@@ -16,7 +16,7 @@ Draw.loadPlugin(function (ui) {
     const model = graph.getModel && graph.getModel();
     if (!model) return;
 
-    const PLUGIN_VERSION = 4;
+    const PLUGIN_VERSION = 5;
     const ACTION_ID = "trellisIrrigationPlanner";
     const CREATE_SOURCE_ACTION_ID = "trellisIrrigationCreateSourceEndpoint";
     const CREATE_BED_ACTION_ID = "trellisIrrigationCreateBedEndpoint";
@@ -68,7 +68,8 @@ Draw.loadPlugin(function (ui) {
     const BRANCH_SINGLETON_CATEGORIES = new Set(["backflow", "filter", "regulator", "controller_timer"]);
     const BRIDGE_SUGGESTION_CATEGORIES = new Set(["fitting", "source_adapter"]);
     const ZONE_ORIGIN_TIMER_OUTLET = "timer_outlet";
-    const ZONE_ORIGIN_MANUAL = "manual";
+    const ZONE_ORIGIN_SOURCE = "source"; // NEW: source-fed trees without timers are first-class analyzable zones.
+    const ZONE_ORIGIN_MANUAL = "manual"; // CHANGE: legacy persisted records are ignored during zone derivation.
     const VALID_STOCK_STATES = ["in_stock", "low_stock", "out_of_stock", "unknown"];
     const ASSEMBLY_PART_WIDTH = 150;
     const ASSEMBLY_PART_HEIGHT = 34;
@@ -228,6 +229,8 @@ Draw.loadPlugin(function (ui) {
     const ANALYSIS_DEMAND_CATEGORIES = new Set(["emitter", "sprinkler", "microspray", "bubbler", "standpipe"]); // NEW
     const ANALYSIS_LOW_MARGIN_PSI = 5; // NEW
     const ANALYSIS_DEFAULT_HW_C = 150; // NEW
+    const ANALYSIS_FLOW_DELTA_EPSILON_GPM = 0.05; // NEW
+    const ANALYSIS_PRESSURE_DELTA_EPSILON_PSI = 0.25; // NEW
     const BED_SUPPLY_PIPE_BY_SIZE = { "1/4": "micro_tubing_1_4", "1/2": "poly_distribution_1_2", "3/4": "poly_mainline_3_4", "1": "poly_mainline_1" }; // CHANGE
     const DISCONNECTED_SOURCE_WARNING = "Irrigation tree is disconnected from a source.";
 
@@ -265,6 +268,8 @@ Draw.loadPlugin(function (ui) {
         "micro_emitter_0_5_gph",
         "micro_emitter_1_0_gph",
         "micro_emitter_2_0_gph",
+        "micro_dripline_1_4_non_pc",
+        "micro_bubbler_adjustable_1_4",
         "micro_spray_stake_1_4"
     ].concat(GENERATED_CONNECTOR_CATALOG_ITEMS.map(function (part) { return part.id; }), GENERATED_THREAD_CONNECTOR_CATALOG_ITEMS.map(function (part) { return part.id; }))); // CHANGE: additive upgrades include the cleaned realistic starter parts
 
@@ -314,14 +319,16 @@ Draw.loadPlugin(function (ui) {
         starterPart("micro_tubing_1_4", "1/4\" micro tubing", "pipe_tubing", 0, 1, 1, input("barb", "1/4"), output("barb", "1/4"), { innerDiameterIn: 0.170, hazenWilliamsC: 150 }, 0.12), // CHANGE
         starterPart("drip_tape_8mil_12in", "8 mil drip tape, 12\" emitter spacing", "drip_tape", 14, 1, 1, input("barb", "1/2", "drip"), output("barb", "1/2", "drip"), { flowGpm: 1.3, emitterFlowGph: 0.8, emitterSpacingIn: 12, wettedWidthIn: 12, operatingPressurePsi: 10 }, 0.13), // CHANGE
         starterPart("pc_dripline_1_2", "1/2\" pressure-compensating dripline", "dripline", 32, 1, 1, input("barb", "1/2", "drip"), output("barb", "1/2", "drip"), { flowGpm: 1.0, emitterFlowGph: 0.9, emitterSpacingIn: 18, wettedWidthIn: 12, operatingPressurePsi: 12 }, 0.32), // CHANGE
-        starterPart("micro_emitter_0_5_gph", "1/4\" drip emitter, 0.5 gph", "emitter", 0.45, 1, 0, input("barb", "1/4", "drip"), output("", ""), { flowGpm: 0.0083, operatingPressurePsi: 15, coveragePattern: "circle", throwRadiusFt: 0.5 }), // CHANGE
-        starterPart("micro_emitter_1_0_gph", "1/4\" drip emitter, 1.0 gph", "emitter", 0.45, 1, 0, input("barb", "1/4", "drip"), output("", ""), { flowGpm: 0.0167, operatingPressurePsi: 15, coveragePattern: "circle", throwRadiusFt: 0.5 }), // CHANGE
-        starterPart("micro_emitter_2_0_gph", "1/4\" drip emitter, 2.0 gph", "emitter", 0.45, 1, 0, input("barb", "1/4", "drip"), output("", ""), { flowGpm: 0.0333, operatingPressurePsi: 15, coveragePattern: "circle", throwRadiusFt: 0.5 }), // CHANGE
+        starterPart("micro_dripline_1_4_non_pc", "1/4\" non-PC inline dripline, 6\" spacing", "dripline", 18, 1, 1, input("barb", "1/4", "drip"), output("barb", "1/4", "drip"), { emitterFlowGph: 0.5, emitterSpacingIn: 6, wettedWidthIn: 8, minOperatingPressurePsi: 10, maxOperatingPressurePsi: 25 }, 0.22), // NEW
+        starterPart("micro_emitter_0_5_gph", "PC self-piercing drip emitter, 0.5 gph", "emitter", 0.65, 1, 0, inputWithAlternates("barb", "1/4", [input("barb", "1/2", "drip", true)], "drip", true), output("", ""), { flowGpm: 0.0083, minOperatingPressurePsi: 15, maxOperatingPressurePsi: 45, coveragePattern: "circle", throwRadiusFt: 0.5 }), // CHANGE
+        starterPart("micro_emitter_1_0_gph", "PC self-piercing drip emitter, 1.0 gph", "emitter", 0.65, 1, 0, inputWithAlternates("barb", "1/4", [input("barb", "1/2", "drip", true)], "drip", true), output("", ""), { flowGpm: 0.0167, minOperatingPressurePsi: 15, maxOperatingPressurePsi: 45, coveragePattern: "circle", throwRadiusFt: 0.5 }), // CHANGE
+        starterPart("micro_emitter_2_0_gph", "PC self-piercing drip emitter, 2.0 gph", "emitter", 0.65, 1, 0, inputWithAlternates("barb", "1/4", [input("barb", "1/2", "drip", true)], "drip", true), output("", ""), { flowGpm: 0.0333, minOperatingPressurePsi: 15, maxOperatingPressurePsi: 45, coveragePattern: "circle", throwRadiusFt: 0.5 }), // CHANGE
         starterPart("overhead_sprinkler_head_30psi", "Overhead sprinkler head/nozzle, 30 psi", "sprinkler", 14, 1, 1, input("barb", "1/2", "sprinkler"), output("barb", "1/2", "sprinkler"), { flowGpm: 2.5, operatingPressurePsi: 30, coveragePattern: "circle", throwRadiusFt: 8 }), // CHANGE
         starterPart("microspray_stake_20psi", "Nursery microspray stake, 20 psi", "microspray", 8, 1, 1, input("barb", "1/2", "microspray"), output("barb", "1/2", "microspray"), { flowGpm: 1.5, operatingPressurePsi: 20, coveragePattern: "circle", throwRadiusFt: 6 }), // CHANGE
-        starterPart("micro_spray_stake_1_4", "1/4\" micro-spray stake, 20 psi", "microspray", 3.5, 1, 0, input("barb", "1/4", "microspray"), output("", ""), { flowGpm: 0.25, operatingPressurePsi: 20, coveragePattern: "circle", throwRadiusFt: 4 }), // CHANGE
+        starterPart("micro_spray_stake_1_4", "1/4\" 360 micro-spray stake, 20 psi", "microspray", 3.5, 1, 0, input("barb", "1/4", "microspray"), output("", ""), { flowGpm: 0.25, minOperatingPressurePsi: 20, maxOperatingPressurePsi: 35, coveragePattern: "circle", throwRadiusFt: 4 }), // CHANGE
         starterPart("soaker_row_line_1_2", "1/2\" soaker row line", "dripline", 30, 1, 1, input("barb", "1/2", "drip"), output("barb", "1/2", "drip"), { flowGpm: 1.3, emitterFlowGph: 0.8, emitterSpacingIn: 12, wettedWidthIn: 18, operatingPressurePsi: 10 }, 0.30), // CHANGE
         starterPart("bubbler_emitter_1_2", "Perennial bubbler emitter", "bubbler", 5, 1, 1, input("barb", "1/2", "bubbler"), output("barb", "1/2", "bubbler"), { flowGpm: 1.0, operatingPressurePsi: 15, coveragePattern: "circle", throwRadiusFt: 2 }), // CHANGE
+        starterPart("micro_bubbler_adjustable_1_4", "1/4\" adjustable micro-bubbler, 6 gph", "bubbler", 4.5, 1, 0, input("barb", "1/4", "bubbler"), output("", ""), { flowGpm: 0.1, minOperatingPressurePsi: 15, maxOperatingPressurePsi: 30, coveragePattern: "circle", throwRadiusFt: 1.5 }), // NEW
         starterPart("hose_standpipe_1_2", "Manual hose standpipe", "standpipe", 22, 1, 1, input("barb", "1/2", "standpipe"), output("barb", "1/2", "standpipe"), { flowGpm: 2.0, operatingPressurePsi: 20 }) // CHANGE
     ].concat(GENERATED_THREAD_CONNECTOR_CATALOG_ITEMS, GENERATED_CONNECTOR_CATALOG_ITEMS);
 
@@ -332,6 +339,7 @@ Draw.loadPlugin(function (ui) {
     let inactiveEntryOverlay = null;
     let inactiveEntryRefreshTimer = null;
     let closingIrrigationModeSession = null;
+    let lastModuleClickAnchor = null; // NEW
     let programmaticEdgeInsertDepth = 0;
     let activeIrrigationEditDepth = 0;
     let pendingHudGraphSyncModuleCells = [];
@@ -751,6 +759,10 @@ Draw.loadPlugin(function (ui) {
         return { type: normalizeConnectorType(type), nominalSize: nominalSize || "", pipeConnection: !!pipeConnection };
     }
 
+    function inputWithAlternates(type, nominalSize, alternates, method, pipeConnection) { // NEW
+        return Object.assign(input(type, nominalSize, method, pipeConnection), { alternates: alternates || [] }); // NEW
+    } // NEW
+
     function output(type, nominalSize, method, maxFlowGpm, pipeConnection) {
         return { type: normalizeConnectorType(type), nominalSize: nominalSize || "", maxFlowGpm: maxFlowGpm == null ? null : maxFlowGpm, pipeConnection: !!pipeConnection };
     }
@@ -797,9 +809,15 @@ Draw.loadPlugin(function (ui) {
 
     function mergeCatalogUpgradeParts(moduleCell, currentCatalog) {
         const current = currentCatalog || readCatalog(moduleCell);
-        const items = (current.items || []).slice(); // CHANGE: starter upgrades are additive and preserve existing catalog entries
+        const starterById = {};
+        starterCatalogUpgradeItems().forEach(function (part) { starterById[part.id] = part; }); // NEW
+        const items = (current.items || []).map(function (item) { // CHANGE: starter upgrades are additive and preserve existing catalog entries
+            const replacement = starterById[item && item.id];
+            return starterOwnedEmitterUpgradeCandidate(item, replacement) ? replacement : item; // NEW
+        });
         const usedIds = new Set(items.map(function (item) { return item.id; }));
-        starterCatalogUpgradeItems().forEach(function (part) {
+        Object.keys(starterById).forEach(function (id) {
+            const part = starterById[id];
             if (!usedIds.has(part.id)) {
                 usedIds.add(part.id);
                 items.push(part);
@@ -807,6 +825,23 @@ Draw.loadPlugin(function (ui) {
         });
         return writeCatalog(moduleCell, { items });
     }
+
+    function starterOwnedEmitterUpgradeCandidate(current, replacement) { // NEW
+        const p = normalizeCatalogPart(current); // NEW
+        const next = normalizeCatalogPart(replacement); // NEW
+        if (!p || !next || ["micro_emitter_0_5_gph", "micro_emitter_1_0_gph", "micro_emitter_2_0_gph"].indexOf(p.id) < 0) return false; // NEW
+        const expectedFlow = { micro_emitter_0_5_gph: 0.0083, micro_emitter_1_0_gph: 0.0167, micro_emitter_2_0_gph: 0.0333 }[p.id]; // NEW
+        const expectedName = { micro_emitter_0_5_gph: "1/4\" drip emitter, 0.5 gph", micro_emitter_1_0_gph: "1/4\" drip emitter, 1.0 gph", micro_emitter_2_0_gph: "1/4\" drip emitter, 2.0 gph" }[p.id]; // NEW
+        return p.category === "emitter" && // NEW
+            p.name === expectedName && // NEW
+            Math.abs(finiteNumber(p.cost, 0) - 0.45) < 0.0001 && // NEW
+            p.connectors.inputs === 1 && p.connectors.outputs === 0 && // NEW
+            p.connectors.input.type === "barb" && p.connectors.input.nominalSize === "1/4" && // NEW
+            (!p.connectors.input.alternates || p.connectors.input.alternates.length === 0) && // NEW
+            Math.abs(finiteNumber(p.specs && p.specs.flowGpm, 0) - expectedFlow) < 0.0001 && // NEW
+            finiteNumber(p.specs && p.specs.minOperatingPressurePsi, null) === 15 && // NEW
+            finiteNumber(p.specs && p.specs.throwRadiusFt, null) === 0.5; // NEW
+    } // NEW
 
     function seedStarterCatalogIfEmpty(moduleCell) {
         const current = readCatalog(moduleCell);
@@ -990,6 +1025,13 @@ Draw.loadPlugin(function (ui) {
     }
 
     function normalizeConnectorRecord(connector) {
+        const normalized = normalizeConnectorRecordShallow(connector); // NEW
+        const alternates = Array.isArray(connector && connector.alternates) ? connector.alternates.map(normalizeConnectorRecordShallow).filter(function (entry) { return !!(entry.type || entry.nominalSize); }) : []; // NEW
+        normalized.alternates = alternates; // NEW
+        return normalized; // NEW
+    }
+
+    function normalizeConnectorRecordShallow(connector) { // NEW
         const c = connector || {};
         const type = normalizeConnectorType(c.type || c.connectionType);
         return {
@@ -1002,7 +1044,7 @@ Draw.loadPlugin(function (ui) {
             minPressurePsi: finiteNumber(c.minPressurePsi, null),
             maxPressurePsi: finiteNumber(c.maxPressurePsi, null)
         };
-    }
+    } // NEW
 
     function normalizeConnectorPortRecords(records, fallback, count) { // NEW
         const normalizedFallback = normalizeConnectorRecord(fallback); // NEW
@@ -1151,8 +1193,27 @@ Draw.loadPlugin(function (ui) {
         return connectorUsesPipe(sourceConnector) && connectorUsesPipe(targetConnector);
     }
 
-    function connectorRecordsMatch(sourceConnector, targetConnector, endpointRequirement) {
+    function connectorRecordsMatchSingle(sourceConnector, targetConnector, endpointRequirement) { // NEW
         return connectorRecordsRequirePipe(sourceConnector, targetConnector) ? pipeConnectorMatches(sourceConnector, targetConnector) : connectorMatches(sourceConnector, targetConnector, endpointRequirement);
+    } // NEW
+
+    function connectorRecordMatchCandidates(connector) { // NEW
+        const primary = normalizeConnectorRecord(connector); // NEW
+        return [primary].concat((primary.alternates || []).map(normalizeConnectorRecordShallow)); // NEW
+    } // NEW
+
+    function connectorRecordsMatch(sourceConnector, targetConnector, endpointRequirement) {
+        const sourceCandidates = connectorRecordMatchCandidates(sourceConnector); // NEW
+        const targetCandidates = connectorRecordMatchCandidates(targetConnector); // NEW
+        let firstFailure = null; // NEW
+        for (let i = 0; i < sourceCandidates.length; i++) { // NEW
+            for (let j = 0; j < targetCandidates.length; j++) { // NEW
+                const result = connectorRecordsMatchSingle(sourceCandidates[i], targetCandidates[j], endpointRequirement); // NEW
+                if (result.ok) return result; // NEW
+                if (!firstFailure) firstFailure = result; // NEW
+            } // NEW
+        } // NEW
+        return firstFailure || { ok: false, reason: "Missing connector." }; // NEW
     }
 
     function canConnectParts(previousPart, nextPart, endpointRequirement) {
@@ -4220,7 +4281,7 @@ Draw.loadPlugin(function (ui) {
         if (refreshed.recomputed && JSON.stringify(nextRecord) !== JSON.stringify(record)) {
             changed = setCellAttrs(bedAssembly, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(nextRecord) }) || changed;
         }
-        changed = setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(nextRecord, catalog, moduleCell) }) || changed; // CHANGE
+        if (Object.prototype.hasOwnProperty.call(nextRecord, "assemblyLabelMode")) changed = setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(nextRecord, catalog, moduleCell) }) || changed; // CHANGE: legacy records keep their existing visible assembly label.
         changed = createBedTemplateLayoutCells(bedAssembly, nextRecord.pathId || ("assembly_bed_" + sanitizeId(getCellId(bedCell))), nextRecord, geometry) || changed;
         return changed;
     }
@@ -4248,7 +4309,8 @@ Draw.loadPlugin(function (ui) {
         try {
             if (movingPorts) writeBedPortConfig(linkedBed, movingPorts);
             if (fitWidth || fitHeight) changed = !!setGeometry(assembly, next);
-            changed = syncBedAssemblyLabelStyle(assembly) || changed; // CHANGE
+            const record = readBedAssemblyTemplateRecord(moduleCell || findGardenModuleAncestor(assembly), assembly); // CHANGE
+            if (!record || Object.prototype.hasOwnProperty.call(record, "assemblyLabelMode")) changed = syncBedAssemblyLabelStyle(assembly) || changed; // CHANGE: preserve legacy visible labels when the mode was never stored.
             changed = setCellAttrs(assembly, { [ATTRS.LINKED_BED_ID]: getCellId(linkedBed) || "", bed_fit_width: fitWidth ? "1" : "0", bed_fit_height: fitHeight ? "1" : "0" }) || changed;
             changed = syncBedAssemblyRotation(assembly, linkedBed) || changed;
             reflowBedTemplateLayout(moduleCell || findGardenModuleAncestor(assembly), assembly);
@@ -5095,15 +5157,15 @@ Draw.loadPlugin(function (ui) {
 
     function normalizeZone(zone) {
         const z = zone || {};
-        const originType = z.originType === ZONE_ORIGIN_TIMER_OUTLET ? ZONE_ORIGIN_TIMER_OUTLET : (z.originType === ZONE_ORIGIN_MANUAL ? ZONE_ORIGIN_MANUAL : ZONE_ORIGIN_MANUAL);
+        const originType = z.originType === ZONE_ORIGIN_TIMER_OUTLET ? ZONE_ORIGIN_TIMER_OUTLET : (z.originType === ZONE_ORIGIN_SOURCE ? ZONE_ORIGIN_SOURCE : ZONE_ORIGIN_MANUAL); // CHANGE
         const originCellId = String(z.originCellId || "").trim();
         const outletIndex = Math.max(0, Math.floor(finiteNumber(z.outletIndex, 0)));
-        const id = String(z.id || (originType === ZONE_ORIGIN_TIMER_OUTLET ? timerZoneId(originCellId, outletIndex) : "")).trim();
+        const id = String(z.id || (originType === ZONE_ORIGIN_TIMER_OUTLET ? timerZoneId(originCellId, outletIndex) : (originType === ZONE_ORIGIN_SOURCE ? sourceZoneId(originCellId, outletIndex) : ""))).trim(); // CHANGE
         return {
-            id: id || ("zone_manual_" + Date.now()),
+            id: id || ("zone_legacy_manual_" + Date.now()), // CHANGE
             originType,
-            originCellId: originType === ZONE_ORIGIN_TIMER_OUTLET ? originCellId : "",
-            outletIndex: originType === ZONE_ORIGIN_TIMER_OUTLET ? outletIndex : null,
+            originCellId: originType === ZONE_ORIGIN_TIMER_OUTLET || originType === ZONE_ORIGIN_SOURCE ? originCellId : "", // CHANGE
+            outletIndex: originType === ZONE_ORIGIN_TIMER_OUTLET || originType === ZONE_ORIGIN_SOURCE ? outletIndex : null, // CHANGE
             alias: String(z.alias || "").trim(),
             inferredBedIds: uniqueStrings(z.inferredBedIds || []),
             pinnedBedIds: uniqueStrings(z.pinnedBedIds || []),
@@ -5118,7 +5180,7 @@ Draw.loadPlugin(function (ui) {
     function readZoneOverrides(moduleCell) {
         const parsed = GraphStore.readJsonAttr(moduleCell, ATTRS.ZONES_JSON, null);
         const zones = parsed && Array.isArray(parsed.zones) ? parsed.zones : (Array.isArray(parsed) ? parsed : []);
-        return zones.map(normalizeZone).filter(function (zone) { return !!zone.id; });
+        return zones.map(normalizeZone).filter(function (zone) { return !!zone.id && zone.originType !== ZONE_ORIGIN_MANUAL; }); // CHANGE: ignore legacy manual zones without mutating saved JSON.
     }
 
     function writeZones(moduleCell, zones) {
@@ -5134,13 +5196,13 @@ Draw.loadPlugin(function (ui) {
 
     function persistedZoneOverrideRecord(zone) {
         const z = normalizeZone(zone);
-        if (z.originType === ZONE_ORIGIN_TIMER_OUTLET) z.inferredBedIds = [];
+        if (z.originType === ZONE_ORIGIN_TIMER_OUTLET || z.originType === ZONE_ORIGIN_SOURCE) z.inferredBedIds = []; // CHANGE
         return z;
     }
 
     function zoneHasPersistedZoneIntent(zone) {
         const z = normalizeZone(zone);
-        if (z.originType === ZONE_ORIGIN_MANUAL) return true;
+        if (z.originType === ZONE_ORIGIN_MANUAL) return false; // CHANGE: manual zones are obsolete and are never re-persisted.
         return !!(z.alias || z.pinnedBedIds.length || z.excludedBedIds.length);
     }
 
@@ -5149,8 +5211,9 @@ Draw.loadPlugin(function (ui) {
         return "zone_timer_" + sanitizeId(id || "timer") + "_out_" + (Math.max(0, Math.floor(finiteNumber(outletIndex, 0))) + 1);
     }
 
-    function manualZoneId(label) {
-        return "zone_manual_" + sanitizeId(label || "zone") + "_" + Date.now();
+    function sourceZoneId(sourceCellOrId, outletIndex) { // NEW
+        const id = typeof sourceCellOrId === "string" ? sourceCellOrId : getCellId(sourceCellOrId); // NEW
+        return "zone_source_" + sanitizeId(id || "source") + "_out_" + (Math.max(0, Math.floor(finiteNumber(outletIndex, 0))) + 1); // NEW
     }
 
     function uniqueStrings(values) {
@@ -5190,6 +5253,50 @@ Draw.loadPlugin(function (ui) {
         return zones;
     }
 
+    function isControllerTimerCell(moduleCell, cell) { // NEW
+        const part = partForCell(moduleCell, cell); // NEW
+        return !!part && part.category === "controller_timer"; // NEW
+    } // NEW
+
+    function sourceFedDemandFromSource(moduleCell, sourceCell, outletIndex) { // NEW
+        const seedEdges = outgoingAssemblyEdges(moduleCell, sourceCell).filter(function (edge) { // NEW
+            return String(getCellAttr(edge, ATTRS.EDGE_SOURCE_PORT, "0")) === String(outletIndex || 0); // NEW
+        }); // NEW
+        const stack = seedEdges.map(function (edge) { return edge.target; }).filter(Boolean); // NEW
+        const seen = new Set(); // NEW
+        const beds = []; // NEW
+        let hasDemand = false; // NEW
+        while (stack.length) { // NEW
+            const cell = stack.pop(); // NEW
+            const id = getCellId(cell); // NEW
+            if (!id || seen.has(id)) continue; // NEW
+            seen.add(id); // NEW
+            if (isControllerTimerCell(moduleCell, cell)) continue; // NEW: timer outputs own their downstream zones.
+            if (isAssembly(cell) && assemblyType(cell) === "bed") { beds.push(id); hasDemand = true; } // NEW
+            else { const part = partForCell(moduleCell, cell); if (part && ANALYSIS_DEMAND_CATEGORIES.has(part.category)) hasDemand = true; } // NEW
+            outgoingAssemblyEdges(moduleCell, cell).forEach(function (edge) { if (edge && edge.target) stack.push(edge.target); }); // NEW
+            const internal = internalNeighborForPort(cell, "output"); // NEW
+            if (internal) stack.push(internal); // NEW
+        } // NEW
+        return { bedIds: uniqueStrings(beds), hasDemand }; // NEW
+    } // NEW
+
+    function deriveInferredSourceZones(moduleCell) { // NEW
+        const zones = []; // NEW
+        collectEndpoints(moduleCell, "source").forEach(function (sourceCell) { // NEW
+            const demand = sourceFedDemandFromSource(moduleCell, sourceCell, 0); // NEW
+            if (!demand.hasDemand) return; // NEW
+            zones.push(normalizeZone({ // NEW
+                id: sourceZoneId(sourceCell, 0), // NEW
+                originType: ZONE_ORIGIN_SOURCE, // NEW
+                originCellId: getCellId(sourceCell) || "", // NEW
+                outletIndex: 0, // NEW
+                inferredBedIds: demand.bedIds // NEW
+            })); // NEW
+        }); // NEW
+        return zones; // NEW
+    } // NEW
+
     function downstreamBedAssemblyIdsFromTimerOutlet(moduleCell, timerCell, outletIndex) {
         const seedEdges = outgoingAssemblyEdges(moduleCell, timerCell).filter(function (edge) {
             return String(getCellAttr(edge, ATTRS.EDGE_SOURCE_PORT, "0")) === String(outletIndex || 0);
@@ -5217,7 +5324,7 @@ Draw.loadPlugin(function (ui) {
     function deriveZones(moduleCell) {
         const saved = readZoneOverrides(moduleCell);
         const savedById = new Map(saved.map(function (zone) { return [zone.id, zone]; }));
-        const inferred = deriveInferredTimerZones(moduleCell);
+        const inferred = deriveInferredTimerZones(moduleCell).concat(deriveInferredSourceZones(moduleCell)); // CHANGE
         const inferredIds = new Set(inferred.map(function (zone) { return zone.id; }));
         const zones = inferred.map(function (zone) {
             const existing = savedById.get(zone.id);
@@ -5241,7 +5348,11 @@ Draw.loadPlugin(function (ui) {
             const timer = findCellById(moduleCell, z.originCellId);
             return irrigationCellLabel(timer) + " outlet " + (finiteNumber(z.outletIndex, 0) + 1);
         }
-        return "Manual zone";
+        if (z.originType === ZONE_ORIGIN_SOURCE) { // NEW
+            const source = findCellById(moduleCell, z.originCellId); // NEW
+            return endpointLabel(source) + " direct zone"; // NEW
+        } // NEW
+        return "Legacy manual zone"; // CHANGE
     }
 
     function allBedAssemblyIds(moduleCell) {
@@ -5310,16 +5421,6 @@ Draw.loadPlugin(function (ui) {
         return writeZoneOverrides(moduleCell, zones);
     }
 
-    function createManualZone(moduleCell, alias, bedAssemblyIds) {
-        if (activeIrrigationEditDepth === 0) return runIrrigationEdit("createManualZone", function () { return createManualZone(moduleCell, alias, bedAssemblyIds); });
-        const zones = deriveZones(moduleCell);
-        const zone = normalizeZone({ id: manualZoneId(alias || "manual_zone"), originType: ZONE_ORIGIN_MANUAL, alias: alias || "Manual Zone", pinnedBedIds: uniqueStrings(bedAssemblyIds) });
-        zones.push(zone);
-        writeZoneOverrides(moduleCell, zones);
-        if (bedAssemblyIds && bedAssemblyIds.length) assignBedsToZone(moduleCell, zone.id, bedAssemblyIds);
-        return zone;
-    }
-
     function updateZoneAlias(moduleCell, zoneId, alias) {
         if (activeIrrigationEditDepth === 0) return runIrrigationEdit("updateZoneAlias", function () { return updateZoneAlias(moduleCell, zoneId, alias); });
         const zones = deriveZones(moduleCell).map(function (zone) {
@@ -5361,14 +5462,13 @@ Draw.loadPlugin(function (ui) {
                     worstMarginPsi = worstMarginPsi == null ? margin : Math.min(worstMarginPsi, margin);
                 }
             });
-            const origin = zone.originType === ZONE_ORIGIN_TIMER_OUTLET ? findCellById(moduleCell, zone.originCellId) : null;
-            const sourceRoute = origin ? routeAssemblyToSource(moduleCell, origin) : null;
+            const origin = zone.originType === ZONE_ORIGIN_TIMER_OUTLET || zone.originType === ZONE_ORIGIN_SOURCE ? findCellById(moduleCell, zone.originCellId) : null; // CHANGE
+            const sourceRoute = zone.originType === ZONE_ORIGIN_SOURCE && origin ? { source: origin } : (origin ? routeAssemblyToSource(moduleCell, origin) : null); // CHANGE
             const sourceProfile = sourceRoute && sourceRoute.source ? endpointProfile(sourceRoute.source) : null;
-            const originPart = origin ? partForCell(moduleCell, origin) : null;
+            const originPart = zone.originType === ZONE_ORIGIN_TIMER_OUTLET && origin ? partForCell(moduleCell, origin) : null; // CHANGE
             const outletMax = originPart ? finiteNumber(originPart.connectors && originPart.connectors.output && originPart.connectors.output.maxFlowGpm, finiteNumber(originPart.specs && originPart.specs.maxFlowGpm, null)) : null;
             const sourceMax = sourceProfile ? finiteNumber(sourceProfile.usableFlowGpm, null) : null;
             const warnings = [];
-            if (zone.originType === ZONE_ORIGIN_MANUAL && !origin) warnings.push("Manual zone is not linked to a timer outlet.");
             if (sourceMax != null && demandGpm > sourceMax) warnings.push("Zone demand exceeds source usable flow.");
             if (outletMax != null && demandGpm > outletMax) warnings.push("Zone demand exceeds timer outlet max flow.");
             if (worstMarginPsi != null && worstMarginPsi < 0) warnings.push("One or more zone paths have negative pressure margin.");
@@ -5382,7 +5482,7 @@ Draw.loadPlugin(function (ui) {
                 memberBedIds: memberIds,
                 demandGpm,
                 worstMarginPsi,
-                status: !warnings.length ? "ok" : (zone.originType === ZONE_ORIGIN_MANUAL && !origin ? "unknown" : "warning"),
+                status: !warnings.length ? "ok" : "warning", // CHANGE
                 warnings
             };
         });
@@ -7330,6 +7430,17 @@ Draw.loadPlugin(function (ui) {
         }
         seedStarterCatalogIfEmpty(targetModule);
         closeWizardSessionForModeSwitch();
+        if (activeIrrigationMode && sameCell(activeIrrigationMode.moduleCell, targetModule)) { // NEW
+            applyOpenCreationModelPoint(activeIrrigationMode, options && options.creationModelPoint); // NEW
+            const entrySelection = irrigationModeEntrySelection(activeIrrigationMode, selection, options); // NEW
+            if (entrySelection) selectCell(entrySelection, false); // NEW
+            if (options && options.message) activeIrrigationMode.message = options.message; // NEW
+            removeHudNode(inactiveEntryOverlay); // NEW
+            inactiveEntryOverlay = null; // NEW
+            renderIrrigationMode(activeIrrigationMode); // NEW
+            dispatchIrrigationModeChanged(); // NEW
+            return activeIrrigationMode; // NEW
+        } // NEW
         closeIrrigationMode();
         const interactionOwnerId = "irrigation:" + (targetModule.id || targetModule.getId && targetModule.getId() || "module"); // NEW
         ensureTrellisInteractionModes().request(IRRIGATION_INTERACTION_MODE_ID, interactionOwnerId, { close: function () { closeIrrigationMode(); } }); // NEW
@@ -7373,6 +7484,7 @@ Draw.loadPlugin(function (ui) {
             suppressHudDuringDrag: false, // CHANGE
             listeners: []
         };
+        applyOpenCreationModelPoint(activeIrrigationMode, options && options.creationModelPoint); // NEW
         installIrrigationModeListeners(activeIrrigationMode);
         const entrySelection = irrigationModeEntrySelection(activeIrrigationMode, selection, options);
         if (entrySelection) selectCell(entrySelection, false);
@@ -7390,6 +7502,20 @@ Draw.loadPlugin(function (ui) {
         scheduleIrrigationDebugSnapshot(activeIrrigationMode, "openIrrigationMode:post-render-async");
         return activeIrrigationMode;
     }
+
+    function sameCell(first, second) { // NEW
+        if (!first || !second) return false; // NEW
+        if (first === second) return true; // NEW
+        const firstId = getCellId(first); // NEW
+        return !!firstId && firstId === getCellId(second); // NEW
+    } // NEW
+
+    function applyOpenCreationModelPoint(session, modelPoint) { // NEW
+        if (!session || !modelPoint) return false; // NEW
+        session.lastModelPoint = modelPointToModulePoint(session.moduleCell, modelPoint); // NEW
+        if (session.creationMode) return updateCreationModelPoint(session, modelPoint, { center: true, render: false }); // NEW
+        return true; // NEW
+    } // NEW
 
     function closeIrrigationMode() {
         const session = activeIrrigationMode;
@@ -7448,6 +7574,7 @@ Draw.loadPlugin(function (ui) {
         if (graph.addListener && typeof mxEvent !== "undefined") {
             const mouseListener = function (_, evt) {
                 updateSessionPointerFromMxEvent(session, evt);
+                if (handleCreationModuleClick(session, evt)) return; // NEW
                 if (resolveGraphClickCell(evt)) { clearSelectedPortAndBoundaryState(session); renderIrrigationMode(session); }
             };
             graph.addListener(mxEvent.CLICK, mouseListener);
@@ -7587,6 +7714,30 @@ Draw.loadPlugin(function (ui) {
         return resolveMouseEventCell(evt);
     }
 
+    function graphEventModelPoint(evt) { // NEW
+        const domEvent = evt && evt.getProperty ? evt.getProperty("event") : (evt && evt.getEvent ? evt.getEvent() : evt); // NEW
+        return domEventModelPoint(domEvent); // NEW
+    } // NEW
+
+    function domEventModelPoint(domEvent) { // NEW
+        if (!domEvent || typeof mxUtils === "undefined" || typeof mxEvent === "undefined" || !graph.container || !mxUtils.convertPoint) return null; // NEW
+        const pt = mxUtils.convertPoint(graph.container, mxEvent.getClientX(domEvent), mxEvent.getClientY(domEvent)); // NEW
+        const scale = finiteNumber(graph.view && graph.view.scale, 1) || 1; // NEW
+        const translate = graph.view && graph.view.translate ? graph.view.translate : { x: 0, y: 0 }; // NEW
+        return { x: pt.x / scale - finiteNumber(translate.x, 0), y: pt.y / scale - finiteNumber(translate.y, 0) }; // NEW
+    } // NEW
+
+    function handleCreationModuleClick(session, evt) { // NEW
+        if (!session || !session.creationMode) return false; // NEW
+        const clicked = resolveGraphClickCell(evt); // NEW
+        if (!sameCell(clicked, session.moduleCell)) return false; // NEW
+        const modelPoint = graphEventModelPoint(evt); // NEW
+        if (!modelPoint) return false; // NEW
+        clearSelectedPortAndBoundaryState(session); // NEW
+        updateCreationModelPoint(session, modelPoint, { center: true, render: true }); // NEW
+        return true; // NEW
+    } // NEW
+
     function resolveMouseEventCell(evt) {
         if (!evt) return null;
         if (evt.getCell) return evt.getCell();
@@ -7613,10 +7764,8 @@ Draw.loadPlugin(function (ui) {
     function updateSessionPointerFromDomEvent(session, domEvent) {
         if (!session || !domEvent || typeof mxUtils === "undefined" || typeof mxEvent === "undefined" || !graph.container) return;
         if (isCreationPointerIgnoredEvent(domEvent)) return; // NEW
-        const pt = mxUtils.convertPoint(graph.container, mxEvent.getClientX(domEvent), mxEvent.getClientY(domEvent));
-        const scale = finiteNumber(graph.view && graph.view.scale, 1) || 1;
-        const translate = graph.view && graph.view.translate ? graph.view.translate : { x: 0, y: 0 };
-        const modelPoint = { x: pt.x / scale - finiteNumber(translate.x, 0), y: pt.y / scale - finiteNumber(translate.y, 0) };
+        const modelPoint = domEventModelPoint(domEvent); // CHANGE
+        if (!modelPoint) return; // NEW
         session.lastModelPoint = modelPointToModulePoint(session.moduleCell, modelPoint);
     }
 
@@ -7830,6 +7979,17 @@ Draw.loadPlugin(function (ui) {
         renderIrrigationMode(session); // NEW
     } // NEW
 
+    function updateCreationModelPoint(session, modelPoint, options) { // NEW
+        if (!session || !modelPoint) return false; // NEW
+        session.creationModelPoint = cloneCreationModelPoint(modelPoint); // NEW
+        session.creationAnchor = modelPointToModulePoint(session.moduleCell, session.creationModelPoint); // NEW
+        session.creationPreviewBounds = null; // NEW
+        session.lastModelPoint = session.creationAnchor; // NEW
+        if (!options || options.center !== false) centerViewportOnCreationAnchor(session); // NEW
+        if (options && options.render) renderIrrigationMode(session); // NEW
+        return true; // NEW
+    } // NEW
+
     function clearCreationMode(session) { // NEW
         if (!session) return; // NEW
         session.creationMode = ""; // NEW
@@ -7906,12 +8066,16 @@ Draw.loadPlugin(function (ui) {
         if (!selected) return; // NEW
         const selectedId = getCellId(selected) || ""; // NEW
         const analysis = view.analysis || {}; // NEW
-        const pipe = (analysis.pipeLabels || []).find(function (row) { return row.edgeId === selectedId; }); // NEW
-        const endpoint = (analysis.endpointLabels || []).find(function (row) { return row.cellId === selectedId || getCellId(findAssemblyAncestor(selected)) === row.cellId; }); // NEW
-        if (!pipe && !endpoint) return; // NEW
+        const assemblyId = getCellId(findAssemblyAncestor(selected)) || ""; // NEW
+        const branch = (analysis.branchBadges || []).find(function (row) { return row.edgeId === selectedId || row.sourceId === selectedId; }); // CHANGE
+        const bed = (analysis.bedBadges || []).find(function (row) { return row.cellId === selectedId || assemblyId === row.cellId; }); // CHANGE
+        const assembly = (analysis.assemblyBadges || []).find(function (row) { return row.cellId === selectedId || assemblyId === row.cellId; }); // NEW
+        if (!branch && !bed && !assembly) return; // CHANGE
         const section = hudSection("Selection"); // NEW
-        if (pipe) section.appendChild(hudText("Pipe " + formatFeet(pipe.lengthFt) + ", " + formatGpm(pipe.flowGpm) + ", loss " + formatPsi(pipe.pressureLossPsi) + ".")); // NEW
-        if (endpoint) section.appendChild(hudText(irrigationCellLabel(endpoint.cell) + ": " + formatGpm(endpoint.flowGpm) + ", delivered " + formatPsi(endpoint.deliveredPressurePsi) + ", margin " + formatPsi(endpoint.marginPsi) + ".")); // NEW
+        [branch, bed, assembly].filter(Boolean).forEach(function (badge) { // NEW
+            (badge.detailLines || []).forEach(function (line) { section.appendChild(hudText(line)); }); // NEW
+            (badge.warnings || []).forEach(function (warning) { section.appendChild(hudWarning(warning)); }); // NEW
+        }); // NEW
         hud.appendChild(section); // NEW
     } // NEW
 
@@ -7932,6 +8096,11 @@ Draw.loadPlugin(function (ui) {
         return n == null ? "unknown gpm" : n.toFixed(n >= 10 ? 1 : 2).replace(/\.0+$/, "") + " gpm"; // NEW
     } // NEW
 
+    function formatSignedGpm(value) { // NEW
+        const n = finiteNumber(value, null); // NEW
+        return n == null ? "unknown gpm" : (n > 0 ? "+" : "") + formatGpm(n); // NEW
+    } // NEW
+
     function formatDualFlow(value) { // CHANGE
         const n = finiteNumber(value, null); // NEW
         const litersPerMinute = n == null ? null : n * LITERS_PER_GALLON; // NEW
@@ -7942,6 +8111,11 @@ Draw.loadPlugin(function (ui) {
     function formatPsi(value) { // NEW
         const n = finiteNumber(value, null); // NEW
         return n == null ? "unknown PSI" : n.toFixed(Math.abs(n) >= 10 ? 1 : 2).replace(/\.0+$/, "") + " PSI"; // NEW
+    } // NEW
+
+    function formatSignedPsi(value) { // NEW
+        const n = finiteNumber(value, null); // NEW
+        return n == null ? "unknown PSI" : (n > 0 ? "+" : "") + formatPsi(n); // NEW
     } // NEW
 
     function formatDualPressure(value) { // CHANGE
@@ -10546,8 +10720,9 @@ Draw.loadPlugin(function (ui) {
         const total = Math.max(1, Math.floor(finiteNumber(count, 1)));
         const slot = (index + 1) / (total + 1);
         const width = portBadgeWidthForLabel(label); // NEW
-        const x = role === "left" ? state.x - width - 4 : (role === "right" ? state.x + state.width + 4 : state.x + state.width * slot - width / 2); // CHANGE
-        const y = role === "left" || role === "right" ? state.y + state.height * slot - PORT_BADGE_SIZE / 2 : (role === "top" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4); // CHANGE
+        const visualRole = role === "input" ? "top" : (role === "output" ? "bottom" : role); // CHANGE
+        const x = visualRole === "left" ? state.x - width - 4 : (visualRole === "right" ? state.x + state.width + 4 : state.x + state.width * slot - width / 2); // CHANGE
+        const y = visualRole === "left" || visualRole === "right" ? state.y + state.height * slot - PORT_BADGE_SIZE / 2 : (visualRole === "top" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4); // CHANGE
         node.style.left = Math.round(x) + "px";
         node.style.top = Math.round(y) + "px";
     }
@@ -10877,7 +11052,7 @@ Draw.loadPlugin(function (ui) {
             alias.style.cssText = "width:150px;padding:3px;border:1px solid #aaa;border-radius:4px;";
             nameTd.appendChild(alias);
             const originTd = document.createElement("td");
-            originTd.textContent = zone.originType === ZONE_ORIGIN_TIMER_OUTLET ? "Timer outlet " + (finiteNumber(zone.outletIndex, 0) + 1) : "Manual";
+            originTd.textContent = zone.originType === ZONE_ORIGIN_TIMER_OUTLET ? "Timer outlet " + (finiteNumber(zone.outletIndex, 0) + 1) : (zone.originType === ZONE_ORIGIN_SOURCE ? "Source" : "Legacy manual"); // CHANGE
             const bedsTd = document.createElement("td");
             bedsTd.textContent = detail.memberBedIds.map(function (id) { return bedAssemblyLabel(moduleCell, findCellById(moduleCell, id)); }).join(", ") || "Empty";
             const demandTd = document.createElement("td");
@@ -10904,7 +11079,6 @@ Draw.loadPlugin(function (ui) {
             container.appendChild(warn);
         }
         const controls = hudActions();
-        controls.appendChild(button("New Manual Zone", function () { runIrrigationEdit("newManualZone", function () { ZoneModel.createManual(moduleCell, "Manual Zone", []); HudController.syncGraphState(moduleCell); }); renderZoneManager(container, moduleCell, state, session); if (session) renderIrrigationMode(session); }, "add"));
         controls.appendChild(button("Close", hideDialog, "close")); // CHANGE
         container.appendChild(controls);
     }
@@ -11295,30 +11469,44 @@ Draw.loadPlugin(function (ui) {
     function zoneBadgeLabel(moduleCell, zone) {
         if (zone.alias) return zone.alias;
         if (zone.originType === ZONE_ORIGIN_TIMER_OUTLET) return "Z" + (finiteNumber(zone.outletIndex, 0) + 1);
+        if (zone.originType === ZONE_ORIGIN_SOURCE) return "S"; // NEW
         return zoneDisplayName(moduleCell, zone);
     }
 
     function renderAnalysisOverlays(session, view) { // NEW
         const analysis = view && view.analysis || {}; // NEW
         (analysis.coverageOverlays || []).forEach(function (coverage) { if (!coverage.issue) renderAnalysisCoverageOverlay(session, coverage); }); // NEW
-        (analysis.pipeLabels || []).forEach(function (pipe) { renderAnalysisPipeLabel(session, pipe); }); // NEW
-        (analysis.endpointLabels || []).forEach(function (endpoint) { renderAnalysisEndpointLabel(session, endpoint); }); // NEW
+        (analysis.branchBadges || []).forEach(function (badge) { renderAnalysisBranchBadge(session, badge); }); // NEW
+        (analysis.bedBadges || []).forEach(function (badge) { renderAnalysisBedBadge(session, badge); }); // NEW
+        (analysis.assemblyBadges || []).forEach(function (badge) { renderAnalysisAssemblyBadge(session, badge); }); // NEW
         if (analysis.source) renderAnalysisSourceLabel(session, analysis); // NEW
     } // NEW
 
-    function renderAnalysisPipeLabel(session, pipe) { // NEW
-        if (!pipe || !pipe.edge) return; // NEW
-        const label = analysisOverlayLabel("trellis-irrigation-analysis-pipe-label", formatGpm(pipe.flowGpm) + "\n" + formatFeet(pipe.lengthFt) + " / " + formatPsi(pipe.pressureLossPsi), analysisLabelColor(pipe.pressureLossPsi == null ? "unknown" : "ok")); // NEW
-        positionAnalysisEdgeLabel(label, pipe.edge); // NEW
+    function renderAnalysisBranchBadge(session, badge) { // NEW
+        if (!badge || !badge.edge || analysisCellHiddenByCollapsedAssembly(badge.edge.source) || analysisCellHiddenByCollapsedAssembly(badge.edge.target)) return; // NEW
+        const label = analysisOverlayLabel("trellis-irrigation-analysis-branch-badge", analysisBranchBadgeText(badge), analysisLabelColor(badge.status)); // NEW
+        label.title = analysisBadgeTitle(badge); // NEW
+        positionAnalysisEdgeLabel(label, badge.edge, 1 / 3); // CHANGE
         appendOverlayNode(label); // NEW
         session.analysisOverlays.push(label); // NEW
     } // NEW
 
-    function renderAnalysisEndpointLabel(session, endpoint) { // NEW
-        if (!endpoint || !endpoint.cell) return; // NEW
-        const status = endpoint.marginPsi == null ? "unknown" : (endpoint.marginPsi < 0 ? "error" : (endpoint.marginPsi < ANALYSIS_LOW_MARGIN_PSI ? "warning" : "ok")); // NEW
-        const label = analysisOverlayLabel("trellis-irrigation-analysis-endpoint-label", formatGpm(endpoint.flowGpm) + "\nmargin " + formatPsi(endpoint.marginPsi), analysisLabelColor(status)); // NEW
-        positionOverlayBox(label, endpoint.cell, -18); // NEW
+    function renderAnalysisBedBadge(session, badge) { // NEW
+        if (!badge || !badge.cell || analysisCellHiddenByCollapsedAssembly(badge.cell)) return; // NEW
+        const label = analysisOverlayLabel("trellis-irrigation-analysis-bed-badge", analysisBedBadgeText(badge), analysisLabelColor(badge.status)); // NEW
+        label.title = analysisBadgeTitle(badge); // NEW
+        positionOverlayBox(label, badge.cell, -18); // NEW
+        label.style.width = ""; // NEW
+        label.style.height = ""; // NEW
+        appendOverlayNode(label); // NEW
+        session.analysisOverlays.push(label); // NEW
+    } // NEW
+
+    function renderAnalysisAssemblyBadge(session, badge) { // NEW
+        if (!badge || !badge.cell || !analysisAssemblyIsCollapsed(badge.cell)) return; // NEW
+        const label = analysisOverlayLabel("trellis-irrigation-analysis-assembly-badge", analysisAssemblyBadgeText(badge), analysisLabelColor(badge.status)); // NEW
+        label.title = analysisBadgeTitle(badge); // NEW
+        positionOverlayBox(label, badge.cell, -24); // NEW
         label.style.width = ""; // NEW
         label.style.height = ""; // NEW
         appendOverlayNode(label); // NEW
@@ -11379,7 +11567,7 @@ Draw.loadPlugin(function (ui) {
         const label = document.createElement("div"); // NEW
         label.className = className; // NEW
         label.textContent = text; // NEW
-        label.style.cssText = "position:absolute;z-index:999;pointer-events:none;white-space:pre;max-width:130px;padding:2px 4px;border:1px solid " + color + ";border-radius:4px;background:#fff;color:" + color + ";font:bold 10px Arial,sans-serif;line-height:1.2;box-shadow:0 1px 4px rgba(0,0,0,.16);"; // NEW
+        label.style.cssText = "position:absolute;z-index:999;pointer-events:none;white-space:pre;max-width:168px;padding:2px 4px;border:1px solid " + color + ";border-radius:4px;background:#fff;color:" + color + ";font:bold 10px Arial,sans-serif;line-height:1.2;box-shadow:0 1px 4px rgba(0,0,0,.16);"; // CHANGE
         return label; // NEW
     } // NEW
 
@@ -11390,22 +11578,112 @@ Draw.loadPlugin(function (ui) {
         return "#166534"; // NEW
     } // NEW
 
-    function positionAnalysisEdgeLabel(node, edge) { // NEW
+    function analysisBranchBadgeText(badge) { // NEW
+        const lines = []; // NEW
+        let flow = "Flow " + formatGpm(badge.flowGpm); // NEW
+        if (badge.flowDeltaGpm != null && Math.abs(badge.flowDeltaGpm) >= ANALYSIS_FLOW_DELTA_EPSILON_GPM) flow += " " + (badge.flowDeltaKind === "split" ? "split " : "Δ ") + formatSignedGpm(badge.flowDeltaGpm); // NEW
+        let pressure = "Pressure " + formatPsi(badge.outletPressurePsi); // NEW
+        if (badge.pressureDeltaPsi != null && Math.abs(badge.pressureDeltaPsi) >= ANALYSIS_PRESSURE_DELTA_EPSILON_PSI) pressure += " Δ " + formatSignedPsi(badge.pressureDeltaPsi); // NEW
+        lines.push(flow); // NEW
+        lines.push(pressure); // NEW
+        lines.push("Pipe " + formatFeet(badge.lengthFt) + " / loss " + formatPsi(badge.pressureLossPsi)); // NEW
+        if (badge.warningCount > 0) lines.push("! " + badge.warningCount + " warning" + (badge.warningCount === 1 ? "" : "s")); // NEW
+        return lines.join("\n"); // NEW
+    } // NEW
+
+    function analysisBedBadgeText(badge) { // NEW
+        const lines = ["Use " + formatGpm(badge.consumedGpm)]; // NEW
+        if (finiteNumber(badge.passThroughGpm, 0) >= ANALYSIS_FLOW_DELTA_EPSILON_GPM) lines[0] += " / Pass " + formatGpm(badge.passThroughGpm); // NEW
+        lines.push(analysisEmitterBadgeLine(badge.emitterDetail)); // NEW
+        lines.push("Pressure " + formatPsi(badge.deliveredPressurePsi)); // NEW
+        lines.push("Margin " + formatPsi(badge.marginPsi)); // NEW
+        if (badge.warningCount > 0) lines.push("! " + badge.warningCount + " warning" + (badge.warningCount === 1 ? "" : "s")); // NEW
+        return lines.join("\n"); // NEW
+    } // NEW
+
+    function analysisEmitterBadgeLine(detail) { // NEW
+        if (!detail || detail.unknown) return "Emitters unknown"; // NEW
+        const count = formatEmitterCount(detail.emitterCount); // NEW
+        return "Emitters " + count + " x " + formatGpm(detail.perEmitterGpm) + " ea"; // NEW
+    } // NEW
+
+    function formatEmitterCount(value) { // NEW
+        const n = finiteNumber(value, null); // NEW
+        if (n == null) return "unknown"; // NEW
+        return Math.abs(n - Math.round(n)) < 0.01 ? String(Math.round(n)) : formatBomNumber(n); // NEW
+    } // NEW
+
+    function analysisAssemblyBadgeText(badge) { // NEW
+        const lines = ["Flow " + formatGpm(badge.outletFlowGpm)]; // NEW
+        if (badge.flowDeltaGpm != null && Math.abs(badge.flowDeltaGpm) >= ANALYSIS_FLOW_DELTA_EPSILON_GPM) lines[0] += " Δ " + formatSignedGpm(badge.flowDeltaGpm); // NEW
+        lines.push("Pressure " + formatPsi(badge.outletPressurePsi) + (badge.pressureDeltaPsi != null && Math.abs(badge.pressureDeltaPsi) >= ANALYSIS_PRESSURE_DELTA_EPSILON_PSI ? " Δ " + formatSignedPsi(badge.pressureDeltaPsi) : "")); // NEW
+        lines.push("Hidden pipe loss " + formatPsi(badge.internalPipeLossPsi)); // NEW
+        if (badge.warningCount > 0) lines.push("! " + badge.warningCount + " warning" + (badge.warningCount === 1 ? "" : "s")); // NEW
+        return lines.join("\n"); // NEW
+    } // NEW
+
+    function analysisBadgeTitle(badge) { // NEW
+        const details = Array.isArray(badge && badge.detailLines) ? badge.detailLines.slice() : []; // NEW
+        const warnings = Array.isArray(badge && badge.warnings) ? badge.warnings.map(function (warning) { return "! " + warning; }) : []; // NEW
+        return details.concat(warnings).join("\n"); // NEW
+    } // NEW
+
+    function analysisAssemblyIsCollapsed(cell) { // NEW
+        if (!cell || !isCenterStableFoldAssembly(cell)) return false; // NEW
+        if (graph && typeof graph.isCellCollapsed === "function") return !!graph.isCellCollapsed(cell); // NEW
+        return !!cell.collapsed; // NEW
+    } // NEW
+
+    function analysisCellHiddenByCollapsedAssembly(cell) { // NEW
+        let cur = cell ? findAssemblyAncestor(cell) : null; // NEW
+        while (cur) { // NEW
+            if (analysisAssemblyIsCollapsed(cur)) return true; // NEW
+            cur = findAssemblyAncestor(model.getParent ? model.getParent(cur) : cur.parent); // NEW
+        } // NEW
+        return false; // NEW
+    } // NEW
+
+    function positionAnalysisEdgeLabel(node, edge, fraction) { // CHANGE
         const points = edgeModelPoints(edge); // NEW
         let x = 0, y = 0; // NEW
+        const t = Math.max(0, Math.min(1, finiteNumber(fraction, 0.5))); // NEW
         if (points.length) { // NEW
-            const mid = points[Math.floor(points.length / 2)]; // NEW
-            x = finiteNumber(mid && mid.x, 0); // NEW
-            y = finiteNumber(mid && mid.y, 0); // NEW
+            const point = pointAlongModelPath(points, t); // NEW
+            x = finiteNumber(point && point.x, 0); // NEW
+            y = finiteNumber(point && point.y, 0); // NEW
         } else { // NEW
             const a = cellBoundsInModel(edge && edge.source); // NEW
             const b = cellBoundsInModel(edge && edge.target); // NEW
-            x = ((a ? a.x + a.width / 2 : 0) + (b ? b.x + b.width / 2 : 0)) / 2; // NEW
-            y = ((a ? a.y + a.height / 2 : 0) + (b ? b.y + b.height / 2 : 0)) / 2; // NEW
+            const ax = a ? a.x + a.width / 2 : 0; // NEW
+            const ay = a ? a.y + a.height / 2 : 0; // NEW
+            const bx = b ? b.x + b.width / 2 : 0; // NEW
+            const by = b ? b.y + b.height / 2 : 0; // NEW
+            x = ax + (bx - ax) * t; // CHANGE
+            y = ay + (by - ay) * t; // CHANGE
         } // NEW
         const screen = modelPointToScreenPoint({ x, y }); // NEW
         node.style.left = Math.round(screen.x + 6) + "px"; // NEW
         node.style.top = Math.round(screen.y + 6) + "px"; // NEW
+    } // NEW
+
+    function pointAlongModelPath(points, fraction) { // NEW
+        const pts = (points || []).filter(Boolean); // NEW
+        if (!pts.length) return { x: 0, y: 0 }; // NEW
+        if (pts.length === 1) return pts[0]; // NEW
+        let total = 0; // NEW
+        for (let i = 1; i < pts.length; i++) total += Math.sqrt(Math.pow(finiteNumber(pts[i].x, 0) - finiteNumber(pts[i - 1].x, 0), 2) + Math.pow(finiteNumber(pts[i].y, 0) - finiteNumber(pts[i - 1].y, 0), 2)); // NEW
+        if (!(total > 0)) return pts[0]; // NEW
+        let target = total * Math.max(0, Math.min(1, finiteNumber(fraction, 0.5))); // NEW
+        for (let i = 1; i < pts.length; i++) { // NEW
+            const a = pts[i - 1], b = pts[i]; // NEW
+            const length = Math.sqrt(Math.pow(finiteNumber(b.x, 0) - finiteNumber(a.x, 0), 2) + Math.pow(finiteNumber(b.y, 0) - finiteNumber(a.y, 0), 2)); // NEW
+            if (target <= length || i === pts.length - 1) { // NEW
+                const t = length > 0 ? target / length : 0; // NEW
+                return { x: finiteNumber(a.x, 0) + (finiteNumber(b.x, 0) - finiteNumber(a.x, 0)) * t, y: finiteNumber(a.y, 0) + (finiteNumber(b.y, 0) - finiteNumber(a.y, 0)) * t }; // NEW
+            } // NEW
+            target -= length; // NEW
+        } // NEW
+        return pts[pts.length - 1]; // NEW
     } // NEW
 
     function positionModelBox(node, box) { // NEW
@@ -11669,6 +11947,229 @@ Draw.loadPlugin(function (ui) {
         return { pressurePsi: nextPressure, lossPsi, regulated: regulatorPsi != null }; // NEW
     } // NEW
 
+    function analysisPressureStateForCell(moduleCell, cell, sourceProfile, pipeById) { // NEW
+        const staticPressure = sourceProfile && sourceProfile.staticPressurePsi != null ? finiteNumber(sourceProfile.staticPressurePsi, null) : null; // NEW
+        if (!cell) return { inletPressurePsi: null, outletPressurePsi: null, routeIssue: null }; // NEW
+        if (endpointType(cell) === "source") return { inletPressurePsi: null, outletPressurePsi: staticPressure, routeIssue: null }; // NEW
+        const route = analysisRouteToSource(moduleCell, cell); // NEW
+        let pressure = staticPressure; // NEW
+        let inlet = null; // NEW
+        let outlet = null; // NEW
+        (route.cells || []).forEach(function (routeCell, index) { // NEW
+            const edge = (route.edges || [])[index]; // NEW
+            const record = pipeById.get(getCellId(edge) || ""); // NEW
+            if (pressure != null && record && record.pressureLossPsi != null) pressure -= record.pressureLossPsi; // NEW
+            else if (pressure != null && record) pressure = null; // NEW
+            if (routeCell === cell) inlet = pressure; // NEW
+            const effect = analysisCellPressureEffect(moduleCell, routeCell, pressure); // NEW
+            pressure = effect.pressurePsi; // NEW
+            if (routeCell === cell) outlet = pressure; // NEW
+        }); // NEW
+        return { inletPressurePsi: inlet, outletPressurePsi: outlet, routeIssue: route.issue || null }; // NEW
+    } // NEW
+
+    function analysisOpenPortIssues(moduleCell, cell) { // NEW
+        const issues = []; // NEW
+        if (!cell) return issues; // NEW
+        ["input", "output"].forEach(function (role) { // NEW
+            const count = portCapacityForCell(moduleCell, cell, role); // NEW
+            for (let index = 0; index < count; index++) { // NEW
+                if (!isPortFree(moduleCell, { cellId: getCellId(cell), role, index })) continue; // NEW
+                issues.push(analysisIssue("warning", portDisplayPrefix(moduleCell, cell, role) + " " + (index + 1) + " is open on the active zone path.", cell, "open_" + role + "_port")); // NEW
+            } // NEW
+        }); // NEW
+        return issues; // NEW
+    } // NEW
+
+    function analysisIssuesForCell(issues, cellOrId) { // NEW
+        const id = typeof cellOrId === "string" ? cellOrId : getCellId(cellOrId); // NEW
+        return (issues || []).filter(function (issue) { return issue && issue.cellId === id; }); // NEW
+    } // NEW
+
+    function analysisIssueMessages(issues) { // NEW
+        return uniqueStrings((issues || []).map(function (issue) { return issue && issue.message || ""; }).filter(Boolean)); // NEW
+    } // NEW
+
+    function analysisBadgeStatusFromIssues(issues, fallbackStatus) { // NEW
+        if ((issues || []).some(function (issue) { return issue && issue.severity === "error"; })) return "error"; // NEW
+        if ((issues || []).some(function (issue) { return issue && issue.severity === "unknown"; })) return "unknown"; // NEW
+        if ((issues || []).some(function (issue) { return issue && issue.severity === "warning"; })) return "warning"; // NEW
+        return fallbackStatus || "ok"; // NEW
+    } // NEW
+
+    function analysisMarginStatus(marginPsi) { // NEW
+        const margin = finiteNumber(marginPsi, null); // NEW
+        if (margin == null) return "unknown"; // NEW
+        if (margin < 0) return "error"; // NEW
+        if (margin < ANALYSIS_LOW_MARGIN_PSI) return "warning"; // NEW
+        return "ok"; // NEW
+    } // NEW
+
+    function analysisBuildBranchBadges(moduleCell, pipeLabels, nodeDemand, edgeDemand, sourceProfile, pipeById, issues) { // NEW
+        const edgeIds = new Set((pipeLabels || []).map(function (record) { return record.edgeId; })); // NEW
+        return (pipeLabels || []).map(function (record) { // NEW
+            const source = record.edge && record.edge.source; // NEW
+            const sourceId = getCellId(source) || ""; // NEW
+            const state = analysisPressureStateForCell(moduleCell, source, sourceProfile, pipeById); // NEW
+            const inletFlow = finiteNumber(nodeDemand.get(sourceId) && nodeDemand.get(sourceId).flowGpm, null); // NEW
+            const branchFlow = finiteNumber(record.flowGpm, 0); // NEW
+            const activeOutCount = outgoingAssemblyEdges(moduleCell, source).filter(function (edge) { return edgeIds.has(getCellId(edge) || ""); }).length; // NEW
+            const flowDelta = inletFlow == null ? null : branchFlow - inletFlow; // NEW
+            const pressureDelta = state.inletPressurePsi == null || state.outletPressurePsi == null ? null : state.outletPressurePsi - state.inletPressurePsi; // NEW
+            const badgeIssues = [].concat(record.issues || [], analysisIssuesForCell(issues, sourceId), analysisOpenPortIssues(moduleCell, source)); // NEW
+            const unknown = state.outletPressurePsi == null || record.pressureLossPsi == null; // NEW
+            return { // NEW
+                kind: "branch", // NEW
+                edge: record.edge, // NEW
+                edgeId: record.edgeId, // NEW
+                sourceId, // NEW
+                targetId: record.targetId, // NEW
+                flowGpm: branchFlow, // NEW
+                inletFlowGpm: inletFlow, // NEW
+                flowDeltaGpm: flowDelta, // NEW
+                flowDeltaKind: activeOutCount > 1 ? "split" : "delta", // NEW
+                inletPressurePsi: state.inletPressurePsi, // NEW
+                outletPressurePsi: state.outletPressurePsi, // NEW
+                pressureDeltaPsi: pressureDelta, // NEW
+                lengthFt: record.lengthFt, // NEW
+                hydraulicLengthFt: record.hydraulicLengthFt, // NEW
+                pressureLossPsi: record.pressureLossPsi, // NEW
+                status: analysisBadgeStatusFromIssues(badgeIssues, unknown ? "unknown" : "ok"), // NEW
+                warnings: analysisIssueMessages(badgeIssues), // NEW
+                warningCount: analysisIssueMessages(badgeIssues).length, // NEW
+                detailLines: [ // NEW
+                    irrigationCellLabel(source) + " outlet to " + irrigationCellLabel(record.edge && record.edge.target) + ".", // NEW
+                    "Flow after outlet " + formatGpm(branchFlow) + (flowDelta != null && Math.abs(flowDelta) >= ANALYSIS_FLOW_DELTA_EPSILON_GPM ? " (" + (activeOutCount > 1 ? "split " : "delta ") + formatSignedGpm(flowDelta) + ")" : "") + ".", // NEW
+                    "Pressure after outlet " + formatPsi(state.outletPressurePsi) + (pressureDelta != null && Math.abs(pressureDelta) >= ANALYSIS_PRESSURE_DELTA_EPSILON_PSI ? " (delta " + formatSignedPsi(pressureDelta) + ")" : "") + ".", // NEW
+                    "Pipe " + formatFeet(record.lengthFt) + ", loss " + formatPsi(record.pressureLossPsi) + "." // NEW
+                ] // NEW
+            }; // NEW
+        }); // NEW
+    } // NEW
+
+    function analysisBuildBedBadges(moduleCell, endpointLabels, edgeDemand, edgeIds, issues) { // NEW
+        const catalog = IrrigationCatalog.read(moduleCell); // NEW
+        return (endpointLabels || []).map(function (endpoint) { // NEW
+            const passThrough = outgoingAssemblyEdges(moduleCell, endpoint.cell).filter(function (edge) { return edgeIds.has(getCellId(edge) || ""); }).reduce(function (sum, edge) { const demand = edgeDemand.get(getCellId(edge) || ""); return sum + finiteNumber(demand && demand.flowGpm, 0); }, 0); // NEW
+            const cellIssues = analysisIssuesForCell(issues, endpoint.cell); // NEW
+            const status = analysisBadgeStatusFromIssues(cellIssues, analysisMarginStatus(endpoint.marginPsi)); // NEW
+            const emitterDetail = analysisBedEmitterDetail(moduleCell, catalog, endpoint); // NEW
+            return { // NEW
+                kind: "bed", // NEW
+                cell: endpoint.cell, // NEW
+                cellId: endpoint.cellId, // NEW
+                consumedGpm: endpoint.flowGpm, // NEW
+                passThroughGpm: passThrough, // NEW
+                emitterDetail, // NEW
+                deliveredPressurePsi: endpoint.deliveredPressurePsi, // NEW
+                requiredPressurePsi: endpoint.requiredPressurePsi, // NEW
+                marginPsi: endpoint.marginPsi, // NEW
+                status, // NEW
+                warnings: analysisIssueMessages(cellIssues), // NEW
+                warningCount: analysisIssueMessages(cellIssues).length, // NEW
+                detailLines: [ // NEW
+                    irrigationCellLabel(endpoint.cell) + " demand " + formatGpm(endpoint.flowGpm) + ".", // NEW
+                    analysisEmitterDetailLine(emitterDetail), // NEW
+                    "Pass-through flow " + formatGpm(passThrough) + ".", // NEW
+                    "Delivered pressure " + formatPsi(endpoint.deliveredPressurePsi) + ", required " + formatPsi(endpoint.requiredPressurePsi) + ".", // NEW
+                    "Remaining margin " + formatPsi(endpoint.marginPsi) + "." // NEW
+                ] // NEW
+            }; // NEW
+        }); // NEW
+    } // NEW
+
+    function analysisEmitterDetailLine(detail) { // NEW
+        if (!detail || detail.unknown) return "Emitter count and per-emitter consumption are unknown; this bed only has aggregate demand."; // NEW
+        return "Emitters " + formatEmitterCount(detail.emitterCount) + " at " + formatGpm(detail.perEmitterGpm) + " each" + (detail.totalEmitterGpm != null ? ", total " + formatGpm(detail.totalEmitterGpm) : "") + "."; // NEW
+    } // NEW
+
+    function analysisBedEmitterDetail(moduleCell, catalog, endpoint) { // NEW
+        const cell = endpoint && endpoint.cell; // NEW
+        const totalFlow = finiteNumber(endpoint && endpoint.flowGpm, null); // NEW
+        if (!cell) return { unknown: true }; // NEW
+        if (!isBedAssembly(cell)) return totalFlow != null ? { emitterCount: 1, perEmitterGpm: totalFlow, totalEmitterGpm: totalFlow } : { unknown: true }; // NEW
+        const record = readBedAssemblyTemplateRecord(moduleCell, cell) || {}; // NEW
+        const explicit = analysisEmitterDetailFromRecipeRecord(catalog, record, totalFlow); // NEW
+        if (explicit) return explicit; // NEW
+        const inferred = analysisEmitterDetailFromSelfEmittingRecord(catalog, cell, record, totalFlow); // NEW
+        if (inferred) return inferred; // NEW
+        return { unknown: true }; // NEW
+    } // NEW
+
+    function analysisEmitterDetailFromRecipeRecord(catalog, record, totalFlow) { // NEW
+        const emitterLine = (record.resolvedBomParts || []).find(function (entry) { return entry && entry.role === "emitter_device"; }); // NEW
+        if (!emitterLine) return null; // NEW
+        const count = finiteNumber(emitterLine.quantity, null); // NEW
+        if (!(count > 0)) return null; // NEW
+        const emitterPart = partById(catalog, record.emitterPartId || emitterLine.partId); // NEW
+        const partFlow = finiteNumber(emitterPart && emitterPart.specs && emitterPart.specs.flowGpm, null); // NEW
+        const perEmitter = partFlow != null ? partFlow : (totalFlow != null ? totalFlow / count : null); // NEW
+        return perEmitter != null ? { emitterCount: count, perEmitterGpm: perEmitter, totalEmitterGpm: totalFlow != null ? totalFlow : perEmitter * count } : { emitterCount: count, perEmitterGpm: null, totalEmitterGpm: totalFlow }; // NEW
+    } // NEW
+
+    function analysisEmitterDetailFromSelfEmittingRecord(catalog, bedAssembly, record, totalFlow) { // NEW
+        const rowPart = partById(catalog, record.rowPartId || record.anchorPartId || analysisFirstRequiredPartId(record)); // NEW
+        if (!rowPart) return null; // NEW
+        const spacingIn = finiteNumber(rowPart.specs && rowPart.specs.emitterSpacingIn, finiteNumber(record.spacing && record.spacing.emitterInches, null)); // NEW
+        const rowCount = Math.max(0, Math.floor(finiteNumber(record.spacing && record.spacing.rows, 0))); // NEW
+        const rowLengthMeters = finiteNumber(record.rowLengthMeters, rowLengthMetersForBedGeometry(getGeometry(bedAssembly) || {}, record.rowOrientation)); // NEW
+        let count = rowCount > 0 && rowLengthMeters > 0 && spacingIn > 0 ? rowCount * rowDeviceCount(rowLengthMeters, spacingIn) : null; // NEW
+        const emitterFlowGph = finiteNumber(rowPart.specs && rowPart.specs.emitterFlowGph, null); // NEW
+        let perEmitter = emitterFlowGph != null && emitterFlowGph > 0 ? emitterFlowGph / 60 : null; // NEW
+        if (!(count > 0) && perEmitter != null && totalFlow != null && totalFlow > 0) count = totalFlow / perEmitter; // NEW
+        if (perEmitter == null && count > 0 && totalFlow != null) perEmitter = totalFlow / count; // NEW
+        return count > 0 ? { emitterCount: count, perEmitterGpm: perEmitter, totalEmitterGpm: totalFlow } : null; // NEW
+    } // NEW
+
+    function analysisFirstRequiredPartId(record) { // NEW
+        const entry = record && Array.isArray(record.requiredParts) ? record.requiredParts[0] : null; // NEW
+        return entry && entry.partId || ""; // NEW
+    } // NEW
+
+    function analysisBuildAssemblyBadges(moduleCell, nodeIds, pipeLabels, sourceProfile, pipeById, issues) { // NEW
+        const activeNodeIds = new Set(nodeIds || []); // NEW
+        const assemblies = collectDescendants(moduleCell, function (cell) { // NEW
+            return isCenterStableFoldAssembly(cell) && collectDescendants(cell, function (child) { return activeNodeIds.has(getCellId(child) || ""); }).length > 0; // NEW
+        }); // NEW
+        return assemblies.map(function (assembly) { // NEW
+            const descendants = new Set(collectDescendants(assembly, function () { return true; }).concat([assembly]).map(getCellId).filter(Boolean)); // NEW
+            const internal = (pipeLabels || []).filter(function (record) { return descendants.has(record.sourceId) && descendants.has(record.targetId); }); // NEW
+            const entering = (pipeLabels || []).filter(function (record) { return !descendants.has(record.sourceId) && descendants.has(record.targetId); }); // NEW
+            const leaving = (pipeLabels || []).filter(function (record) { return descendants.has(record.sourceId) && !descendants.has(record.targetId); }); // NEW
+            const inletFlow = entering.reduce(function (sum, record) { return sum + finiteNumber(record.flowGpm, 0); }, 0); // NEW
+            const outletFlow = leaving.reduce(function (sum, record) { return sum + finiteNumber(record.flowGpm, 0); }, 0); // NEW
+            const inletCell = entering[0] && entering[0].edge && entering[0].edge.target; // NEW
+            const outletCell = leaving[0] && leaving[0].edge && leaving[0].edge.source; // NEW
+            const inletState = analysisPressureStateForCell(moduleCell, inletCell, sourceProfile, pipeById); // NEW
+            const outletState = analysisPressureStateForCell(moduleCell, outletCell, sourceProfile, pipeById); // NEW
+            const internalLossUnknown = internal.some(function (record) { return record.pressureLossPsi == null; }); // NEW
+            const internalLoss = internalLossUnknown ? null : internal.reduce(function (sum, record) { return sum + finiteNumber(record.pressureLossPsi, 0); }, 0); // NEW
+            const hiddenIssues = [].concat.apply([], internal.map(function (record) { return record.issues || []; })).concat(collectDescendants(assembly, function (child) { return activeNodeIds.has(getCellId(child) || ""); }).reduce(function (list, child) { return list.concat(analysisOpenPortIssues(moduleCell, child), analysisIssuesForCell(issues, child)); }, [])); // NEW
+            const pressureDelta = inletState.inletPressurePsi == null || outletState.outletPressurePsi == null ? null : outletState.outletPressurePsi - inletState.inletPressurePsi; // NEW
+            return { // NEW
+                kind: "assembly", // NEW
+                cell: assembly, // NEW
+                cellId: getCellId(assembly) || "", // NEW
+                inletFlowGpm: inletFlow, // NEW
+                outletFlowGpm: outletFlow, // NEW
+                flowDeltaGpm: outletFlow - inletFlow, // NEW
+                inletPressurePsi: inletState.inletPressurePsi, // NEW
+                outletPressurePsi: outletState.outletPressurePsi, // NEW
+                pressureDeltaPsi: pressureDelta, // NEW
+                internalPipeLossPsi: internalLoss, // NEW
+                status: analysisBadgeStatusFromIssues(hiddenIssues, internalLossUnknown || outletState.outletPressurePsi == null ? "unknown" : "ok"), // NEW
+                warnings: analysisIssueMessages(hiddenIssues), // NEW
+                warningCount: analysisIssueMessages(hiddenIssues).length, // NEW
+                detailLines: [ // NEW
+                    irrigationCellLabel(assembly) + " collapsed assembly summary.", // NEW
+                    "Inlet flow " + formatGpm(inletFlow) + ", outlet flow " + formatGpm(outletFlow) + ".", // NEW
+                    "Outlet pressure " + formatPsi(outletState.outletPressurePsi) + (pressureDelta != null ? ", net delta " + formatSignedPsi(pressureDelta) : "") + ".", // NEW
+                    "Hidden internal pipe loss " + formatPsi(internalLoss) + "." // NEW
+                ] // NEW
+            }; // NEW
+        }); // NEW
+    } // NEW
+
     function analysisRouteToSource(moduleCell, targetCell) { // NEW
         const cells = []; // NEW
         const edges = []; // NEW
@@ -11692,7 +12193,12 @@ Draw.loadPlugin(function (ui) {
 
     function analysisZoneSourceRoute(moduleCell, zone) { // NEW
         const z = ZoneModel.normalize(zone); // NEW
-        if (z.originType !== ZONE_ORIGIN_TIMER_OUTLET) return { source: null, origin: null, route: null, issue: analysisIssue("unknown", "Manual zones are not tied to a timer outlet; assign beds to a timer outlet zone for hydraulic analysis.", null, "manual_zone") }; // NEW
+        if (z.originType === ZONE_ORIGIN_SOURCE) { // NEW
+            const source = findCellById(moduleCell, z.originCellId); // NEW
+            if (!source) return { source: null, origin: null, route: null, issue: analysisIssue("error", "Source zone origin is missing.", null, "missing_source_origin") }; // NEW
+            return { source, origin: source, route: { source, cells: [], edges: [], issue: null }, issue: null }; // NEW
+        } // NEW
+        if (z.originType !== ZONE_ORIGIN_TIMER_OUTLET) return { source: null, origin: null, route: null, issue: analysisIssue("unknown", "Zone origin is obsolete or unsupported for hydraulic analysis.", null, "unsupported_zone_origin") }; // CHANGE
         const origin = findCellById(moduleCell, z.originCellId); // NEW
         if (!origin) return { source: null, origin: null, route: null, issue: analysisIssue("error", "Zone timer outlet source part is missing.", null, "missing_zone_origin") }; // NEW
         const route = analysisRouteToSource(moduleCell, origin); // NEW
@@ -11705,6 +12211,7 @@ Draw.loadPlugin(function (ui) {
         const sourceRoute = analysisZoneSourceRoute(moduleCell, z); // NEW
         const issues = []; // NEW
         const edgeDemand = new Map(); // NEW
+        const nodeDemand = new Map(); // NEW
         const nodeIds = new Set(); // NEW
         const edgeIds = new Set(); // NEW
         const demands = []; // NEW
@@ -11726,6 +12233,7 @@ Draw.loadPlugin(function (ui) {
             if (!id) return { flowGpm: 0, operatingPressurePsi: 0 }; // NEW
             if (stack.has(id)) { issues.push(analysisIssue("error", "Irrigation graph contains a loop; Analysis supports directed trees only.", cell, "loop")); return { flowGpm: 0, operatingPressurePsi: 0 }; } // NEW
             nodeIds.add(id); // NEW
+            if (cell !== origin && isControllerTimerCell(moduleCell, cell)) return { flowGpm: 0, operatingPressurePsi: 0 }; // NEW: source-fed zones exclude timer-controlled subtrees.
             const incoming = incomingAssemblyEdges(moduleCell, cell); // NEW
             if (cell !== origin && incoming.length > 1) issues.push(analysisIssue("error", "Multiple upstream feeds are unsupported in Analysis mode.", cell, "multiple_upstream")); // NEW
             stack.add(id); // NEW
@@ -11741,6 +12249,7 @@ Draw.loadPlugin(function (ui) {
             let edges = outgoingAssemblyEdges(moduleCell, cell); // NEW
             if (constrainedOutletIndex != null) edges = edges.filter(function (edge) { return String(getCellAttr(edge, ATTRS.EDGE_SOURCE_PORT, "0")) === String(constrainedOutletIndex); }); // NEW
             edges.forEach(function (edge) { // NEW
+                if (isControllerTimerCell(moduleCell, edge && edge.target)) return; // NEW: source-fed analysis omits timer-controlled branches.
                 edgeIds.add(getCellId(edge) || ""); // NEW
                 const downstream = visit(edge.target, stack, null); // NEW
                 edgeDemand.set(getCellId(edge) || "", downstream); // NEW
@@ -11748,6 +12257,7 @@ Draw.loadPlugin(function (ui) {
                 total.operatingPressurePsi = Math.max(total.operatingPressurePsi, downstream.operatingPressurePsi); // NEW
             }); // NEW
             stack.delete(id); // NEW
+            nodeDemand.set(id, { flowGpm: total.flowGpm, operatingPressurePsi: total.operatingPressurePsi }); // NEW
             return total; // NEW
         } // NEW
 
@@ -11758,6 +12268,8 @@ Draw.loadPlugin(function (ui) {
             edgeDemand.set(getCellId(edge) || "", zoneDemand); // NEW
             if (edge.source) nodeIds.add(getCellId(edge.source) || ""); // NEW
             if (edge.target) nodeIds.add(getCellId(edge.target) || ""); // NEW
+            if (edge.source) nodeDemand.set(getCellId(edge.source) || "", zoneDemand); // NEW
+            if (edge.target && !nodeDemand.has(getCellId(edge.target) || "")) nodeDemand.set(getCellId(edge.target) || "", zoneDemand); // NEW
         }); // NEW
         const pipeEdges = Array.from(edgeIds).map(function (edgeId) { return findCellById(moduleCell, edgeId); }).filter(Boolean); // NEW
         const pipeLabels = pipeEdges.map(function (edge) { // NEW
@@ -11766,6 +12278,7 @@ Draw.loadPlugin(function (ui) {
         }); // NEW
         pipeLabels.forEach(function (record) { issues.push.apply(issues, record.issues); }); // NEW
         const pipeById = new Map(pipeLabels.map(function (record) { return [record.edgeId, record]; })); // NEW
+        Array.from(nodeIds).forEach(function (nodeId) { issues.push.apply(issues, analysisOpenPortIssues(moduleCell, findCellById(moduleCell, nodeId))); }); // NEW
         const sourceProfile = sourceRoute.source ? endpointProfile(sourceRoute.source) : null; // NEW
         if (sourceRoute.source && (!sourceProfile || sourceProfile.usableFlowGpm == null)) issues.push(analysisIssue("warning", "Source usable flow is missing; flow capacity is unknown.", sourceRoute.source, "missing_source_flow")); // NEW
         if (sourceRoute.source && (!sourceProfile || sourceProfile.staticPressurePsi == null)) issues.push(analysisIssue("warning", "Source static PSI is missing; pressure margin is unknown.", sourceRoute.source, "missing_source_pressure")); // NEW
@@ -11797,7 +12310,13 @@ Draw.loadPlugin(function (ui) {
         const coverageOverlays = endpointLabels.map(function (endpoint) { return analysisCoverageForEndpoint(moduleCell, catalog, endpoint.cell); }).filter(Boolean); // NEW
         coverageOverlays.forEach(function (coverage) { if (coverage.issue) issues.push(coverage.issue); }); // NEW
         const sortedIssues = uniqueAnalysisIssues(issues).sort(function (a, b) { return analysisIssueRank(a) - analysisIssueRank(b) || String(a.message).localeCompare(String(b.message)); }); // NEW
-        return { zone: z, source: sourceRoute.source, origin, nodeIds: Array.from(nodeIds).filter(Boolean), edgeIds: Array.from(edgeIds).filter(Boolean), demandGpm: zoneDemand.flowGpm, requiredPressurePsi: zoneDemand.operatingPressurePsi, pipeLabels, endpointLabels, coverageOverlays, issues: sortedIssues }; // NEW
+        const activeNodeIds = Array.from(nodeIds).filter(Boolean); // NEW
+        const activeEdgeIds = Array.from(edgeIds).filter(Boolean); // NEW
+        const activeEdgeIdSet = new Set(activeEdgeIds); // NEW
+        const branchBadges = analysisBuildBranchBadges(moduleCell, pipeLabels, nodeDemand, edgeDemand, sourceProfile, pipeById, sortedIssues); // NEW
+        const bedBadges = analysisBuildBedBadges(moduleCell, endpointLabels, edgeDemand, activeEdgeIdSet, sortedIssues); // NEW
+        const assemblyBadges = analysisBuildAssemblyBadges(moduleCell, activeNodeIds, pipeLabels, sourceProfile, pipeById, sortedIssues); // NEW
+        return { zone: z, source: sourceRoute.source, origin, nodeIds: activeNodeIds, edgeIds: activeEdgeIds, demandGpm: zoneDemand.flowGpm, requiredPressurePsi: zoneDemand.operatingPressurePsi, pipeLabels, endpointLabels, branchBadges, bedBadges, assemblyBadges, coverageOverlays, issues: sortedIssues }; // CHANGE
     } // NEW
 
     function uniqueAnalysisIssues(issues) { // NEW
@@ -11880,7 +12399,7 @@ Draw.loadPlugin(function (ui) {
         const activeZoneId = inferAnalysisZoneId(moduleCell, selectedCells, options && options.zoneId); // NEW
         const activeOption = zoneOptions.find(function (option) { return option.id === activeZoneId; }) || zoneOptions[0] || null; // NEW
         const analysis = activeOption ? analysisBuildActiveZone(moduleCell, activeOption.zone) : null; // NEW
-        return { mode: ANALYSIS_MODE_ANALYSIS, zoneOptions, activeZoneId: activeOption && activeOption.id || "", activeZoneName: activeOption && activeOption.name || "No zone", analysis: analysis || { demandGpm: 0, requiredPressurePsi: 0, pipeLabels: [], endpointLabels: [], coverageOverlays: [], issues: [analysisIssue("unknown", "No timer outlet zones found.", moduleCell, "no_zones")], nodeIds: [], edgeIds: [] } }; // NEW
+        return { mode: ANALYSIS_MODE_ANALYSIS, zoneOptions, activeZoneId: activeOption && activeOption.id || "", activeZoneName: activeOption && activeOption.name || "No zone", analysis: analysis || { demandGpm: 0, requiredPressurePsi: 0, pipeLabels: [], endpointLabels: [], branchBadges: [], bedBadges: [], assemblyBadges: [], coverageOverlays: [], issues: [analysisIssue("unknown", "No timer outlet zones found.", moduleCell, "no_zones")], nodeIds: [], edgeIds: [] } }; // CHANGE
     } // NEW
 
     function syncHudGraphState(moduleCell) {
@@ -12012,6 +12531,7 @@ Draw.loadPlugin(function (ui) {
     function installInactiveIrrigationEntryOverlay() {
         const selectionModel = graph.getSelectionModel && graph.getSelectionModel();
         if (selectionModel && selectionModel.addListener && typeof mxEvent !== "undefined") selectionModel.addListener(mxEvent.CHANGE, scheduleInactiveEntryOverlayRefresh);
+        if (graph.addListener && typeof mxEvent !== "undefined") graph.addListener(mxEvent.CLICK, function (_, evt) { rememberModuleClickAnchor(evt); }); // NEW
         if (model.addListener && typeof mxEvent !== "undefined") model.addListener(mxEvent.CHANGE, scheduleInactiveEntryOverlayRefresh);
         if (graph.view && graph.view.addListener && typeof mxEvent !== "undefined") {
             [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE, mxEvent.REPAINT].forEach(function (eventName) {
@@ -12021,6 +12541,25 @@ Draw.loadPlugin(function (ui) {
         if (graph.container && graph.container.addEventListener) graph.container.addEventListener("scroll", scheduleInactiveEntryOverlayRefresh, { passive: true });
         scheduleInactiveEntryOverlayRefresh();
     }
+
+    function rememberModuleClickAnchor(evt) { // NEW
+        const clicked = resolveGraphClickCell(evt); // NEW
+        if (!isGardenModule(clicked)) return; // NEW
+        const modelPoint = graphEventModelPoint(evt); // NEW
+        if (!modelPoint) return; // NEW
+        lastModuleClickAnchor = { moduleId: getCellId(clicked) || "", modelPoint: cloneCreationModelPoint(modelPoint) }; // NEW
+    } // NEW
+
+    function lastModuleClickModelPoint(moduleCell) { // NEW
+        if (!moduleCell || !lastModuleClickAnchor) return null; // NEW
+        if ((getCellId(moduleCell) || "") !== lastModuleClickAnchor.moduleId) return null; // NEW
+        return cloneCreationModelPoint(lastModuleClickAnchor.modelPoint); // NEW
+    } // NEW
+
+    function withModuleClickCreationPoint(moduleCell, options) { // NEW
+        const modelPoint = lastModuleClickModelPoint(moduleCell); // NEW
+        return modelPoint ? Object.assign({}, options || {}, { creationModelPoint: modelPoint }) : (options || undefined); // NEW
+    } // NEW
 
     function scheduleInactiveEntryOverlayRefresh() {
         if (inactiveEntryRefreshTimer != null && typeof clearTimeout === "function") clearTimeout(inactiveEntryRefreshTimer);
@@ -12508,7 +13047,6 @@ Draw.loadPlugin(function (ui) {
         summary: zoneSummary,
         assignBeds: assignBedsToZone,
         resetBedOverrides: resetBedZoneOverrides,
-        createManual: createManualZone,
         updateAlias: updateZoneAlias,
         resetZoneOverrides,
         displayName: zoneDisplayName
@@ -12545,13 +13083,14 @@ Draw.loadPlugin(function (ui) {
         if (ui.actions && ui.actions.addAction) {
             ui.actions.addAction(ACTION_ID, function () {
                 const selection = graph.getSelectionCell && graph.getSelectionCell();
-                openIrrigationMode(findGardenModuleAncestor(selection) || selection);
+                const moduleCell = findGardenModuleAncestor(selection) || selection; // CHANGE
+                openIrrigationMode(moduleCell, withModuleClickCreationPoint(moduleCell)); // CHANGE
             });
             ui.actions.addAction(CREATE_SOURCE_ACTION_ID, function () {
                 const selection = graph.getSelectionCell && graph.getSelectionCell();
                 const moduleCell = isGardenModule(selection) ? selection : findGardenModuleAncestor(selection);
                 if (!moduleCell) return alertUser("Select a Trellis garden module first.");
-                openIrrigationMode(moduleCell, { sourceForm: true, preserveViewport: true });
+                openIrrigationMode(moduleCell, withModuleClickCreationPoint(moduleCell, { sourceForm: true, preserveViewport: true })); // CHANGE
             });
             ui.actions.addAction(CREATE_BED_ACTION_ID, function () {
                 const selection = graph.getSelectionCell && graph.getSelectionCell();
@@ -12598,7 +13137,6 @@ Draw.loadPlugin(function (ui) {
         buildBomRows: ReportModel.buildBomRows,
         assignBedsToZone: ZoneModel.assignBeds,
         resetBedZoneOverrides: ZoneModel.resetBedOverrides,
-        createManualZone: ZoneModel.createManual,
         openIrrigationMode: HudController.open,
         closeIrrigationMode: HudController.close,
         beginHudDragSuppression, // CHANGE
@@ -12709,7 +13247,6 @@ Draw.loadPlugin(function (ui) {
             deriveBomComponents: ReportModel.deriveBomComponents,
             assignBedsToZone: ZoneModel.assignBeds,
             resetBedZoneOverrides: ZoneModel.resetBedOverrides,
-            createManualZone: ZoneModel.createManual,
             createSourceAssembly,
             createPartAssembly,
             createBedAssembly,

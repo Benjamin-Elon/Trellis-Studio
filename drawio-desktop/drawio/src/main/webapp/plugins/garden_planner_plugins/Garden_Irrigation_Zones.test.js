@@ -202,11 +202,93 @@ function runZoneTests() {
     api.resetBedZoneOverrides(moduleCell, ["bedC"]);
     const reset = api.resolveEffectiveZoneMembership(moduleCell, api.syncZones(moduleCell));
     assert.strictEqual(reset.assignment.get("bedC").zoneId, zones[1].id);
-    const manual = api.createManualZone(moduleCell, "North Beds", ["bedA"]);
-    const manualSummary = api.zoneSummary(moduleCell, api.readZones(moduleCell), paths);
-    assert.strictEqual(api.resolveEffectiveZoneMembership(moduleCell, api.readZones(moduleCell)).assignment.get("bedA").zoneId, manual.id);
-    assert.strictEqual(manualSummary.zones.find(zone => zone.id === manual.id).status, "unknown");
+    moduleCell.value.setAttribute("irrigation_zones_json", JSON.stringify({ version: 1, zones: [{ id: "legacy_manual", originType: "manual", alias: "Legacy", pinnedBedIds: ["bedA"] }] })); // CHANGE
+    const legacyIgnored = api.readZones(moduleCell); // CHANGE
+    assert.strictEqual(legacyIgnored.some(zone => zone.id === "legacy_manual"), false); // CHANGE
+    assert.strictEqual(api.resolveEffectiveZoneMembership(moduleCell, legacyIgnored).assignment.get("bedA").zoneId, zones[0].id); // CHANGE
 }
+
+function sourceCell(id, label, profile) { // NEW
+    return makeCell(id, { irrigation_endpoint: "1", irrigation_endpoint_type: "source", irrigation_endpoint_profile_json: JSON.stringify(profile || { usableFlowGpm: 8, staticPressurePsi: 45, connectorType: "barb", nominalSize: "3/4", pipeConnection: true }), label }); // NEW
+} // NEW
+
+function sourceFedBaseCatalog() { // NEW
+    return analysisCatalog({ valve_analysis: { connectors: { inputs: 1, outputs: 2, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } } } }); // NEW
+} // NEW
+
+function buildSourceDirectBedFixture() { // NEW
+    const moduleCell = makeCell("module_source_direct", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const source = addChild(moduleCell, sourceCell("sourceDirect", "Direct Source")); // NEW
+    const bed = writeBedTemplate(addChild(moduleCell, makeCell("sourceBedA", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed A" }, { width: 100, height: 50 })), analysisBedRecord(1.5, 12)); // NEW
+    setPipeLength(addChild(moduleCell, edge("sourceDirectBed", source, bed, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 12); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, sourceFedBaseCatalog()); // NEW
+    return Object.assign({ moduleCell, source, bed }, installed); // NEW
+} // NEW
+
+function buildSourceSplitterFixture() { // NEW
+    const moduleCell = makeCell("module_source_splitter", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const source = addChild(moduleCell, sourceCell("sourceSplit", "Split Source")); // NEW
+    const splitter = addChild(moduleCell, partCell("sourceSplitter", "valve_analysis", "Splitter", 20)); // NEW
+    const bedA = writeBedTemplate(addChild(moduleCell, makeCell("sourceSplitBedA", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed A" }, { width: 100, height: 50 })), analysisBedRecord(1, 12)); // NEW
+    const bedB = writeBedTemplate(addChild(moduleCell, makeCell("sourceSplitBedB", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed B" }, { width: 100, height: 50 })), analysisBedRecord(2, 12)); // NEW
+    setPipeLength(addChild(moduleCell, edge("sourceSplitToSplitter", source, splitter, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 4); // NEW
+    setPipeLength(addChild(moduleCell, edge("sourceSplitterBedA", splitter, bedA, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 6); // NEW
+    setPipeLength(addChild(moduleCell, edge("sourceSplitterBedB", splitter, bedB, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "1", irrigation_edge_target_port: "0" })), 8); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, sourceFedBaseCatalog()); // NEW
+    return Object.assign({ moduleCell, source, splitter, bedA, bedB }, installed); // NEW
+} // NEW
+
+function buildSourceTimerOnlyFixture() { // NEW
+    const moduleCell = makeCell("module_source_timer_only", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const source = addChild(moduleCell, sourceCell("sourceTimerOnly", "Timer Source")); // NEW
+    const timer = addChild(moduleCell, partCell("sourceOnlyTimer", "timer_analysis", "Timer", 20)); // NEW
+    const bed = writeBedTemplate(addChild(moduleCell, makeCell("sourceTimerBed", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Timer Bed" }, { width: 100, height: 50 })), analysisBedRecord(1, 12)); // NEW
+    setPipeLength(addChild(moduleCell, edge("sourceOnlyToTimer", source, timer, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 4); // NEW
+    setPipeLength(addChild(moduleCell, edge("sourceOnlyTimerBed", timer, bed, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 6); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, sourceFedBaseCatalog()); // NEW
+    return Object.assign({ moduleCell, source, timer, bed }, installed); // NEW
+} // NEW
+
+function buildMixedSourceTimerFixture() { // NEW
+    const moduleCell = makeCell("module_source_mixed", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const source = addChild(moduleCell, sourceCell("sourceMixed", "Mixed Source")); // NEW
+    const splitter = addChild(moduleCell, partCell("mixedSplitter", "valve_analysis", "Splitter", 20)); // NEW
+    const directBed = writeBedTemplate(addChild(moduleCell, makeCell("mixedDirectBed", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Direct Bed" }, { width: 100, height: 50 })), analysisBedRecord(1.25, 12)); // NEW
+    const timer = addChild(moduleCell, partCell("mixedTimer", "timer_analysis", "Timer", 70)); // NEW
+    const timerBed = writeBedTemplate(addChild(moduleCell, makeCell("mixedTimerBed", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Timer Bed" }, { width: 100, height: 50 })), analysisBedRecord(2.5, 12)); // NEW
+    setPipeLength(addChild(moduleCell, edge("mixedSourceSplitter", source, splitter, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 4); // NEW
+    setPipeLength(addChild(moduleCell, edge("mixedSplitterDirect", splitter, directBed, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 6); // NEW
+    setPipeLength(addChild(moduleCell, edge("mixedSplitterTimer", splitter, timer, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "1", irrigation_edge_target_port: "0" })), 8); // NEW
+    setPipeLength(addChild(moduleCell, edge("mixedTimerBedEdge", timer, timerBed, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 10); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, sourceFedBaseCatalog()); // NEW
+    return Object.assign({ moduleCell, source, splitter, directBed, timer, timerBed }, installed); // NEW
+} // NEW
+
+function runSourceFedZoneInferenceTests() { // NEW
+    let fixture = buildSourceDirectBedFixture(); // NEW
+    let zones = fixture.api.syncZones(fixture.moduleCell); // NEW
+    assert.strictEqual(zones.filter(zone => zone.originType === "source").length, 1); // NEW
+    assert.deepStrictEqual(zones.find(zone => zone.originType === "source").inferredBedIds, ["sourceBedA"]); // NEW
+
+    fixture = buildSourceSplitterFixture(); // NEW
+    zones = fixture.api.syncZones(fixture.moduleCell); // NEW
+    assert.strictEqual(zones.filter(zone => zone.originType === "source").length, 1); // NEW
+    assert.deepStrictEqual(zones.find(zone => zone.originType === "source").inferredBedIds.sort(), ["sourceSplitBedA", "sourceSplitBedB"]); // NEW
+
+    fixture = buildSourceTimerOnlyFixture(); // NEW
+    zones = fixture.api.syncZones(fixture.moduleCell); // NEW
+    assert.strictEqual(zones.filter(zone => zone.originType === "source").length, 0); // NEW
+    assert.ok(zones.some(zone => zone.originType === "timer_outlet" && zone.inferredBedIds.includes("sourceTimerBed"))); // NEW
+
+    fixture = buildMixedSourceTimerFixture(); // NEW
+    zones = fixture.api.syncZones(fixture.moduleCell); // NEW
+    assert.deepStrictEqual(zones.find(zone => zone.originType === "source").inferredBedIds, ["mixedDirectBed"]); // NEW
+    assert.ok(zones.some(zone => zone.originType === "timer_outlet" && zone.inferredBedIds.includes("mixedTimerBed"))); // NEW
+} // NEW
 
 function runBoundaryDisconnectTests() {
     const { moduleCell, api, assembly, a, b, c } = buildInternalAssemblyFixture();
@@ -622,11 +704,25 @@ function runAnalysisSharedTrunkTests() {
     const { moduleCell, api, zone } = buildAnalysisFixture();
     const analysis = api.__test.buildActiveZoneAnalysis(moduleCell, zone);
     const byEdge = new Map(analysis.pipeLabels.map(row => [row.edgeId, row]));
+    const branchByEdge = new Map(analysis.branchBadges.map(row => [row.edgeId, row])); // NEW
+    const bedById = new Map(analysis.bedBadges.map(row => [row.cellId, row])); // NEW
     assert.strictEqual(byEdge.get("analysisSourceTimer").flowGpm, 3);
     assert.strictEqual(byEdge.get("analysisTimerValve").flowGpm, 3);
     assert.strictEqual(byEdge.get("analysisValveBedA").flowGpm, 1);
     assert.strictEqual(byEdge.get("analysisValveBedB").flowGpm, 2);
+    assert.strictEqual(branchByEdge.get("analysisSourceTimer").flowGpm, 3); // NEW
+    assert.strictEqual(branchByEdge.get("analysisSourceTimer").outletPressurePsi, 45); // NEW
+    assert.ok(branchByEdge.get("analysisTimerValve").pressureLossPsi > 0); // NEW
+    assert.strictEqual(branchByEdge.get("analysisValveBedA").flowDeltaKind, "split"); // NEW
+    assert.strictEqual(branchByEdge.get("analysisValveBedA").flowGpm, 1); // NEW
+    assert.strictEqual(branchByEdge.get("analysisValveBedB").flowGpm, 2); // NEW
     assert.strictEqual(analysis.endpointLabels.length, 2);
+    assert.strictEqual(analysis.bedBadges.length, 2); // NEW
+    assert.strictEqual(bedById.get("analysisBedA").consumedGpm, 1); // NEW
+    assert.strictEqual(bedById.get("analysisBedA").passThroughGpm, 0); // NEW
+    assert.strictEqual(bedById.get("analysisBedA").emitterDetail.unknown, true); // NEW
+    assert.ok(bedById.get("analysisBedA").detailLines.some(line => line.includes("aggregate demand"))); // NEW
+    assert.ok(bedById.get("analysisBedA").marginPsi != null); // NEW
     assert.strictEqual(analysis.issues.some(issue => issue.code === "source_over_capacity"), false);
 }
 
@@ -647,9 +743,14 @@ function runAnalysisStandaloneEmitterAndRegulatorTests() {
     const zone = installed.api.syncZones(moduleCell).find(item => item.originCellId === "emitterTimer");
     const analysis = installed.api.__test.buildActiveZoneAnalysis(moduleCell, zone);
     const endpoint = analysis.endpointLabels.find(row => row.cellId === "sprayCell");
+    const sprayBadge = analysis.bedBadges.find(row => row.cellId === "sprayCell"); // NEW
+    const regulatorBranch = analysis.branchBadges.find(row => row.edgeId === "emitterRegSpray"); // NEW
     assert.ok(endpoint);
     assert.strictEqual(endpoint.flowGpm, 0.5);
     assert.ok(endpoint.deliveredPressurePsi <= 25.01);
+    assert.ok(sprayBadge); // NEW
+    assert.strictEqual(sprayBadge.consumedGpm, 0.5); // NEW
+    assert.ok(regulatorBranch.outletPressurePsi <= 25.01); // NEW
     assert.ok(analysis.coverageOverlays.some(row => row.cellId === "sprayCell" && row.radiusFt === 6));
 }
 
@@ -677,7 +778,8 @@ function runAnalysisCoverageAndHudHookTests() {
     assert.strictEqual(api.__test.inferAnalysisZoneId(moduleCell, [bedB], ""), zone.id);
     const view = api.__test.buildAnalysisView(moduleCell, { selectedCells: [bedB] });
     assert.strictEqual(view.activeZoneId, zone.id);
-    assert.ok(view.analysis.pipeLabels.length > 0);
+    assert.ok(view.analysis.branchBadges.length > 0); // CHANGE
+    assert.ok(view.analysis.bedBadges.length > 0); // NEW
     const session = api.openIrrigationMode(moduleCell, { analysisMode: "analysis", preserveViewport: true });
     assert.strictEqual(session.analysisMode, "analysis");
     api.closeIrrigationMode();
@@ -688,15 +790,101 @@ function runAnalysisLinearBedCoverageTests() { // NEW
     writeBedTemplate(bedA, Object.assign(analysisBedRecord(1, 10), { templateId: "dripline_bed", rowPartId: "dripline_analysis", rowOrientation: "width", spacing: { rows: 2 } })); // NEW
     const analysis = api.__test.buildActiveZoneAnalysis(moduleCell, zone); // NEW
     const coverage = analysis.coverageOverlays.find(row => row.cellId === "analysisBedA"); // NEW
+    const bedBadge = analysis.bedBadges.find(row => row.cellId === "analysisBedA"); // NEW
     assert.ok(coverage, "Expected analysis coverage for dripline bed"); // NEW
     assert.strictEqual(coverage.wettedWidthIn, 12); // NEW
     assert.strictEqual(coverage.bands.length, 2); // NEW
     assert.ok(coverage.bands.every(band => band.width === 100)); // NEW
     assert.ok(coverage.bands.every(band => band.height > 20 && band.height < 30)); // NEW
+    assert.ok(bedBadge.emitterDetail.emitterCount > 0); // NEW
+    assert.ok(Math.abs(bedBadge.emitterDetail.perEmitterGpm - (0.8 / 60)) < 0.0001); // NEW
+    assert.ok(bedBadge.detailLines.some(line => line.includes("Emitters"))); // NEW
+} // NEW
+
+function runSourceFedAnalysisTests() { // NEW
+    const fixture = buildMixedSourceTimerFixture(); // NEW
+    const sourceZone = fixture.api.syncZones(fixture.moduleCell).find(zone => zone.originType === "source"); // NEW
+    const analysis = fixture.api.__test.buildActiveZoneAnalysis(fixture.moduleCell, sourceZone); // NEW
+    const byEdge = new Map(analysis.pipeLabels.map(row => [row.edgeId, row])); // NEW
+    const branchByEdge = new Map(analysis.branchBadges.map(row => [row.edgeId, row])); // NEW
+    assert.strictEqual(analysis.demandGpm, 1.25); // NEW
+    assert.deepStrictEqual(analysis.endpointLabels.map(row => row.cellId), ["mixedDirectBed"]); // NEW
+    assert.deepStrictEqual(analysis.bedBadges.map(row => row.cellId), ["mixedDirectBed"]); // NEW
+    assert.strictEqual(byEdge.get("mixedSourceSplitter").flowGpm, 1.25); // NEW
+    assert.strictEqual(byEdge.get("mixedSplitterDirect").flowGpm, 1.25); // NEW
+    assert.strictEqual(byEdge.has("mixedSplitterTimer"), false); // NEW
+    assert.strictEqual(byEdge.has("mixedTimerBedEdge"), false); // NEW
+    assert.strictEqual(branchByEdge.get("mixedSourceSplitter").outletPressurePsi, 45); // CHANGE
+    assert.strictEqual(branchByEdge.has("mixedSplitterTimer"), false); // NEW
+    assert.ok(analysis.endpointLabels[0].marginPsi != null); // NEW
+} // NEW
+
+function runSourceFedRegulatorAnalysisTests() { // NEW
+    const moduleCell = makeCell("module_source_regulator", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const source = addChild(moduleCell, sourceCell("sourceRegulator", "Regulated Source", { usableFlowGpm: 5, staticPressurePsi: 60, connectorType: "barb", nominalSize: "3/4", pipeConnection: true })); // NEW
+    const regulator = addChild(moduleCell, partCell("sourceRegulatorCell", "regulator_analysis", "Regulator", 20)); // NEW
+    const spray = addChild(moduleCell, partCell("sourceSprayCell", "spray_analysis", "Spray", 70)); // NEW
+    setPipeLength(addChild(moduleCell, edge("sourceRegulatorEdge", source, regulator, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 1); // NEW
+    setPipeLength(addChild(moduleCell, edge("sourceRegulatorSpray", regulator, spray, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 1); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, sourceFedBaseCatalog()); // NEW
+    const sourceZone = installed.api.syncZones(moduleCell).find(zone => zone.originType === "source"); // NEW
+    const analysis = installed.api.__test.buildActiveZoneAnalysis(moduleCell, sourceZone); // NEW
+    const endpoint = analysis.endpointLabels.find(row => row.cellId === "sourceSprayCell"); // NEW
+    const sprayBadge = analysis.bedBadges.find(row => row.cellId === "sourceSprayCell"); // NEW
+    const branch = analysis.branchBadges.find(row => row.edgeId === "sourceRegulatorSpray"); // NEW
+    assert.ok(endpoint); // NEW
+    assert.strictEqual(endpoint.flowGpm, 0.5); // NEW
+    assert.ok(endpoint.deliveredPressurePsi <= 25.01); // NEW
+    assert.ok(sprayBadge); // NEW
+    assert.ok(sprayBadge.marginPsi != null); // NEW
+    assert.ok(branch.outletPressurePsi <= 25.01); // NEW
+} // NEW
+
+function runAnalysisDaisyChainBedBadgeTests() { // NEW
+    const moduleCell = makeCell("module_analysis_daisy", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const source = addChild(moduleCell, makeCell("daisySource", { irrigation_endpoint: "1", irrigation_endpoint_type: "source", irrigation_endpoint_profile_json: JSON.stringify({ usableFlowGpm: 5, staticPressurePsi: 45, connectorType: "barb", nominalSize: "3/4", pipeConnection: true }), label: "Source" })); // NEW
+    const timer = addChild(moduleCell, partCell("daisyTimer", "timer_analysis", "Timer", 20)); // NEW
+    const bedA = writeBedTemplate(addChild(moduleCell, makeCell("daisyBedA", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed A" }, { width: 100, height: 50 })), analysisBedRecord(1, 12)); // NEW
+    const bedB = writeBedTemplate(addChild(moduleCell, makeCell("daisyBedB", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed B" }, { width: 100, height: 50 })), analysisBedRecord(2, 12)); // NEW
+    setPipeLength(addChild(moduleCell, edge("daisySourceTimer", source, timer, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 2); // NEW
+    setPipeLength(addChild(moduleCell, edge("daisyTimerBedA", timer, bedA, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 3); // NEW
+    setPipeLength(addChild(moduleCell, edge("daisyBedABedB", bedA, bedB, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 4); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, analysisCatalog()); // NEW
+    const zone = installed.api.syncZones(moduleCell).find(item => item.originCellId === "daisyTimer"); // NEW
+    const analysis = installed.api.__test.buildActiveZoneAnalysis(moduleCell, zone); // NEW
+    const bedAStatus = analysis.bedBadges.find(row => row.cellId === "daisyBedA"); // NEW
+    const bedBStatus = analysis.bedBadges.find(row => row.cellId === "daisyBedB"); // NEW
+    assert.strictEqual(bedAStatus.consumedGpm, 1); // NEW
+    assert.strictEqual(bedAStatus.passThroughGpm, 2); // NEW
+    assert.strictEqual(bedBStatus.consumedGpm, 2); // NEW
+    assert.strictEqual(bedBStatus.passThroughGpm, 0); // NEW
+} // NEW
+
+function runAnalysisAssemblyBadgeTests() { // NEW
+    const moduleCell = makeCell("module_analysis_assembly_badge", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const source = addChild(moduleCell, makeCell("assemblyBadgeSource", { irrigation_endpoint: "1", irrigation_endpoint_type: "source", irrigation_endpoint_profile_json: JSON.stringify({ usableFlowGpm: 5, staticPressurePsi: 45, connectorType: "barb", nominalSize: "3/4", pipeConnection: true }), label: "Source" })); // NEW
+    const lane = addChild(moduleCell, makeCell("assemblyBadgeLane", { irrigation_assembly: "1", irrigation_assembly_type: "parts", label: "Valve Assembly" }, { width: 220, height: 78 })); // NEW
+    const timer = addChild(lane, partCell("assemblyBadgeTimer", "timer_analysis", "Timer", 20)); // NEW
+    const valve = addChild(lane, partCell("assemblyBadgeValve", "valve_analysis", "Valve", 80)); // NEW
+    const bed = writeBedTemplate(addChild(moduleCell, makeCell("assemblyBadgeBed", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed" }, { width: 100, height: 50 })), analysisBedRecord(1, 12)); // NEW
+    setPipeLength(addChild(moduleCell, edge("assemblyBadgeSourceTimer", source, timer, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 2); // NEW
+    setPipeLength(addChild(moduleCell, edge("assemblyBadgeTimerValve", timer, valve, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 5); // NEW
+    setPipeLength(addChild(moduleCell, edge("assemblyBadgeValveBed", valve, bed, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 4); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, analysisCatalog()); // NEW
+    const zone = installed.api.syncZones(moduleCell).find(item => item.originCellId === "assemblyBadgeTimer"); // NEW
+    const analysis = installed.api.__test.buildActiveZoneAnalysis(moduleCell, zone); // NEW
+    const badge = analysis.assemblyBadges.find(row => row.cellId === "assemblyBadgeLane"); // NEW
+    assert.ok(badge); // NEW
+    assert.ok(badge.internalPipeLossPsi > 0); // NEW
+    assert.ok(badge.detailLines.some(line => line.includes("Hidden internal pipe loss"))); // NEW
 } // NEW
 
 function run() {
     runZoneTests();
+    runSourceFedZoneInferenceTests(); // NEW
     runBoundaryDisconnectTests();
     runMixedDisconnectTests();
     runDeletePartTests();
@@ -720,6 +908,10 @@ function run() {
     runAnalysisMissingAndUnsupportedGraphTests();
     runAnalysisCoverageAndHudHookTests();
     runAnalysisLinearBedCoverageTests(); // NEW
+    runSourceFedAnalysisTests(); // NEW
+    runSourceFedRegulatorAnalysisTests(); // NEW
+    runAnalysisDaisyChainBedBadgeTests(); // NEW
+    runAnalysisAssemblyBadgeTests(); // NEW
 }
 
 run();

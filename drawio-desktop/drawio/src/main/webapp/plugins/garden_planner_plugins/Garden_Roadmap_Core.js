@@ -64,6 +64,8 @@
         const value = record && typeof record === 'object' ? record : {}; // NEW
         return { // NEW
             perspective: value.perspective === 'inception' ? 'inception' : 'today', // NEW
+            pricingEnabled: value.pricingEnabled === true, // NEW
+            pricingCheckpointDay: Number.isSafeInteger(value.pricingCheckpointDay) ? value.pricingCheckpointDay : null, // NEW
             today: normalizePerspective(value.today), // NEW
             inception: normalizePerspective(value.inception) // NEW
         }; // NEW
@@ -283,6 +285,31 @@
         return { status: next, progress: status === 'Done' || next === 'Done' ? 100 : storedProgress(progress) }; // NEW
     } // NEW
  // NEW
+    /** Return a nonnegative finite object cost; malformed pricing or dates are treated as unpriced. */ // NEW
+    function costTotal(item) { // NEW
+        if (!item || (item.costMode !== 'fixed' && item.costMode !== 'per_day')) return 0; // NEW
+        const amount = Number(item.costAmount); // NEW
+        if (!Number.isFinite(amount) || amount <= 0) return 0; // NEW
+        let interval; try { interval = intervalOf(item); } catch (_) { return 0; } // NEW
+        return item.costMode === 'per_day' ? amount * (interval.end - interval.start + 1) : amount; // NEW
+    } // NEW
+ // NEW
+    /** Full cost plus remaining funding required from today through a clamped checkpoint day. */ // CHANGE
+    function costSummary(objects, { today, checkpoint } = {}) { // NEW
+        if (!Array.isArray(objects)) throw new TypeError('objects must be an array'); // NEW
+        const start = today == null ? todayDay() : requireDay(today, 'today'); // NEW
+        const checkpointDay = Math.max(start, checkpoint == null ? start : requireDay(checkpoint, 'checkpoint')); // NEW
+        let total = 0, checkpointTotal = 0; // NEW
+        for (const object of objects) { // NEW
+            const cost = costTotal(object); total += cost; // NEW
+            let interval; try { interval = intervalOf(object); } catch (_) { continue; } // NEW
+            const overlapStart = Math.max(interval.start, start), overlapEnd = Math.min(interval.end, checkpointDay); // CHANGE
+            if (!cost || overlapStart > overlapEnd) continue; // CHANGE
+            checkpointTotal += object.costMode === 'per_day' ? Number(object.costAmount) * (overlapEnd - overlapStart + 1) : cost; // CHANGE
+        } // NEW
+        return { total, checkpointTotal, checkpointDay }; // NEW
+    } // NEW
+ // NEW
     /** // NEW
      * Return {processes: Map, objects: Map, width, height}; both maps hold {x,y,width,height}. // NEW
      * Processes and objects use first-available interval packing; parent bounds expand to contain objects. // NEW
@@ -361,7 +388,7 @@
         throw new Error('Cannot resolve neighboring layout without a collision.'); // NEW
     } // NEW
 
-    const api = Object.freeze({ parseDay, formatDay, todayDay, normalizeView, buildTimeline, dayToX, xToDay, calendarTicks, planCollisions, packIntervals, progressSummary, transitionStatus, layoutRoadmap }); // CHANGE
+    const api = Object.freeze({ parseDay, formatDay, todayDay, normalizeView, buildTimeline, dayToX, xToDay, calendarTicks, planCollisions, packIntervals, progressSummary, transitionStatus, costTotal, costSummary, layoutRoadmap }); // CHANGE
     root.TrellisRoadmapCore = api; // NEW
     if (typeof module !== 'undefined' && module && typeof module.exports !== 'undefined') module.exports = api; // NEW
 })(globalThis); // NEW

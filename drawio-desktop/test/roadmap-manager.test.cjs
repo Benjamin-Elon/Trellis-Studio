@@ -68,6 +68,7 @@ test('Main creation is usable, idempotent, inclusive, and gives secondary projec
     assert.equal(h.api.ensureMainRoadmapInRoadmapModule(h.module), h.board);
     assert.equal(h.typed(h.board, 'timeframe').length, 8);
     assert.equal(h.typed(h.board, 'marker').length, 1);
+    assert.equal(h.graph.getCellStyle(h.typed(h.board, 'marker')[0]).strokeColor, '#2563eb'); // CHANGE
     assert.equal(h.process.getAttribute('label'), 'Planning');
     assert.equal(h.object.getAttribute('label'), 'First Step');
     assert.equal(h.board.getAttribute('roadmap_header_version'), '1'); // NEW
@@ -380,6 +381,10 @@ test('roadmap object overlay uses direct status buttons, note dialog, and Doing 
     assert.ok(!buttons.some(button => button.textContent === 'Edit')); // CHANGE
     assert.deepEqual(buttons.slice(0, 3).map(button => button.textContent), ['Doing', 'Blocked', 'Done']); // CHANGE
     assert.ok(!buttons.some(button => button.textContent === 'Planned')); // CHANGE
+    assert.match(buttons.find(button => button.textContent === 'Doing').getAttribute('style'), /background:\s*(#bfdbfe|rgb\(191,\s*219,\s*254\))/); // NEW
+    assert.match(buttons.find(button => button.textContent === 'Blocked').getAttribute('style'), /background:\s*(#fecaca|rgb\(254,\s*202,\s*202\))/); // NEW
+    assert.match(buttons.find(button => button.textContent === 'Done').getAttribute('style'), /background:\s*(#bbf7d0|rgb\(187,\s*247,\s*208\))/); // NEW
+    assert.equal(buttons.find(button => button.textContent === 'Doing').getAttribute('data-roadmap-status'), 'Doing'); // NEW
     assert.ok(!buttons.some(button => /^Open Tasks/.test(button.textContent))); // NEW
     assert.equal(buttons.find(button => button.textContent === 'Add Note').textContent, 'Add Note'); // NEW
 
@@ -406,9 +411,10 @@ test('roadmap object overlay uses direct status buttons, note dialog, and Doing 
 
 test('roadmap object overlay hides invalid and current status transitions', async t => { // CHANGE
     const h = harness(t); h.api.editObject(h.object, { status: 'Done' }); h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
-    const buttons = Array.from(controlWithButton(h, 'Delete Object').querySelectorAll('button')).map(button => button.textContent); // CHANGE
-    assert.ok(!buttons.includes('Blocked')); assert.ok(!buttons.includes('Done')); // CHANGE
-    assert.ok(buttons.includes('Planned')); assert.ok(buttons.includes('Doing')); // NEW
+    const buttons = Array.from(controlWithButton(h, 'Delete Object').querySelectorAll('button')), labels = buttons.map(button => button.textContent); // CHANGE
+    assert.ok(!labels.includes('Blocked')); assert.ok(!labels.includes('Done')); // CHANGE
+    assert.ok(labels.includes('Planned')); assert.ok(labels.includes('Doing')); // NEW
+    assert.match(buttons.find(button => button.textContent === 'Planned').getAttribute('style'), /background:\s*(#e2e8f0|rgb\(226,\s*232,\s*240\))/); // NEW
 }); // NEW
 
 test('copying planning content clears task links and source IDs while retaining dates and valid roles', t => {
@@ -600,12 +606,116 @@ test('task dialog cancellation leaves no companion or document edit', t => { // 
 test('focused trim buttons refresh state across repeated clicks', async t => { // NEW
     const h = harness(t); h.api.setViewState(h.board, { today: { leftHidden: 0 } }); h.graph.setSelectionCell(h.board); h.api.refresh(); // CHANGE
     const frame = () => new Promise(resolve => h.w.requestAnimationFrame(resolve)); await frame(); // NEW
+    graphButton(h, 'Columns').click(); await frame(); // CHANGE
     const before = h.xml(); // NEW
     for (let hidden = 1; hidden <= 3; hidden++) { // NEW
         const button = Array.from(h.graph.container.querySelectorAll('button')).find(button => button.textContent === 'Hide past'); // NEW
         assert.ok(button); button.focus(); button.click(); await frame(); assert.equal(h.api.getViewState(h.board).today.leftHidden, hidden); // NEW
     } // NEW
     assert.equal(h.xml(), before); // NEW
+}); // NEW
+ // NEW
+test('Columns toggles a visible per-user timeline controls panel without document edits', async t => { // NEW
+    const h = harness(t); h.api.setViewState(h.board, { today: { leftHidden: 0, multiplier: 1.25 } }); h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); // NEW
+    const before = h.xml(), history = h.undo.history.length, columns = () => graphButton(h, 'Columns'); // NEW
+    assert.equal(columns().getAttribute('aria-pressed'), 'false'); assert.equal(columns().getAttribute('data-trellis-button-variant'), 'neutral'); // NEW
+    assert.equal(h.graph.container.querySelector('.trellis-roadmap-columns-panel'), null); assert.equal(graphButton(h, 'Hide past'), undefined); // NEW
+    columns().click(); await frame(h); // NEW
+    assert.equal(columns().getAttribute('aria-pressed'), 'true'); assert.equal(columns().getAttribute('data-trellis-button-variant'), 'open'); // NEW
+    assert.ok(h.graph.container.querySelector('.trellis-roadmap-columns-panel')); assert.ok(graphButton(h, 'Hide past')); assert.ok(graphButton(h, 'Reset scale')); // NEW
+    graphButton(h, 'Hide past').click(); await frame(h); assert.equal(h.api.getViewState(h.board).today.leftHidden, 1); // NEW
+    graphButton(h, 'Show past').click(); await frame(h); assert.equal(h.api.getViewState(h.board).today.leftHidden, 0); // NEW
+    const scale = h.graph.container.querySelector('.trellis-roadmap-columns-panel input[aria-label="Scale %"]'); assert.ok(scale); scale.value = '150'; scale.dispatchEvent(new h.w.Event('change', { bubbles: true })); await frame(h); // NEW
+    assert.equal(h.api.getViewState(h.board).today.multiplier, 1.5); // NEW
+    graphButton(h, 'Reset scale').click(); await frame(h); assert.equal(h.api.getViewState(h.board).today.multiplier, 1); // NEW
+    columns().click(); await frame(h); // NEW
+    assert.equal(columns().getAttribute('aria-pressed'), 'false'); assert.equal(h.graph.container.querySelector('.trellis-roadmap-columns-panel'), null); // NEW
+    assert.equal(h.xml(), before); assert.equal(h.undo.history.length, history); // NEW
+}); // NEW
+ // NEW
+test('today and inception perspective buttons expose only the selected mode as active', async t => { // NEW
+    const h = harness(t); h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); // NEW
+    const before = h.xml(), today = () => graphButton(h, 'Today'), inception = () => graphButton(h, 'Inception'); // NEW
+    assert.equal(today().getAttribute('aria-pressed'), 'true'); assert.equal(inception().getAttribute('aria-pressed'), 'false'); // NEW
+    assert.equal(today().getAttribute('data-trellis-button-variant'), 'open'); assert.equal(inception().getAttribute('data-trellis-button-variant'), 'neutral'); // NEW
+    inception().click(); await frame(h); // NEW
+    assert.equal(h.api.getViewState(h.board).perspective, 'inception'); // NEW
+    assert.equal(today().getAttribute('aria-pressed'), 'false'); assert.equal(inception().getAttribute('aria-pressed'), 'true'); // NEW
+    assert.equal(today().getAttribute('data-trellis-button-variant'), 'neutral'); assert.equal(inception().getAttribute('data-trellis-button-variant'), 'open'); // NEW
+    assert.equal(h.xml(), before); // NEW
+}); // NEW
+ // NEW
+test('show cost checkbox is a per-user board preference and does not edit diagram XML', async t => { // CHANGE
+    const h = harness(t); h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); // NEW
+    const before = h.xml(), history = h.undo.history.length, checkbox = h.graph.container.querySelector('input[aria-label="Show Cost"]'); // CHANGE
+    assert.ok(checkbox); checkbox.checked = true; checkbox.dispatchEvent(new h.w.Event('change', { bubbles: true })); await frame(h); // NEW
+    assert.equal(h.api.getViewState(h.board).pricingEnabled, true); // NEW
+    assert.equal(h.xml(), before); assert.equal(h.undo.history.length, history); // NEW
+    assert.ok(Array.from({ length: h.w.localStorage.length }, (_, index) => h.w.localStorage.getItem(h.w.localStorage.key(index))).some(value => /pricingEnabled/.test(value || ''))); // CHANGE
+}); // NEW
+ // NEW
+test('pricing visuals hide when selection leaves the roadmap module context', async t => { // NEW
+    const h = harness(t); h.api.setObjectCost(h.object, { mode: 'fixed', amount: 100 }); h.api.setViewState(h.board, { pricingEnabled: true }); h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); // NEW
+    assert.ok(h.graph.container.querySelector('.trellis-roadmap-cost-badge')); // NEW
+    const outside = h.cell(null, { label: 'Outside' }, 'rounded=1;whiteSpace=wrap;html=1;'); h.graph.setSelectionCell(outside); h.api.refresh(); await frame(h); // NEW
+    assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-cost-badge').length, 0); assert.equal(h.graph.container.querySelector('.trellis-roadmap-today-line'), null); // NEW
+    assert.equal(h.graph.container.querySelector('.trellis-roadmap-pricing-layer').style.display, 'none'); // NEW
+}); // NEW
+ // NEW
+test('object cost editor writes pricing attributes and renders object process and board badges', async t => { // NEW
+    const h = harness(t); h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // CHANGE
+    graphButton(h, 'Add Cost').click(); const picker = h.graph.container.querySelector('.trellis-roadmap-cost-picker'); assert.ok(picker); // NEW
+    const initialAmount = picker.querySelector('input[aria-label="Fixed cost"]'); assert.equal(h.w.document.activeElement, initialAmount); // CHANGE
+    const bubbled = []; h.graph.container.addEventListener('mousedown', event => bubbled.push(event.type)); // NEW
+    const mode = picker.querySelector('select[aria-label="Cost mode"]'), down = new h.w.MouseEvent('mousedown', { bubbles: true, cancelable: true }); mode.dispatchEvent(down); // NEW
+    assert.equal(down.defaultPrevented, false); assert.deepEqual(bubbled, []); // NEW
+    mode.value = 'per_day'; mode.dispatchEvent(new h.w.Event('change')); // CHANGE
+    const amount = picker.querySelector('input[aria-label="Daily rate"]'); amount.value = '25'; amount.dispatchEvent(new h.w.Event('input')); // NEW
+    assert.match(picker.textContent, /Total: \$200/); // NEW
+    Array.from(picker.querySelectorAll('button')).find(button => button.textContent === 'Apply').click(); await frame(h); // NEW
+    assert.equal(h.object.getAttribute('roadmap_cost_mode'), 'per_day'); assert.equal(h.object.getAttribute('roadmap_cost_amount'), '25'); // NEW
+    assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-cost-badge').length, 0); // NEW
+    h.api.setViewState(h.board, { pricingEnabled: true }); h.api.refresh(); await frame(h); // NEW
+    const badges = Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-cost-badge')).map(node => node.textContent); // NEW
+    assert.equal(badges.filter(text => text === '$200').length, 3); // NEW
+    const boardBadge = h.graph.container.querySelector('.trellis-roadmap-cost-badge-board'), processBadge = h.graph.container.querySelector('.trellis-roadmap-cost-badge-process'), objectBadge = h.graph.container.querySelector('.trellis-roadmap-cost-badge-object'); // NEW
+    const boardState = h.graph.view.getState(h.board), processState = h.graph.view.getState(h.process), objectState = h.graph.view.getState(h.object); // NEW
+    assert.equal(parseInt(boardBadge.style.left, 10), Math.round(boardState.x + boardState.width / 2)); assert.equal(parseInt(boardBadge.style.top, 10), Math.round(boardState.y - 8)); assert.equal(boardBadge.style.transform, 'translate(-50%,-100%)'); // NEW
+    assert.equal(parseInt(processBadge.style.left, 10), Math.round(processState.x + processState.width / 2 + 24)); assert.equal(parseInt(processBadge.style.top, 10), Math.round(processState.y - 6)); assert.equal(processBadge.style.transform, 'translate(0,-100%)'); // NEW
+    assert.equal(parseInt(objectBadge.style.left, 10), Math.round(objectState.x + objectState.width / 2 + 24)); assert.equal(parseInt(objectBadge.style.top, 10), Math.round(objectState.y - 6)); assert.equal(objectBadge.style.transform, 'translate(0,-100%)'); // NEW
+    h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); const symbol = h.graph.container.querySelector('input[aria-label="Currency"]'); // NEW
+    assert.ok(symbol); symbol.value = '€'; symbol.dispatchEvent(new h.w.Event('change', { bubbles: true })); await frame(h); // NEW
+    assert.equal(h.board.getAttribute('roadmap_cost_symbol'), '€'); assert.ok(Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-cost-badge')).some(node => node.textContent === '€200')); // NEW
+}); // NEW
+ // NEW
+test('pricing checkpoint click creates a red funding line for remaining cost through the checkpoint', async t => { // CHANGE
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); h.api.setViewState(h.board, { pricingEnabled: true, today: { leftHidden: 0 } }); // CHANGE
+    h.api.editObject(h.object, { startISO: c.formatDay(today - 2), endISO: c.formatDay(today + 10) }); // CHANGE
+    const later = h.api.addObject(h.process); h.api.editObject(later, { startISO: c.formatDay(today + 10), endISO: c.formatDay(today + 10) }); // NEW
+    h.api.setObjectCost(h.object, { mode: 'per_day', amount: 25 }); h.api.setObjectCost(later, { mode: 'fixed', amount: 300 }); h.graph.setSelectionCell(h.module); h.graph.refresh(); await frame(h); // CHANGE
+    const state = h.graph.view.getState(h.board), layout = h.api.getLayout(h.board), x = state.x + (12 + c.dayToX(layout.timeline, today + 7)) * h.graph.view.scale; // NEW
+    const todayLine = h.graph.container.querySelector('.trellis-roadmap-today-line'), todayX = state.x + (12 + c.dayToX(layout.timeline, today)) * h.graph.view.scale; // NEW
+    assert.ok(todayLine); assert.equal(parseInt(todayLine.style.left, 10), Math.round(todayX)); assert.match(todayLine.getAttribute('style'), /#2563eb|rgb\(37,\s*99,\s*235\)/); // NEW
+    h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); assert.equal(h.graph.container.querySelector('.trellis-roadmap-today-line'), null); // NEW
+    assert.ok(Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-cost-badge')).some(node => node.textContent === '$325')); // NEW
+    h.graph.container.dispatchEvent(new h.w.MouseEvent('click', { bubbles: true, clientX: x, clientY: state.y + 10 })); await frame(h); // NEW
+    assert.equal(h.api.getViewState(h.board).pricingCheckpointDay, today + 7); // NEW
+    const pricingLayer = h.graph.container.querySelector('.trellis-roadmap-pricing-layer'), controls = h.graph.container.querySelector('.trellis-roadmap-controls'), fundingLine = h.graph.container.querySelector('.trellis-roadmap-funding-line'), fundingBadge = h.graph.container.querySelector('.trellis-roadmap-funding-badge'); // NEW
+    assert.ok(fundingLine); assert.match(fundingLine.getAttribute('style'), /#dc2626|rgb\(220,\s*38,\s*38\)/); // CHANGE
+    assert.ok(pricingLayer); assert.ok(controls); assert.ok(Number(pricingLayer.style.zIndex) > Number(controls.style.zIndex)); // NEW
+    assert.match(fundingBadge.textContent, /By .*: \$200/); assert.equal(fundingBadge.parentNode, pricingLayer); // CHANGE
+    const pastX = state.x + (12 + c.dayToX(layout.timeline, today - 7)) * h.graph.view.scale; // NEW
+    h.graph.container.dispatchEvent(new h.w.MouseEvent('click', { bubbles: true, clientX: pastX, clientY: state.y + 10 })); await frame(h); // NEW
+    assert.equal(h.api.getViewState(h.board).pricingCheckpointDay, today); // NEW
+}); // NEW
+ // NEW
+test('reader can explore pricing but cannot edit object costs', async t => { // NEW
+    const h = harness(t); h.graph.__trellisUsers = { canEditCell: () => false, canAddCell: () => false, canDeleteCell: () => false, getCurrentUser: () => ({ id: 'reader' }) }; h.api.setViewState(h.board, { pricingEnabled: true }); // CHANGE
+    h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
+    const before = h.xml(), add = graphButton(h, 'Add Cost'); assert.ok(add); assert.equal(add.disabled, true); // NEW
+    const today = h.w.TrellisRoadmapCore.todayDay(), state = h.graph.view.getState(h.board), layout = h.api.getLayout(h.board), x = state.x + (12 + h.w.TrellisRoadmapCore.dayToX(layout.timeline, today + 3)) * h.graph.view.scale; // NEW
+    h.graph.container.dispatchEvent(new h.w.MouseEvent('click', { bubbles: true, clientX: x, clientY: state.y + 10 })); await frame(h); // NEW
+    assert.equal(h.api.getViewState(h.board).pricingCheckpointDay, today + 3); assert.equal(h.xml(), before); // NEW
 }); // NEW
 
 /** Unopened pages need personal export projection without changing the live page cache. */ // NEW

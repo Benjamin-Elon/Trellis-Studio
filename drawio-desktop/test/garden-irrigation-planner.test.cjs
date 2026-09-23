@@ -169,8 +169,8 @@ function loadPlugin(options = {}) {
         removeListener(listener) { graphListeners.forEach(list => { const index = list.indexOf(listener); if (index >= 0) list.splice(index, 1); }); },
         addMouseListener(listener) { mouseListeners.push(listener); },
         removeMouseListener(listener) { const index = mouseListeners.indexOf(listener); if (index >= 0) mouseListeners.splice(index, 1); },
-        fireClick(cell, x = 0, y = 0) {
-            const event = { clientX: x, clientY: y };
+        fireClick(cell, x = 0, y = 0, target = container) { // CHANGE
+            const event = { clientX: x, clientY: y, target }; // CHANGE
             (graphListeners.get("click") || []).forEach(listener => listener(this, { getProperty(key) { return key === "cell" ? cell : key === "event" ? event : null; } }));
         },
         fireMouseMove(x = 0, y = 0, target = container) { // CHANGE
@@ -1614,6 +1614,8 @@ test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation componen
         "micro_emitter_0_5_gph",
         "micro_emitter_1_0_gph",
         "micro_emitter_2_0_gph",
+        "micro_dripline_1_4_non_pc",
+        "micro_bubbler_adjustable_1_4",
         "micro_spray_stake_1_4",
         "hose_splitter_2way_3_4_fght_mght",
         "hose_splitter_4way_3_4_fght_mght",
@@ -1696,12 +1698,22 @@ test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation componen
     assert.equal(byId("pc_dripline_1_2").specs.emitterFlowGph, 0.9); // NEW
     assert.equal(byId("pc_dripline_1_2").specs.wettedWidthIn, 12); // NEW
     assert.equal(byId("pc_dripline_1_2").specs.emitterSpacingIn, 18); // NEW
+    assert.equal(byId("micro_dripline_1_4_non_pc").specs.emitterFlowGph, 0.5); // NEW
+    assert.equal(byId("micro_dripline_1_4_non_pc").specs.emitterSpacingIn, 6); // NEW
+    assert.equal(byId("micro_dripline_1_4_non_pc").connectors.input.nominalSize, "1/4"); // NEW
+    assert.equal(byId("micro_emitter_1_0_gph").name, "PC self-piercing drip emitter, 1.0 gph"); // CHANGE
+    assert.equal(byId("micro_emitter_1_0_gph").specs.minOperatingPressurePsi, 15); // NEW
+    assert.equal(byId("micro_emitter_1_0_gph").specs.maxOperatingPressurePsi, 45); // NEW
+    assert.equal(byId("micro_emitter_1_0_gph").connectors.input.alternates.length, 1); // NEW
+    assert.equal(byId("micro_emitter_1_0_gph").connectors.input.alternates[0].nominalSize, "1/2"); // NEW
     assert.equal(byId("soaker_row_line_1_2").specs.wettedWidthIn, 18); // NEW
     assert.equal(byId("overhead_sprinkler_head_30psi").specs.throwRadiusFt, 8); // NEW
     assert.equal(byId("microspray_stake_20psi").specs.throwRadiusFt, 6); // NEW
     assert.equal(byId("micro_spray_stake_1_4").specs.throwRadiusFt, 4); // NEW
     assert.equal(byId("bubbler_emitter_1_2").specs.throwRadiusFt, 2); // NEW
     assert.equal(byId("micro_emitter_1_0_gph").specs.throwRadiusFt, 0.5); // NEW
+    assert.equal(byId("micro_bubbler_adjustable_1_4").specs.flowGpm, 0.1); // NEW
+    assert.equal(byId("micro_bubbler_adjustable_1_4").connectors.input.nominalSize, "1/4"); // NEW
     assert.equal(byId("drip_tape_8mil_12in").unitCost, 0.13); // NEW
     assert.equal(byId("poly_mainline_3_4").unitCost, 0.42); // NEW
     assert.equal(byId("poly_distribution_1_2").unitCost, 0.18); // NEW
@@ -1744,6 +1756,19 @@ test("connector compatibility respects GHT and pipe-thread gender", () => {
     assert.match(api.__test.connectorMatches(c("ght"), c("ght")).reason, /Gendered GHT/);
     assert.match(api.__test.connectorMatches(c("quick_connect"), c("quick_connect")).reason, /Gendered connector/);
     assert.equal(api.__test.connectorMatches(c("mght"), { type: "fght", nominalSize: "1/2" }).ok, false);
+    const halfOrQuarterEmitter = api.__test.normalizeCatalogPart({
+        id: "alt_emitter",
+        name: "Alternate emitter",
+        category: "emitter",
+        stockState: "in_stock",
+        cost: 1,
+        connectors: { inputs: 1, outputs: 0, input: { type: "barb", nominalSize: "1/4", pipeConnection: true, alternates: [{ type: "barb", nominalSize: "1/2", pipeConnection: true, alternates: [{ type: "barb", nominalSize: "3/4", pipeConnection: true }] }] }, output: { type: "", nominalSize: "" } },
+        specs: { flowGpm: 0.01, minOperatingPressurePsi: 15 }
+    });
+    assert.equal(halfOrQuarterEmitter.connectors.input.alternates.length, 1);
+    assert.equal(halfOrQuarterEmitter.connectors.input.alternates[0].alternates, undefined);
+    assert.equal(api.__test.ConnectorRules.connectorRecordsMatch({ type: "barb", nominalSize: "1/2", pipeConnection: true }, halfOrQuarterEmitter.connectors.input, null).ok, true);
+    assert.equal(api.__test.ConnectorRules.connectorRecordsMatch({ type: "barb", nominalSize: "3/4", pipeConnection: true }, halfOrQuarterEmitter.connectors.input, null).ok, false);
 });
 
 test("generated twist-lock and push-connect connectors infer pipe edges by size", () => {
@@ -1807,14 +1832,16 @@ test("starter catalog upgrade merges new parts into existing catalogs without ov
         part("twist_lock_coupler_1_4", "Obsolete generated twist-lock 1/4 coupler", "fitting", "in_stock", 2, 1, 1, "twist_lock", "1/4", "twist_lock", "1/4", { pressureLossPsi: 0.1 }, undefined, true), // NEW
         part("fpt_to_1_4_push_connect_adapter", "Obsolete generated FPT to 1/4 push adapter", "fitting", "in_stock", 2, 1, 1, "fpt", "1/4", "push_connect", "1/4", { pressureLossPsi: 0.1 }, undefined, true), // NEW
         part("twist_lock_tubing_1_2", "Obsolete twist tubing", "pipe_tubing", "in_stock", 0, 1, 1, "twist_lock", "1/2", "twist_lock", "1/2", { innerDiameterIn: 0.6 }, 0.4, true),
-        part("push_connect_tubing_3_4", "Obsolete push tubing", "pipe_tubing", "in_stock", 0, 1, 1, "push_connect", "3/4", "push_connect", "3/4", { innerDiameterIn: 0.824 }, 0.5, true)
+        part("push_connect_tubing_3_4", "Obsolete push tubing", "pipe_tubing", "in_stock", 0, 1, 1, "push_connect", "3/4", "push_connect", "3/4", { innerDiameterIn: 0.824 }, 0.5, true),
+        part("micro_emitter_0_5_gph", "1/4\" drip emitter, 0.5 gph", "emitter", "unknown", 0.45, 1, 0, "barb", "1/4", "", "", { flowGpm: 0.0083, operatingPressurePsi: 15, coveragePattern: "circle", throwRadiusFt: 0.5 }, undefined, true), // NEW
+        part("micro_emitter_1_0_gph", "User tuned emitter", "emitter", "unknown", 1.25, 1, 0, "barb", "1/4", "", "", { flowGpm: 0.02, operatingPressurePsi: 12, coveragePattern: "circle", throwRadiusFt: 0.75 }, undefined, true) // NEW
     ] });
     const stored = JSON.parse(moduleCell.getAttribute(api.attrs.CATALOG_JSON));
-    stored.version = 1;
+    stored.version = 4;
     moduleCell.value.setAttribute(api.attrs.CATALOG_JSON, JSON.stringify(stored));
     const upgraded = api.seedStarterCatalogIfEmpty(moduleCell);
     const filter = upgraded.items.find(item => item.id === "filter");
-    assert.equal(upgraded.version, 4);
+    assert.equal(upgraded.version, 5);
     assert.equal(filter.name, "User Edited Filter");
     assert.equal(filter.cost, 99);
     assert.ok(upgraded.items.some(item => item.id === "poly_mainline_1"));
@@ -1822,6 +1849,8 @@ test("starter catalog upgrade merges new parts into existing catalogs without ov
     assert.ok(upgraded.items.some(item => item.id === "twist_lock_reducing_tee_1_to_3_4")); // CHANGE
     assert.ok(upgraded.items.some(item => item.id === "push_connect_reducing_tee_3_4_to_1_2")); // CHANGE
     assert.equal(upgraded.items.some(item => item.id === "mpt_to_1_2_twist_lock_adapter"), true); // CHANGE
+    assert.ok(upgraded.items.some(item => item.id === "micro_dripline_1_4_non_pc")); // NEW
+    assert.ok(upgraded.items.some(item => item.id === "micro_bubbler_adjustable_1_4")); // NEW
     assert.ok(upgraded.items.some(item => item.id === "custom_micro"));
     assert.ok(upgraded.items.some(item => item.id === "custom_push_quarter")); // NEW
     assert.ok(upgraded.items.some(item => item.id === "twist_lock_tubing_custom"));
@@ -1829,6 +1858,13 @@ test("starter catalog upgrade merges new parts into existing catalogs without ov
     assert.equal(upgraded.items.some(item => item.id === "fpt_to_1_4_push_connect_adapter"), true); // CHANGE
     assert.equal(upgraded.items.some(item => item.id === "twist_lock_tubing_1_2"), true); // CHANGE
     assert.equal(upgraded.items.some(item => item.id === "push_connect_tubing_3_4"), true); // CHANGE
+    const upgradedDefaultEmitter = upgraded.items.find(item => item.id === "micro_emitter_0_5_gph"); // NEW
+    assert.equal(upgradedDefaultEmitter.name, "PC self-piercing drip emitter, 0.5 gph"); // NEW
+    assert.equal(upgradedDefaultEmitter.connectors.input.alternates[0].nominalSize, "1/2"); // NEW
+    const customizedEmitter = upgraded.items.find(item => item.id === "micro_emitter_1_0_gph"); // NEW
+    assert.equal(customizedEmitter.name, "User tuned emitter"); // NEW
+    assert.equal(customizedEmitter.cost, 1.25); // NEW
+    assert.equal(customizedEmitter.connectors.input.alternates.length, 0); // NEW
 });
 
 test("fitting intent grouping infers granular buckets from existing part data", () => { // NEW
@@ -2019,6 +2055,101 @@ test("HUD-originated pointer movement does not change the next creation anchor",
     const sourceAssembly = assemblyCells(moduleCell, api)[0]; // NEW
     assert.equal(sourceAssembly.geometry.x, 240); // NEW
     assert.equal(sourceAssembly.geometry.y, 160); // NEW
+}); // NEW
+
+test("module click anchors irrigation creation entry before source or part mode is chosen", () => { // NEW
+    const sourceEnv = loadPlugin(); // NEW
+    sourceEnv.api.writeCatalog(sourceEnv.moduleCell, sampleCatalog()); // NEW
+    sourceEnv.graph.fireClick(sourceEnv.moduleCell, 280, 190); // NEW
+    sourceEnv.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    sourceEnv.graph.fireMouseMove(640, 420, sourceEnv.graph.container.querySelector(".trellis-irrigation-mode-hud")); // NEW
+    sourceEnv.model.completedEdits = []; // NEW
+    clickButton(sourceEnv.graph.container, "Create Source"); // NEW
+    const sourcePreview = sourceEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-source"); // NEW
+    assert.equal(sourcePreview.style.left, "280px"); // NEW
+    assert.equal(sourcePreview.style.top, "190px"); // NEW
+    assert.equal(sourceEnv.model.completedEdits.length, 0); // NEW
+    clickButton(sourceEnv.graph.container, "Commit Source"); // NEW
+    const sourceAssembly = assemblyCells(sourceEnv.moduleCell, sourceEnv.api)[0]; // NEW
+    assert.equal(sourceEnv.model.completedEdits.length, 1); // NEW
+    assert.equal(sourceAssembly.geometry.x, 280); // NEW
+    assert.equal(sourceAssembly.geometry.y, 190); // NEW
+
+    const partEnv = loadPlugin(); // NEW
+    partEnv.api.writeCatalog(partEnv.moduleCell, sampleCatalog()); // NEW
+    partEnv.graph.fireClick(partEnv.moduleCell, 340, 230); // NEW
+    partEnv.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    partEnv.graph.fireMouseMove(660, 440, partEnv.graph.container.querySelector(".trellis-irrigation-mode-hud")); // NEW
+    partEnv.model.completedEdits = []; // NEW
+    clickButton(partEnv.graph.container, "Add Part"); // NEW
+    const partPreview = partEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-part"); // NEW
+    assert.equal(partPreview.style.left, "340px"); // NEW
+    assert.equal(partPreview.style.top, "230px"); // NEW
+    const select = partEnv.graph.container.querySelector(".trellis-irrigation-add-part-picker"); // NEW
+    select.value = "filter"; // NEW
+    select.dispatchEvent(new partEnv.graph.container.ownerDocument.defaultView.Event("change", { bubbles: true })); // NEW
+    clickButton(partEnv.graph.container.querySelector(".trellis-irrigation-add-assembly-form"), "Add Part"); // NEW
+    const partAssembly = assemblyCells(partEnv.moduleCell, partEnv.api)[0]; // NEW
+    assert.equal(partEnv.model.completedEdits.length, 1); // NEW
+    assert.equal(partAssembly.geometry.x, 340); // NEW
+    assert.equal(partAssembly.geometry.y, 230); // NEW
+}); // NEW
+
+test("module clicks reposition active creation previews without closing irrigation mode", () => { // NEW
+    const sourceEnv = loadPlugin(); // NEW
+    sourceEnv.api.writeCatalog(sourceEnv.moduleCell, sampleCatalog()); // NEW
+    sourceEnv.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    sourceEnv.graph.fireMouseMove(220, 150); // NEW
+    clickButton(sourceEnv.graph.container, "Create Source"); // NEW
+    const label = sourceEnv.graph.container.querySelector(".trellis-irrigation-source-form input"); // NEW
+    label.value = "Well House"; // NEW
+    label.dispatchEvent(new sourceEnv.graph.container.ownerDocument.defaultView.Event("input", { bubbles: true })); // NEW
+    sourceEnv.model.completedEdits = []; // NEW
+    sourceEnv.graph.fireClick(sourceEnv.moduleCell, 520, 310); // NEW
+    const movedSourcePreview = sourceEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-source"); // NEW
+    assert.equal(movedSourcePreview.style.left, "520px"); // NEW
+    assert.equal(movedSourcePreview.style.top, "310px"); // NEW
+    assert.match(movedSourcePreview.textContent, /Well House/); // NEW
+    assert.match(irrigationHeader(sourceEnv.graph.container).textContent, /Create new source/); // NEW
+    assert.equal(buttonByText(sourceEnv.graph.container, "Create Source").getAttribute("aria-pressed"), "true"); // NEW
+    assert.equal(sourceEnv.graph.container.querySelector(".trellis-irrigation-source-form input").value, "Well House"); // NEW
+    assert.equal(sourceEnv.model.completedEdits.length, 0); // NEW
+    clickButton(sourceEnv.graph.container, "Commit Source"); // NEW
+    const sourceAssembly = assemblyCells(sourceEnv.moduleCell, sourceEnv.api)[0]; // NEW
+    assert.equal(sourceAssembly.geometry.x, 520); // NEW
+    assert.equal(sourceAssembly.geometry.y, 310); // NEW
+
+    const partEnv = loadPlugin(); // NEW
+    partEnv.api.writeCatalog(partEnv.moduleCell, sampleCatalog()); // NEW
+    partEnv.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    partEnv.graph.fireMouseMove(260, 180); // NEW
+    clickButton(partEnv.graph.container, "Add Part"); // NEW
+    const select = partEnv.graph.container.querySelector(".trellis-irrigation-add-part-picker"); // NEW
+    select.value = "filter"; // NEW
+    select.dispatchEvent(new partEnv.graph.container.ownerDocument.defaultView.Event("change", { bubbles: true })); // NEW
+    partEnv.model.completedEdits = []; // NEW
+    partEnv.graph.fireClick(partEnv.moduleCell, 540, 330); // NEW
+    const movedPartPreview = partEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-part"); // NEW
+    assert.equal(movedPartPreview.style.left, "540px"); // NEW
+    assert.equal(movedPartPreview.style.top, "330px"); // NEW
+    assert.match(movedPartPreview.textContent, /Filter/); // NEW
+    assert.match(irrigationHeader(partEnv.graph.container).textContent, /Create new part/); // NEW
+    assert.equal(buttonByText(partEnv.graph.container, "Add Part").getAttribute("aria-pressed"), "true"); // NEW
+    assert.equal(partEnv.graph.container.querySelector(".trellis-irrigation-add-part-picker").value, "filter"); // NEW
+    assert.equal(partEnv.model.completedEdits.length, 0); // NEW
+    clickButton(partEnv.graph.container.querySelector(".trellis-irrigation-add-assembly-form"), "Add Part"); // NEW
+    const partAssembly = assemblyCells(partEnv.moduleCell, partEnv.api)[0]; // NEW
+    assert.equal(partAssembly.geometry.x, 540); // NEW
+    assert.equal(partAssembly.geometry.y, 330); // NEW
+}); // NEW
+
+test("module clicks keep irrigation mode open when no creation preview is active", () => { // NEW
+    const env = loadPlugin(); // NEW
+    env.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    assert.match(irrigationHeader(env.graph.container).textContent, /Irrigation Mode/); // NEW
+    env.graph.fireClick(env.moduleCell, 420, 260); // NEW
+    assert.match(irrigationHeader(env.graph.container).textContent, /Irrigation Mode/); // NEW
+    assert.ok(env.graph.container.querySelector(".trellis-irrigation-mode-hud")); // NEW
 }); // NEW
 
 test("source and part assemblies store compact stack row geometry", () => { // NEW
@@ -2428,6 +2559,10 @@ test("inactive irrigation selection shows entry button and opens irrigation mode
     entry.click();
     assert.ok(graph.container.querySelector(".trellis-irrigation-mode-hud"));
     assert.equal(graph.container.querySelector(".trellis-irrigation-enter-mode"), null);
+    assert.equal(graph.container.querySelector(".trellis-irrigation-creation-preview"), null); // NEW
+    clickButton(graph.container, "Exit"); // NEW
+    assert.equal(api.isIrrigationModeActive(), false); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-mode-hud"), null); // NEW
 });
 
 test("selected part and assembly overlays render labeled connection rows with disabled empty choices", () => {
@@ -5145,7 +5280,8 @@ test("opening zone manager is read-only", () => {
     model.completedEdits = [];
     clickButton(graph.container, "Edit Zones");
     assert.ok(ui.lastDialog);
-    assert.match(ui.lastDialog.textContent, /New Manual Zone/);
+    assert.match(ui.lastDialog.textContent, /Irrigation Zones/); // CHANGE
+    assert.doesNotMatch(ui.lastDialog.textContent, /New Manual Zone/); // CHANGE
     assert.equal(model.valuesWritten, writesBeforeOpen);
     assert.equal(model.completedEdits.length, 0);
 });
@@ -5191,7 +5327,7 @@ test("internal architecture facades expose domain seams without changing public 
     assert.equal(api.__test.ZoneModel.normalize({ id: "z", originType: "manual" }).id, "z");
 });
 
-test("ZoneModel preserves inferred zones, manual overrides, ambiguous beds, and unzoned beds", () => {
+test("ZoneModel preserves inferred zones, ignores manual records, ambiguous beds, and unzoned beds", () => { // CHANGE
     const { api, moduleCell, bed, bed2 } = loadPlugin();
     const catalog = addDripTapeBomParts(sampleCatalog()); // CHANGE
     catalog.items.push(part("timer_two", "Two Zone Timer", "controller_timer", "in_stock", 40, 1, 2, "barb", "1/2", "barb", "1/2", { maxFlowGpm: 3 }, undefined, true));
@@ -5207,10 +5343,12 @@ test("ZoneModel preserves inferred zones, manual overrides, ambiguous beds, and 
     const summary = api.__test.ZoneModel.summary(moduleCell, zones, []);
     assert.equal(summary.emptyZoneCount, 1);
     assert.equal(JSON.stringify(summary.unzonedBedIds), JSON.stringify([bedTwo.assembly.getId()]));
-    const manual = api.__test.ZoneModel.createManual(moduleCell, "North", [bedTwo.assembly.getId()]);
-    assert.equal(api.__test.ZoneModel.resolveMembership(moduleCell, api.__test.ZoneModel.read(moduleCell)).assignment.get(bedTwo.assembly.getId()).zoneId, manual.id);
+    api.__test.ZoneModel.assignBeds(moduleCell, zones[0].id, [bedTwo.assembly.getId()]); // CHANGE
+    assert.equal(api.__test.ZoneModel.resolveMembership(moduleCell, api.__test.ZoneModel.read(moduleCell)).assignment.get(bedTwo.assembly.getId()).zoneId, zones[0].id); // CHANGE
     api.__test.ZoneModel.resetBedOverrides(moduleCell, [bedTwo.assembly.getId()]);
     assert.equal(api.__test.ZoneModel.resolveMembership(moduleCell, api.__test.ZoneModel.read(moduleCell)).assignment.has(bedTwo.assembly.getId()), false);
+    moduleCell.value.setAttribute(api.attrs.ZONES_JSON, JSON.stringify({ version: 1, zones: [{ id: "legacy_manual", originType: "manual", alias: "Legacy", pinnedBedIds: [bedTwo.assembly.getId()] }] })); // NEW
+    assert.equal(api.__test.ZoneModel.read(moduleCell).some(zone => zone.id === "legacy_manual"), false); // NEW
     const ambiguous = api.__test.ZoneModel.resolveMembership(moduleCell, [
         api.__test.ZoneModel.normalize({ id: "zone_a", inferredBedIds: [bedOne.assembly.getId()] }),
         api.__test.ZoneModel.normalize({ id: "zone_b", inferredBedIds: [bedOne.assembly.getId()] })

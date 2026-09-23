@@ -92,16 +92,18 @@ test('local today follows timezone calendar dates across DST and UTC date bounda
 test('view normalization independently defaults and clamps each perspective without mutation', () => { // NEW
     const defaults = { scales: DEFAULT_SCALES, multiplier: 1, leftHidden: 3, rightHidden: 0 }; // CHANGE
     for (const value of [undefined, null, false, 'bad', []]) { // NEW
-        assert.deepEqual(core.normalizeView(value), { perspective: 'today', today: defaults, inception: defaults }); // NEW
+        assert.deepEqual(core.normalizeView(value), { perspective: 'today', pricingEnabled: false, pricingCheckpointDay: null, today: defaults, inception: defaults }); // CHANGE
     } // NEW
-    const input = freezeDeep({ perspective: 'inception', today: { scales: [1, 0, -1, Infinity, NaN, '2', 0.5, 8, 9], multiplier: 2, leftHidden: 99, rightHidden: -1 }, inception: { scales: [9], multiplier: 0, leftHidden: 2.9, rightHidden: 99 } }); // NEW
+    const input = freezeDeep({ perspective: 'inception', pricingEnabled: true, pricingCheckpointDay: ANCHOR + 14, today: { scales: [1, 0, -1, Infinity, NaN, '2', 0.5, 8, 9], multiplier: 2, leftHidden: 99, rightHidden: -1 }, inception: { scales: [9], multiplier: 0, leftHidden: 2.9, rightHidden: 99 } }); // CHANGE
     const view = core.normalizeView(input); // NEW
+    assert.equal(view.pricingEnabled, true); assert.equal(view.pricingCheckpointDay, ANCHOR + 14); // NEW
     assert.deepEqual(view.today, { scales: [1, DEFAULT_SCALES[1], DEFAULT_SCALES[2], DEFAULT_SCALES[3], DEFAULT_SCALES[4], DEFAULT_SCALES[5], 0.5, 8], multiplier: 2, leftHidden: 3, rightHidden: 0 }); // CHANGE
     assert.deepEqual(view.inception, { scales: [9, DEFAULT_SCALES[1], DEFAULT_SCALES[2], DEFAULT_SCALES[3], DEFAULT_SCALES[4], DEFAULT_SCALES[5], DEFAULT_SCALES[6], DEFAULT_SCALES[7]], multiplier: 1, leftHidden: 2, rightHidden: 4 }); // CHANGE
     view.today.scales[0] = 100; // NEW
     assert.equal(view.inception.scales[0], 9); // NEW
     assert.equal(input.today.scales[0], 1); // NEW
     assert.equal(core.normalizeView({ perspective: 'unknown' }).perspective, 'today'); // NEW
+    assert.equal(core.normalizeView({ pricingEnabled: 'yes', pricingCheckpointDay: 0.5 }).pricingEnabled, false); // NEW
 }); // NEW
 
 test('default user view hides past columns and gives nominal 75px/400px widths', () => { // NEW
@@ -257,6 +259,35 @@ test('every title-case transition preserves stored progress except Done and forb
     assert.deepEqual(core.transitionStatus({ status: 'Doing', progress: -5 }, 'Blocked'), { status: 'Blocked', progress: 0 }); // NEW
     assert.deepEqual(core.transitionStatus({ status: 'Done', progress: 12 }, 'Doing'), { status: 'Doing', progress: 100 }); // NEW
     assert.throws(() => core.transitionStatus({ status: 'Doing', progress: 12 }, 'done'), /Unknown/); // NEW
+}); // NEW
+ // NEW
+test('cost totals use inclusive durations and ignore malformed pricing without disrupting summaries', () => { // NEW
+    const objects = freezeDeep([ // NEW
+        { start: 0, end: 0, costMode: 'fixed', costAmount: 100 }, // NEW
+        { start: 0, end: 2, costMode: 'per_day', costAmount: 50 }, // NEW
+        { start: 0, end: 4, costMode: 'per_day', costAmount: 'bad' }, // NEW
+        { start: 2, end: 1, costMode: 'fixed', costAmount: 99 }, // NEW
+        { start: 0, end: 0, costMode: 'other', costAmount: 99 } // NEW
+    ]); // NEW
+    assert.equal(core.costTotal(objects[0]), 100); // NEW
+    assert.equal(core.costTotal(objects[1]), 150); // NEW
+    assert.equal(core.costTotal(objects[2]), 0); // NEW
+    assert.equal(core.costTotal(objects[3]), 0); // NEW
+    assert.deepEqual(core.costSummary(objects, { today: 0, checkpoint: 2 }), { total: 250, checkpointTotal: 250, checkpointDay: 2 }); // NEW
+    assert.deepEqual(core.progressSummary([{ start: 0, end: 0, status: 'Done' }]), { percent: 100, blockedCount: 0 }); // NEW
+}); // NEW
+ // NEW
+test('checkpoint funding counts remaining overlap from today through a clamped checkpoint', () => { // CHANGE
+    const objects = freezeDeep([ // NEW
+        { start: 1, end: 4, costMode: 'fixed', costAmount: 25 }, // CHANGE
+        { start: 4, end: 6, costMode: 'fixed', costAmount: 30 }, // CHANGE
+        { start: 4, end: 8, costMode: 'per_day', costAmount: 10 }, // CHANGE
+        { start: 7, end: 7, costMode: 'fixed', costAmount: 40 }, // NEW
+        { start: 8, end: 8, costMode: 'fixed', costAmount: 80 } // NEW
+    ]); // NEW
+    assert.deepEqual(core.costSummary(objects, { today: 5, checkpoint: 7 }), { total: 225, checkpointTotal: 100, checkpointDay: 7 }); // CHANGE
+    assert.deepEqual(core.costSummary(objects, { today: 5, checkpoint: 2 }), { total: 225, checkpointTotal: 40, checkpointDay: 5 }); // CHANGE
+    assert.throws(() => core.costSummary({}, { today: 5 }), /array/); // NEW
 }); // NEW
  // NEW
 test('layout uses board/process coordinate spaces, inclusive widths, and fixed dimensions', () => { // NEW

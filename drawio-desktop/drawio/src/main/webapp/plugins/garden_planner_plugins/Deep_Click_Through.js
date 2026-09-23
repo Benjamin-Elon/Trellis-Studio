@@ -436,21 +436,10 @@ Draw.loadPlugin(function (ui) {
         return !!evt && Number(evt.detail || 0) > 1;
     }
 
-    function shouldCloseGardenModuleIrrigationOnPlainClick(graph, cell, evt) {
-        return !isDoubleClickOrTextEditClick(evt) && isGardenModule(cell) && isOnlySelectedCell(graph, cell);
-    }
-
     function clearSelection(graph) {
         if (graph && graph.clearSelection) graph.clearSelection();
         else if (graph && graph.setSelectionCells) graph.setSelectionCells([]);
         else if (graph && graph.setSelectionCell) graph.setSelectionCell(null);
-    }
-
-    function closeIrrigationModeIfAvailable(graph) {
-        const graphApi = graph && graph.__trellisIrrigationPlanner;
-        const windowApi = typeof window !== 'undefined' && window.TrellisIrrigationPlanner;
-        const close = graphApi && graphApi.closeIrrigationMode || windowApi && windowApi.closeIrrigationMode;
-        if (typeof close === 'function') close();
     }
 
     function irrigationPlannerApiForWorkspaceDrag() { // CHANGE
@@ -670,8 +659,6 @@ Draw.loadPlugin(function (ui) {
             this.addSelectionCell(cell);
             return;
         }
-
-        if (shouldCloseGardenModuleIrrigationOnPlainClick(this, cell, evt)) closeIrrigationModeIfAvailable(this);
 
         this.setSelectionCell(cell);
     };

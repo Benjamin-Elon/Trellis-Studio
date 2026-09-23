@@ -3379,20 +3379,24 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function canConsiderBedPathSnapForCells(cells, evt, clone, target) {
-        return !!resolveBedPathSnapMoveContext(cells, evt, clone, target, { singleBedOnly: true }); // CHANGE
+        if (clone || target || (evt && mxEvent.isAltDown && mxEvent.isAltDown(evt))) return false; // CHANGE
+        const snapCells = (cells || []).filter(Boolean); // CHANGE
+        return snapCells.length === 1 && isAxisAlignedPathSnapBed(snapCells[0]) && !!findGardenModuleAncestor(graph, snapCells[0]); // CHANGE
     } // NEW
 
-    function resolveBedPathSnapMoveContext(cells, evt, clone, target, opts) {
-        if (clone || target || (evt && mxEvent.isAltDown && mxEvent.isAltDown(evt))) return null; // CHANGE
+    function resolveBedPathSnapMoveContext(cells, evt, clone, target) {
+        if (clone || !evt || (mxEvent.isAltDown && mxEvent.isAltDown(evt))) return null; // CHANGE
         const moveCells = (cells || []).filter(Boolean); // CHANGE
-        if (moveCells.length === 1 && isAxisAlignedPathSnapBed(moveCells[0]) && !!findGardenModuleAncestor(graph, moveCells[0])) {
-            return { bedCell: moveCells[0], moveCells: [moveCells[0]], source: "single-bed" }; // CHANGE
-        } // CHANGE
-        if (opts && opts.singleBedOnly) return null; // CHANGE
-        if (graph.__trellisWorkspaceHandleDragActive !== true || moveCells.length < 2) return null; // CHANGE
+        const workspaceHandleDrag = graph.__trellisWorkspaceHandleDragActive === true; // CHANGE
+        if (target && !workspaceHandleDrag) return null; // CHANGE
         const bedCell = moveCells[0]; // CHANGE
-        if (!isAxisAlignedPathSnapBed(bedCell) || !findGardenModuleAncestor(graph, bedCell)) return null; // CHANGE
-        return { bedCell, moveCells: moveCells.slice(), source: "workspace-handle" }; // CHANGE
+        const moduleCell = isAxisAlignedPathSnapBed(bedCell) ? findGardenModuleAncestor(graph, bedCell) : null; // CHANGE
+        if (moveCells.length === 1 && moduleCell) {
+            return { bedCell, moveCells: [bedCell], moduleCell, source: "single-bed" }; // CHANGE
+        } // CHANGE
+        if (!workspaceHandleDrag || moveCells.length < 2) return null; // CHANGE
+        if (!moduleCell) return null; // CHANGE
+        return { bedCell, moveCells: moveCells.slice(), moduleCell, source: "workspace-handle" }; // CHANGE
     } // CHANGE
 
     function applyBedPathSnapDeltaNoTxn(model, cells, dx, dy) {
@@ -3413,18 +3417,24 @@ Draw.loadPlugin(function (ui) {
         return changed; // CHANGE
     } // CHANGE
 
-    function applyBedPathSnapNoTxn(model, bedCell, opts) {
-        if (!model || !bedCell || !isAxisAlignedPathSnapBed(bedCell)) return null; // NEW
-        if (opts && opts.event && mxEvent.isAltDown && mxEvent.isAltDown(opts.event)) return null; // NEW
-        const moduleCell = findGardenModuleAncestor(graph, bedCell); // NEW
-        const rect = getModelRect(bedCell); // NEW
-        if (!moduleCell || !rect) return null; // NEW
-        const evaluation = evaluateBedPathSnap(moduleCell, bedCell, rect); // NEW
-        if (!evaluation || (!evaluation.dx && !evaluation.dy)) return evaluation; // NEW
-        const changed = applyBedPathSnapDeltaNoTxn(model, (opts && opts.moveCells) || [bedCell], evaluation.dx, evaluation.dy); // CHANGE
+    function applyBedPathSnapEvaluationNoTxn(model, context, opts) {
+        const bedCell = context && context.bedCell; // CHANGE
+        const moduleCell = context && context.moduleCell; // CHANGE
+        if (!model || !bedCell || !moduleCell || !isAxisAlignedPathSnapBed(bedCell)) return null; // CHANGE
+        if (opts && opts.event && mxEvent.isAltDown && mxEvent.isAltDown(opts.event)) return null; // CHANGE
+        const rect = getModelRect(bedCell); // CHANGE
+        if (!rect) return null; // CHANGE
+        const evaluation = evaluateBedPathSnap(moduleCell, bedCell, rect); // CHANGE
+        if (!evaluation || (!evaluation.dx && !evaluation.dy)) return evaluation; // CHANGE
+        const changed = applyBedPathSnapDeltaNoTxn(model, (context && context.moveCells) || [bedCell], evaluation.dx, evaluation.dy); // CHANGE
         evaluation.applied = changed.length > 0; // CHANGE
         evaluation.appliedCells = changed; // CHANGE
-        return evaluation; // NEW
+        return evaluation; // CHANGE
+    } // CHANGE
+
+    function applyBedPathSnapNoTxn(model, bedCell, opts) {
+        const moduleCell = bedCell && isAxisAlignedPathSnapBed(bedCell) ? findGardenModuleAncestor(graph, bedCell) : null; // CHANGE
+        return applyBedPathSnapEvaluationNoTxn(model, { bedCell, moduleCell, moveCells: (opts && opts.moveCells) || [bedCell] }, opts); // CHANGE
     } // NEW
 
     function installBedPathSnapOverlay() {
@@ -6460,7 +6470,7 @@ Draw.loadPlugin(function (ui) {
             model.beginUpdate(); // NEW
             try { // NEW
                 res = oldMoveCells.call(this, cells, dx, dy, clone, target, evt, mapping); // NEW
-                applyBedPathSnapNoTxn(model, snapContext.bedCell, { source: "bed-moved", event: evt, moveCells: snapContext.moveCells }); // CHANGE
+                applyBedPathSnapEvaluationNoTxn(model, snapContext, { source: "bed-moved", event: evt }); // CHANGE
             } finally { // NEW
                 model.endUpdate(); // NEW
             } // NEW

@@ -267,33 +267,14 @@ test("plain second-click on sole-selected garden module keeps selection", () => 
     assert.deepEqual(getSelected(), [gardenModule]);
 });
 
-test("plain second-click on selected garden module closes graph-local irrigation mode without clearing selection", () => {
-    const { graph, gardenModule, getSelected } = makeHarness();
-    const closeCalls = [];
-    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
-    graph.setSelectionCell(gardenModule);
-    plainClick(graph, gardenModule);
-    assert.deepEqual(closeCalls, ["graph"]);
-    assert.deepEqual(getSelected(), [gardenModule]);
-});
-
-test("graph-local irrigation close is preferred over window fallback", () => {
-    const { graph, window, gardenModule } = makeHarness();
-    const closeCalls = [];
-    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
-    window.TrellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("window"); } };
-    graph.setSelectionCell(gardenModule);
-    plainClick(graph, gardenModule);
-    assert.deepEqual(closeCalls, ["graph"]);
-});
-
-test("window irrigation close is used when graph-local API is unavailable", () => {
+test("plain second-click on selected garden module does not close irrigation mode", () => {
     const { graph, window, gardenModule, getSelected } = makeHarness();
     const closeCalls = [];
+    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
     window.TrellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("window"); } };
     graph.setSelectionCell(gardenModule);
     plainClick(graph, gardenModule);
-    assert.deepEqual(closeCalls, ["window"]);
+    assert.deepEqual(closeCalls, []);
     assert.deepEqual(getSelected(), [gardenModule]);
 });
 
