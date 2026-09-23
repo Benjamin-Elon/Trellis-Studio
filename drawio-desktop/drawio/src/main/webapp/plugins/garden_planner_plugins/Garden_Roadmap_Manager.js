@@ -258,7 +258,7 @@ Draw.loadPlugin(function (ui) {
             geometry.set(id(cell), new mxGeometry(PAD + column.x, 0, column.width, height));
             if (!column.visible) hidden.add(id(cell));
         });
-        typedChildren(board, 'marker').forEach(cell => geometry.set(id(cell), new mxGeometry(PAD + core.dayToX(timeline, anchor), HEADER - 10, 1, height - HEADER + 10)));
+        typedChildren(board, 'marker').forEach(cell => { geometry.set(id(cell), new mxGeometry(PAD + core.dayToX(timeline, anchor), HEADER - 10, 1, height - HEADER + 10)); hidden.add(id(cell)); }); // CHANGE: legacy graph marker cells are compatibility data; the visible today line is the selection-scoped DOM overlay.
         const saved = model.getGeometry(board) || new mxGeometry(PAD, PAD, 1, 1);
         geometry.set(id(board), new mxGeometry(saved.x, saved.y, timeline.width + PAD * 2, height));
         return { board, records, timeline, geometry, hidden, clipped, width: timeline.width + PAD * 2, height, anchor, packedProcesses, perspective: state.perspective }; // CHANGE
@@ -354,7 +354,7 @@ Draw.loadPlugin(function (ui) {
         const process = makeProcess(board, 'Planning', lastToday, lastToday + 30);
         makeObject(process, 'First Step', lastToday, lastToday + 7);
         ['Past Year', 'Past Month', 'Past Week', 'This Week', 'Next Week', 'Next Month', 'Next Year', 'Future'].forEach((name, index) => vertex(board, 'timeframe', name, FRAME_STYLE, { roadmap_timeframe_index: index }));
-        vertex(board, 'marker', '', 'fillColor=#2563eb;strokeColor=#2563eb;resizable=0;movable=0;selectable=0;connectable=0;'); // CHANGE
+        vertex(board, 'marker', '', 'fillColor=none;strokeColor=none;opacity=0;resizable=0;movable=0;selectable=0;connectable=0;'); // CHANGE: keep legacy marker cell for old documents without rendering a second today line.
         const garden = model.getCell(attr(moduleCell, 'roadmap_garden_module_id'));
         if (garden) allCells().filter(cell => attr(cell, 'trellis_role_garden_module_id') === id(garden) && attr(cell, 'trellis_role_user_id')).forEach(roleCell => link(board, roleCell));
         saveCanonicalLayout(board);
@@ -747,7 +747,7 @@ Draw.loadPlugin(function (ui) {
         if (kind(cell) === 'object') { // CHANGE
             return Object.assign({}, style, { movable: 1, resizable: 1, editable: 0, rotatable: 0, recursiveResize: 0 }); // CHANGE
         } // NEW
-        if (kind(cell) === 'marker') return Object.assign({}, style, { fillColor: '#2563eb', strokeColor: '#2563eb' }); // CHANGE
+        if (kind(cell) === 'marker') return Object.assign({}, style, { fillColor: 'none', strokeColor: 'none', opacity: 0 }); // CHANGE: marker visuals moved to renderTodayLine so selection rules are centralized.
         if (kind(cell) !== 'timeframe') return style;
         const board = ancestor(cell, 'board'), layout = getLayout(board), timeline = gesture && gesture.board === board && gesture.layout.timeline || layout.timeline, column = timeline.columns[Number(attr(cell, 'roadmap_timeframe_index'))]; // CHANGE
         return Object.assign({}, style, { resizable: 1, movable: 0, rotatable: 0, roadmapFrameStart: column.start, roadmapFrameEnd: column.end, roadmapFrameAnchor: layout.anchor, roadmapFrameScale: column.scale, roadmapFrameStep: column.tickStep, roadmapFrameTickUnit: column.tickUnit }); // CHANGE

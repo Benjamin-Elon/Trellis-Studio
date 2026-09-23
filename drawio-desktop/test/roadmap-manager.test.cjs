@@ -68,7 +68,8 @@ test('Main creation is usable, idempotent, inclusive, and gives secondary projec
     assert.equal(h.api.ensureMainRoadmapInRoadmapModule(h.module), h.board);
     assert.equal(h.typed(h.board, 'timeframe').length, 8);
     assert.equal(h.typed(h.board, 'marker').length, 1);
-    assert.equal(h.graph.getCellStyle(h.typed(h.board, 'marker')[0]).strokeColor, '#2563eb'); // CHANGE
+    assert.equal(h.graph.isCellVisible(h.typed(h.board, 'marker')[0]), false); // CHANGE: legacy marker cells must not render a second today line.
+    assert.equal(h.graph.getCellStyle(h.typed(h.board, 'marker')[0]).strokeColor, 'none'); // CHANGE
     assert.equal(h.process.getAttribute('label'), 'Planning');
     assert.equal(h.object.getAttribute('label'), 'First Step');
     assert.equal(h.board.getAttribute('roadmap_header_version'), '1'); // NEW
@@ -696,7 +697,7 @@ test('pricing checkpoint click creates a red funding line for remaining cost thr
     const state = h.graph.view.getState(h.board), layout = h.api.getLayout(h.board), x = state.x + (12 + c.dayToX(layout.timeline, today + 7)) * h.graph.view.scale; // NEW
     const todayLine = h.graph.container.querySelector('.trellis-roadmap-today-line'), todayX = state.x + (12 + c.dayToX(layout.timeline, today)) * h.graph.view.scale; // NEW
     assert.ok(todayLine); assert.equal(parseInt(todayLine.style.left, 10), Math.round(todayX)); assert.match(todayLine.getAttribute('style'), /#2563eb|rgb\(37,\s*99,\s*235\)/); // NEW
-    h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); assert.equal(h.graph.container.querySelector('.trellis-roadmap-today-line'), null); // NEW
+    h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); assert.equal(h.graph.container.querySelector('.trellis-roadmap-today-line'), null); assert.equal(h.graph.isCellVisible(h.typed(h.board, 'marker')[0]), false); // CHANGE
     assert.ok(Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-cost-badge')).some(node => node.textContent === '$325')); // NEW
     h.graph.container.dispatchEvent(new h.w.MouseEvent('click', { bubbles: true, clientX: x, clientY: state.y + 10 })); await frame(h); // NEW
     assert.equal(h.api.getViewState(h.board).pricingCheckpointDay, today + 7); // NEW

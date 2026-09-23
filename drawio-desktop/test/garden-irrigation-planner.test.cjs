@@ -1802,6 +1802,22 @@ test("generated twist-lock and push-connect connectors infer pipe edges by size"
     assert.match(mismatch.reason, /Pipe Edge size mismatch/);
 });
 
+test("starter PC drip emitters connect to 1/2 barb hosts through connector alternates", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const catalog = api.readCatalog(moduleCell); // NEW
+    const emitterPart = catalog.items.find(item => item.id === "micro_emitter_1_0_gph"); // NEW
+    const halfSource = api.__test.createSourceAssembly(moduleCell, "Half host", { connectorType: "barb", nominalSize: "1/2", pipeConnection: true, usableFlowGpm: 2, staticPressurePsi: 35 }, { x: 30, y: 40 }); // NEW
+    const halfEmitter = api.__test.createPartAssembly(moduleCell, emitterPart, { x: 30, y: 180 }); // NEW
+    const halfConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(halfSource.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(halfEmitter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(halfConnection.ok, true, halfConnection.reason); // NEW
+    const threeQuarterSource = api.__test.createSourceAssembly(moduleCell, "Three-quarter host", { connectorType: "barb", nominalSize: "3/4", pipeConnection: true, usableFlowGpm: 2, staticPressurePsi: 35 }, { x: 340, y: 40 }); // NEW
+    const threeQuarterEmitter = api.__test.createPartAssembly(moduleCell, emitterPart, { x: 340, y: 180 }); // NEW
+    const threeQuarterConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(threeQuarterSource.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(threeQuarterEmitter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(threeQuarterConnection.ok, false); // NEW
+    assert.match(threeQuarterConnection.reason, /size mismatch/i); // NEW
+}); // NEW
+
 test("hydraulics use minimum operating psi and warn over maximum operating psi", () => {
     const { api, model } = loadPlugin();
     const catalog = { items: [part("spray", "Spray", "sprinkler", "in_stock", 10, 1, 1, "barb", "1/2", "barb", "1/2", { flowGpm: 1, minOperatingPressurePsi: 10, maxOperatingPressurePsi: 20, pressureLossPsi: 0 }, undefined, true)] };

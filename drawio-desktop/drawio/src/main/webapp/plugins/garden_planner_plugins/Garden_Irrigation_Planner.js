@@ -1202,18 +1202,23 @@ Draw.loadPlugin(function (ui) {
         return [primary].concat((primary.alternates || []).map(normalizeConnectorRecordShallow)); // NEW
     } // NEW
 
-    function connectorRecordsMatch(sourceConnector, targetConnector, endpointRequirement) {
+    function connectorRecordsMatchingPair(sourceConnector, targetConnector, endpointRequirement) { // NEW
         const sourceCandidates = connectorRecordMatchCandidates(sourceConnector); // NEW
         const targetCandidates = connectorRecordMatchCandidates(targetConnector); // NEW
         let firstFailure = null; // NEW
         for (let i = 0; i < sourceCandidates.length; i++) { // NEW
             for (let j = 0; j < targetCandidates.length; j++) { // NEW
                 const result = connectorRecordsMatchSingle(sourceCandidates[i], targetCandidates[j], endpointRequirement); // NEW
-                if (result.ok) return result; // NEW
+                if (result.ok) return { ok: true, reason: "", sourceConnector: sourceCandidates[i], targetConnector: targetCandidates[j], result }; // NEW
                 if (!firstFailure) firstFailure = result; // NEW
             } // NEW
         } // NEW
-        return firstFailure || { ok: false, reason: "Missing connector." }; // NEW
+        return Object.assign({ ok: false, sourceConnector: null, targetConnector: null }, firstFailure || { reason: "Missing connector." }); // NEW
+    } // NEW
+
+    function connectorRecordsMatch(sourceConnector, targetConnector, endpointRequirement) {
+        const pair = connectorRecordsMatchingPair(sourceConnector, targetConnector, endpointRequirement); // NEW
+        return pair.ok ? pair.result : { ok: false, reason: pair.reason }; // NEW
     }
 
     function canConnectParts(previousPart, nextPart, endpointRequirement) {
@@ -2748,16 +2753,16 @@ Draw.loadPlugin(function (ui) {
     }
 
     function connectorConnectionMode(moduleCell, sourceConnector, targetConnector) {
-        if (ConnectorRules.connectorsRequirePipe(sourceConnector, targetConnector)) {
-            const pipeMatch = ConnectorRules.pipeConnectorMatches(sourceConnector, targetConnector);
-            if (!pipeMatch.ok) { irrigationDebug("connectorConnectionMode:rejected", { reason: pipeMatch.reason, mode: "pipe-match", sourceConnector, targetConnector }); return pipeMatch; }
-            const pipePartId = ConnectorRules.autoPipePartIdForConnection(moduleCell, sourceConnector, targetConnector);
+        const matched = connectorRecordsMatchingPair(sourceConnector, targetConnector, null); // NEW
+        if (matched.ok && connectorRecordsRequirePipe(matched.sourceConnector, matched.targetConnector)) { // CHANGE
+            const pipePartId = ConnectorRules.autoPipePartIdForConnection(moduleCell, matched.sourceConnector, matched.targetConnector); // CHANGE
             if (!pipePartId) { const rejected = { ok: false, reason: "No compatible pipe part found for this connection." }; irrigationDebug("connectorConnectionMode:rejected", { reason: rejected.reason, mode: "pipe-part", sourceConnector, targetConnector }); return rejected; }
             return { ok: true, reason: "", mode: "pipe", pipePartId };
         }
-        const direct = ConnectorRules.connectorMatches(sourceConnector, targetConnector, null);
-        if (!direct.ok) irrigationDebug("connectorConnectionMode:rejected", { reason: direct.reason, mode: "direct", sourceConnector, targetConnector });
-        return direct.ok ? { ok: true, reason: "", mode: "direct" } : direct;
+        if (matched.ok) return { ok: true, reason: "", mode: "direct" }; // NEW
+        const rejected = { ok: false, reason: matched.reason }; // CHANGE
+        irrigationDebug("connectorConnectionMode:rejected", { reason: rejected.reason, mode: ConnectorRules.connectorsRequirePipe(sourceConnector, targetConnector) ? "pipe-match" : "direct", sourceConnector, targetConnector }); // CHANGE
+        return rejected; // CHANGE
     }
 
     function validatePortConnectionStructure(moduleCell, sourcePort, targetPort) {
