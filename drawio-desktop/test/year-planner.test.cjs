@@ -260,6 +260,21 @@ test("PlanningCore treats CSA components as committed demand", () => {
     assert.equal(coverage.totals.targetKg, 10);
 });
 
+test("PlanningCore coverage week summaries expose canonical week start dates", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }));
+    addDemand(plan, { qty: 5, from: "2026-06-01", to: "2026-06-07" });
+
+    const coverage = api.PlanningCore.computeYearCoverage({ plan, year: 2026 });
+    const targetWeekIndex = api.PlanMath.weekIndexForDate(coverage.weekStarts, "2026-06-01");
+    const targetWeek = coverage.weekSummaries[targetWeekIndex];
+
+    assert.equal(targetWeek.start, coverage.weekStarts[targetWeekIndex].iso);
+    assert.match(targetWeek.start, /^\d{4}-\d{2}-\d{2}$/);
+    assert.ok(targetWeek.shortKg > 0);
+});
+
 test("PlanningCore recommends the smallest whole plant count for reachable shortage", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);

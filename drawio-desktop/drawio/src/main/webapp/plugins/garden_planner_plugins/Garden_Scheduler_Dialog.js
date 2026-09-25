@@ -15259,6 +15259,94 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
+    function isoWindowsOverlap(aStart, aEnd, bStart, bEnd) {
+        if (!aStart || !aEnd || !bStart || !bEnd) return false;
+        return String(aStart) <= String(bEnd) && String(aEnd) >= String(bStart);
+    }
+
+    async function proposeLifecycleForDemandWindow(options = {}) {
+        try {
+            const targetStartISO = String(options.targetStartISO || options.demandStartISO || "").trim();
+            const targetEndISO = String(options.targetEndISO || options.demandEndISO || "").trim() || targetStartISO;
+            if (!targetStartISO) return { ok: false, status: "structural_failure", reason: "Target demand week is required.", taskPreview: [] };
+            const plant = options.plant instanceof PlantModel ? options.plant : new PlantModel(options.plant || {});
+            const city = options.city instanceof CityClimate ? options.city : new CityClimate(options.city || {});
+            const methodId = normId(options.methodId || plant.default_planting_method || "direct_sow.field");
+            const behavior = resolveMethodBehavior({ methodCategoryId: options.methodCategoryId || "", methodId });
+            const effectiveTransplantDays = normalizeTransplantDays(options.effectiveTransplantDays ?? plant.days_transplant) ?? 0;
+            const seasonStartYear = Number(options.seasonStartYear || targetStartISO.slice(0, 4));
+            const scanStartISO = String(options.scanStartISO || `${seasonStartYear}-01-01`);
+            const scanEndISO = String(options.scanEndISO || targetEndISO);
+            const candidates = datesBetweenISO(scanStartISO, scanEndISO).reverse();
+            const policy = options.policy || new PolicyFlags({
+                useSpringFrostGate: options.useSpringFrostGate !== false,
+                useSoilTempGate: options.useSoilTempGate !== false && behavior.usesSoilTempGate !== false,
+                overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
+            });
+            let lastFailure = null;
+            for (const sowISO of candidates) {
+                const primaryDateISO = behavior.planningMode === "transplant_indoor"
+                    ? primaryDateFromSowDate(sowISO, methodId, effectiveTransplantDays)
+                    : sowISO;
+                let harvestStart = "";
+                let harvestEnd = "";
+                try {
+                    const candidateInputs = new sharedCore.ScheduleInputs({
+                        plant,
+                        city,
+                        planningMode: behavior.planningMode,
+                        methodCategoryId: behavior.methodCategoryId,
+                        methodId,
+                        startISO: sowISO,
+                        seasonEndISO: String(options.seasonEndISO || `${seasonStartYear}-12-31`),
+                        seasonStartYear,
+                        harvestWindowDays: resolveHarvestWindowDays(plant, options.harvestWindowDays),
+                        minYieldMultiplier: Number(options.minYieldMultiplier || 0),
+                        policy,
+                        dailyClimate: options.dailyClimate || null,
+                        bedProfile: normalizeBedProfile(options.bedProfile || null),
+                        bedProfileSource: String(options.bedProfileSource || "allocation bed")
+                    });
+                    const candidateResult = computeScheduleResult(candidateInputs);
+                    harvestStart = candidateResult && candidateResult.timelines && candidateResult.timelines[0] && fmtISO(candidateResult.timelines[0].harvestStart) || "";
+                    harvestEnd = candidateResult && candidateResult.timelines && candidateResult.timelines[0] && fmtISO(candidateResult.timelines[0].harvestEnd) || "";
+                } catch (error) {
+                    lastFailure = { reason: error && error.message ? error.message : String(error || "candidate failed") };
+                    continue;
+                }
+                if (!isoWindowsOverlap(harvestStart, harvestEnd, targetStartISO, targetEndISO)) continue;
+                const proposal = await proposeLifecycle(Object.assign({}, options, {
+                    methodId,
+                    methodCategoryId: behavior.methodCategoryId,
+                    primaryDateISO,
+                    weekStartISO: "",
+                    weekEndISO: "",
+                    chooseBestFeasibleDay: false,
+                    seasonStartYear
+                }));
+                if (!proposal || !proposal.ok) return proposal;
+                return Object.assign({}, proposal, {
+                    startISO: proposal.startISO || sowISO,
+                    targetDemandStartISO: targetStartISO,
+                    targetDemandEndISO: targetEndISO
+                });
+            }
+            return {
+                ok: false,
+                status: "structural_failure",
+                reason: lastFailure && lastFailure.reason || "No feasible sow/start date can satisfy this demand week.",
+                taskPreview: []
+            };
+        } catch (error) {
+            return {
+                ok: false,
+                status: "structural_failure",
+                reason: error && error.message ? error.message : String(error || "Unable to calculate lifecycle for demand week."),
+                taskPreview: []
+            };
+        }
+    }
+
     async function openDraftScheduleDialog(ui, draft, callbacks = {}) {
         const current = Object.assign({}, draft || {});
         const proposal = current.lifecycle || current.scheduleProposal || null;
@@ -15728,6 +15816,7 @@ Draw.loadPlugin(function (ui) {
         resolvePlantForPlanCrop,
         resolveCityForModule,
         proposeLifecycle,
+        proposeLifecycleForDemandWindow,
         openDraftScheduleDialog,
         layoutTools
     });
@@ -16255,6 +16344,7 @@ Draw.loadPlugin(function (ui) {
             resolvePlantForPlanCrop: async function () { return { ok: false, reason: message }; },
             resolveCityForModule: async function () { return { ok: false, reason: message }; },
             proposeLifecycle: async function () { return { ok: false, status: "structural_failure", reason: message, taskPreview: [] }; },
+            proposeLifecycleForDemandWindow: async function () { return { ok: false, status: "structural_failure", reason: message, taskPreview: [] }; },
             openDraftScheduleDialog: async function () { throw new Error(message); }
         });
         window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
@@ -16389,6 +16479,7 @@ Draw.loadPlugin(function (ui) {
             resolvePlantForPlanCrop,
             resolveCityForModule,
             proposeLifecycle,
+            proposeLifecycleForDemandWindow,
             openDraftScheduleDialog,
             buildScheduleViewState,
             renderScheduleSummary,

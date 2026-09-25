@@ -3111,7 +3111,7 @@ Draw.loadPlugin(function (ui) {
                 }
                 return {
                     weekIndex,
-                    start: week && week.ymd || "",
+                    start: week && (week.ymd || week.iso) || "", // CHANGE: Allocate needs the canonical week start date from PlanMath week objects.
                     targetKg: Math.max(0, Number(weekly.targetTotal && weekly.targetTotal[weekIndex]) || 0),
                     shortKg: Math.max(0, Number(weekly.shortTotal && weekly.shortTotal[weekIndex]) || 0),
                     cropShortages

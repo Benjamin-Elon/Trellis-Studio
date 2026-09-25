@@ -65,6 +65,7 @@
         return { // NEW
             perspective: value.perspective === 'inception' ? 'inception' : 'today', // NEW
             pricingEnabled: value.pricingEnabled === true, // NEW
+            goalMarkersEnabled: value.goalMarkersEnabled !== false, // NEW: goal pins are visible by default and hidden only by explicit per-board preference.
             pricingCheckpointDay: Number.isSafeInteger(value.pricingCheckpointDay) ? value.pricingCheckpointDay : null, // NEW
             today: normalizePerspective(value.today), // NEW
             inception: normalizePerspective(value.inception) // NEW
@@ -455,6 +456,16 @@
         }; // NEW
         mxCellRenderer.registerShape('trellisRoadmapTimeframe', TimeframeShape); // NEW
         function tickDistance(ticks, scale) { return ticks.length > 1 ? (ticks[1].day - ticks[0].day) * scale : 999; } // NEW
+
+        function GoalMarkerShape() { mxRectangleShape.apply(this, arguments); } // NEW
+        GoalMarkerShape.prototype = Object.create(mxRectangleShape.prototype); // NEW
+        GoalMarkerShape.prototype.constructor = GoalMarkerShape; // NEW
+        GoalMarkerShape.prototype.paintVertexShape = function (canvas, x, y, width, height) { // NEW
+            const style = this.style || {}, color = style.strokeColor || '#facc15', center = x + width / 2, badgeTop = y + Math.max(2, Number(style.roadmapGoalLabelOffset || 0) + 2), badgeHeight = 16; // CHANGE: stacked goal badges reserve header space above the date line.
+            canvas.setFillColor(style.fillColor || '#ffffff'); canvas.setStrokeColor(color); canvas.roundrect(x + 2, badgeTop, Math.max(0, width - 4), badgeHeight, 4, 4); canvas.fillAndStroke(); // CHANGE: render the top goal badge outline instead of a pin dot.
+            canvas.setStrokeColor(color); canvas.begin(); canvas.moveTo(center, badgeTop + badgeHeight); canvas.lineTo(center, y + height); canvas.stroke(); // CHANGE
+        }; // NEW
+        mxCellRenderer.registerShape('trellisRoadmapGoalMarker', GoalMarkerShape); // NEW
     } // NEW
 
     /** Apply display data only to the export renderer's decoded model. Original XML stays canonical. */ // NEW
@@ -463,10 +474,18 @@
         if (!records) return; // NEW
         const model = graph.getModel(); model.beginUpdate(); // NEW
         try { records.forEach(record => { // NEW
+            if (record.synthetic) { // NEW
+                const parent = model.getCell(record.parentId); if (!parent || !record.geometry) return; // NEW
+                let cell = model.getCell(record.id); // NEW
+                if (!cell) { const value = mxUtils.createXmlDocument().createElement('object'); value.setAttribute('label', record.label || ''); cell = new mxCell(value, new mxGeometry(record.geometry.x, record.geometry.y, record.geometry.width, record.geometry.height), record.style || ''); if (cell.setId) cell.setId(record.id); cell.setVertex(true); model.add(parent, cell); return; } // NEW
+                const geometry = model.getGeometry(cell).clone(); Object.assign(geometry, record.geometry); model.setGeometry(cell, geometry); if (record.style != null) model.setStyle(cell, record.style); // NEW
+                return; // NEW
+            } // NEW
             const cell = model.getCell(record.id); if (!cell) return; // NEW
             if (record.geometry) { const geometry = model.getGeometry(cell).clone(); Object.assign(geometry, record.geometry); model.setGeometry(cell, geometry); } // NEW
             if (!record.visible) model.setVisible(cell, false); // NEW
             if (record.label != null && cell.value && cell.value.cloneNode) { const value = cell.value.cloneNode(true); value.setAttribute('label', record.label); model.setValue(cell, value); } // NEW
+            if (record.stylePatch) model.setStyle(cell, cell.style + ';' + Object.entries(record.stylePatch).map(([key, value]) => key + '=' + value).join(';') + ';'); // NEW
             if (record.frameStyle) model.setStyle(cell, cell.style + ';' + Object.entries(record.frameStyle).map(([key, value]) => key + '=' + value).join(';') + ';'); // NEW
         }); } finally { model.endUpdate(); } // NEW
     } // NEW

@@ -92,11 +92,11 @@ test('local today follows timezone calendar dates across DST and UTC date bounda
 test('view normalization independently defaults and clamps each perspective without mutation', () => { // NEW
     const defaults = { scales: DEFAULT_SCALES, multiplier: 1, leftHidden: 3, rightHidden: 0 }; // CHANGE
     for (const value of [undefined, null, false, 'bad', []]) { // NEW
-        assert.deepEqual(core.normalizeView(value), { perspective: 'today', pricingEnabled: false, pricingCheckpointDay: null, today: defaults, inception: defaults }); // CHANGE
+        assert.deepEqual(core.normalizeView(value), { perspective: 'today', pricingEnabled: false, goalMarkersEnabled: true, pricingCheckpointDay: null, today: defaults, inception: defaults }); // CHANGE
     } // NEW
     const input = freezeDeep({ perspective: 'inception', pricingEnabled: true, pricingCheckpointDay: ANCHOR + 14, today: { scales: [1, 0, -1, Infinity, NaN, '2', 0.5, 8, 9], multiplier: 2, leftHidden: 99, rightHidden: -1 }, inception: { scales: [9], multiplier: 0, leftHidden: 2.9, rightHidden: 99 } }); // CHANGE
     const view = core.normalizeView(input); // NEW
-    assert.equal(view.pricingEnabled, true); assert.equal(view.pricingCheckpointDay, ANCHOR + 14); // NEW
+    assert.equal(view.pricingEnabled, true); assert.equal(view.goalMarkersEnabled, true); assert.equal(view.pricingCheckpointDay, ANCHOR + 14); // CHANGE
     assert.deepEqual(view.today, { scales: [1, DEFAULT_SCALES[1], DEFAULT_SCALES[2], DEFAULT_SCALES[3], DEFAULT_SCALES[4], DEFAULT_SCALES[5], 0.5, 8], multiplier: 2, leftHidden: 3, rightHidden: 0 }); // CHANGE
     assert.deepEqual(view.inception, { scales: [9, DEFAULT_SCALES[1], DEFAULT_SCALES[2], DEFAULT_SCALES[3], DEFAULT_SCALES[4], DEFAULT_SCALES[5], DEFAULT_SCALES[6], DEFAULT_SCALES[7]], multiplier: 1, leftHidden: 2, rightHidden: 4 }); // CHANGE
     view.today.scales[0] = 100; // NEW
@@ -104,6 +104,7 @@ test('view normalization independently defaults and clamps each perspective with
     assert.equal(input.today.scales[0], 1); // NEW
     assert.equal(core.normalizeView({ perspective: 'unknown' }).perspective, 'today'); // NEW
     assert.equal(core.normalizeView({ pricingEnabled: 'yes', pricingCheckpointDay: 0.5 }).pricingEnabled, false); // NEW
+    assert.equal(core.normalizeView({ goalMarkersEnabled: false }).goalMarkersEnabled, false); // NEW
 }); // NEW
 
 test('default user view hides past columns and gives nominal 75px/400px widths', () => { // NEW

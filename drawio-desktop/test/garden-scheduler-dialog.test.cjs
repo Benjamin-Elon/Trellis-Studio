@@ -270,6 +270,24 @@ test('proposeLifecycle can choose the earliest calculable bed-entry day in a wee
     assert.equal(proposal.attributePatch.sow_date, '2026-04-01');
 });
 
+
+test('proposeLifecycleForDemandWindow back-schedules sow date from future demand', async () => {
+    const proposal = await hooks.proposeLifecycleForDemandWindow({
+        plant: makePlant(hooks, { plant_name: 'Radish', days_maturity: 30, harvest_window_days: 7 }),
+        city: makeCity(hooks, 18),
+        methodId: 'direct_sow.field',
+        methodCategoryId: 'direct_sow',
+        targetStartISO: '2026-06-07',
+        targetEndISO: '2026-06-13',
+        seasonStartYear: 2026
+    });
+
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.startISO, '2026-05-14');
+    assert.equal(proposal.primaryDateISO, '2026-05-14');
+    assert.ok(proposal.attributePatch.harvest_start <= '2026-06-13');
+    assert.ok(proposal.attributePatch.harvest_end >= '2026-06-07');
+});
 test('proposeLifecycle reports overrideable warnings separately from structural failures', async () => {
     const proposal = await hooks.proposeLifecycle({
         plant: makePlant(hooks, { plant_name: 'Lettuce', days_maturity: 30, harvest_window_days: 7 }),

@@ -6,6 +6,7 @@ Draw.loadPlugin(function (ui) {
     const HUD_Z = 2000000000;
     const EPS = 0.0001;
     const STORE_PREFIX = "trellis.allocate.reviewSuppressed.";
+    const DEBUG_STORAGE_KEY = "trellis.allocate.debug"; // CHANGE: gated diagnostics explain Allocate week selection without normal console noise.
 
     function ensureInteractionModes() {
         window.Trellis = window.Trellis || {};
@@ -63,6 +64,97 @@ Draw.loadPlugin(function (ui) {
         return d.toISOString().slice(0, 10);
     }
 
+    function compareISO(a, b) {
+        return String(a || "").localeCompare(String(b || ""));
+    }
+
+    function weekEndISO(week) {
+        return addDaysISO(week && week.start || "", 6);
+    }
+
+    function weekIndexForISO(coverage, iso) {
+        const value = String(iso || "");
+        if (!value) return null;
+        const weeks = (coverage && coverage.weekSummaries || []).slice().sort((a, b) => Number(a.weekIndex) - Number(b.weekIndex));
+        for (let i = 0; i < weeks.length; i++) {
+            const start = String(weeks[i] && weeks[i].start || "");
+            const nextStart = String(weeks[i + 1] && weeks[i + 1].start || "");
+            if (start && compareISO(value, start) >= 0 && (!nextStart || compareISO(value, nextStart) < 0)) return Number(weeks[i].weekIndex);
+        }
+        return null;
+    }
+
+    function defer(fn, delay) {
+        const runner = typeof setTimeout === "function" ? setTimeout : window && window.setTimeout;
+        return runner ? runner(fn, delay || 0) : (fn(), null);
+    }
+
+    function cancelDeferred(id) {
+        const cancel = typeof clearTimeout === "function" ? clearTimeout : window && window.clearTimeout;
+        if (cancel && id != null) cancel(id);
+    }
+
+    function yieldToUi() {
+        return new Promise(resolve => defer(resolve, 0));
+    }
+
+    function emptyActionSchedule() {
+        return { actions: [], unresolved: [], actionableWeekIndices: [] };
+    }
+
+    function createScheduleProgress(phase, totalRows) {
+        return {
+            phase: phase || "idle",
+            processedRows: 0,
+            totalRows: Math.max(0, Number(totalRows) || 0),
+            foundActions: 0,
+            unresolvedCount: 0,
+            cacheHits: 0,
+            cacheMisses: 0,
+            cancellations: 0,
+            startedAt: Date.now ? Date.now() : 0,
+            finishedAt: 0,
+            error: ""
+        };
+    }
+
+    function progressIsActive(progress) {
+        const phase = String(progress && progress.phase || "");
+        return phase === "loading" || phase === "scanning demand" || phase === "checking beds";
+    }
+
+    function scheduleProgressText(state) {
+        const progress = state && state.scheduleProgress || null;
+        if (!progress) return "";
+        const phase = String(progress.phase || "");
+        if (phase === "failed") return "Unable to find sow/start actions: " + (progress.error || "unknown error");
+        if (phase === "complete" && progress.totalRows > 0 && progress.foundActions <= 0) return "No feasible sow/start actions found for unmet demand.";
+        if (phase === "complete") return "Sow/start actions ready - " + plural(progress.foundActions, "action", "actions") + " found.";
+        if (phase === "cancelled") return "Restarting sow/start action search...";
+        if (phase === "loading") return "Loading Allocate...";
+        if (phase === "scanning demand" || phase === "checking beds") {
+            return "Finding sow/start actions... " + progress.processedRows + " of " + progress.totalRows + " demand rows - " + plural(progress.foundActions, "action", "actions") + " found.";
+        }
+        return "";
+    }
+
+    function noteCacheAccess(state, hit) {
+        if (!state || !state.scheduleProgress) return;
+        if (hit) state.scheduleProgress.cacheHits += 1;
+        else state.scheduleProgress.cacheMisses += 1;
+    }
+
+    function resetScheduleCaches(state) {
+        if (!state) return;
+        state.lifecycleCache = new Map();
+        state.bedResultCache = new Map();
+    }
+
+    function selectedWeekHasActions(state) {
+        const schedule = state && state.actionSchedule || null;
+        return actionRowsForWeek(schedule, state && state.weekIndex).length > 0;
+    }
+
     function normAllocationMethodId(value) {
         return String(value || "").trim().toLowerCase();
     }
@@ -104,6 +196,11 @@ Draw.loadPlugin(function (ui) {
     function localStorageSafe() {
         try { return window.localStorage || null; } catch (_) { return null; }
     }
+
+    function allocateDebugEnabled() {
+        const store = localStorageSafe();
+        return !!(store && store.getItem(DEBUG_STORAGE_KEY) === "1");
+    } // CHANGE: diagnostics are opt-in via localStorage.
 
     function reviewKey(draft) {
         const crop = draft && draft.crop || {};
@@ -248,6 +345,180 @@ Draw.loadPlugin(function (ui) {
         return (state.coverage.weekSummaries || []).find(week => week.weekIndex === state.weekIndex) || state.coverage.weekSummaries[0] || null;
     }
 
+    function weekSummaryByIndex(coverage, weekIndex) {
+        const index = Number(weekIndex);
+        return (coverage && coverage.weekSummaries || []).find(week => Number(week.weekIndex) === index) || null;
+    } // CHANGE: week dropdown needs stable labels for any shortage week, not only the selected week.
+
+    function plural(count, singular, pluralLabel) {
+        return count + " " + (count === 1 ? singular : pluralLabel);
+    } // CHANGE: keep week status labels compact and consistent.
+
+    function weekStatusText(model) {
+        const actionable = (model && model.actionable || []).length;
+        const unresolved = (model && model.unresolved || []).length;
+        const parts = [];
+        if (actionable) parts.push(plural(actionable, "actionable", "actionable"));
+        if (unresolved) parts.push(plural(unresolved, "issue", "issues"));
+        return parts.length ? parts.join(", ") : "covered";
+    } // CHANGE: summarize why a shortage week is useful to visit.
+
+    function actionRowsForWeek(schedule, weekIndex) {
+        const index = Number(weekIndex);
+        return (schedule && schedule.actions || []).filter(row => Number(row.actionWeekIndex) === index);
+    }
+
+    function actionWeekIndices(schedule) {
+        return Array.from(new Set((schedule && schedule.actions || []).map(row => Number(row.actionWeekIndex)).filter(Number.isFinite))).sort((a, b) => a - b);
+    }
+
+    function cropWithAllocationTiming(crop, row) {
+        return Object.assign({}, crop || row && row.crop || {}, {
+            cropId: String(row && row.cropId || crop && crop.cropId || crop && crop.id || ""),
+            label: String(row && row.label || cropLabel(crop || row && row.crop)),
+            shortKg: Math.max(0, Number((row && row.futureDemandKg) ?? (row && row.shortKg)) || 0), // CHANGE: parenthesized nullish fallback parses during default startup.
+            selectedWeekShortKg: Math.max(0, Number((row && row.futureDemandKg) ?? (row && row.shortKg)) || 0),
+            allocationDemandWeekIndex: Number(row && row.demandWeekIndex),
+            allocationDemandWeekIndices: (row && row.demandWeekIndices || []).slice(),
+            allocationDemandStartISO: String(row && row.targetDemandStartISO || ""),
+            allocationDemandEndISO: String(row && row.targetDemandEndISO || ""),
+            allocationActionWeekIndex: Number(row && row.actionWeekIndex),
+            allocationActionStartISO: String(row && row.actionStartISO || ""),
+            allocationBedEntryISO: String(row && row.bedEntryISO || ""),
+            selectedBedSuitability: Number(row && row.selectedBedSuitability || 0)
+        });
+    }
+
+    function buildSowWeekOpportunityModel(state, weekIndex) {
+        const index = Number(Number.isFinite(Number(weekIndex)) ? weekIndex : state && state.weekIndex);
+        const schedule = state && state.actionSchedule || { actions: [], unresolved: [] };
+        const actions = actionRowsForWeek(schedule, index).map(row => cropWithAllocationTiming(row.crop, row));
+        const unresolved = (schedule.unresolved || []).filter(row => Number(row.actionWeekIndex) === index).map(row => Object.assign(cropWithAllocationTiming(row.crop, row), { unresolvedReason: row.reason || "not currently allocatable" }));
+        return { actionable: actions, unresolved, satisfied: [], actionableWeekIndices: actionWeekIndices(schedule) };
+    }
+
+    function buildWeekOptionLabel(state, weekIndex) {
+        const index = Number(weekIndex);
+        const week = weekSummaryByIndex(state && state.coverage, index);
+        const date = week && week.start ? " - " + week.start : "";
+        if (state && state.actionSchedule) {
+            const rows = actionRowsForWeek(state.actionSchedule, index);
+            const futureDemandKg = rows.reduce((sum, row) => sum + Math.max(0, Number(row.futureDemandKg) || 0), 0);
+            if (!rows.length && progressIsActive(state.scheduleProgress)) {
+                return "Week " + (index + 1) + date + " - finding actions...";
+            }
+            return "Week " + (index + 1) + date + " - " + plural(rows.length, "sow action", "sow actions") + " - " + formatKg(futureDemandKg) + " future demand";
+        }
+        const modelForWeek = state && Number(state.weekIndex) === index && state.opportunityModel
+            ? state.opportunityModel
+            : buildOpportunityModel(state && state.plan, state && state.coverage, { weekIndex: index });
+        return "Week " + (index + 1) + date + " - " + formatKg(week && week.shortKg) + " short - " + weekStatusText(modelForWeek);
+    } // CHANGE: dropdown options expose sow-week actions instead of demand-week shortages.
+
+    function buildDebugWeekRow(week) {
+        const shortages = Array.isArray(week && week.cropShortages) ? week.cropShortages : [];
+        return {
+            week: Number(week && week.weekIndex) + 1,
+            weekIndex: Number(week && week.weekIndex),
+            start: String(week && week.start || ""),
+            targetKg: Math.max(0, Number(week && week.targetKg) || 0),
+            shortKg: Math.max(0, Number(week && week.shortKg) || 0),
+            cropShortageCount: shortages.length,
+            cropShortages: shortages.map(row => String(row && row.label || row && row.cropId || "Crop") + " " + formatKg(row && row.shortKg)).join(", ")
+        };
+    } // CHANGE: console diagnostics use compact, table-friendly week rows.
+
+    function demandRangeRow(kind, row, fallback = {}) {
+        const source = row || {};
+        return {
+            kind,
+            id: String(source.id || fallback.id || ""),
+            cropId: String(source.cropId || fallback.cropId || ""),
+            channelId: String(source.channelId || fallback.channelId || ""),
+            enabled: source.enabled !== false && fallback.enabled !== false,
+            from: String(source.from || source.start || fallback.from || fallback.start || ""),
+            to: String(source.to || source.end || fallback.to || fallback.end || ""),
+            qty: source.qty ?? fallback.qty ?? "",
+            unit: String(source.unit || fallback.unit || "")
+        };
+    } // CHANGE: normalize saved demand inputs for debug output.
+
+    function buildDemandRangeRows(plan) {
+        const rows = [];
+        const demandLines = Array.isArray(plan && plan.demands) ? plan.demands : [];
+        demandLines.forEach(line => rows.push(demandRangeRow("demand", line)));
+        const selfLines = Array.isArray(plan && plan.selfSufficiency && plan.selfSufficiency.lines) ? plan.selfSufficiency.lines : [];
+        selfLines.forEach(line => rows.push(demandRangeRow("self", line, { enabled: !(plan && plan.selfSufficiency && plan.selfSufficiency.enabled === false) })));
+        const csa = plan && plan.csa || null;
+        if (csa) {
+            rows.push(demandRangeRow("csa", csa, { id: "csa", from: csa.start, to: csa.end, qty: csa.boxesPerWeek, unit: "boxes/week", enabled: csa.enabled !== false }));
+            const components = Array.isArray(csa.components) ? csa.components : [];
+            components.forEach((component, index) => rows.push(demandRangeRow("csa_component", component, { id: "component_" + (index + 1), from: csa.start, to: csa.end, enabled: csa.enabled !== false })));
+        }
+        return rows;
+    } // CHANGE: expose raw demand windows that can make the first shortage week surprising.
+
+    function firstWeekRow(rows, predicate) {
+        return (rows || []).find(predicate) || null;
+    }
+
+    function buildAllocationDebugSnapshot(state) {
+        const coverage = state && state.coverage || {};
+        const weekRows = (coverage.weekSummaries || []).map(buildDebugWeekRow);
+        const selected = weekRows.find(row => row.weekIndex === Number(state && state.weekIndex)) || null;
+        const firstDemandWeek = firstWeekRow(weekRows, row => Number(row.targetKg) > EPS);
+        const firstShortageWeek = firstWeekRow(weekRows, row => Number(row.shortKg) > EPS);
+        const opportunityModel = state && state.opportunityModel || {};
+        return {
+            year: Number(state && state.year) || null,
+            selectedWeek: selected,
+            firstDemandWeek,
+            firstShortageWeek,
+            totals: {
+                targetKg: Math.max(0, Number(coverage.totals && coverage.totals.targetKg) || 0),
+                shortKg: Math.max(0, Number(coverage.totals && coverage.totals.shortKg) || 0)
+            },
+            opportunityCounts: {
+                actionable: (opportunityModel.actionable || []).length,
+                unresolved: (opportunityModel.unresolved || []).length,
+                satisfied: (opportunityModel.satisfied || []).length
+            },
+            progress: state && state.scheduleProgress ? {
+                phase: String(state.scheduleProgress.phase || ""),
+                processedRows: Number(state.scheduleProgress.processedRows) || 0,
+                totalRows: Number(state.scheduleProgress.totalRows) || 0,
+                foundActions: Number(state.scheduleProgress.foundActions) || 0,
+                unresolvedCount: Number(state.scheduleProgress.unresolvedCount) || 0,
+                cacheHits: Number(state.scheduleProgress.cacheHits) || 0,
+                cacheMisses: Number(state.scheduleProgress.cacheMisses) || 0,
+                cancellations: Number(state.scheduleProgress.cancellations) || 0,
+                elapsedMs: state.scheduleProgress.finishedAt && state.scheduleProgress.startedAt ? Math.max(0, Number(state.scheduleProgress.finishedAt) - Number(state.scheduleProgress.startedAt)) : 0
+            } : null,
+            demandRanges: buildDemandRangeRows(state && state.plan),
+            weeks: weekRows
+        };
+    } // CHANGE: single testable source of truth for Allocate week diagnostics.
+
+    function logAllocationDebugSnapshot(state, eventName) {
+        if (!allocateDebugEnabled() || typeof console === "undefined") return;
+        const snapshot = buildAllocationDebugSnapshot(state);
+        const label = "Trellis Allocate " + (eventName || "debug") + " - " + (snapshot.year || "year");
+        try {
+            if (console.groupCollapsed) console.groupCollapsed(label);
+            else if (console.log) console.log(label);
+            if (console.log) console.log({ selectedWeek: snapshot.selectedWeek, firstDemandWeek: snapshot.firstDemandWeek, firstShortageWeek: snapshot.firstShortageWeek, totals: snapshot.totals, opportunityCounts: snapshot.opportunityCounts, progress: snapshot.progress });
+            if (console.table) {
+                console.table(snapshot.demandRanges);
+                console.table(snapshot.weeks);
+            } else if (console.log) {
+                console.log("demandRanges", snapshot.demandRanges);
+                console.log("weeks", snapshot.weeks);
+            }
+        } finally {
+            if (console.groupEnd) console.groupEnd();
+        }
+    } // CHANGE: opt-in console output for explaining selected week behavior.
+
     function findTilerGroupAncestor(cell) {
         let cur = cell;
         while (cur) {
@@ -283,6 +554,58 @@ Draw.loadPlugin(function (ui) {
         return (result.geometry && result.geometry.capacity || 0) - (result.plantCount || 0);
     }
 
+    function stableStringify(value) {
+        if (!value || typeof value !== "object") return String(value || "");
+        const keys = Object.keys(value).sort();
+        const out = {};
+        keys.forEach(key => { out[key] = value[key]; });
+        try { return JSON.stringify(out); } catch (_) { return ""; }
+    }
+
+    function occupancySignature(state) {
+        return (state && state.occupancy || []).map(item => [item && item.groupId || item && item.id || "", item && item.entryISO || "", item && item.harvestEndISO || ""].join(":"))
+            .sort()
+            .join("|");
+    }
+
+    function demandWeekKey(state, crop) {
+        const week = targetDemandWeekForCrop(state, crop);
+        return [Number(week && week.weekIndex), String(week && week.start || ""), weekEndISO(week)].join("@");
+    }
+
+    function cropMethodCacheKey(state, crop) {
+        return [
+            state && state.year || "",
+            crop && (crop.cropId || crop.id) || "",
+            crop && crop.plantId || "",
+            crop && crop.varietyId || "",
+            crop && (crop.method || crop.methodId) || "",
+            demandWeekKey(state, crop)
+        ].join("|");
+    }
+
+    function lifecycleCacheKey(state, crop, bedProfile) {
+        return cropMethodCacheKey(state, crop) + "|profile:" + stableStringify(bedProfile);
+    }
+
+    function bedResultCacheKey(state, crop, bed) {
+        return cropMethodCacheKey(state, crop) + "|bed:" + cellId(bed) + "|occ:" + occupancySignature(state);
+    }
+
+    function targetDemandWeekForCrop(state, crop) {
+        const index = Number(crop && crop.allocationDemandWeekIndex);
+        return Number.isFinite(index) ? weekSummaryByIndex(state && state.coverage, index) : selectedWeek(state);
+    }
+
+    async function proposeAllocationLifecycle(scheduler, options) {
+        if (scheduler && typeof scheduler.proposeLifecycleForDemandWindow === "function") return await scheduler.proposeLifecycleForDemandWindow(options);
+        return await scheduler.proposeLifecycle(Object.assign({}, options, {
+            weekStartISO: options.targetStartISO,
+            weekEndISO: options.targetEndISO,
+            chooseBestFeasibleDay: true
+        }));
+    }
+
     async function resolveAllocationContext(state, crop, bed) {
         const scheduler = window.USL && window.USL.scheduler;
         const tiler = window.USL && window.USL.tiler;
@@ -290,29 +613,37 @@ Draw.loadPlugin(function (ui) {
         if (!scheduler || !tiler || !planning) return { ok: false, status: "structural_failure", reason: "Allocate contracts are unavailable." };
         const plantResolution = await scheduler.resolvePlantForPlanCrop({ plantId: crop.plantId, varietyId: crop.varietyId });
         if (!plantResolution || !plantResolution.ok) return { ok: false, status: "structural_failure", reason: plantResolution && plantResolution.reason || "Plant not found." };
-        const week = selectedWeek(state);
-        const weekStartISO = week && week.start || "";
+        const demandWeek = targetDemandWeekForCrop(state, crop);
+        const targetStartISO = demandWeek && demandWeek.start || "";
+        const targetEndISO = weekEndISO(demandWeek);
         const methodContext = resolveCropMethodContext(crop);
         if (!methodContext.ok) return { ok: false, status: "structural_failure", reason: methodContext.reason, bed, crop, plantResolution }; // CHANGE: validate saved Year Plan method context before lifecycle scheduling.
-        const lifecycle = await scheduler.proposeLifecycle({
-            plant: plantResolution.plant,
-            city: state.city,
-            methodId: methodContext.methodId,
-            methodCategoryId: methodContext.methodCategoryId, // CHANGE: preserve planting method category through allocation lifecycle scheduling.
-            weekStartISO,
-            weekEndISO: addDaysISO(weekStartISO, 6),
-            chooseBestFeasibleDay: true,
-            seasonStartYear: state.year,
-            varietyName: plantResolution.varietyName,
-            bedProfile: tiler.readBedProfile(bed),
-            bedProfileSource: getAttr(bed, "label") || "garden bed"
-        });
-        if (!lifecycle || !lifecycle.ok) return { ok: false, status: "structural_failure", reason: allocationLifecycleReason(lifecycle && lifecycle.reason), bed, crop, plantResolution, lifecycle }; // CHANGE
+        const bedProfile = tiler.readBedProfile(bed);
+        const lifecycleKey = lifecycleCacheKey(state, crop, bedProfile);
+        let lifecycle = state.lifecycleCache && state.lifecycleCache.get(lifecycleKey);
+        noteCacheAccess(state, !!lifecycle);
+        if (!lifecycle) {
+            lifecycle = await proposeAllocationLifecycle(scheduler, {
+                plant: plantResolution.plant,
+                city: state.city,
+                methodId: methodContext.methodId,
+                methodCategoryId: methodContext.methodCategoryId, // CHANGE: preserve planting method category through allocation lifecycle scheduling.
+                targetStartISO,
+                targetEndISO,
+                seasonStartYear: state.year,
+                varietyName: plantResolution.varietyName,
+                bedProfile,
+                bedProfileSource: getAttr(bed, "label") || "garden bed"
+            });
+            if (state.lifecycleCache) state.lifecycleCache.set(lifecycleKey, lifecycle);
+        }
+        if (!lifecycle || !lifecycle.ok) return { ok: false, status: "structural_failure", reason: allocationLifecycleReason(lifecycle && lifecycle.reason), bed, crop, plantResolution, lifecycle, demandWeek }; // CHANGE
         const harvestStart = lifecycleHarvestStart(lifecycle);
         const harvestEnd = lifecycleHarvestEnd(lifecycle);
+        const actionStartISO = lifecycle.startISO || lifecycle.primaryDateISO || "";
         const kgPerPlant = Number(crop.kgPerPlant || plantResolution.plant.yield_per_plant_kg || plantResolution.plant.yield_kg_per_plant || 0);
-        if (!Number.isFinite(kgPerPlant) || kgPerPlant <= EPS) return { ok: false, status: "structural_failure", reason: "Missing yield data.", bed, crop, lifecycle, plantResolution };
-        return { ok: true, scheduler, tiler, planning, plantResolution, lifecycle, weekStartISO, harvestStart, harvestEnd, kgPerPlant };
+        if (!Number.isFinite(kgPerPlant) || kgPerPlant <= EPS) return { ok: false, status: "structural_failure", reason: "Missing yield data.", bed, crop, lifecycle, plantResolution, demandWeek };
+        return { ok: true, scheduler, tiler, planning, plantResolution, lifecycle, actionStartISO, demandWeek, targetStartISO, targetEndISO, harvestStart, harvestEnd, kgPerPlant };
     }
 
     function recommendFullPlantCount(state, crop, context) {
@@ -344,7 +675,7 @@ Draw.loadPlugin(function (ui) {
             spacingYCm: context.plantResolution.plant.spacing_y_cm || context.plantResolution.plant.spacing_cm || 30,
             vegHeightCm: context.plantResolution.plant.veg_height_cm || null,
             occupancy: state.occupancy || [],
-            entryISO: context.lifecycle.primaryDateISO || context.weekStartISO,
+            entryISO: context.lifecycle.primaryDateISO || context.actionStartISO,
             harvestEndISO: context.harvestEnd,
             orientationOverride: orientationOverride != null ? orientationOverride : (crop.orientationOverride || "")
         });
@@ -393,6 +724,10 @@ Draw.loadPlugin(function (ui) {
             kgPerPlant: context.kgPerPlant,
             harvestStart: context.harvestStart,
             harvestEnd: context.harvestEnd,
+            actionStartISO: context.actionStartISO,
+            targetDemandStartISO: context.targetStartISO,
+            targetDemandEndISO: context.targetEndISO,
+            targetDemandWeekIndex: context.demandWeek && context.demandWeek.weekIndex,
             demandServedKg: demandServedByCandidate(state, crop, context, plantCount),
             projectedKg: plantCount * context.kgPerPlant,
             taskPreview: context.lifecycle.taskPreview || [],
@@ -401,23 +736,152 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
+    function cachedBedResult(state, key, result, bed, crop) {
+        const value = Object.assign({ bed, crop }, result || {});
+        if (state && state.bedResultCache && key) state.bedResultCache.set(key, value);
+        return value;
+    }
+
     async function computeBedResult(state, crop, bed) {
+        const cacheKey = state && state.bedResultCache ? bedResultCacheKey(state, crop, bed) : "";
+        if (cacheKey && state.bedResultCache.has(cacheKey)) {
+            noteCacheAccess(state, true);
+            return Object.assign({}, state.bedResultCache.get(cacheKey), { bed, crop });
+        }
+        if (cacheKey) noteCacheAccess(state, false);
         const context = await resolveAllocationContext(state, crop, bed);
-        if (!context || !context.ok) return Object.assign({ bed, crop }, context || {});
+        if (!context || !context.ok) return cachedBedResult(state, cacheKey, Object.assign({ bed, crop }, context || {}), bed, crop);
         const need = recommendFullPlantCount(state, crop, context);
-        if (!need.ok) return { ok: false, status: need.status, reason: need.reason, bed, crop, lifecycle: context.lifecycle, plantResolution: context.plantResolution, recommendation: need.recommendation };
+        if (!need.ok) return cachedBedResult(state, cacheKey, { ok: false, status: need.status, reason: need.reason, bed, crop, lifecycle: context.lifecycle, plantResolution: context.plantResolution, recommendation: need.recommendation }, bed, crop);
         const fullPlantCount = need.fullPlantCount;
         const fullGeometry = proposeGeometryForPlantCount(state, crop, bed, context, fullPlantCount);
-        if (fullGeometry && fullGeometry.ok) return buildBedResult(state, crop, bed, context, fullGeometry, fullPlantCount, fullPlantCount, "");
+        if (fullGeometry && fullGeometry.ok) return cachedBedResult(state, cacheKey, buildBedResult(state, crop, bed, context, fullGeometry, fullPlantCount, fullPlantCount, ""), bed, crop);
         const capacity = Math.max(0, Math.trunc(Number(fullGeometry && fullGeometry.capacity) || 0));
         if (capacity > 0 && capacity < fullPlantCount) {
             const partialPlantCount = Math.max(1, Math.min(fullPlantCount, capacity));
             const partialGeometry = proposeGeometryForPlantCount(state, crop, bed, context, partialPlantCount);
             if (partialGeometry && partialGeometry.ok) {
-                return buildBedResult(state, crop, bed, context, partialGeometry, partialPlantCount, fullPlantCount, partialAllocationWarning(partialPlantCount, fullPlantCount));
+                return cachedBedResult(state, cacheKey, buildBedResult(state, crop, bed, context, partialGeometry, partialPlantCount, fullPlantCount, partialAllocationWarning(partialPlantCount, fullPlantCount)), bed, crop);
             }
         }
-        return { ok: false, status: "unavailable", reason: capacity > 0 ? "Need " + fullPlantCount + " plants" : "No bed capacity", capacity, plantCount: fullPlantCount, fullPlantCount, lifecycle: context.lifecycle, plantResolution: context.plantResolution, geometry: fullGeometry, bed, crop };
+        return cachedBedResult(state, cacheKey, { ok: false, status: "unavailable", reason: capacity > 0 ? "Need " + fullPlantCount + " plants" : "No bed capacity", capacity, plantCount: fullPlantCount, fullPlantCount, lifecycle: context.lifecycle, plantResolution: context.plantResolution, geometry: fullGeometry, bed, crop }, bed, crop);
+    }
+
+    function demandShortageRows(plan, coverage) {
+        const rows = [];
+        (coverage && coverage.weekSummaries || []).forEach(week => {
+            (week.cropShortages || []).forEach(shortage => {
+                const shortKg = Math.max(0, Number(shortage && shortage.shortKg) || 0);
+                if (shortKg <= EPS) return;
+                const crop = planCropById(plan, shortage.cropId);
+                rows.push({ week, crop, cropId: String(shortage.cropId || ""), shortKg, label: String(shortage.label || cropLabel(crop)) });
+            });
+        });
+        return rows;
+    }
+
+    function mergeActionRow(actions, row) {
+        const key = [row.cropId, row.actionWeekIndex, row.actionStartISO].join("|");
+        const existing = actions.find(item => item.key === key);
+        if (!existing) {
+            actions.push(Object.assign({ key, demandWeekIndices: [row.demandWeekIndex], futureDemandKg: row.shortKg }, row));
+            return;
+        }
+        if (!existing.demandWeekIndices.includes(row.demandWeekIndex)) existing.demandWeekIndices.push(row.demandWeekIndex);
+        existing.futureDemandKg += Math.max(0, Number(row.shortKg) || 0);
+        if (row.targetDemandStartISO && (!existing.targetDemandStartISO || compareISO(row.targetDemandStartISO, existing.targetDemandStartISO) < 0)) existing.targetDemandStartISO = row.targetDemandStartISO;
+        if (row.targetDemandEndISO && (!existing.targetDemandEndISO || compareISO(row.targetDemandEndISO, existing.targetDemandEndISO) > 0)) existing.targetDemandEndISO = row.targetDemandEndISO;
+    }
+
+    function unresolvedActionWeekIndex(coverage, row) {
+        const target = row && row.week || null;
+        const targetIndex = target && Number(target.weekIndex);
+        return Number.isFinite(targetIndex) ? targetIndex : weekIndexForISO(coverage, target && target.start);
+    }
+
+    function refreshActionSchedule(schedule) {
+        const value = schedule || emptyActionSchedule();
+        value.actions.sort((a, b) => Number(a.actionWeekIndex) - Number(b.actionWeekIndex) || priorityRank(a.crop) - priorityRank(b.crop) || a.label.localeCompare(b.label));
+        value.actionableWeekIndices = actionWeekIndices(value);
+        return value;
+    }
+
+    async function processSowWeekScheduleRow(state, row, schedule) {
+        const target = schedule || emptyActionSchedule();
+        if (!row.crop) {
+            target.unresolved.push(Object.assign({}, row, { actionWeekIndex: unresolvedActionWeekIndex(state.coverage, row), reason: "missing plant identity" }));
+            return refreshActionSchedule(target);
+        }
+        const methodContext = resolveCropMethodContext(row.crop);
+        if (!methodContext.ok || isPerennialPlanCrop(row.crop)) {
+            target.unresolved.push(Object.assign({}, row, { crop: row.crop, actionWeekIndex: unresolvedActionWeekIndex(state.coverage, row), reason: isPerennialPlanCrop(row.crop) ? "new perennial allocation deferred" : methodContext.reason }));
+            return refreshActionSchedule(target);
+        }
+        let best = null;
+        let lastFailure = null;
+        const cropForDemand = Object.assign({}, row.crop, {
+            cropId: String(row.crop.id || row.cropId || ""),
+            allocationDemandWeekIndex: Number(row.week.weekIndex),
+            allocationDemandStartISO: String(row.week.start || ""),
+            allocationDemandEndISO: weekEndISO(row.week)
+        });
+        for (const bed of state.beds || []) {
+            const result = await computeBedResult(state, cropForDemand, bed);
+            if (result && result.ok && (!best || rankBedResult(result) < rankBedResult(best))) best = result;
+            else lastFailure = result || lastFailure;
+        }
+        if (!best) {
+            target.unresolved.push(Object.assign({}, row, { crop: row.crop, actionWeekIndex: unresolvedActionWeekIndex(state.coverage, row), reason: lastFailure && lastFailure.reason || "no available bed" }));
+            return refreshActionSchedule(target);
+        }
+        const actionStartISO = best.actionStartISO || best.lifecycle && (best.lifecycle.startISO || best.lifecycle.primaryDateISO) || "";
+        const actionWeekIndex = weekIndexForISO(state.coverage, actionStartISO);
+        if (!Number.isFinite(actionWeekIndex)) {
+            target.unresolved.push(Object.assign({}, row, { crop: row.crop, actionWeekIndex: unresolvedActionWeekIndex(state.coverage, row), reason: "Required sow/start date is outside this plan year." }));
+            return refreshActionSchedule(target);
+        }
+        mergeActionRow(target.actions, {
+            crop: cropForDemand,
+            cropId: String(cropForDemand.cropId || cropForDemand.id || ""),
+            label: cropLabel(cropForDemand),
+            shortKg: row.shortKg,
+            actionWeekIndex,
+            actionStartISO,
+            bedEntryISO: best.lifecycle && best.lifecycle.primaryDateISO || "",
+            demandWeekIndex: Number(row.week.weekIndex),
+            targetDemandStartISO: String(row.week.start || ""),
+            targetDemandEndISO: weekEndISO(row.week),
+            selectedBedSuitability: best.status === "compatible" ? 2 : 1
+        });
+        return refreshActionSchedule(target);
+    }
+
+    async function buildSowWeekSchedule(state) {
+        const schedule = emptyActionSchedule();
+        for (const row of demandShortageRows(state.plan, state.coverage)) {
+            await processSowWeekScheduleRow(state, row, schedule);
+        }
+        return refreshActionSchedule(schedule);
+    }
+
+    function updateScheduleCounts(state) {
+        const progress = state && state.scheduleProgress || null;
+        const schedule = state && state.actionSchedule || emptyActionSchedule();
+        if (!progress) return;
+        progress.foundActions = (schedule.actions || []).length;
+        progress.unresolvedCount = (schedule.unresolved || []).length;
+    }
+
+    function chooseFirstActionWeek(state) {
+        const weeks = state && state.actionSchedule && state.actionSchedule.actionableWeekIndices || [];
+        if (weeks.length && !weeks.includes(state.weekIndex)) state.weekIndex = weeks[0];
+    }
+
+    function applyScheduleModel(state) {
+        if (!state) return;
+        chooseFirstActionWeek(state);
+        state.opportunityModel = buildSowWeekOpportunityModel(state, state.weekIndex);
+        if (state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = "";
     }
 
     function createButton(label, variant) {
@@ -436,10 +900,98 @@ Draw.loadPlugin(function (ui) {
     const AllocateController = (() => {
         let session = null;
 
+        function cancelSowWeekScheduleJob(state, phase) {
+            if (!state) return;
+            state.scheduleJobId = (Number(state.scheduleJobId) || 0) + 1;
+            cancelDeferred(state.scheduleTimer);
+            state.scheduleTimer = null;
+            if (state.scheduleProgress && progressIsActive(state.scheduleProgress)) {
+                state.scheduleProgress.phase = phase || "cancelled";
+                state.scheduleProgress.finishedAt = Date.now ? Date.now() : 0;
+                state.scheduleProgress.cancellations += 1;
+            }
+        }
+
+        function renderScheduleProgress(state) {
+            if (!state || state.closed) return;
+            updateScheduleCounts(state);
+            applyScheduleModel(state);
+            renderHud(state);
+            if (selectedWeekHasActions(state)) scheduleOverlayEvaluation(state);
+        }
+
+        async function runSowWeekScheduleJob(state, jobId, rows) {
+            try {
+                for (let index = 0; index < rows.length; index += 1) {
+                    if (state.closed || jobId !== state.scheduleJobId) return;
+                    state.scheduleProgress.phase = "checking beds";
+                    await processSowWeekScheduleRow(state, rows[index], state.actionSchedule);
+                    if (state.closed || jobId !== state.scheduleJobId) return;
+                    state.scheduleProgress.processedRows = index + 1;
+                    renderScheduleProgress(state);
+                    await yieldToUi();
+                }
+                if (state.closed || jobId !== state.scheduleJobId) return;
+                state.scheduleProgress.phase = "complete";
+                state.scheduleProgress.finishedAt = Date.now ? Date.now() : 0;
+                renderScheduleProgress(state);
+                logAllocationDebugSnapshot(state, "open");
+            } catch (err) {
+                if (state.closed || jobId !== state.scheduleJobId) return;
+                state.scheduleProgress.phase = "failed";
+                state.scheduleProgress.error = err && err.message ? err.message : String(err || "unknown error");
+                state.scheduleProgress.finishedAt = Date.now ? Date.now() : 0;
+                renderHud(state);
+            }
+        }
+
+        function startSowWeekScheduleJob(state) {
+            if (!state || state.closed) return null;
+            const rows = state.scheduleRows || demandShortageRows(state.plan, state.coverage);
+            const priorCancellations = state.scheduleProgress ? Number(state.scheduleProgress.cancellations) || 0 : 0;
+            state.scheduleRows = rows;
+            state.actionSchedule = emptyActionSchedule();
+            state.scheduleProgress = createScheduleProgress(rows.length ? "scanning demand" : "complete", rows.length);
+            state.scheduleProgress.cancellations = priorCancellations;
+            applyScheduleModel(state);
+            renderHud(state);
+            if (!rows.length) {
+                state.scheduleProgress.finishedAt = Date.now ? Date.now() : 0;
+                logAllocationDebugSnapshot(state, "open");
+                return null;
+            }
+            const jobId = (Number(state.scheduleJobId) || 0) + 1;
+            state.scheduleJobId = jobId;
+            state.scheduleTimer = defer(function () {
+                state.scheduleTimer = null;
+                void runSowWeekScheduleJob(state, jobId, rows);
+            }, 0);
+            return jobId;
+        }
+
+        function scheduleStateRefresh(state) {
+            if (!state || state.closed) return;
+            cancelSowWeekScheduleJob(state, "cancelled");
+            state.draft = null;
+            renderHud(state);
+            cancelDeferred(state.refreshTimer);
+            state.refreshTimer = defer(async function () {
+                state.refreshTimer = null;
+                if (state.closed) return;
+                await loadState(state);
+                if (state.closed) return;
+                renderHud(state);
+                if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
+                else scheduleOverlayEvaluation(state);
+            }, 150);
+        }
+
         function close(reason) {
             const current = session;
             if (!current) return;
             session = null;
+            cancelSowWeekScheduleJob(current, "cancelled");
+            cancelDeferred(current.refreshTimer);
             current.closed = true;
             removeNode(current.hud);
             removeNode(current.overlayHost);
@@ -462,6 +1014,14 @@ Draw.loadPlugin(function (ui) {
                 city: null,
                 beds: [],
                 occupancy: [],
+                actionSchedule: emptyActionSchedule(),
+                scheduleRows: [],
+                scheduleProgress: createScheduleProgress("loading", 0),
+                scheduleJobId: 0,
+                scheduleTimer: null,
+                refreshTimer: null,
+                lifecycleCache: new Map(),
+                bedResultCache: new Map(),
                 opportunityModel: null,
                 weekIndex: 0,
                 selectedCropId: "",
@@ -476,9 +1036,11 @@ Draw.loadPlugin(function (ui) {
             state.overlayHost = createOverlayHost();
             state.hud = createHud(state);
             session = state;
+            renderHud(state);
             await loadState(state);
             renderHud(state);
-            scheduleOverlayEvaluation(state);
+            if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
+            else scheduleOverlayEvaluation(state);
             installListeners(state);
             return state;
         }
@@ -509,20 +1071,22 @@ Draw.loadPlugin(function (ui) {
             state.coverage = planning.computeYearCoverage({ moduleCell: state.moduleCell, year: state.year, plan: state.plan });
             state.beds = tiler.listGardenBeds(state.moduleCell);
             state.occupancy = typeof tiler.listPlantingFootprints === "function" ? tiler.listPlantingFootprints(state.moduleCell, { year: state.year, includeUndatedOccupancy: false }) : [];
-            const globalOpportunityModel = buildOpportunityModel(state.plan, state.coverage);
-            state.weekIndex = globalOpportunityModel.actionableWeekIndices.includes(state.weekIndex) ? state.weekIndex : (globalOpportunityModel.actionableWeekIndices[0] ?? 0);
-            state.opportunityModel = await buildWeekOpportunityModel(state);
+            resetScheduleCaches(state);
+            state.scheduleRows = demandShortageRows(state.plan, state.coverage);
+            state.actionSchedule = emptyActionSchedule();
+            state.scheduleProgress = createScheduleProgress(state.scheduleRows.length ? "scanning demand" : "complete", state.scheduleRows.length);
+            state.opportunityModel = buildSowWeekOpportunityModel(state, state.weekIndex);
             if (state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = "";
             state.noticeMessage = "";
             if (state.coverage.totals.targetKg <= EPS) state.message = "No demand to allocate.";
             else if (state.coverage.totals.shortKg <= EPS) state.message = "The plan is covered.";
             else {
                 state.message = "";
-                if (!state.opportunityModel.actionable.length && state.opportunityModel.unresolved.length) state.noticeMessage = "Only unresolved crops remain for this week.";
             }
         }
 
         async function buildWeekOpportunityModel(state) {
+            if (state && state.actionSchedule) return buildSowWeekOpportunityModel(state, state.weekIndex);
             const weekModel = buildOpportunityModel(state.plan, state.coverage, { weekIndex: state.weekIndex });
             const actionable = [];
             const unresolved = weekModel.unresolved.slice();
@@ -569,7 +1133,8 @@ Draw.loadPlugin(function (ui) {
             const panel = state.hud;
             if (!panel) return;
             const bedContext = currentBedContext(state);
-            panel.style.display = state.message || state.noticeMessage || bedContext || state.opportunityModel ? "flex" : "none";
+            const progressText = scheduleProgressText(state);
+            panel.style.display = state.message || state.noticeMessage || bedContext || state.opportunityModel || progressText ? "flex" : "none";
             panel.innerHTML = "";
             const header = document.createElement("div");
             header.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;";
@@ -588,23 +1153,37 @@ Draw.loadPlugin(function (ui) {
             const status = document.createElement("div");
             status.style.cssText = "line-height:1.35;color:#374151;";
             if (state.message) status.textContent = state.message;
-            else status.textContent = formatKg(state.coverage.totals.shortKg) + " unmet of " + formatKg(state.coverage.totals.targetKg) + " demand" + (state.noticeMessage ? " - " + state.noticeMessage : "");
+            else if (state.coverage && state.coverage.totals) status.textContent = formatKg(state.coverage.totals.shortKg) + " unmet of " + formatKg(state.coverage.totals.targetKg) + " demand" + (state.noticeMessage ? " - " + state.noticeMessage : "");
+            else status.textContent = "Loading Allocate...";
             panel.appendChild(status);
 
+            if (progressText) {
+                const progress = document.createElement("div");
+                progress.style.cssText = "font-size:11px;line-height:1.3;color:#4b5563;";
+                progress.textContent = progressText;
+                panel.appendChild(progress);
+            }
+
             if (state.message) return;
+            if (!state.coverage) return;
 
             const week = selectedWeek(state);
             const weekRow = document.createElement("div");
             weekRow.style.cssText = "display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center;";
             const prev = createButton("<");
             const next = createButton(">");
-            const label = document.createElement("div");
-            label.style.cssText = "text-align:center;font-weight:700;";
-            label.textContent = "Week " + (Number(state.weekIndex) + 1) + " - " + (week && week.start || "");
+            const weekSelect = document.createElement("select");
+            weekSelect.title = "Select sow/start week";
+            weekSelect.style.cssText = "width:100%;min-width:0;box-sizing:border-box;font-weight:700;";
+            appendWeekOptions(weekSelect, state);
+            weekSelect.value = String(state.weekIndex);
+            weekSelect.addEventListener("change", function () {
+                void selectWeek(state, Number(weekSelect.value));
+            });
             prev.addEventListener("click", () => { void moveWeek(state, -1); });
             next.addEventListener("click", () => { void moveWeek(state, 1); });
             weekRow.appendChild(prev);
-            weekRow.appendChild(label);
+            weekRow.appendChild(weekSelect);
             weekRow.appendChild(next);
             panel.appendChild(weekRow);
 
@@ -657,10 +1236,23 @@ Draw.loadPlugin(function (ui) {
             placeholder.value = "";
             placeholder.textContent = "Select crop...";
             select.appendChild(placeholder);
-            group("Actionable this week", state.opportunityModel.actionable, false);
-            group("Unresolved this week", state.opportunityModel.unresolved, true);
-            group("Satisfied this week", state.opportunityModel.satisfied, true);
+            const model = state.opportunityModel || { actionable: [], unresolved: [], satisfied: [] };
+            group("Sow/start this week", model.actionable || [], false);
+            group("Unresolved future demand", model.unresolved || [], true);
+            group("Already satisfied", model.satisfied || [], true);
         }
+
+        function appendWeekOptions(select, state) {
+            const weeks = state.opportunityModel && state.opportunityModel.actionableWeekIndices && state.opportunityModel.actionableWeekIndices.length
+                ? state.opportunityModel.actionableWeekIndices
+                : [state.weekIndex];
+            weeks.forEach(weekIndex => {
+                const opt = document.createElement("option");
+                opt.value = String(weekIndex);
+                opt.textContent = buildWeekOptionLabel(state, weekIndex);
+                select.appendChild(opt);
+            });
+        } // CHANGE: replace step-only week navigation with direct shortage-week navigation.
 
         function renderUnresolvedReasons(state, panel) {
             const unresolved = state.opportunityModel && state.opportunityModel.unresolved || [];
@@ -669,7 +1261,7 @@ Draw.loadPlugin(function (ui) {
             box.style.cssText = "border:1px solid #fed7aa;border-radius:6px;background:#fff7ed;color:#92400e;padding:7px;display:flex;flex-direction:column;gap:3px;line-height:1.3;";
             const title = document.createElement("div");
             title.style.cssText = "font-weight:700;";
-            title.textContent = "Unresolved this week";
+            title.textContent = "Unresolved future demand";
             box.appendChild(title);
             unresolved.slice(0, 5).forEach(crop => {
                 const row = document.createElement("div");
@@ -686,8 +1278,10 @@ Draw.loadPlugin(function (ui) {
 
         function renderDraftSummary(state, box) {
             if (!state.draft) {
-                box.textContent = state.opportunityModel && !state.opportunityModel.actionable.length && state.opportunityModel.unresolved.length
-                    ? "No actionable crops this week. Resolve the reasons above or switch weeks."
+                box.textContent = progressIsActive(state.scheduleProgress)
+                    ? "Finding sow/start actions..."
+                    : state.opportunityModel && !state.opportunityModel.actionable.length && state.opportunityModel.unresolved.length
+                    ? "No sow/start actions this week. Resolve the reasons above or switch weeks."
                     : "Select a bed to preview placement.";
                 return;
             }
@@ -695,7 +1289,9 @@ Draw.loadPlugin(function (ui) {
             box.innerHTML = "";
             [
                 d.crop.label,
-                methodBedEntryLabel(d.crop.method) + " " + (d.lifecycle.primaryDateISO || ""),
+                "Start/sow " + (d.actionStartISO || d.lifecycle.startISO || ""),
+                d.lifecycle.primaryDateISO && d.lifecycle.primaryDateISO !== (d.actionStartISO || d.lifecycle.startISO || "") ? methodBedEntryLabel(d.crop.method) + " " + d.lifecycle.primaryDateISO : "",
+                d.targetDemandStartISO ? "Targets demand " + d.targetDemandStartISO + " to " + (d.targetDemandEndISO || d.targetDemandStartISO) : "",
                 String(d.plantCount || 0) + " plants - " + formatKg(d.projectedKg) + " projected",
                 d.partialPlanting ? "Partial: " + d.plantCount + " of " + d.fullPlantCount + " plants" : "",
                 "Harvest " + (d.harvestStart || "n/a") + " to " + (d.harvestEnd || "n/a"),
@@ -709,16 +1305,23 @@ Draw.loadPlugin(function (ui) {
         }
 
         async function moveWeek(state, delta) {
-            const weeks = state.opportunityModel.actionableWeekIndices;
+            const weeks = state.opportunityModel && state.opportunityModel.actionableWeekIndices || [state.weekIndex];
             const pos = Math.max(0, weeks.indexOf(state.weekIndex));
             const nextPos = Math.max(0, Math.min(weeks.length - 1, pos + delta));
-            state.weekIndex = weeks[nextPos] ?? state.weekIndex;
+            await selectWeek(state, weeks[nextPos] ?? state.weekIndex);
+        }
+
+        async function selectWeek(state, weekIndex) {
+            const nextWeekIndex = Number(weekIndex);
+            if (!Number.isFinite(nextWeekIndex)) return;
+            state.weekIndex = nextWeekIndex;
             state.draft = null;
             state.opportunityModel = await buildWeekOpportunityModel(state);
             if (state.selectedCropId && !state.opportunityModel.actionable.some(crop => crop.cropId === state.selectedCropId)) state.selectedCropId = "";
+            logAllocationDebugSnapshot(state, "week-change");
             renderHud(state);
             scheduleOverlayEvaluation(state);
-        }
+        } // CHANGE: dropdown and step buttons share the same week-change behavior.
 
         function createOverlayHost() {
             const host = document.createElement("div");
@@ -733,7 +1336,9 @@ Draw.loadPlugin(function (ui) {
             state.overlayHost.innerHTML = "";
             removeNode(state.ghost);
             state.ghost = null;
-            const crop = planCropById(state.plan, state.selectedCropId);
+            if (!state.opportunityModel || progressIsActive(state.scheduleProgress) && !selectedWeekHasActions(state)) return;
+            const crop = (state.opportunityModel && state.opportunityModel.actionable || []).find(item => item.cropId === state.selectedCropId) || planCropById(state.plan, state.selectedCropId);
+            if (!crop && !(state.opportunityModel.actionable || []).length) return;
             state.beds.forEach(bed => renderBedOverlay(state, bed, { label: "Calculating...", tone: "neutral" }));
             setTimeout(async function () {
                 const results = [];
@@ -755,7 +1360,7 @@ Draw.loadPlugin(function (ui) {
 
         async function bestOpportunityForBed(state, bed) {
             let best = null;
-            for (const crop of state.opportunityModel.actionable) {
+            for (const crop of state.opportunityModel && state.opportunityModel.actionable || []) {
                 const result = await computeBedResult(state, crop, bed);
                 if (result && result.ok && (!best || rankBedResult(result) < rankBedResult(best))) best = result;
             }
@@ -890,7 +1495,9 @@ Draw.loadPlugin(function (ui) {
             div.appendChild(title);
             [
                 draft.crop.label,
-                methodBedEntryLabel(draft.crop.method) + " " + (draft.lifecycle.primaryDateISO || ""),
+                "Start/sow " + (draft.actionStartISO || draft.lifecycle.startISO || ""),
+                draft.lifecycle.primaryDateISO && draft.lifecycle.primaryDateISO !== (draft.actionStartISO || draft.lifecycle.startISO || "") ? methodBedEntryLabel(draft.crop.method) + " " + draft.lifecycle.primaryDateISO : "",
+                draft.targetDemandStartISO ? "Targets demand " + draft.targetDemandStartISO + " to " + (draft.targetDemandEndISO || draft.targetDemandStartISO) : "",
                 String(draft.plantCount) + " plants",
                 draft.partialPlanting ? "Partial: " + draft.plantCount + " of " + draft.fullPlantCount + " plants fit in this bed" : "",
                 "Harvest " + draft.harvestStart + " to " + draft.harvestEnd,
@@ -1012,25 +1619,26 @@ Draw.loadPlugin(function (ui) {
             } else {
                 operation();
             }
+            cancelSowWeekScheduleJob(state, "cancelled");
             await loadState(state);
             state.selectedCropId = opportunityContainsCrop(state.opportunityModel, previousCropId) ? previousCropId : "";
             renderHud(state);
-            scheduleOverlayEvaluation(state);
+            if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
+            else scheduleOverlayEvaluation(state);
         }
 
         function installListeners(state) {
             const refresh = function () {
-                if (state.closed) return;
-                state.draft = null;
-                void loadState(state).then(function () {
-                    if (state.closed) return;
-                    renderHud(state);
-                    scheduleOverlayEvaluation(state);
-                });
+                scheduleStateRefresh(state);
             };
             const selectionRefresh = function () {
                 if (state.closed) return;
                 renderHud(state);
+            };
+            const layoutRefresh = function () {
+                if (state.closed) return;
+                renderHud(state);
+                scheduleOverlayEvaluation(state);
             };
             if (graph.addListener && typeof mxEvent !== "undefined") {
                 graph.addListener(mxEvent.CELLS_MOVED, refresh);
@@ -1048,8 +1656,8 @@ Draw.loadPlugin(function (ui) {
                     if (selectionModel.removeListener) selectionModel.removeListener(selectionRefresh);
                 });
             }
-            window.addEventListener("resize", refresh);
-            state.cleanups.push(function () { window.removeEventListener("resize", refresh); });
+            window.addEventListener("resize", layoutRefresh);
+            state.cleanups.push(function () { window.removeEventListener("resize", layoutRefresh); });
         }
 
         return { open, close, isActive: () => !!session, _session: () => session };
@@ -1077,6 +1685,14 @@ Draw.loadPlugin(function (ui) {
         isActive: AllocateController.isActive,
         __test: {
             buildOpportunityModel,
+            buildWeekOptionLabel,
+            buildAllocationDebugSnapshot,
+            buildSowWeekSchedule,
+            processSowWeekScheduleRow,
+            buildSowWeekOpportunityModel,
+            createScheduleProgress,
+            scheduleProgressText,
+            progressIsActive,
             computeBedResult,
             partialAllocationWarning,
             resolveCropMethodContext,
