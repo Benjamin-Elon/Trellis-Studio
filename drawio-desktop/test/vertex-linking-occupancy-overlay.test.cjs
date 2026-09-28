@@ -257,8 +257,9 @@ test("multi-selected role cards draw links without opening task overlays", () =>
 
     assert.match(multiRoleSource, /clearAllHighlights\(\);/);
     assert.match(multiRoleSource, /pruneBrokenLinks\(cell\);/);
-    assert.match(multiRoleSource, /highlight\(cell, selIsPrimary \? YELLOW : RED\);/);
+    assert.match(multiRoleSource, /highlight\(cell, selIsPrimary \? YELLOW : ORDINARY_LINK_OVERLAY_COLOR\);/); // CHANGE: ordinary multi-role outlines are blue.
     assert.match(multiRoleSource, /if \(linkedIds\.size === 0\) continue;/);
+    assert.match(multiRoleSource, /\? YELLOW : ORDINARY_LINK_OVERLAY_COLOR/); // CHANGE: ordinary multi-role connector lines are blue, not red.
     assert.match(multiRoleSource, /visibleLinkOverlayRecords\.push\(\{ source: cell, other, exitHint, edgeColor, label, labelOffset: \{ x: 0, y: 0 \} \}\);/);
     assert.match(multiRoleSource, /linkOverlays\.setLinkOverlay\(record\.source, record\.other, record\.exitHint, record\.edgeColor, record\.label, record\.labelOffset\);/);
     assert.doesNotMatch(multiRoleSource, /taskScheduleOverlay\.show/);
@@ -275,22 +276,24 @@ test("linked task navigation delegates hidden-card paging to the task manager", 
     assert.doesNotMatch(source, /function getLanePageSizeForReveal/);
 });
 
-test("plant-tiler sibling task highlights use blue without changing direct non-task red", () => {
+test("plant-tiler sibling task highlights use blue with ordinary blue outlines", () => {
     const source = readSource();
     const cardSiblingSource = sourceBetween(source, "function collectSameBoardLinkedKanbanCards", "function collectLinkedTaskCardSiblingIdsForTiler");
     const tilerSiblingSource = sourceBetween(source, "function collectLinkedTaskCardSiblingIdsForTiler", "function collectLinkedKanbanCardsForSource");
     const directHighlightSource = sourceBetween(source, "const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards", "// If link touches a Kanban task card");
+    const edgeColorSource = sourceBetween(source, "const linkedTargetHighlight = selectedTilerTaskSiblingIds.has(other.id)", "const label = getRawTextLabel ? getRawTextLabel(other) : '';");
 
-    assert.match(source, /const RED = '#ff0000';/);
     assert.match(source, /const SAME_CROP_HIGHLIGHT = '#2563eb';/);
+    assert.match(source, /const ORDINARY_LINK_OVERLAY_COLOR = '#2563eb';/); // CHANGE: ordinary connectors and vertex outlines share blue.
     assert.match(cardSiblingSource, /if \(!isTilerGroup\(source\)\) continue;/);
     assert.match(tilerSiblingSource, /if \(!isTilerGroup\(selectedTiler\)\) return new Set\(\);/);
     assert.match(tilerSiblingSource, /if \(!isKanbanCard\(target\)\) continue;/);
     assert.match(tilerSiblingSource, /if \(!findKanbanBoardAncestor\(target\)\) continue;/);
     assert.match(tilerSiblingSource, /if \(cards\.length < 2\) return new Set\(\);/);
     assert.match(directHighlightSource, /const selectedTilerTaskSiblingIds = collectLinkedTaskCardSiblingIdsForTiler\(cell, targets\);/);
-    assert.match(directHighlightSource, /const linkedTargetHighlight = selectedTilerTaskSiblingIds\.has\(other\.id\) \? SAME_CROP_HIGHLIGHT : RED;/);
+    assert.match(directHighlightSource, /const linkedTargetHighlight = selectedTilerTaskSiblingIds\.has\(other\.id\) \? SAME_CROP_HIGHLIGHT : ORDINARY_LINK_OVERLAY_COLOR;/); // CHANGE: ordinary direct target outlines are blue.
     assert.match(directHighlightSource, /highlight\(other, otherIsPrimary \? YELLOW : linkedTargetHighlight\);/);
+    assert.match(edgeColorSource, /\? YELLOW : ORDINARY_LINK_OVERLAY_COLOR/); // CHANGE: ordinary connector line matches ordinary blue outline.
     assert.match(source, /for \(const otherCard of sameBoardLinkedCards\)[\s\S]*highlight\(otherCard, otherIsPrimary \? YELLOW : SAME_CROP_HIGHLIGHT, 1\.5\);/);
 });
 
@@ -300,6 +303,21 @@ test("standard link overlays use the native editor overlay pane", () => { // CHA
 
     assert.match(linkOverlaySource, /function getOverlayPane\(\) \{[\s\S]*const view = graph\.getView && graph\.getView\(\);[\s\S]*return view && view\.getOverlayPane \? view\.getOverlayPane\(\) : null;/);
     assert.doesNotMatch(linkOverlaySource, /ensureGraphOverlaySvgLayer\('connection'\)/);
+});
+
+test("standard link overlays and ordinary outlines use blue fallback color with half-width link strokes", () => {
+    const source = readSource();
+    const polylineSource = sourceBetween(source, "function createOrUpdatePolyline(entry)", "function setLinkOverlay(a, b, exitHint, color, label, labelOffset)");
+    const setOverlaySource = sourceBetween(source, "function setLinkOverlay(a, b, exitHint, color, label, labelOffset)", "function clearAll()");
+
+    assert.match(source, /const ORDINARY_LINK_OVERLAY_COLOR = '#2563eb';/); // CHANGE: ordinary connector overlays no longer fall back to error red.
+    assert.match(source, /const STANDARD_LINK_OVERLAY_STROKE_WIDTH = 1\.5;/); // CHANGE: standard connector overlays are half the old 3px width.
+    assert.match(polylineSource, /const stroke = entry\.color \|\| ORDINARY_LINK_OVERLAY_COLOR;/);
+    assert.match(polylineSource, /new mxPolyline\(pts, stroke, STANDARD_LINK_OVERLAY_STROKE_WIDTH\)/);
+    assert.match(setOverlaySource, /color: color \|\| ORDINARY_LINK_OVERLAY_COLOR/);
+    assert.match(setOverlaySource, /entry\.color = color \|\| ORDINARY_LINK_OVERLAY_COLOR;/);
+    assert.match(source, /target\.style\.stroke = color \|\| ORDINARY_LINK_OVERLAY_COLOR;/); // CHANGE: vertex highlight outlines now match ordinary link blue.
+    assert.doesNotMatch(source, /const RED = '#ff0000';/); // CHANGE: ordinary outline red is no longer part of link highlighting.
 });
 
 test("standard link overlays navigate on plain left click without a vertex shift fallback", () => {

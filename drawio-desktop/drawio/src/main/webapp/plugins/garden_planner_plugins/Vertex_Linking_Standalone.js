@@ -20,6 +20,8 @@ Draw.loadPlugin(function (ui) {
     const GRAPH_OVERLAY_LAYER_Z = Object.freeze({ annotation: GRAPH_OVERLAY_Z.ANNOTATION, connection: GRAPH_OVERLAY_Z.CONNECTION, control: GRAPH_OVERLAY_Z.CONTROL, controlTop: GRAPH_OVERLAY_Z.CONTROL_TOP });
     const LINK_ENDPOINT_CENTER_OFFSET_PX = 5;
     const LINK_LABEL_STAGGER_PX = 15;
+    const ORDINARY_LINK_OVERLAY_COLOR = '#2563eb'; // CHANGE: ordinary connector overlays and vertex highlight outlines use the same neutral blue.
+    const STANDARD_LINK_OVERLAY_STROKE_WIDTH = 1.5; // CHANGE: standard connector overlays are half the previous 3px width.
     graph.__ctrlToggleHandled = false;
 
     function applyVertexButtonStyle(button, variant, options) {
@@ -1296,7 +1298,7 @@ Draw.loadPlugin(function (ui) {
                 return;
             }
 
-            const stroke = entry.color || '#ff0000';
+            const stroke = entry.color || ORDINARY_LINK_OVERLAY_COLOR; // CHANGE: fallback connector color follows ordinary-link blue.
 
             if (entry.poly && entry.poly.node &&
                 entry.poly.node.parentNode === pane) {
@@ -1309,7 +1311,7 @@ Draw.loadPlugin(function (ui) {
                     entry.poly.node.parentNode.removeChild(entry.poly.node);
                 }
 
-                const poly = new mxPolyline(pts, stroke, 3);
+                const poly = new mxPolyline(pts, stroke, STANDARD_LINK_OVERLAY_STROKE_WIDTH); // CHANGE: halve ordinary standard connector width.
                 poly.dialect = graph.dialect;
                 poly.init(pane);
                 poly.redraw();
@@ -1358,7 +1360,7 @@ Draw.loadPlugin(function (ui) {
                     srcId: aId,
                     trgId: bId,
                     exitHint: exitHint || null,
-                    color: color || '#ff0000',
+                    color: color || ORDINARY_LINK_OVERLAY_COLOR, // CHANGE: unlabeled/default overlays use ordinary-link blue.
                     label: label || '',
                     labelOffset: normalizeLabelOffset(labelOffset),
                     poly: null,
@@ -1367,7 +1369,7 @@ Draw.loadPlugin(function (ui) {
                 registry.set(key, entry);
             } else {
                 entry.exitHint = exitHint || null;
-                entry.color = color || '#ff0000';
+                entry.color = color || ORDINARY_LINK_OVERLAY_COLOR; // CHANGE: keep refreshed fallback overlays blue.
                 entry.label = label || '';
                 entry.labelOffset = normalizeLabelOffset(labelOffset);
             }
@@ -3884,7 +3886,7 @@ Draw.loadPlugin(function (ui) {
             });
         }
 
-        target.style.stroke = color || '#ff0000';
+        target.style.stroke = color || ORDINARY_LINK_OVERLAY_COLOR; // CHANGE: fallback vertex outlines match ordinary link blue.
         target.style.strokeWidth = (widthPx || 3) + 'px';
         markHighlighted(cell);
     }
@@ -3974,7 +3976,6 @@ Draw.loadPlugin(function (ui) {
 
     function highlightLinkedRoleCards(cells) {
         const YELLOW = '#ffd400';
-        const RED = '#ff0000';
         const selectedRoleCards = (cells || []).filter(cell => cell && model.isVertex(cell) && isRoleCard(cell));
 
         model.beginUpdate();
@@ -3987,7 +3988,7 @@ Draw.loadPlugin(function (ui) {
                 pruneBrokenLinks(cell);
                 const linkedIds = getLinkSet(cell);
                 const selIsPrimary = isPrimary(cell);
-                highlight(cell, selIsPrimary ? YELLOW : RED);
+                highlight(cell, selIsPrimary ? YELLOW : ORDINARY_LINK_OVERLAY_COLOR); // CHANGE: ordinary role-card outlines match ordinary link blue.
                 if (linkedIds.size === 0) continue;
 
                 const targets = [];
@@ -3999,9 +4000,9 @@ Draw.loadPlugin(function (ui) {
                 const exitMap = computeExitParamsForOrigin(cell, targets);
                 for (const other of targets) {
                     const otherIsPrimary = isPrimary(other);
-                    highlight(other, otherIsPrimary ? YELLOW : RED);
+                    highlight(other, otherIsPrimary ? YELLOW : ORDINARY_LINK_OVERLAY_COLOR); // CHANGE: ordinary linked role-card outlines match ordinary link blue.
                     const laneColor = getLinkLaneColor(cell, other);
-                    const edgeColor = laneColor ? laneColor : ((selIsPrimary || otherIsPrimary) ? YELLOW : RED);
+                    const edgeColor = laneColor ? laneColor : ((selIsPrimary || otherIsPrimary) ? YELLOW : ORDINARY_LINK_OVERLAY_COLOR); // CHANGE: only connector overlays use blue for ordinary links.
                     const label = getRawTextLabel ? getRawTextLabel(other) : '';
                     const exitHint = exitMap.get(other.id);
                     if (shouldShowEdgeInternal(cell, other)) {
@@ -4021,7 +4022,6 @@ Draw.loadPlugin(function (ui) {
 
     function highlightLinked(cell) {
         const YELLOW = '#ffd400';
-        const RED = '#ff0000';
         const SAME_CROP_HIGHLIGHT = '#2563eb';
 
         model.beginUpdate();
@@ -4037,7 +4037,7 @@ Draw.loadPlugin(function (ui) {
             const selectedIsTilerGroup = isTilerGroup(cell);
 
             if (!hasLinks && selectedIsTilerGroup) {
-                highlight(cell, selIsPrimary ? YELLOW : RED);
+                highlight(cell, selIsPrimary ? YELLOW : ORDINARY_LINK_OVERLAY_COLOR); // CHANGE: ordinary selected tiler outlines match ordinary link blue.
                 taskScheduleOverlay.showScheduleOnly(cell);
                 return;
             }
@@ -4046,7 +4046,7 @@ Draw.loadPlugin(function (ui) {
                 return;
             }
 
-            highlight(cell, selIsPrimary ? YELLOW : RED);
+            highlight(cell, selIsPrimary ? YELLOW : ORDINARY_LINK_OVERLAY_COLOR); // CHANGE: ordinary selected outlines match ordinary link blue.
 
             if (!hasLinks) return;
 
@@ -4075,14 +4075,14 @@ Draw.loadPlugin(function (ui) {
 
             for (const other of targets) {
                 const otherIsPrimary = isPrimary(other);
-                const linkedTargetHighlight = selectedTilerTaskSiblingIds.has(other.id) ? SAME_CROP_HIGHLIGHT : RED;
+                const linkedTargetHighlight = selectedTilerTaskSiblingIds.has(other.id) ? SAME_CROP_HIGHLIGHT : ORDINARY_LINK_OVERLAY_COLOR; // CHANGE: ordinary target outlines match ordinary link blue.
                 highlight(other, otherIsPrimary ? YELLOW : linkedTargetHighlight);
 
                 // If link touches a Kanban task card, edge color = lane fillColor  
                 const laneColor = getLinkLaneColor(cell, other);
                 const edgeColor = laneColor
                     ? laneColor
-                    : ((selIsPrimary || otherIsPrimary) ? YELLOW : RED);
+                    : ((selIsPrimary || otherIsPrimary) ? YELLOW : ORDINARY_LINK_OVERLAY_COLOR);
 
                 const label = getRawTextLabel ? getRawTextLabel(other) : '';
                 const exitHint = exitMap.get(other.id);

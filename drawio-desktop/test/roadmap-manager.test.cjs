@@ -49,6 +49,7 @@ function controlWithButton(h, text) { const button = graphButton(h, text); retur
 function linkIdSet(cell) { return new Set(String(cell.getAttribute('linkedTo') || '').split(',').filter(Boolean)); } // NEW
 function setLinkedTo(cell, ids) { cell.value.setAttribute('linkedTo', ids.join(',')); } // NEW
 function dependencyPills(h) { return Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-dependency-pill')).map(node => node.textContent); } // NEW
+function objectDateBadges(h) { return Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-object-date-badge')).map(node => node.textContent); } // NEW
 const THIS_WEEK_DAY_PX = 400 / 7; // NEW
 const BOUNDARY_SCALES = [0.31, 0.73, 5, 11, 2, 6, 1.3, 0.42]; // NEW
 function compactHudDate(c, day) { const iso = c.formatDay(day); return iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(2, 4); } // NEW
@@ -225,6 +226,18 @@ test('new roadmap view defaults hide past frames and use 75px/400px nominal widt
     assert.deepEqual(Array.from(frames.slice(0, 3), frame => Math.round(h.graph.getCellGeometry(frame).width)), [75, 75, 75]); // CHANGE
 }); // NEW
 
+test('roadmap split header targets board above and timeframes below', t => { // CHANGE
+    const h = harness(t), frames = h.typed(h.board, 'timeframe'); h.graph.refresh(); // CHANGE
+    const boardState = h.graph.view.getState(h.board), frame = frames[3], frameGeometry = h.graph.getCellGeometry(frame), frameState = h.graph.view.getState(frame); // CHANGE
+    assert.equal(Math.round(frameGeometry.y), 32); // CHANGE: timeframe cells visibly start halfway down the 64px board header.
+    assert.equal(Math.round(frameState.y - boardState.y), 32); // CHANGE
+    const frameX = frameState.x + frameState.width / 2; // CHANGE
+    assert.equal(h.api.getHitCellAt(frameX, boardState.y + 16), h.board); // CHANGE
+    assert.equal(h.api.getHitCellAt(frameX, boardState.y + 48), frame); // CHANGE
+    const objectState = h.graph.view.getState(h.object); // CHANGE
+    assert.equal(h.api.getHitCellAt(objectState.x + objectState.width / 2, objectState.y + objectState.height / 2), h.object); // CHANGE
+}); // CHANGE
+
 test('old v1 roadmap view scale preferences do not affect v2 defaults', t => { // NEW
     const h = harness(t), frames = h.typed(h.board, 'timeframe'); // NEW
     h.w.localStorage.setItem(legacyV1PreferenceKey(h), JSON.stringify({ perspective: 'today', today: { scales: Array(8).fill(4), multiplier: 1, leftHidden: 0, rightHidden: 0 }, inception: { scales: Array(8).fill(4), multiplier: 1, leftHidden: 0, rightHidden: 0 } })); // NEW
@@ -314,6 +327,36 @@ test('process overlay exposes color picker without inline date fields', async t 
     assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-control input[type="date"]').length, 0); // NEW
     const buttons = Array.from(controlWithButton(h, 'Delete Process').querySelectorAll('button')).map(button => button.textContent); // CHANGE
     assert.ok(!buttons.includes('Edit')); assert.ok(buttons.includes('Add Roadmap Object')); // NEW
+}); // NEW
+
+test('process object date badges are opt-in, undoable, and exported', async t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(), otherProcess = h.api.addProcess(h.board), otherObject = h.api.addObject(otherProcess); // NEW
+    h.graph.setSelectionCell(h.process); h.api.refresh(); await frame(h); // NEW
+    const toggle = h.graph.container.querySelector('.trellis-roadmap-control input[aria-label="Show Dates & Duration"]'); // NEW
+    assert.ok(toggle); assert.equal(toggle.checked, false); assert.ok(!h.process.getAttribute('roadmap_object_badges_enabled')); assert.equal(objectDateBadges(h).join('|'), ''); // NEW
+    toggle.checked = true; toggle.dispatchEvent(new h.w.Event('change', { bubbles: true })); await frame(h); // NEW
+    assert.equal(h.process.getAttribute('roadmap_object_badges_enabled'), '1'); // NEW
+    assert.equal(objectDateBadges(h).join('|'), [compactHudDate(c, today), compactHudDate(c, today + 7), '8d'].join('|')); // NEW
+    assert.equal(objectDateBadges(h).length, 3); assert.ok(otherObject); // NEW
+    let records = h.api.exportProjection()[''].filter(record => record.synthetic && /^trellis-roadmap-object-date-badge-/.test(record.id)); // NEW
+    assert.equal(records.map(record => record.label).join('|'), [compactHudDate(c, today), compactHudDate(c, today + 7), '8d'].join('|')); // NEW
+    assert.equal(records.every(record => record.parentId === h.process.id && styleValue(record.style, 'strokeColor') === '#111111'), true); // NEW
+    const enabledXml = h.xml(); h.api.setProcessObjectBadges(h.process, false); await frame(h); // NEW
+    assert.ok(!h.process.getAttribute('roadmap_object_badges_enabled')); assert.equal(objectDateBadges(h).join('|'), ''); // NEW
+    assert.equal((h.api.exportProjection()[''] || []).some(record => record.synthetic && /^trellis-roadmap-object-date-badge-/.test(record.id)), false); // NEW
+    h.undo.undo(); assert.equal(h.xml(), enabledXml); await frame(h); assert.equal(objectDateBadges(h).join('|'), [compactHudDate(c, today), compactHudDate(c, today + 7), '8d'].join('|')); // NEW
+    h.undo.redo(); await frame(h); assert.equal(objectDateBadges(h).join('|'), ''); // NEW
+}); // NEW
+
+test('process object date badges follow object edits and respect permissions', async t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); // NEW
+    h.api.setProcessObjectBadges(h.process, true); await frame(h); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today + 2), endISO: c.formatDay(today + 4) }); await frame(h); // NEW
+    assert.equal(objectDateBadges(h).join('|'), [compactHudDate(c, today + 2), compactHudDate(c, today + 4), '3d'].join('|')); // NEW
+    const records = h.api.exportProjection()[''].filter(record => record.synthetic && /^trellis-roadmap-object-date-badge-/.test(record.id)); // NEW
+    assert.equal(records.map(record => record.label).join('|'), [compactHudDate(c, today + 2), compactHudDate(c, today + 4), '3d'].join('|')); // NEW
+    const beforeDenied = h.xml(); h.graph.__trellisUsers = { canEditCell: cell => cell !== h.process, canAddCell: () => true, canDeleteCell: () => true, getCurrentUser: () => ({ id: 'editor' }) }; // NEW
+    assert.equal(h.api.setProcessObjectBadges(h.process, false), null); assert.equal(h.xml(), beforeDenied); // NEW
 }); // NEW
 
 test('transparent columns select the object; process handles are movable; view is exported from a clone', t => {
@@ -893,6 +936,64 @@ function pointer(h, type, x, y, cell, extras = {}) { // NEW
     Object.defineProperty(event, 'target', { value: h.graph.container }); // NEW
     h.graph.fireMouseEvent(type, new h.w.mxMouseEvent(event, cell && h.graph.view.getState(cell))); // NEW
 } // NEW
+function roadmapCellPoint(h, cell) { const state = h.graph.view.getState(cell); assert.ok(state, 'missing roadmap cell state'); return { x: state.x + Math.min(12, Math.max(1, state.width / 2)), y: state.y + Math.min(12, Math.max(1, state.height / 2)) }; } // NEW
+function clickRoadmapCell(h, cell, move = { x: 0, y: 0 }) { const pt = roadmapCellPoint(h, cell); pointer(h, 'mouseDown', pt.x, pt.y, cell); if (move.x || move.y) pointer(h, 'mouseMove', pt.x + move.x, pt.y + move.y, cell); pointer(h, 'mouseUp', pt.x + move.x, pt.y + move.y, cell); } // NEW
+
+test('selected roadmap board click-through selects objects and preserves board/background hits', async t => { // NEW
+    const h = harness(t, ['Deep_Click_Through.js']); h.graph.refresh(); h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); // NEW
+    const objectPoint = roadmapCellPoint(h, h.object); pointer(h, 'mouseDown', objectPoint.x, objectPoint.y, h.board); pointer(h, 'mouseUp', objectPoint.x, objectPoint.y, h.board); // NEW
+    assert.equal(h.graph.getSelectionCell(), h.object); // NEW
+    h.api.editObject(h.object, { endISO: h.object.getAttribute('roadmap_start') }); h.api.setViewState(h.board, { today: { multiplier: 0.01 } }); h.graph.refresh(); h.graph.setSelectionCell(h.board); // NEW
+    const shortState = h.graph.view.getState(h.object), shortX = shortState.x + shortState.width + 3, shortY = shortState.y + 5; // NEW
+    pointer(h, 'mouseDown', shortX, shortY, h.board); pointer(h, 'mouseUp', shortX, shortY, h.board); assert.equal(h.graph.getSelectionCell(), h.object); // NEW
+    h.graph.setSelectionCell(h.object); const boardState = h.graph.view.getState(h.board), emptyX = boardState.x + boardState.width - 4, emptyY = boardState.y + boardState.height - 4; // NEW
+    pointer(h, 'mouseDown', emptyX, emptyY, h.board); pointer(h, 'mouseUp', emptyX, emptyY, h.board); assert.equal(h.graph.getSelectionCell(), h.board); // NEW
+}); // NEW
+
+test('roadmap hit testing uses layout geometry when child view states are stale', t => { // NEW
+    const h = harness(t); h.graph.refresh(); const state = h.graph.view.getState(h.object), x = state.x + state.width / 2, y = state.y + state.height / 2, baseGetState = h.graph.view.getState.bind(h.graph.view); // NEW
+    h.graph.view.getState = function (cell) { return cell === h.process || cell === h.object ? null : baseGetState(cell); }; // NEW
+    try { assert.equal(h.api.getHitCellAt(x, y), h.object); } finally { h.graph.view.getState = baseGetState; } // NEW
+    const frame = h.typed(h.board, 'timeframe')[3], frameState = h.graph.view.getState(frame); assert.equal(h.api.getHitCellAt(frameState.x + frameState.width / 2, frameState.y + 4), frame); // NEW
+}); // NEW
+
+test('selected roadmap object repeated plain clicks toggle controls without changing selection', async t => { // NEW
+    const h = harness(t), second = h.api.addObject(h.process); h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
+    assert.ok(graphButton(h, 'Create Task')); // NEW
+    clickRoadmapCell(h, h.object); await frame(h); // NEW
+    assert.equal(h.graph.getSelectionCell(), h.object); assert.equal(graphButton(h, 'Create Task'), undefined); assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-control').length, 0); // NEW
+    clickRoadmapCell(h, h.object); await frame(h); // NEW
+    assert.equal(h.graph.getSelectionCell(), h.object); assert.ok(graphButton(h, 'Create Task')); // NEW
+    clickRoadmapCell(h, h.object); await frame(h); // NEW
+    assert.equal(graphButton(h, 'Create Task'), undefined); // NEW
+    h.graph.setSelectionCell(second); h.api.refresh(); await frame(h); // NEW
+    assert.equal(h.graph.getSelectionCell(), second); assert.ok(graphButton(h, 'Create Task')); // NEW
+}); // NEW
+
+test('selected roadmap object click opens absent controls before the next click closes them', async t => { // NEW
+    const h = harness(t); h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
+    const controls = h.graph.container.querySelector('.trellis-roadmap-controls'); assert.ok(controls); controls.replaceChildren(); // NEW
+    assert.equal(graphButton(h, 'Create Task'), undefined); // NEW
+    clickRoadmapCell(h, h.object); await frame(h); // NEW
+    assert.equal(h.graph.getSelectionCell(), h.object); assert.ok(graphButton(h, 'Create Task')); // NEW
+    clickRoadmapCell(h, h.object); await frame(h); // NEW
+    assert.equal(graphButton(h, 'Create Task'), undefined); // NEW
+}); // NEW
+
+test('selected roadmap object overlay toggle ignores drag-like movement', async t => { // NEW
+    const h = harness(t); h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
+    assert.ok(graphButton(h, 'Create Task')); // NEW
+    clickRoadmapCell(h, h.object, { x: 10, y: 0 }); await frame(h); // NEW
+    h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
+    assert.ok(graphButton(h, 'Create Task')); // NEW
+}); // NEW
+
+test('roadmap process and goal marker repeated clicks do not toggle controls', async t => { // NEW
+    const h = harness(t); h.graph.setSelectionCell(h.process); h.api.refresh(); await frame(h); // NEW
+    assert.ok(graphButton(h, 'Add Roadmap Object')); clickRoadmapCell(h, h.process); await frame(h); h.graph.setSelectionCell(h.process); h.api.refresh(); await frame(h); assert.ok(graphButton(h, 'Add Roadmap Object')); // CHANGE
+    const marker = h.api.addGoalMarker(h.process); h.graph.setSelectionCell(marker); h.api.refresh(); await frame(h); // NEW
+    assert.ok(graphButton(h, 'Delete Goal Marker')); clickRoadmapCell(h, marker); await frame(h); h.graph.setSelectionCell(marker); h.api.refresh(); await frame(h); assert.ok(graphButton(h, 'Delete Goal Marker')); // CHANGE
+}); // NEW
 
 test('native graph handler previews without XML edits, commits dates and supports Escape', t => { // NEW
     const h = harness(t); h.graph.setGridEnabled(false); h.graph.refresh(); h.graph.setSelectionCell(h.object); // NEW

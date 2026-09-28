@@ -9,7 +9,7 @@ Draw.loadPlugin(function (ui) {
     const core = globalThis.TrellisRoadmapCore;
     if (!graph || !core || graph.__trellisRoadmapManager) return;
     const model = graph.getModel();
-    const HEADER = 64, PAD = 12, PROCESS_HEADER = 28, OBJECT_HEIGHT = 26, GAP = 8;
+    const HEADER = 64, HEADER_SPLIT = HEADER / 2, PAD = 12, PROCESS_HEADER = 28, OBJECT_HEIGHT = 26, GAP = 8; // CHANGE: Split the roadmap header into board-selection and timeframe-selection halves.
     const GOAL_MARKER_WIDTH = 72, GOAL_MARKER_LABEL_STEP = 14; // NEW
     const TYPES = new Set(['module', 'board', 'process', 'object', 'goal_marker', 'timeframe', 'marker']);
     const STATUS_COLORS = { Planned: '#e2e8f0', Doing: '#bfdbfe', Blocked: '#fecaca', Done: '#bbf7d0' };
@@ -17,16 +17,20 @@ Draw.loadPlugin(function (ui) {
     const GOAL_MARKER_TEXT = '#111827'; // NEW
     const DEPENDENCY_COLOR = '#2563eb'; // NEW
     const DEPENDENCY_BADGE_STYLE = 'rounded=1;arcSize=50;fillColor=#2563eb;strokeColor=#1d4ed8;fontColor=#ffffff;fontSize=9;fontStyle=1;align=center;verticalAlign=middle;resizable=0;movable=0;connectable=0;whiteSpace=nowrap;html=0;'; // NEW
+    const OBJECT_DATE_BADGE_STYLE = 'rounded=1;arcSize=8;fillColor=#ffffff;strokeColor=#111111;fontColor=#111827;fontSize=9;align=center;verticalAlign=middle;resizable=0;movable=0;connectable=0;whiteSpace=wrap;html=0;spacing=2;'; // NEW
+    const OBJECT_DATE_BADGE_HEIGHT = 16, OBJECT_DATE_BADGE_SIDE_WIDTH = 50, OBJECT_DATE_BADGE_DURATION_WIDTH = 32; // NEW
     const PROCESS_COLORS = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#be123c', '#4f46e5']; // NEW
     const BOARD_STYLE = 'shape=trellisRoadmapBoard;rounded=0;fillColor=#ffffff;strokeColor=#64748b;container=1;collapsible=0;recursiveResize=0;resizable=0;connectable=0;verticalAlign=top;align=left;spacing=6;whiteSpace=nowrap;overflow=hidden;'; // CHANGE
     const PROCESS_STYLE = 'shape=trellisRoadmapProcess;rounded=1;arcSize=12;fillColor=#f8fafc;strokeColor=#94a3b8;container=1;collapsible=0;recursiveResize=0;resizable=0;movable=0;connectable=0;verticalAlign=top;align=left;spacing=5;whiteSpace=nowrap;overflow=hidden;fontSize=11;'; // CHANGE
     const OBJECT_STYLE = 'rounded=1;arcSize=12;fillColor=#e2e8f0;strokeColor=#64748b;resizable=0;movable=0;connectable=0;whiteSpace=nowrap;overflow=hidden;spacing=3;fontSize=11;';
     const GOAL_MARKER_STYLE = 'shape=trellisRoadmapGoalMarker;rounded=0;fillColor=#ffffff;strokeColor=#facc15;resizable=0;movable=0;connectable=0;whiteSpace=wrap;html=0;overflow=hidden;align=center;verticalAlign=top;fontSize=9;fontStyle=1;fontColor=#111827;spacingTop=0;spacingLeft=2;spacingRight=2;'; // CHANGE
     const FRAME_STYLE = 'shape=trellisRoadmapTimeframe;fillColor=none;strokeColor=#cbd5e1;resizable=0;movable=0;connectable=0;verticalAlign=top;align=center;spacingTop=24;whiteSpace=nowrap;overflow=hidden;fontSize=10;';
+    const SIMPLE_OBJECT_TOGGLE_MAX_MOVE_PX = 4; // NEW
     const preferences = new Map(), layouts = new Map();
     let projections = new WeakMap(), committingCanonical = false, fixedBoardMoves = new Set(); // NEW
     let commandDepth = 0, journal = null, gesture = null, refreshPending = false, boardRegistry = null, destroyed = false; // CHANGE
-    let lastToday = core.todayDay(), overlay = null, pricingOverlay = null, dependencyOverlay = null, dateHint = null, dateHud = null, assignmentPicker = null, costPicker = null, dialogError = null; // CHANGE
+    let lastToday = core.todayDay(), overlay = null, pricingOverlay = null, dependencyOverlay = null, objectDateBadgeOverlay = null, dateHint = null, dateHud = null, assignmentPicker = null, costPicker = null, dialogError = null; // CHANGE
+    let manuallyHiddenObjectCell = null, pendingSelectedObjectToggle = null, objectToggleMouseDown = null; // NEW
     const columnPanels = new WeakMap(); // NEW // CHANGE
     const baseGeometry = graph.getCellGeometry.bind(graph);
     const baseVisible = graph.isCellVisible ? graph.isCellVisible.bind(graph) : () => true;
@@ -55,6 +59,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     function processStyle(color) { return validColor(color) ? setStyleValue(PROCESS_STYLE, 'strokeColor', color) : PROCESS_STYLE; } // CHANGE
     function objectStyle(process, status) { const fill = STATUS_COLORS[status || 'Planned'] || STATUS_COLORS.Planned; return setStyleValue(OBJECT_STYLE, 'fillColor', fill); } // CHANGE
+    function processObjectBadgesEnabled(process) { return attr(process, 'roadmap_object_badges_enabled') === '1'; } // NEW
     function clampPercent(value) { return Math.max(0, Math.min(100, Math.round(Number(value) || 0))); } // NEW
     function goalMarkerPercent(cell) { return clampPercent(attr(cell, 'roadmap_goal_percent')); } // NEW
     function goalMarkerStatus(cell, date) { const percent = goalMarkerPercent(cell); return percent >= 100 ? 'met' : date < lastToday ? 'missed' : 'pending'; } // NEW
@@ -242,6 +247,16 @@ Draw.loadPlugin(function (ui) {
         else if (kind(cell) === 'process') details.push(summaryText(cell)); // CHANGE
         return details.join('\n'); // NEW
     } // NEW
+    function objectDateBadgeRecords(cell) { // NEW
+        if (kind(cell) !== 'object' || !processObjectBadgesEnabled(parent(cell))) return []; // NEW
+        const geometry = graph.getCellGeometry(cell), dates = range(cell); if (!geometry) return []; // NEW
+        const midY = geometry.y + geometry.height / 2 - OBJECT_DATE_BADGE_HEIGHT / 2; // NEW
+        return [ // NEW
+            { key: 'start', label: compactDateText(dates.start), geometry: { x: geometry.x - OBJECT_DATE_BADGE_SIDE_WIDTH - 14, y: midY, width: OBJECT_DATE_BADGE_SIDE_WIDTH, height: OBJECT_DATE_BADGE_HEIGHT } }, // NEW
+            { key: 'end', label: compactDateText(dates.end), geometry: { x: geometry.x + geometry.width + 14, y: midY, width: OBJECT_DATE_BADGE_SIDE_WIDTH, height: OBJECT_DATE_BADGE_HEIGHT } }, // NEW
+            { key: 'duration', label: compactDurationText(dates.start, dates.end), geometry: { x: geometry.x + geometry.width / 2 - OBJECT_DATE_BADGE_DURATION_WIDTH / 2, y: geometry.y - OBJECT_DATE_BADGE_HEIGHT - 6, width: OBJECT_DATE_BADGE_DURATION_WIDTH, height: OBJECT_DATE_BADGE_HEIGHT } } // NEW
+        ]; // NEW
+    } // NEW
     function goalMarkerTooltipText(cell) { // NEW
         const day = goalMarkerDate(cell), today = core.todayDay(new Date()); // NEW
         return [label(cell), tooltipDateLine('Goal', day, today), goalMarkerPercent(cell) + '% complete', goalMarkerStatusText(cell, day)].join('\n'); // NEW
@@ -345,7 +360,7 @@ Draw.loadPlugin(function (ui) {
         });
         typedChildren(board, 'timeframe').forEach((cell, index) => {
             const column = timeline.columns[index]; if (!column) return;
-            geometry.set(id(cell), new mxGeometry(PAD + column.x, 0, column.width, height));
+            geometry.set(id(cell), new mxGeometry(PAD + column.x, HEADER_SPLIT, column.width, height - HEADER_SPLIT)); // CHANGE: Make timeframe columns visibly occupy the lower half of the board header.
             if (!column.visible) hidden.add(id(cell));
         });
         typedChildren(board, 'marker').forEach(cell => { geometry.set(id(cell), new mxGeometry(PAD + core.dayToX(timeline, anchor), HEADER - 10, 1, height - HEADER + 10)); hidden.add(id(cell)); }); // CHANGE: legacy graph marker cells are compatibility data; the visible today line is the selection-scoped DOM overlay.
@@ -562,6 +577,7 @@ Draw.loadPlugin(function (ui) {
     function removeObjectCost(cell) { return command(() => { requireEdit(cell); if (kind(cell) !== 'object') throw new Error('Select a roadmap object.'); patch(cell, { roadmap_cost_mode: null, roadmap_cost_amount: null }); return cell; }); } // NEW
 
     function setProcessColor(process, color) { return editProcess(process, { color, startISO: attr(process, 'roadmap_start'), endISO: attr(process, 'roadmap_end') }); } // NEW
+    function setProcessObjectBadges(process, enabled) { return command(() => { requireEdit(process); if (kind(process) !== 'process') throw new Error('Select a process.'); patch(process, { roadmap_object_badges_enabled: enabled ? '1' : null }); return process; }); } // NEW
 
     /** Remove selected descendants so a native container move never shifts them twice. */ // NEW
     function moveRoots(cells) { const selected = new Set(cells || []); return Array.from(selected).filter(cell => { for (let p = parent(cell); p; p = parent(p)) if (selected.has(p)) return false; return true; }); } // NEW
@@ -865,21 +881,29 @@ Draw.loadPlugin(function (ui) {
         for (let i = boards.length - 1; i >= 0; i--) {
             const board = boards[i], state = graph.view.getState(board);
             if (!contains(state, x, y)) continue;
-            const scale = graph.view.scale;
+            const scale = graph.view.scale, layout = getLayout(board);
+            if (y < state.y + HEADER_SPLIT * scale) return board; // CHANGE: The top half of the header selects the roadmap board itself.
             if (y < state.y + HEADER * scale) {
                 const frames = typedChildren(board, 'timeframe');
-                return frames.find(cell => graph.isCellVisible(cell) && contains(graph.view.getState(cell), x, y)) || board;
+                return frames.find(cell => graph.isCellVisible(cell) && contains(roadmapLayoutState(layout, state, scale, cell), x, y)) || board; // CHANGE
             }
             const processes = typedChildren(board, 'process');
             for (let p = processes.length - 1; p >= 0; p--) {
-                if (!graph.isCellVisible(processes[p]) || !containsBar(graph.view.getState(processes[p]), x, y)) continue;
-                const marker = typedChildren(processes[p], 'goal_marker').find(cell => graph.isCellVisible(cell) && containsBar(graph.view.getState(cell), x, y)); // NEW
-                return marker || typedChildren(processes[p], 'object').find(cell => graph.isCellVisible(cell) && containsBar(graph.view.getState(cell), x, y)) || processes[p]; // CHANGE
+                const process = processes[p], processState = roadmapLayoutState(layout, state, scale, process); // CHANGE
+                if (!graph.isCellVisible(process) || !containsBar(processState, x, y)) continue; // CHANGE
+                const marker = typedChildren(process, 'goal_marker').find(cell => graph.isCellVisible(cell) && containsBar(roadmapLayoutState(layout, state, scale, cell, process), x, y)); // CHANGE
+                return marker || typedChildren(process, 'object').find(cell => graph.isCellVisible(cell) && containsBar(roadmapLayoutState(layout, state, scale, cell, process), x, y)) || process; // CHANGE
             }
             return board;
         }
         return null;
     }
+    function roadmapLayoutState(layout, boardState, scale, cell, owner) { // NEW
+        const geometry = layout && layout.geometry.get(id(cell)), ownerGeometry = owner ? layout.geometry.get(id(owner)) : null; // NEW
+        if (!geometry || owner && !ownerGeometry) return graph.view.getState(cell); // NEW
+        const ox = ownerGeometry ? ownerGeometry.x : 0, oy = ownerGeometry ? ownerGeometry.y : 0; // NEW
+        return { cell, x: boardState.x + (ox + geometry.x) * scale, y: boardState.y + (oy + geometry.y) * scale, width: geometry.width * scale, height: geometry.height * scale }; // NEW
+    } // NEW
     function contains(state, x, y) { return state && x >= state.x && x <= state.x + state.width && y >= state.y && y <= state.y + state.height; }
     function containsBar(state, x, y) { const pad = state ? Math.max(0, (12 - state.width) / 2) : 0; return state && x >= state.x - pad && x <= state.x + state.width + pad && y >= state.y && y <= state.y + state.height; } // NEW: selection target is independent of duration and zoom.
     const baseUpdateMouseEvent = graph.updateMouseEvent; // NEW
@@ -956,6 +980,12 @@ Draw.loadPlugin(function (ui) {
             const pageId = pageIdFor(cell), number = dependencyReveal.numberById.get(id(cell)); // NEW
             (pages[pageId] || (pages[pageId] = [])).push({ synthetic: true, id: 'trellis-roadmap-dependency-badge-' + id(cell), parentId: id(process), visible: true, label: String(number), geometry: { x: geometry.x - 7, y: geometry.y - 7, width: 16, height: 16 }, style: DEPENDENCY_BADGE_STYLE }); // NEW
         }); // NEW
+        roots.forEach(root => collectDescendants([root]).filter(cell => kind(cell) === 'object' && graph.isCellVisible(cell) && processObjectBadgesEnabled(parent(cell))).forEach(cell => { // NEW
+            const process = parent(cell), pageId = pageIdFor(cell); // NEW
+            objectDateBadgeRecords(cell).forEach(record => { // NEW
+                (pages[pageId] || (pages[pageId] = [])).push({ synthetic: true, id: 'trellis-roadmap-object-date-badge-' + id(cell) + '-' + record.key, parentId: id(process), visible: true, label: record.label, geometry: record.geometry, style: OBJECT_DATE_BADGE_STYLE }); // NEW
+            }); // NEW
+        })); // NEW
         return pages; // NEW
     } // NEW
     const baseExportVariables = graph.getExportVariables; // NEW
@@ -1196,6 +1226,59 @@ Draw.loadPlugin(function (ui) {
     function rename(cell, name) { return command(() => { requireEdit(cell); patch(cell, { label: normalizedName(cell, name) }); return cell; }); }
     function stopDomPropagation(event) { if (event && event.stopPropagation) event.stopPropagation(); } // NEW: overlay text editing should never start graph gestures.
     function consumeDomEvent(event) { if (event && event.preventDefault) event.preventDefault(); stopDomPropagation(event); } // NEW
+    function selectedRoadmapObject() { // NEW
+        const selected = graph.getSelectionCells ? graph.getSelectionCells() : graph.getSelectionCell ? [graph.getSelectionCell()] : []; // NEW
+        return selected.length === 1 && kind(selected[0]) === 'object' ? selected[0] : null; // NEW
+    } // NEW
+    function clearHiddenObjectIfSelectionChanged() { // NEW
+        if (manuallyHiddenObjectCell && selectedRoadmapObject() !== manuallyHiddenObjectCell) manuallyHiddenObjectCell = null; // NEW
+    } // NEW
+    function isPlainPrimaryMouseEvent(event) { // NEW
+        if (!event) return false; // NEW
+        if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(event)) || event.button === 2) return false; // NEW
+        if (mxEvent.isControlDown(event) || mxEvent.isMetaDown(event) || mxEvent.isShiftDown(event) || mxEvent.isAltDown && mxEvent.isAltDown(event)) return false; // NEW
+        return Number(event.detail || 1) <= 1; // NEW
+    } // NEW
+    function roadmapTogglePointer(event) { // NEW
+        return event ? { x: mxEvent.getClientX(event), y: mxEvent.getClientY(event) } : null; // NEW
+    } // NEW
+    function isSimpleObjectToggleClick(event) { // NEW
+        if (!event || !objectToggleMouseDown) return false; // NEW
+        const pt = roadmapTogglePointer(event), dx = pt.x - objectToggleMouseDown.x, dy = pt.y - objectToggleMouseDown.y; // NEW
+        return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_OBJECT_TOGGLE_MAX_MOVE_PX; // NEW
+    } // NEW
+    function eventSourceInsideRoadmapControls(event) { // NEW
+        const source = event && mxEvent.getSource ? mxEvent.getSource(event) : event && event.target; // NEW
+        return !!(source && source.closest && source.closest('.trellis-roadmap-control')); // NEW
+    } // NEW
+    function roadmapEventPoint(me, event) { // NEW
+        const x = me && me.getGraphX ? me.getGraphX() : NaN, y = me && me.getGraphY ? me.getGraphY() : NaN; // NEW
+        if (Number.isFinite(x) && Number.isFinite(y)) return { x, y }; // NEW
+        return event && graph.container ? point(event) : null; // NEW
+    } // NEW
+    function roadmapMouseEventCell(me, event) { // NEW
+        const pt = roadmapEventPoint(me, event), hit = pt ? getHitCellAt(pt.x, pt.y) : null; // NEW
+        return hit || (me && me.getCell ? me.getCell() : null); // NEW
+    } // NEW
+    function selectedObjectPlainClickTarget(me, event) { // NEW
+        if (!isPlainPrimaryMouseEvent(event) || eventSourceInsideRoadmapControls(event)) return null; // NEW
+        const selected = selectedRoadmapObject(); // NEW
+        return selected && roadmapMouseEventCell(me, event) === selected ? selected : null; // NEW
+    } // NEW
+    function selectedObjectControlsVisible(cell) { // NEW
+        return !!(overlay && cell && Array.from(overlay.children).some(node => node.__roadmapAnchor === cell)); // NEW
+    } // NEW
+    function toggleHiddenObjectAfterSimpleClick(me, event) { // NEW
+        const pending = pendingSelectedObjectToggle; // NEW
+        const simple = isSimpleObjectToggleClick(event); // NEW
+        pendingSelectedObjectToggle = null; objectToggleMouseDown = null; // NEW
+        if (!pending || !simple) return false; // CHANGE
+        if (graph.getSelectionCell && graph.getSelectionCell() !== pending && graph.setSelectionCell) graph.setSelectionCell(pending); // NEW: repeated object clicks must not promote selection while hiding controls.
+        if (selectedRoadmapObject() !== pending) return false; // NEW
+        manuallyHiddenObjectCell = selectedObjectControlsVisible(pending) ? pending : null; // CHANGE: absent controls mean this click opens; visible controls mean it closes.
+        closeAssignmentPicker(); closeCostPicker(); // NEW
+        return true; // NEW
+    } // NEW
     function writeOverlayName(cell, name) { // NEW
         const previous = label(cell), next = normalizedName(cell, name); // NEW
         if (next === previous) return previous; // NEW
@@ -1287,6 +1370,27 @@ Draw.loadPlugin(function (ui) {
         badge('trellis-roadmap-date-badge-end', sideText(ctx.dates.end, ctx.moved.right), state.x + state.width + sideGap, state.y + state.height / 2, 'translate(0,-50%)'); // NEW
         badge('trellis-roadmap-date-badge-duration', compactDurationText(ctx.dates.start, ctx.dates.end), state.x + state.width / 2, state.y - 6, 'translate(-50%,-100%)'); // NEW
     } // NEW
+    function ensureObjectDateBadgeOverlay() { // NEW
+        if (!objectDateBadgeOverlay) { objectDateBadgeOverlay = element('div', null, 'trellis-roadmap-object-date-badge-layer'); objectDateBadgeOverlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10024;pointer-events:none;font:11px Arial,sans-serif;color:#111827;'; graph.container.appendChild(objectDateBadgeOverlay); } // NEW
+        return objectDateBadgeOverlay; // NEW
+    } // NEW
+    function objectDateBadge(host, className, text, left, top, transform) { // NEW
+        const node = element('div', text, 'trellis-roadmap-date-badge trellis-roadmap-object-date-badge ' + className); // NEW
+        node.style.cssText = 'position:absolute;background:#fff;border:1px solid #111;border-radius:4px;padding:2px 5px;line-height:13px;white-space:pre;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.12);'; // NEW
+        node.style.left = Math.round(left) + 'px'; node.style.top = Math.round(top) + 'px'; node.style.transform = transform; host.appendChild(node); return node; // NEW
+    } // NEW
+    function renderObjectDateBadgeLayer() { // NEW
+        if (!document || !graph.container) return; // NEW
+        const host = ensureObjectDateBadgeOverlay(); host.replaceChildren(); // NEW
+        collectDescendants([model.getRoot()]).filter(cell => kind(cell) === 'object' && processObjectBadgesEnabled(parent(cell)) && shouldRenderRoadmapControlsFor(cell) && graph.isCellVisible(cell)).forEach(cell => { // NEW
+            const state = graph.view.getState(cell); if (!state) return; // NEW
+            const dates = range(cell), sideGap = 14; // NEW
+            objectDateBadge(host, 'trellis-roadmap-object-date-badge-start', compactDateText(dates.start), state.x - sideGap, state.y + state.height / 2, 'translate(-100%,-50%)'); // NEW
+            objectDateBadge(host, 'trellis-roadmap-object-date-badge-end', compactDateText(dates.end), state.x + state.width + sideGap, state.y + state.height / 2, 'translate(0,-50%)'); // NEW
+            objectDateBadge(host, 'trellis-roadmap-object-date-badge-duration', compactDurationText(dates.start, dates.end), state.x + state.width / 2, state.y - 6, 'translate(-50%,-100%)'); // NEW
+        }); // NEW
+        host.style.display = host.children.length ? 'block' : 'none'; // NEW
+    } // NEW
     function ensurePricingOverlay() { // NEW
         if (!pricingOverlay) { pricingOverlay = element('div', null, 'trellis-roadmap-pricing-layer'); pricingOverlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10026;pointer-events:none;font:11px Arial,sans-serif;color:#111827;'; graph.container.appendChild(pricingOverlay); } // CHANGE
         return pricingOverlay; // NEW
@@ -1357,6 +1461,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function renderControls() {
+        renderObjectDateBadgeLayer(); // NEW
         renderDateHud(); // NEW
         renderDependencyLayer(); // NEW
         renderPricingLayer(); // NEW
@@ -1364,6 +1469,8 @@ Draw.loadPlugin(function (ui) {
         if (!overlay) { overlay = element('div', null, 'trellis-roadmap-controls'); overlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10020;pointer-events:none;'; (graph.__trellisTaskUi ? graph.__trellisTaskUi.ensureControlHost() : graph.container).appendChild(overlay); }
         const cell = graph.getSelectionCell && graph.getSelectionCell(); if (!cell) return; // CHANGE
         const type = kind(cell), board = ancestor(cell, 'board');
+        clearHiddenObjectIfSelectionChanged(); // NEW
+        if (type === 'object' && cell === manuallyHiddenObjectCell) { overlay.replaceChildren(); return; } // NEW
         const activeHost = overlay.contains(document.activeElement) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) ? document.activeElement.closest('.trellis-roadmap-control') : null; // NEW
         if (activeHost && (activeHost.__roadmapAnchor === cell || activeHost.__roadmapAnchor === board)) return; // CHANGE: preserve active editors only while their anchor still belongs to the current selection.
         overlay.replaceChildren();
@@ -1412,6 +1519,7 @@ Draw.loadPlugin(function (ui) {
                 color.disabled = !allowed(cell); // NEW
                 ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup'].forEach(type => color.addEventListener(type, stopDomPropagation)); // NEW
                 color.addEventListener('change', () => setProcessColor(cell, color.value)); // NEW
+                const objectBadges = checkboxField(host, 'Show Dates & Duration', processObjectBadgesEnabled(cell), checked => setProcessObjectBadges(cell, checked)); objectBadges.disabled = !allowed(cell); // NEW
                 button('Add Roadmap Object', () => addObject(cell), host, !allowed(cell, 'canAddCell'));
                 button('Add Goal Marker', () => addGoalMarker(cell), host, !allowed(cell, 'canAddCell')); // NEW
             } else if (type === 'goal_marker') { // NEW
@@ -1435,6 +1543,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function positionControls() { // NEW
+        renderObjectDateBadgeLayer(); // NEW
         renderDateHud(); // NEW
         renderDependencyLayer(); // NEW
         renderPricingLayer(); // NEW
@@ -1597,6 +1706,24 @@ Draw.loadPlugin(function (ui) {
     const disposers = []; // NEW
     function listenDom(target, event, handler) { target.addEventListener(event, handler); disposers.push(() => target.removeEventListener(event, handler)); } // NEW
     function listenModel(target, event, handler) { if (target && target.addListener) { target.addListener(event, handler); disposers.push(() => target.removeListener(handler)); } } // NEW
+    function installSelectedObjectOverlayToggle() { // NEW
+        if (!graph.addMouseListener) return; // NEW
+        const listener = { // NEW
+            mouseDown: function (_sender, me) { // NEW
+                const event = me && me.getEvent ? me.getEvent() : null; // NEW
+                pendingSelectedObjectToggle = selectedObjectPlainClickTarget(me, event); // NEW
+                objectToggleMouseDown = pendingSelectedObjectToggle ? roadmapTogglePointer(event) : null; // NEW
+            }, // NEW
+            mouseMove: function () { }, // NEW
+            mouseUp: function (_sender, me) { // NEW
+                const event = me && me.getEvent ? me.getEvent() : null; // NEW
+                if (toggleHiddenObjectAfterSimpleClick(me, event)) refresh(); // NEW
+            } // NEW
+        }; // NEW
+        graph.addMouseListener(listener); // NEW
+        disposers.push(() => { if (graph.removeMouseListener) graph.removeMouseListener(listener); }); // NEW
+    } // NEW
+    installSelectedObjectOverlayToggle(); // NEW
     if (graph.container && document) { // CHANGE: only non-gesture lifecycle events belong to Roadmap.
         listenDom(graph.container, 'scroll', renderControls); // NEW
         listenDom(graph.container, 'click', setPricingCheckpointFromClick); // NEW
@@ -1609,11 +1736,11 @@ Draw.loadPlugin(function (ui) {
     listenModel(graph.getSelectionModel && graph.getSelectionModel(), mxEvent.CHANGE, () => { closeAssignmentPicker(); closeCostPicker(); refresh(); }); // CHANGE
     [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE].filter(Boolean).forEach(event => listenModel(graph.view, event, renderControls)); // NEW
     const destroyGraph = graph.destroy; // NEW
-    graph.destroy = function () { destroyed = true; disposers.splice(0).forEach(dispose => dispose()); closeAssignmentPicker(); closeCostPicker(); if (overlay) overlay.remove(); if (pricingOverlay) pricingOverlay.remove(); if (dependencyOverlay) dependencyOverlay.remove(); if (dateHint) dateHint.remove(); if (dateHud) dateHud.remove(); return destroyGraph.apply(this, arguments); }; // CHANGE
+    graph.destroy = function () { destroyed = true; disposers.splice(0).forEach(dispose => dispose()); closeAssignmentPicker(); closeCostPicker(); if (overlay) overlay.remove(); if (pricingOverlay) pricingOverlay.remove(); if (dependencyOverlay) dependencyOverlay.remove(); if (objectDateBadgeOverlay) objectDateBadgeOverlay.remove(); if (dateHint) dateHint.remove(); if (dateHud) dateHud.remove(); return destroyGraph.apply(this, arguments); }; // CHANGE
     graph.__trellisRoadmapManager = {
         runModelCommand: command, // NEW: Modules joins Roadmap lifecycle rollback and post-edit permission validation.
         ensureMainRoadmapInRoadmapModule, createSecondaryRoadmapInRoadmapModule, listRoadmapsForGarden, openRoadmapForGarden, createTaskFromRoadmapObject,
-        addProcess, addObject, addGoalMarker, editProcess, editObject, editGoalMarker, linkRoadmapObjects, unlinkRoadmapObjects, roadmapObjectLinks, setObjectCost, removeObjectCost, setCostSymbol, setAssignments, getViewState, setViewState, getLayout, getSummary, shiftObjects, deleteRoadmapCells, // CHANGE
+        addProcess, addObject, addGoalMarker, editProcess, editObject, editGoalMarker, linkRoadmapObjects, unlinkRoadmapObjects, roadmapObjectLinks, setProcessObjectBadges, setObjectCost, removeObjectCost, setCostSymbol, setAssignments, getViewState, setViewState, getLayout, getSummary, shiftObjects, deleteRoadmapCells, // CHANGE
         getHitCellAt, getTooltipForCell, isRoadmapCell: cell => TYPES.has(kind(cell)), isRoadmapGestureCell: cell => ['object', 'goal_marker', 'timeframe', 'marker'].includes(kind(cell)),
         projectExportXml, exportProjection, refresh, openBoard, showTaskCreationDialog, showEditDialog, linkedTasks, roleRoster,
         _test: { moveContent, moveGoalMarkers, planMove, setObjectStatuses, setObjectAssignments, setProcessColor, dependencyRevealState, resizeTimelineCell, command, beginGesture, previewGesture, endGesture, checkToday, calculateLayout, get gesture() { return gesture; } } // CHANGE

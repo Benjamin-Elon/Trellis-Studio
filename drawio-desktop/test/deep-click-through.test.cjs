@@ -306,6 +306,15 @@ test("plain second-click inside selected roadmap timeframe keeps the timeframe s
     assert.deepEqual(getSelected(), [timeframe]); // NEW
 }); // NEW
 
+test("roadmap split header delegates upper clicks to board and lower clicks to timeframe", () => { // CHANGE
+    const { graph, regularModule, timeframe, getSelected } = makeHarness(); // CHANGE
+    graph.__trellisRoadmapManager = { getHitCellAt(_x, y) { return y < 332 ? regularModule : timeframe; } }; // CHANGE
+    graph.selectCellForEvent(regularModule, { detail: 1, clientX: 130, clientY: 316, button: 0 }); // CHANGE
+    assert.deepEqual(getSelected(), [regularModule]); // CHANGE
+    graph.selectCellForEvent(regularModule, { detail: 1, clientX: 130, clientY: 348, button: 0 }); // CHANGE
+    assert.deepEqual(getSelected(), [timeframe]); // CHANGE
+}); // CHANGE
+
 test("plain second-click on garden objects other than modules stays selected", () => {
     const { graph, bed, tilerGroup, getSelected } = makeHarness();
     const closeCalls = [];

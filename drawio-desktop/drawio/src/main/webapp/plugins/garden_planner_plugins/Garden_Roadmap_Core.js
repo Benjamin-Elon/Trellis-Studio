@@ -397,7 +397,7 @@
 /** Shared native shapes and isolated export projection; no editor UI. */ // NEW
 (function (root) { // NEW
     'use strict'; // NEW
-    const core = root.TrellisRoadmapCore, HEADER = 64, PROCESS_HEADER = 28; // CHANGE
+    const core = root.TrellisRoadmapCore, HEADER = 64, TIMEFRAME_HEADER = HEADER / 2, PROCESS_HEADER = 28; // CHANGE
     if (!core || root.TrellisRoadmapRenderer) return; // NEW
     function frameTicks(start, end, unit) { try { return core.calendarTicks({ start, end, tickUnit: unit }); } catch (_) { return []; } } // CHANGE
     /** Native timeframe shape keeps ticks inside SVG/image exports, not only DOM overlays. */ // NEW
@@ -442,7 +442,7 @@
         TimeframeShape.prototype.constructor = TimeframeShape; // NEW
         TimeframeShape.prototype.paintVertexShape = function (canvas, x, y, width, height) { // NEW
             const style = this.style || {}, start = Number(style.roadmapFrameStart), end = Number(style.roadmapFrameEnd), scale = Number(style.roadmapFrameScale), unit = style.roadmapFrameTickUnit || 'day'; // CHANGE
-            canvas.setStrokeColor('#cbd5e1'); canvas.begin(); canvas.moveTo(x, y + 22); canvas.lineTo(x, y + height); canvas.stroke(); // NEW
+            canvas.setStrokeColor('#cbd5e1'); canvas.begin(); canvas.moveTo(x, y); canvas.lineTo(x, y + height); canvas.stroke(); // CHANGE: Timeframe cells now start in the lower board header half.
             if (!scale || !Number.isFinite(start) || !Number.isFinite(end)) return; // NEW
             const ticks = frameTicks(start, end, unit), tickWidth = unit === 'day' ? 18 : unit === 'week' ? 42 : 28; // NEW
             const density = Math.max(1, Math.ceil(3 / Math.max(0.001, tickDistance(ticks, scale)))); // CHANGE
@@ -450,8 +450,8 @@
             canvas.setFontSize(8); canvas.setFontColor('#64748b'); // NEW
             for (let index = 0; index < ticks.length; index += density) { // CHANGE
                 const tick = ticks[index], px = x + (tick.day - start) * scale; // CHANGE
-                canvas.begin(); canvas.moveTo(px, y + HEADER - 8); canvas.lineTo(px, y + HEADER); canvas.stroke(); // NEW
-                if (index % labelStride === 0 && px + tickWidth < x + width) canvas.text(px + 2, y + HEADER - 22, tickWidth, 12, tick.label, 'left', 'top', false, '', null, false, 0); // CHANGE
+                canvas.begin(); canvas.moveTo(px, y + TIMEFRAME_HEADER - 8); canvas.lineTo(px, y + TIMEFRAME_HEADER); canvas.stroke(); // CHANGE
+                if (index % labelStride === 0 && px + tickWidth < x + width) canvas.text(px + 2, y + TIMEFRAME_HEADER - 22, tickWidth, 12, tick.label, 'left', 'top', false, '', null, false, 0); // CHANGE
             } // NEW
         }; // NEW
         mxCellRenderer.registerShape('trellisRoadmapTimeframe', TimeframeShape); // NEW
