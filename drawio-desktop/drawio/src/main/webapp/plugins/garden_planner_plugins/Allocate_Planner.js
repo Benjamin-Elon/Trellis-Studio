@@ -249,6 +249,19 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
+    function graphPointToScreen(x, y) {
+        const container = graph.container;
+        const hostRect = container && container.getBoundingClientRect ? container.getBoundingClientRect() : { left: 0, top: 0 };
+        const view = graph.view || {};
+        const scale = Number(view.scale) || 1;
+        const tr = view.translate || { x: 0, y: 0 };
+        return {
+            left: hostRect.left + (Number(x || 0) + Number(tr.x || 0)) * scale,
+            top: hostRect.top + (Number(y || 0) + Number(tr.y || 0)) * scale,
+            scale
+        };
+    } // CHANGE: uncommitted proposal geometry is already in graph coordinates.
+
     function lifecycleHarvestStart(lifecycle) {
         return lifecycle && lifecycle.attributePatch && lifecycle.attributePatch.harvest_start
             || lifecycle && lifecycle.result && lifecycle.result.timelines && lifecycle.result.timelines[0] && lifecycle.result.timelines[0].harvestStart
@@ -620,7 +633,8 @@ Draw.loadPlugin(function (ui) {
         if (!methodContext.ok) return { ok: false, status: "structural_failure", reason: methodContext.reason, bed, crop, plantResolution }; // CHANGE: validate saved Year Plan method context before lifecycle scheduling.
         const bedProfile = tiler.readBedProfile(bed);
         const lifecycleKey = lifecycleCacheKey(state, crop, bedProfile);
-        let lifecycle = state.lifecycleCache && state.lifecycleCache.get(lifecycleKey);
+        let lifecycle = crop && crop.allocationLifecycle || null; // CHANGE: allocation scheduler edits can supply a reviewed lifecycle.
+        if (!lifecycle) lifecycle = state.lifecycleCache && state.lifecycleCache.get(lifecycleKey);
         noteCacheAccess(state, !!lifecycle);
         if (!lifecycle) {
             lifecycle = await proposeAllocationLifecycle(scheduler, {
@@ -743,7 +757,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     async function computeBedResult(state, crop, bed) {
-        const cacheKey = state && state.bedResultCache ? bedResultCacheKey(state, crop, bed) : "";
+        const cacheKey = state && state.bedResultCache && !(crop && crop.allocationLifecycle) ? bedResultCacheKey(state, crop, bed) : ""; // CHANGE: edited scheduler lifecycles must not reuse stale bed results.
         if (cacheKey && state.bedResultCache.has(cacheKey)) {
             noteCacheAccess(state, true);
             return Object.assign({}, state.bedResultCache.get(cacheKey), { bed, crop });
@@ -1211,7 +1225,7 @@ Draw.loadPlugin(function (ui) {
             const rotate = createButton("Rotate", "open");
             rotate.disabled = !state.draft || !state.draft.geometry;
             rotate.addEventListener("click", () => rotateDraft(state));
-            const create = createButton(state.draft && state.draft.status !== "compatible" ? "Create anyway" : "Create", "add");
+            const create = createButton("Review Schedule", "add"); // CHANGE: HUD action opens review/configuration before committing.
             create.disabled = !state.draft || state.draft.status === "structural_failure" || state.draft.status === "unavailable";
             create.addEventListener("click", () => beginCreate(state));
             actions.appendChild(rotate);
@@ -1337,19 +1351,17 @@ Draw.loadPlugin(function (ui) {
             removeNode(state.ghost);
             state.ghost = null;
             if (!state.opportunityModel || progressIsActive(state.scheduleProgress) && !selectedWeekHasActions(state)) return;
+            if (!state.selectedCropId) return; // CHANGE: bed badges are meaningful only for the user's selected crop.
             const crop = (state.opportunityModel && state.opportunityModel.actionable || []).find(item => item.cropId === state.selectedCropId) || planCropById(state.plan, state.selectedCropId);
-            if (!crop && !(state.opportunityModel.actionable || []).length) return;
-            state.beds.forEach(bed => renderBedOverlay(state, bed, { label: "Calculating...", tone: "neutral" }));
+            if (!crop) return;
             setTimeout(async function () {
                 const results = [];
                 for (const bed of state.beds) {
                     if (state.closed || version !== state.overlayVersion) return;
-                    let result = null;
-                    if (crop) result = await computeBedResult(state, Object.assign({}, crop, { cropId: String(crop.id || "") }), bed);
-                    else result = await bestOpportunityForBed(state, bed);
+                    const result = await computeBedResult(state, Object.assign({}, crop, { cropId: String(crop.cropId || crop.id || "") }), bed);
                     if (state.closed || version !== state.overlayVersion) return;
                     results.push(result);
-                    renderBedOverlay(state, bed, overlayModel(result));
+                    if (result && result.ok) renderBedOverlay(state, bed, overlayModel(result)); // CHANGE: show only plantable beds.
                 }
                 if (!state.draft && crop) {
                     const best = results.filter(result => result && result.ok).sort((a, b) => rankBedResult(a) - rankBedResult(b))[0];
@@ -1435,12 +1447,12 @@ Draw.loadPlugin(function (ui) {
             removeNode(state.ghost);
             const d = state.draft;
             if (!d || !d.geometry || !d.geometry.geometry) return;
-            const moduleRect = cellScreenRect(state.moduleCell);
             const geo = d.geometry.geometry;
-            const scale = moduleRect.scale || 1;
+            const screen = graphPointToScreen(geo.x, geo.y); // CHANGE: proposal geometry is already in graph coordinates.
+            const scale = screen.scale || 1;
             const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
             svg.setAttribute("class", "trellis-allocate-ghost");
-            svg.style.cssText = "position:fixed;left:" + Math.round(moduleRect.left + geo.x * scale) + "px;top:" + Math.round(moduleRect.top + geo.y * scale) + "px;width:" + Math.round(geo.width * scale) + "px;height:" + Math.round(geo.height * scale) + "px;z-index:" + (HUD_Z - 40) + ";pointer-events:none;overflow:visible;";
+            svg.style.cssText = "position:fixed;left:" + Math.round(screen.left) + "px;top:" + Math.round(screen.top) + "px;width:" + Math.round(geo.width * scale) + "px;height:" + Math.round(geo.height * scale) + "px;z-index:" + (HUD_Z - 40) + ";pointer-events:none;overflow:visible;";
             svg.setAttribute("viewBox", "0 0 " + geo.width + " " + geo.height);
             const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
             rect.setAttribute("x", "0");
@@ -1478,13 +1490,67 @@ Draw.loadPlugin(function (ui) {
 
         async function beginCreate(state) {
             if (!state.draft) return;
+            const scheduler = window.USL && window.USL.scheduler;
+            const defaults = scheduler && typeof scheduler.resolveAllocationDefaultStatus === "function"
+                ? await scheduler.resolveAllocationDefaultStatus(state.draft)
+                : { complete: true, missing: [] };
+            if (defaults && defaults.complete === false) {
+                await openAllocationSchedulerAndCreate(state, state.draft, { defaultStatus: defaults });
+                return;
+            }
             if (isReviewSuppressed(state.draft) && state.draft.status === "compatible") {
                 await createDraft(state, state.draft);
                 return;
             }
             const reviewed = await showCreateReview(state, state.draft);
             if (reviewed && reviewed.action === "create") await createDraft(state, reviewed.draft);
+            else if (reviewed && reviewed.action === "scheduler") await openAllocationSchedulerAndCreate(state, reviewed.draft, { defaultStatus: defaults });
         }
+
+        async function openAllocationSchedulerAndCreate(state, draft, options = {}) {
+            const scheduler = window.USL && window.USL.scheduler;
+            if (!scheduler || typeof scheduler.openAllocationScheduleDialog !== "function") {
+                const reviewed = await showCreateReview(state, draft);
+                if (reviewed && reviewed.action === "create") await createDraft(state, reviewed.draft);
+                return;
+            }
+            const tiler = window.USL && window.USL.tiler;
+            const schedulerDraft = Object.assign({}, draft, {
+                city: state.city,
+                allocationYear: state.year,
+                bedProfile: tiler && draft.bed && typeof tiler.readBedProfile === "function" ? tiler.readBedProfile(draft.bed) : null,
+                bedProfileSource: draft.bed ? (getAttr(draft.bed, "label") || "allocation bed") : "allocation bed"
+            });
+            const edited = await scheduler.openAllocationScheduleDialog(ui, schedulerDraft, Object.assign({ defaultStatus: options.defaultStatus || null }, options));
+            if (!edited || edited.action === "cancel") return;
+            const nextDraft = await recomputeDraftForSameBed(state, Object.assign({}, draft, edited.draft || edited));
+            if (!nextDraft || !nextDraft.ok) {
+                state.noticeMessage = nextDraft && nextDraft.reason || "Edited schedule no longer fits the selected bed.";
+                renderHud(state);
+                return;
+            }
+            await createDraft(state, nextDraft);
+        } // CHANGE: full allocation scheduler saves are final pre-create edits.
+
+        async function recomputeDraftForSameBed(state, draft) {
+            const bed = draft && draft.bed;
+            if (!bed) return Object.assign({}, draft, { ok: false, reason: "Selected bed is unavailable." });
+            const crop = Object.assign({}, draft.crop || {}, {
+                cropId: String(draft.crop && (draft.crop.cropId || draft.crop.id) || state.selectedCropId || ""),
+                method: draft.methodId || draft.crop && draft.crop.method || "",
+                methodCategoryId: draft.methodCategoryId || draft.crop && draft.crop.methodCategoryId || "",
+                allocationLifecycle: draft.lifecycle || null
+            });
+            const result = await computeBedResult(state, crop, bed);
+            if (!result || !result.ok) return Object.assign({}, draft, { ok: false, reason: result && result.reason || "Edited schedule no longer fits the selected bed." });
+            return Object.assign({}, result, {
+                taskPreview: draft.taskPreview || result.taskPreview || [],
+                lifecycle: draft.lifecycle || result.lifecycle,
+                actionStartISO: draft.actionStartISO || result.actionStartISO,
+                targetDemandStartISO: draft.targetDemandStartISO || result.targetDemandStartISO,
+                targetDemandEndISO: draft.targetDemandEndISO || result.targetDemandEndISO
+            });
+        } // CHANGE: edited allocation drafts must be revalidated against the same bed.
 
         async function showCreateReview(state, draft) {
             const div = document.createElement("div");
@@ -1495,6 +1561,8 @@ Draw.loadPlugin(function (ui) {
             div.appendChild(title);
             [
                 draft.crop.label,
+                "Method " + (draft.lifecycle && draft.lifecycle.methodId || draft.crop.method || ""),
+                "Grown for " + (draft.lifecycle && draft.lifecycle.growthStageLabel || draft.crop.growthStageLabel || "Mature"),
                 "Start/sow " + (draft.actionStartISO || draft.lifecycle.startISO || ""),
                 draft.lifecycle.primaryDateISO && draft.lifecycle.primaryDateISO !== (draft.actionStartISO || draft.lifecycle.startISO || "") ? methodBedEntryLabel(draft.crop.method) + " " + draft.lifecycle.primaryDateISO : "",
                 draft.targetDemandStartISO ? "Targets demand " + draft.targetDemandStartISO + " to " + (draft.targetDemandEndISO || draft.targetDemandStartISO) : "",
@@ -1551,13 +1619,7 @@ Draw.loadPlugin(function (ui) {
                 cancel.addEventListener("click", function () { ui.hideDialog(); resolve(null); });
                 edit.addEventListener("click", async function () {
                     ui.hideDialog();
-                    const edited = await window.USL.scheduler.openDraftScheduleDialog(ui, draft);
-                    if (edited) {
-                        state.draft = Object.assign({}, draft, edited);
-                        resolve(await showCreateReview(state, state.draft));
-                    } else {
-                        resolve(null);
-                    }
+                    resolve({ action: "scheduler", draft }); // CHANGE: Edit opens the allocation scheduler path.
                 });
                 create.addEventListener("click", function () {
                     if (suppressInput.checked) setReviewSuppressed(draft);
@@ -1693,6 +1755,7 @@ Draw.loadPlugin(function (ui) {
             createScheduleProgress,
             scheduleProgressText,
             progressIsActive,
+            graphPointToScreen,
             computeBedResult,
             partialAllocationWarning,
             resolveCropMethodContext,

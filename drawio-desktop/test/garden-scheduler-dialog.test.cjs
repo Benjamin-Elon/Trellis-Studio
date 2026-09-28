@@ -319,11 +319,55 @@ test('Scheduler exposes Allocate resolver and draft editing contracts', () => {
     assert.equal(typeof hooks.resolvePlantForPlanCrop, 'function');
     assert.equal(typeof hooks.resolveCityForModule, 'function');
     assert.equal(typeof hooks.openDraftScheduleDialog, 'function');
+    assert.equal(typeof hooks.openAllocationScheduleDialog, 'function');
+    assert.equal(typeof hooks.resolveAllocationDefaultStatus, 'function');
     assert.match(schedulerSource, /resolvePlantForPlanCrop,/);
     assert.match(schedulerSource, /resolveCityForModule,/);
-    assert.match(schedulerSource, /openDraftScheduleDialog/);
-    assert.match(schedulerSource, /renderTaskRows/);
-    assert.match(schedulerSource, /Add task/);
+    assert.match(schedulerSource, /openAllocationScheduleDialog/);
+    assert.match(schedulerSource, /persistAllocationReusableDefaults/);
+    assert.match(schedulerSource, /saveVarietyTemplate/);
+});
+
+test('allocation scheduler draft builder initializes method, grown-for, start date, and tasks from draft', async () => {
+    const plant = makeCrop({
+        plant_id: 14,
+        plant_name: 'Lettuce',
+        default_planting_method: 'direct_sow.field',
+        default_planting_method_category: 'direct_sow'
+    });
+    const draft = {
+        allocationYear: 2027,
+        city: makeCity(hooks, 20),
+        crop: { plantId: '14', plant: 'Lettuce', method: 'direct_sow.field', methodCategoryId: 'direct_sow' },
+        plantResolution: { ok: true, plant, plantId: '14', varietyId: '', varietyName: '', label: 'Lettuce' },
+        actionStartISO: '2027-04-01',
+        taskPreview: [{ startISO: '2027-04-01', title: 'Sow Lettuce' }]
+    };
+
+    const result = await hooks.buildAllocationDialogDraft(draft, {
+        method: { value: 'direct_sow.field' },
+        growth: { value: 'mature' },
+        start: { value: '2027-04-01' }
+    });
+
+    assert.equal(result.methodId, 'direct_sow.field');
+    assert.equal(result.methodCategoryId, 'direct_sow');
+    assert.equal(result.growthStageKey, 'mature');
+    assert.equal(result.actionStartISO, '2027-04-01');
+    assert.equal(result.lifecycle.ok, true);
+    assert.ok(Array.isArray(result.taskPreview));
+});
+
+test('allocation scheduler task previews can be saved as reusable defaults', () => {
+    const template = hooks.taskTemplateFromPreview([
+        { ruleKey: 'sow', startISO: '2027-04-01', title: 'Sow Lettuce' },
+        { ruleKey: 'water', startISO: '2027-04-02', title: 'Water Lettuce' }
+    ]);
+
+    assert.equal(template.version, 2);
+    assert.equal(template.rules.length, 2);
+    assert.equal(template.rules[0].id, 'sow');
+    assert.equal(template.rules[0].title, 'Sow Lettuce');
 });
 
 test('companion metadata annotates crop options without changing suitability order', () => {

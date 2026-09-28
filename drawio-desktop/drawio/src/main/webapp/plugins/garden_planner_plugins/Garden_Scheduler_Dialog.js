@@ -1563,7 +1563,28 @@ Draw.loadPlugin(function (ui) {
             });
         }
 
-        static async saveForSelection({ plantId, methodId, template }) {
+        static async saveVarietyTemplate(varietyId, methodId, template) {
+            await this.ensureTables();
+            const vid = Number(varietyId);
+            const normalizedMethodId = normId(methodId);
+            if (!Number.isFinite(vid)) throw new Error('varietyId is required.');
+            if (!normalizedMethodId) throw new Error('methodId is required.');
+            const json = JSON.stringify(template ?? {});
+            const now = new Date().toISOString();
+            await withDbTransaction(async dbId => {
+                await execRunOnDb(dbId, `
+                    DELETE FROM VarietyTaskTemplates
+                    WHERE variety_id = ? AND LOWER(TRIM(method_id)) = ?;`,
+                [vid, normalizedMethodId]);
+                await execRunOnDb(dbId, `
+                    INSERT INTO VarietyTaskTemplates (variety_id, method_id, template_json, updated_at)
+                    VALUES (?, ?, ?, ?);`,
+                [vid, normalizedMethodId, json, now]);
+            });
+        } // CHANGE: allocation defaults persist variety-first when a variety is selected.
+
+        static async saveForSelection({ plantId, varietyId = null, methodId, template }) {
+            if (varietyId != null && varietyId !== '') return this.saveVarietyTemplate(varietyId, methodId, template);
             return this.savePlantTemplate(plantId, methodId, template);
         }
 
@@ -15245,6 +15266,7 @@ Draw.loadPlugin(function (ui) {
                 planningMode: behavior.planningMode,
                 primaryDateISO,
                 startISO,
+                effectiveTransplantDays,
                 result,
                 attributePatch,
                 taskPreview: tasks
@@ -15455,6 +15477,220 @@ Draw.loadPlugin(function (ui) {
             elevateTrellisDialog(ui);
         });
     }
+
+    function draftPlantId(draft) {
+        return finiteNumberOrNull(draft?.crop?.plantId ?? draft?.plantResolution?.plantId ?? draft?.plantResolution?.plant?.plant_id);
+    }
+
+    function draftVarietyId(draft) {
+        return finiteNumberOrNull(draft?.crop?.varietyId ?? draft?.plantResolution?.varietyId);
+    }
+
+    function draftMethodId(draft) {
+        return normId(draft?.methodId || draft?.lifecycle?.methodId || draft?.crop?.method || draft?.plantResolution?.plant?.default_planting_method || 'direct_sow.field');
+    }
+
+    function draftMethodCategoryId(draft, methodId = '') {
+        const id = normId(methodId);
+        const existingId = draftMethodId(draft);
+        if (id && id !== existingId) return inferMethodCategoryFromMethodId(id);
+        return normId(draft?.methodCategoryId || draft?.lifecycle?.methodCategoryId || draft?.crop?.methodCategoryId || inferMethodCategoryFromMethodId(id));
+    }
+
+    function draftGrowthStage(draft) {
+        return normalizeGrowthStage({
+            stage_key: draft?.growthStageKey || draft?.lifecycle?.growthStageKey || draft?.crop?.growthStageKey || draft?.plantResolution?.plant?.growth_stage_key || DEFAULT_GROWTH_STAGE_KEY,
+            stage_label: draft?.growthStageLabel || draft?.lifecycle?.growthStageLabel || draft?.crop?.growthStageLabel || draft?.plantResolution?.plant?.growth_stage_label || DEFAULT_GROWTH_STAGE_LABEL,
+            gdd_ratio: draft?.growthStageGddRatio || draft?.crop?.growthStageGddRatio || draft?.plantResolution?.plant?.growth_stage_gdd_ratio || 1,
+            spacing_ratio: draft?.growthStageSpacingRatio || draft?.crop?.growthStageSpacingRatio || draft?.plantResolution?.plant?.growth_stage_spacing_ratio,
+            plant_diameter_ratio: draft?.growthStageDiameterRatio || draft?.crop?.growthStageDiameterRatio || draft?.plantResolution?.plant?.growth_stage_diameter_ratio,
+            plant_height_ratio: draft?.growthStageHeightRatio || draft?.crop?.growthStageHeightRatio || draft?.plantResolution?.plant?.growth_stage_height_ratio
+        });
+    } // CHANGE: allocation scheduler reads reusable scheduling choices from draft objects.
+
+    async function resolveAllocationDefaultStatus(draft = {}) {
+        const plantId = draftPlantId(draft);
+        const varietyId = draftVarietyId(draft);
+        const methodId = draftMethodId(draft);
+        const missing = [];
+        const plant = plantId != null ? await PlantModel.loadById(plantId) : null;
+        const taskTemplate = await resolveTaskTemplate({ cell: null, plantId, varietyId, methodId });
+        if (!plant || !normId(plant.default_planting_method)) missing.push('method');
+        if (!taskTemplate || taskTemplate.source === 'method_builtin' || taskTemplate.source === 'none' || taskTemplate.source === 'unknown') missing.push('tasks');
+        const stages = plantId != null ? await PlantGrowthStageModel.listByPlantId(plantId, { includeInactive: true }) : [];
+        if (!stages.length) missing.push('grownFor');
+        return {
+            complete: missing.length === 0,
+            missing,
+            plantId,
+            varietyId,
+            methodId,
+            taskTemplateSource: taskTemplate && taskTemplate.source || 'unknown',
+            taskTemplate: taskTemplate && taskTemplate.template || null
+        };
+    } // CHANGE: Allocate can decide whether to show review or first-time scheduler defaults.
+
+    function taskTemplateFromPreview(tasks) {
+        return normalizeTaskTemplate({
+            version: 2,
+            rules: (Array.isArray(tasks) ? tasks : []).map((task, index) => ({
+                id: String(task.ruleKey || task.id || 'allocation_task_' + (index + 1)),
+                title: String(task.title || task.name || 'Task'),
+                startAnchorStage: 'SOW',
+                startOffsetDays: Math.trunc(Number(task.startOffsetDays) || 0),
+                startOffsetDirection: 'after',
+                endMode: 'fixed_days',
+                durationDays: 0,
+                repeatMode: 'none'
+            }))
+        });
+    }
+
+    async function persistAllocationReusableDefaults(draft, options = {}) {
+        const plantId = draftPlantId(draft);
+        if (plantId == null) return { saved: [] };
+        const varietyId = draftVarietyId(draft);
+        const methodId = draftMethodId(draft);
+        const methodCategoryId = draftMethodCategoryId(draft, methodId);
+        const saved = [];
+        const plant = await PlantModel.loadById(plantId);
+        const patch = {};
+        if (plant && !normId(plant.default_planting_method)) {
+            patch.default_planting_method = methodId;
+            patch.default_planting_method_category = methodCategoryId;
+        }
+        if (draft.lifecycle && draft.lifecycle.effectiveTransplantDays != null && plant && finiteNumberOrNull(plant.days_transplant) == null) {
+            patch.days_transplant = Number(draft.lifecycle.effectiveTransplantDays);
+        }
+        if (Object.keys(patch).length) {
+            await PlantModel.update(plantId, patch);
+            saved.push('method');
+        }
+        const status = options.defaultStatus || await resolveAllocationDefaultStatus(draft);
+        if ((status.missing || []).includes('tasks')) {
+            await TaskTemplateModel.saveForSelection({
+                plantId,
+                varietyId,
+                methodId,
+                template: taskTemplateFromPreview(draft.taskPreview || [])
+            });
+            saved.push('tasks');
+        }
+        if ((status.missing || []).includes('grownFor')) {
+            await PlantGrowthStageModel.saveForPlant(plantId, [draftGrowthStage(draft)]);
+            saved.push('grownFor');
+        }
+        return { saved };
+    } // CHANGE: first allocation configuration teaches reusable crop defaults without saving bed/date.
+
+    async function buildAllocationDialogDraft(current, controls) {
+        const plantId = draftPlantId(current);
+        const varietyId = draftVarietyId(current);
+        const plantResolution = current.plantResolution && current.plantResolution.plant
+            ? current.plantResolution
+            : await resolvePlantForPlanCrop({ plantId, varietyId });
+        if (!plantResolution || !plantResolution.ok) throw new Error(plantResolution && plantResolution.reason || 'Plant not found.');
+        const methodId = normId(controls.method.value || draftMethodId(current));
+        const methodCategoryId = draftMethodCategoryId(current, methodId);
+        const growthStage = draftGrowthStage(Object.assign({}, current, { growthStageKey: controls.growth.value }));
+        const plant = applyGrowthStageToPlant(plantResolution.plant, growthStage);
+        const lifecycle = await proposeLifecycle({
+            plant,
+            city: current.city || current.allocationCity || {},
+            methodId,
+            methodCategoryId,
+            startISO: String(controls.start.value || current.actionStartISO || current.lifecycle?.startISO || ''),
+            seasonStartYear: Number(current.allocationYear || current.year || new Date().getFullYear()),
+            varietyName: plantResolution.varietyName,
+            bedProfile: current.bedProfile || null,
+            bedProfileSource: current.bedProfileSource || 'allocation bed'
+        });
+        if (!lifecycle || !lifecycle.ok) throw new Error(lifecycle && lifecycle.reason || 'Unable to calculate schedule.');
+        lifecycle.growthStageKey = growthStage.stageKey;
+        lifecycle.growthStageLabel = growthStage.stageLabel;
+        return Object.assign({}, current, {
+            plantResolution,
+            methodId,
+            methodCategoryId,
+            growthStageKey: growthStage.stageKey,
+            growthStageLabel: growthStage.stageLabel,
+            lifecycle,
+            actionStartISO: lifecycle.startISO,
+            taskPreview: lifecycle.taskPreview || []
+        });
+    }
+
+    async function openAllocationScheduleDialog(ui, draft, options = {}) {
+        const current = Object.assign({}, draft || {});
+        const div = document.createElement('div');
+        div.style.cssText = 'padding:14px;font:12px Arial,sans-serif;color:#111827;display:flex;flex-direction:column;gap:10px;max-height:72vh;overflow:auto;';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-weight:700;font-size:15px;';
+        title.textContent = 'Review Schedule';
+        div.appendChild(title);
+        const crop = document.createElement('div');
+        crop.textContent = 'Crop: ' + (current.crop?.label || current.plantResolution?.label || current.plantResolution?.plant?.plant_name || 'Crop');
+        div.appendChild(crop);
+        const method = document.createElement('input');
+        method.value = draftMethodId(current);
+        const growth = document.createElement('input');
+        const growthStage = draftGrowthStage(current);
+        growth.value = growthStage.stageKey;
+        const start = document.createElement('input');
+        start.type = 'date';
+        start.value = String(current.actionStartISO || current.lifecycle?.startISO || '');
+        [
+            ['Method', method],
+            ['Grown for', growth],
+            ['Start/sow', start]
+        ].forEach(([label, control]) => {
+            const row = document.createElement('label');
+            row.style.cssText = 'display:grid;grid-template-columns:82px minmax(0,1fr);gap:8px;align-items:center;';
+            row.appendChild(document.createTextNode(label));
+            control.style.cssText = 'width:100%;box-sizing:border-box;';
+            row.appendChild(control);
+            div.appendChild(row);
+        });
+        const tasks = document.createElement('div');
+        tasks.style.cssText = 'border:1px solid #e5e7eb;border-radius:6px;padding:8px;background:#f9fafb;display:flex;flex-direction:column;gap:4px;';
+        (current.taskPreview || []).forEach(task => {
+            const row = document.createElement('div');
+            row.textContent = [task.startISO, task.title].filter(Boolean).join(' - ');
+            tasks.appendChild(row);
+        });
+        if (!(current.taskPreview || []).length) tasks.textContent = 'Tasks will be generated from the selected method.';
+        div.appendChild(tasks);
+        const status = document.createElement('div');
+        status.style.cssText = 'color:#92400e;min-height:16px;';
+        div.appendChild(status);
+        const buttons = document.createElement('div');
+        buttons.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
+        const cancel = document.createElement('button');
+        cancel.textContent = 'Cancel';
+        const save = document.createElement('button');
+        save.textContent = 'Create';
+        buttons.appendChild(cancel);
+        buttons.appendChild(save);
+        div.appendChild(buttons);
+        return await new Promise(resolve => {
+            cancel.addEventListener('click', function () {
+                if (ui && typeof ui.hideDialog === 'function') ui.hideDialog();
+                resolve({ action: 'cancel' });
+            });
+            save.addEventListener('click', async function () {
+                try {
+                    const next = await buildAllocationDialogDraft(current, { method, growth, start });
+                    await persistAllocationReusableDefaults(next, { defaultStatus: options.defaultStatus || null });
+                    if (ui && typeof ui.hideDialog === 'function') ui.hideDialog();
+                    resolve({ action: 'create', draft: next });
+                } catch (error) {
+                    status.textContent = error && error.message ? error.message : String(error || 'Unable to create schedule.');
+                }
+            });
+            ui.showDialog(div, 560, 500, true, true);
+            elevateTrellisDialog(ui);
+        });
+    } // CHANGE: Allocate uses a draft-oriented scheduler path instead of a committed graph cell.
 
     function spacingLayoutContextForCell(activeGraph, cell) {
         const api = activeGraph && activeGraph.__trellisBedSuccessionNavigator;
@@ -15818,6 +16054,9 @@ Draw.loadPlugin(function (ui) {
         proposeLifecycle,
         proposeLifecycleForDemandWindow,
         openDraftScheduleDialog,
+        openAllocationScheduleDialog,
+        resolveAllocationDefaultStatus,
+        persistAllocationReusableDefaults,
         layoutTools
     });
     window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
@@ -16345,7 +16584,9 @@ Draw.loadPlugin(function (ui) {
             resolveCityForModule: async function () { return { ok: false, reason: message }; },
             proposeLifecycle: async function () { return { ok: false, status: "structural_failure", reason: message, taskPreview: [] }; },
             proposeLifecycleForDemandWindow: async function () { return { ok: false, status: "structural_failure", reason: message, taskPreview: [] }; },
-            openDraftScheduleDialog: async function () { throw new Error(message); }
+            openDraftScheduleDialog: async function () { throw new Error(message); },
+            openAllocationScheduleDialog: async function () { throw new Error(message); },
+            resolveAllocationDefaultStatus: async function () { return { complete: true, missing: [], reason: message }; }
         });
         window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
     }
@@ -16481,6 +16722,11 @@ Draw.loadPlugin(function (ui) {
             proposeLifecycle,
             proposeLifecycleForDemandWindow,
             openDraftScheduleDialog,
+            openAllocationScheduleDialog,
+            resolveAllocationDefaultStatus,
+            persistAllocationReusableDefaults,
+            buildAllocationDialogDraft,
+            taskTemplateFromPreview,
             buildScheduleViewState,
             renderScheduleSummary,
             updateScheduleSummary,

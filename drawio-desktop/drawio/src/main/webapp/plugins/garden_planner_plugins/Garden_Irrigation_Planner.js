@@ -2808,7 +2808,12 @@ Draw.loadPlugin(function (ui) {
         const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.sourceCell, "output", structure.source.index); // CHANGE
         const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.targetCell, "input", structure.target.index); // CHANGE
         const compatibility = ConnectorRules.connectionMode(moduleCell, sourceConnector, targetConnector);
-        return compatibility.ok ? Object.assign({}, structure, { ok: false, bridgeable: false, reason: "Selected ports can connect directly." }) : Object.assign({}, structure, { ok: true, bridgeable: true, reason: compatibility.reason, sourceConnector, targetConnector });
+        if (compatibility.ok) { // CHANGE
+            const primaryCompatibility = ConnectorRules.connectionMode(moduleCell, bridgeSearchPrimaryConnector(sourceConnector), bridgeSearchPrimaryConnector(targetConnector)); // NEW
+            if (primaryCompatibility.ok) return Object.assign({}, structure, { ok: false, bridgeable: false, reason: "Selected ports can connect directly." }); // CHANGE
+            return Object.assign({}, structure, { ok: true, bridgeable: true, reason: primaryCompatibility.reason, sourceConnector, targetConnector }); // NEW
+        } // CHANGE
+        return Object.assign({}, structure, { ok: true, bridgeable: true, reason: compatibility.reason, sourceConnector, targetConnector });
     }
 
     function validatePortConnection(moduleCell, sourcePort, targetPort) {
@@ -9769,27 +9774,33 @@ Draw.loadPlugin(function (ui) {
         if (!bridge.ok) return [];
         const sourceConnector = bridge.sourceConnector;
         const targetConnector = bridge.targetConnector;
+        const searchTargetConnector = bridgeSearchPrimaryConnector(targetConnector); // NEW
         const catalog = readCatalog(moduleCell);
         const sourcePart = { id: "source_port", name: "Selected outlet", category: "source_adapter", stockState: "in_stock", cost: 0, connectors: { inputs: 0, outputs: 1, output: sourceConnector }, specs: {} };
-        const targetRequirement = { connectorType: targetConnector.type, nominalSize: targetConnector.nominalSize, pipeType: targetConnector.pipeType || "", pipeConnection: !!targetConnector.pipeConnection };
         const items = sortRawCatalogParts(catalog.items).map(normalizeCatalogPart).filter(function (part) { return part && bridgeSuggestionPartAllowed(part) && validateCatalogPart(part).ok; }); // CHANGE: bridge planning keeps raw candidate order so display taxonomy does not alter selected chains
         const queue = [{ last: sourcePart, parts: [], seen: new Set(["source_port"]) }];
         const results = [];
+        const matchCache = new Map(); // NEW
+        function addBridgeSearchResult(parts) { // NEW
+            const plan = planBridgeConnectionChain(moduleCell, sourcePort, targetPort, parts); // NEW
+            if (plan.ok) results.push(makeHealSuggestion(plan.partEntries)); // NEW
+        } // NEW
+        function searchConnectorsMatch(source, target) { return bridgeSearchConnectorsMatch(moduleCell, source, target, matchCache); } // NEW
         while (queue.length && results.length < 40) {
             const state = queue.shift();
-            if (state.parts.length > 0 && connectorRecordsMatch(state.last.connectors.output, targetConnector, targetRequirement).ok) {
-                results.push(makeHealSuggestion(state.parts));
+            if (state.parts.length > 0 && searchConnectorsMatch(state.last.connectors.output, searchTargetConnector)) { // CHANGE
+                addBridgeSearchResult(state.parts); // CHANGE
                 continue;
             }
             if (state.parts.length >= 5) continue;
             items.forEach(function (candidate) {
                 if (!candidate.id || state.seen.has(candidate.id)) return;
                 bridgeSearchPartOptions(candidate).forEach(function (option) { // NEW
-                    if (!connectorRecordsMatch(state.last.connectors.output, option.connectors.input, targetRequirement).ok) return; // CHANGE
+                    if (!searchConnectorsMatch(state.last.connectors.output, option.connectors.input)) return; // CHANGE
                     const nextSeen = new Set(Array.from(state.seen)); // CHANGE
                     nextSeen.add(candidate.id); // CHANGE
                     const nextParts = state.parts.concat([{ part: candidate, flipped: option.flipped }]); // NEW
-                    if (connectorRecordsMatch(option.connectors.output, targetConnector, targetRequirement).ok) { results.push(makeHealSuggestion(nextParts)); return; } // NEW
+                    if (searchConnectorsMatch(option.connectors.output, searchTargetConnector)) { addBridgeSearchResult(nextParts); return; } // CHANGE
                     queue.push({ last: option, parts: nextParts, seen: nextSeen }); // CHANGE
                 }); // NEW
             });
@@ -9800,6 +9811,24 @@ Draw.loadPlugin(function (ui) {
             return (stockA - stockB) || (a.purchaseNeededCost - b.purchaseNeededCost) || (a.totalParts - b.totalParts);
         }).slice(0, 5);
     }
+
+    function bridgeSearchConnectorsMatch(moduleCell, sourceConnector, targetConnector, cache) { // CHANGE
+        const key = bridgeSearchConnectorCacheKey(sourceConnector) + ">" + bridgeSearchConnectorCacheKey(targetConnector); // NEW
+        if (cache && cache.has(key)) return cache.get(key); // NEW
+        const ok = ConnectorRules.connectionMode(moduleCell, sourceConnector, targetConnector).ok; // CHANGE
+        if (cache) cache.set(key, ok); // NEW
+        return ok; // NEW
+    } // NEW
+
+    function bridgeSearchConnectorCacheKey(connector) { // NEW
+        const c = normalizeConnectorRecord(connector); // NEW
+        return [c.type, c.nominalSize, c.pipeType, c.pipeConnection ? "1" : "0"].join("|"); // NEW
+    } // NEW
+
+    function bridgeSearchPrimaryConnector(connector) { // NEW
+        const normalized = normalizeConnectorRecord(connector); // NEW
+        return Object.assign({}, normalized, { alternates: [] }); // NEW
+    } // NEW
 
     function applyBridgeSuggestion(session, sourcePort, targetPort, suggestion) {
         if (activeIrrigationEditDepth === 0) return runIrrigationEdit("applyBridgeSuggestion", function () { return applyBridgeSuggestion(session, sourcePort, targetPort, suggestion); });

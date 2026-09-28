@@ -76,6 +76,21 @@ function loadAllocatePlugin() {
     return api;
 }
 
+function collectText(node, out = []) {
+    if (!node) return out;
+    if (node.textContent) out.push(String(node.textContent));
+    (node.children || []).forEach(child => collectText(child, out));
+    return out;
+}
+
+async function waitUntil(predicate, timeoutMs = 250) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        if (predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+}
+
 test("Allocate opportunity model groups actionable, unresolved, and satisfied crops", () => {
     const api = loadAllocatePlugin();
     const plan = {
@@ -299,7 +314,7 @@ test("Allocate open renders a progress state before sow-week scheduling complete
     assert.equal(state.scheduleProgress.totalRows, 1);
     assert.match(api.scheduleProgressText(state), /0 of 1 demand rows/);
 
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await waitUntil(() => state.scheduleProgress.phase === "complete");
 
     assert.equal(state.scheduleProgress.phase, "complete");
     assert.equal(state.scheduleProgress.processedRows, 1);
@@ -307,6 +322,16 @@ test("Allocate open renders a progress state before sow-week scheduling complete
     assert.equal(state.scheduleProgress.foundActions, 1);
     assert.deepEqual(Array.from(state.actionSchedule.actionableWeekIndices), [17]);
     assert.equal(lifecycleCalls, 1);
+    assert.ok(collectText(api.__root).includes("Review Schedule"));
+});
+
+test("Allocate graph proposal coordinates convert directly to screen coordinates", () => {
+    const api = loadAllocatePlugin();
+    const point = api.graphPointToScreen(50, 80);
+
+    assert.equal(point.left, 50);
+    assert.equal(point.top, 80);
+    assert.equal(point.scale, 1);
 });
 
 test("Allocate close cancels a pending sow-week schedule job", async () => {
@@ -772,7 +797,8 @@ test("Allocate bed result reports unsupported concrete methods before lifecycle 
 
 test("Allocate plugin owns launch, draft review, and one-transaction create contracts", () => {
     assert.match(SOURCE, /const ALLOCATE_EVENT = "usl:allocatePlanRequested"/);
-    assert.match(SOURCE, /window\.USL\.scheduler\.openDraftScheduleDialog/);
+    assert.match(SOURCE, /openAllocationScheduleDialog/);
+    assert.match(SOURCE, /resolveAllocationDefaultStatus/);
     assert.match(SOURCE, /window\.USL\.tasks/);
     assert.match(SOURCE, /applySchedulerTaskReplacement/);
     assert.match(SOURCE, /action: "allocateCreate"/);
@@ -783,6 +809,8 @@ test("Allocate plugin owns launch, draft review, and one-transaction create cont
     assert.match(SOURCE, /buildWeekOpportunityModel/);
     assert.match(SOURCE, /listPlantingFootprints/);
     assert.match(SOURCE, /currentBedContext/);
+    assert.match(SOURCE, /Review Schedule/);
+    assert.match(SOURCE, /graphPointToScreen\(geo\.x, geo\.y\)/);
     assert.match(SOURCE, /vegHeightCm: context\.plantResolution\.plant\.veg_height_cm \|\| null/);
     assert.match(SOURCE, /vegHeightCm: d\.geometry\.vegHeightCm \|\| null/);
 });
