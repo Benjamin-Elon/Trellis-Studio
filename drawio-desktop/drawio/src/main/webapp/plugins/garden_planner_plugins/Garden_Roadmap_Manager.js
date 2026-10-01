@@ -17,7 +17,7 @@ Draw.loadPlugin(function (ui) {
     const GOAL_MARKER_TEXT = '#111827'; // NEW
     const DEPENDENCY_COLOR = '#2563eb'; // NEW
     const DEPENDENCY_BADGE_STYLE = 'rounded=1;arcSize=50;fillColor=#2563eb;strokeColor=#1d4ed8;fontColor=#ffffff;fontSize=9;fontStyle=1;align=center;verticalAlign=middle;resizable=0;movable=0;connectable=0;whiteSpace=nowrap;html=0;'; // NEW
-    const OBJECT_DATE_BADGE_STYLE = 'rounded=1;arcSize=8;fillColor=#ffffff;strokeColor=#111111;fontColor=#111827;fontSize=9;align=center;verticalAlign=middle;resizable=0;movable=0;connectable=0;whiteSpace=wrap;html=0;spacing=2;'; // NEW
+    const OBJECT_DATE_BADGE_STYLE = 'rounded=1;arcSize=8;fillColor=#ffffff;strokeColor=#111111;fontColor=#111827;fontSize=9;align=center;verticalAlign=middle;resizable=0;movable=0;connectable=0;whiteSpace=nowrap;html=0;spacing=2;'; // CHANGE
     const OBJECT_DATE_BADGE_HEIGHT = 16, OBJECT_DATE_BADGE_SIDE_WIDTH = 50, OBJECT_DATE_BADGE_DURATION_WIDTH = 32; // NEW
     const PROCESS_COLORS = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#be123c', '#4f46e5']; // NEW
     const BOARD_STYLE = 'shape=trellisRoadmapBoard;rounded=0;fillColor=#ffffff;strokeColor=#64748b;container=1;collapsible=0;recursiveResize=0;resizable=0;connectable=0;verticalAlign=top;align=left;spacing=6;whiteSpace=nowrap;overflow=hidden;'; // CHANGE
@@ -222,6 +222,16 @@ Draw.loadPlugin(function (ui) {
         objects.forEach((cell, index) => numberById.set(id(cell), index + 1)); // NEW
         return { objects, numberById }; // NEW
     } // NEW
+    function dependencyRangesOverlap(a, b) { const ar = range(a), br = range(b); return ar.start <= br.end && br.start <= ar.end; } // NEW
+    function dependencyRevealPairs(objects) { // NEW
+        const revealIds = new Set((objects || []).map(id)), seen = new Set(), pairs = []; // NEW
+        (objects || []).forEach(cell => roadmapObjectLinks(cell).forEach(other => { // NEW
+            if (!revealIds.has(id(other))) return; // NEW
+            const ordered = compareDependencyObjects(cell, other) <= 0 ? [cell, other] : [other, cell], key = id(ordered[0]) + '>' + id(ordered[1]); // NEW
+            if (!seen.has(key)) { seen.add(key); pairs.push(ordered); } // NEW
+        })); // NEW
+        return pairs.sort((a, b) => compareDependencyObjects(a[0], b[0]) || compareDependencyObjects(a[1], b[1])); // NEW
+    } // NEW
     function objectRecord(cell) { return Object.assign({ id: id(cell), cell, status: attr(cell, 'roadmap_status') || 'Planned', progress: Number(attr(cell, 'roadmap_progress')) || 0 }, range(cell)); }
     function processRecords(board) { return typedChildren(board, 'process').map(cell => Object.assign({ id: id(cell), cell, preferredRow: attr(cell, 'roadmap_preferred_row') === '' ? undefined : Number(attr(cell, 'roadmap_preferred_row')), objects: typedChildren(cell, 'object').map(objectRecord) }, range(cell))); }
     function getSummary(cell) { const objects = kind(cell) === 'object' ? [cell] : kind(cell) === 'process' ? typedChildren(cell, 'object') : typedChildren(cell, 'process').flatMap(process => typedChildren(process, 'object')); return core.progressSummary(objects.map(objectRecord)); }
@@ -240,6 +250,22 @@ Draw.loadPlugin(function (ui) {
     function rangeDurationText(start, end) { const duration = end - start + 1; return duration + ' ' + dayWord(duration); } // NEW
     function tooltipDateLine(name, day, today) { return name + ': ' + core.formatDay(day) + ' (' + relativeDayText(day, today) + ')'; } // NEW
     function roadmapDragHintText(dates, edge) { const today = core.todayDay(new Date()), day = edge === 'right' ? dates.end : dates.start; return relativeDayText(day, today) + '\nDuration: ' + rangeDurationText(dates.start, dates.end); } // NEW
+    function estimatedTextWidth(text, fontSize) { // NEW
+        const value = String(text || ''), size = Math.max(1, Number(fontSize) || 11), fallback = value.length * size * 0.58; // NEW
+        try { // NEW
+            const measured = mxUtils && mxUtils.getSizeForString ? mxUtils.getSizeForString(value, size, mxConstants.DEFAULT_FONTFAMILY) : null; // NEW
+            return Math.max(fallback, measured && Number(measured.width) || 0); // NEW
+        } catch (_) { return fallback; } // NEW
+    } // NEW
+    function styleNumber(style, key, fallback) { const value = Number(style && style[key]); return Number.isFinite(value) ? value : fallback; } // NEW
+    function inlineDurationBadgeGeometry(cell, bounds, text, labelScale, badgeScale) { // NEW
+        const style = graph.getCellStyle ? graph.getCellStyle(cell) || {} : {}, kindName = kind(cell), labelSize = styleNumber(style, 'fontSize', 11) * (labelScale || 1), badgeUnit = badgeScale || 1; // NEW
+        const labelWidth = estimatedTextWidth(label(cell), labelSize), badgeWidth = Math.max(OBJECT_DATE_BADGE_DURATION_WIDTH * badgeUnit, estimatedTextWidth(text, 9 * badgeUnit) + 10 * badgeUnit); // NEW
+        const align = style.align || (kindName === 'process' ? 'left' : 'center'), spacing = styleNumber(style, 'spacing', kindName === 'process' ? 5 : 3) * (labelScale || 1), gap = 5 * badgeUnit; // NEW
+        const labelLeft = align === 'left' ? bounds.x + spacing : align === 'right' ? bounds.x + bounds.width - spacing - labelWidth : bounds.x + (bounds.width - labelWidth) / 2; // NEW
+        const centerY = kindName === 'process' ? bounds.y + PROCESS_HEADER * (labelScale || 1) / 2 : bounds.y + bounds.height / 2; // NEW
+        return { x: labelLeft + labelWidth + gap, y: centerY - OBJECT_DATE_BADGE_HEIGHT * badgeUnit / 2, width: badgeWidth, height: OBJECT_DATE_BADGE_HEIGHT * badgeUnit }; // NEW
+    } // NEW
     function roadmapTooltipText(cell, dates) { // NEW
         dates = dates || range(cell); const today = core.todayDay(new Date()); // NEW
         const details = [label(cell), tooltipDateLine('Start', dates.start, today), tooltipDateLine('End', dates.end, today), 'Duration: ' + rangeDurationText(dates.start, dates.end)]; // NEW
@@ -249,12 +275,12 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     function objectDateBadgeRecords(cell) { // NEW
         if (kind(cell) !== 'object' || !processObjectBadgesEnabled(parent(cell))) return []; // NEW
-        const geometry = graph.getCellGeometry(cell), dates = range(cell); if (!geometry) return []; // NEW
+        const geometry = graph.getCellGeometry(cell), dates = range(cell), duration = compactDurationText(dates.start, dates.end); if (!geometry) return []; // CHANGE
         const midY = geometry.y + geometry.height / 2 - OBJECT_DATE_BADGE_HEIGHT / 2; // NEW
         return [ // NEW
             { key: 'start', label: compactDateText(dates.start), geometry: { x: geometry.x - OBJECT_DATE_BADGE_SIDE_WIDTH - 14, y: midY, width: OBJECT_DATE_BADGE_SIDE_WIDTH, height: OBJECT_DATE_BADGE_HEIGHT } }, // NEW
             { key: 'end', label: compactDateText(dates.end), geometry: { x: geometry.x + geometry.width + 14, y: midY, width: OBJECT_DATE_BADGE_SIDE_WIDTH, height: OBJECT_DATE_BADGE_HEIGHT } }, // NEW
-            { key: 'duration', label: compactDurationText(dates.start, dates.end), geometry: { x: geometry.x + geometry.width / 2 - OBJECT_DATE_BADGE_DURATION_WIDTH / 2, y: geometry.y - OBJECT_DATE_BADGE_HEIGHT - 6, width: OBJECT_DATE_BADGE_DURATION_WIDTH, height: OBJECT_DATE_BADGE_HEIGHT } } // NEW
+            { key: 'duration', label: duration, geometry: inlineDurationBadgeGeometry(cell, geometry, duration, 1, 1) } // CHANGE
         ]; // NEW
     } // NEW
     function goalMarkerTooltipText(cell) { // NEW
@@ -1355,9 +1381,10 @@ Draw.loadPlugin(function (ui) {
         const state = graph.view.getState(ctx.cell); if (!state) { host.style.display = 'none'; return; } // NEW
         host.style.display = 'block'; // NEW
         const today = core.todayDay(new Date()), sideGap = 14; // CHANGE: give resize handles breathing room beside the date badges.
-        function badge(className, text, left, top, transform) { // NEW
+        function badge(className, text, left, top, transform, size) { // CHANGE
             const node = element('div', text, 'trellis-roadmap-date-badge ' + className); // NEW
             node.style.cssText = 'position:absolute;background:#fff;border:1px solid #111;border-radius:4px;padding:2px 5px;line-height:13px;white-space:pre;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.12);'; // NEW
+            if (size) { node.style.boxSizing = 'border-box'; node.style.width = Math.round(size.width) + 'px'; node.style.height = Math.round(size.height) + 'px'; node.style.padding = '1px 5px'; node.style.whiteSpace = 'nowrap'; } // NEW
             node.style.left = Math.round(left) + 'px'; node.style.top = Math.round(top) + 'px'; node.style.transform = transform; // NEW
             host.appendChild(node); return node; // NEW
         } // NEW
@@ -1368,15 +1395,17 @@ Draw.loadPlugin(function (ui) {
         } // NEW
         badge('trellis-roadmap-date-badge-start', sideText(ctx.dates.start, ctx.moved.left), state.x - sideGap, state.y + state.height / 2, 'translate(-100%,-50%)'); // NEW
         badge('trellis-roadmap-date-badge-end', sideText(ctx.dates.end, ctx.moved.right), state.x + state.width + sideGap, state.y + state.height / 2, 'translate(0,-50%)'); // NEW
-        badge('trellis-roadmap-date-badge-duration', compactDurationText(ctx.dates.start, ctx.dates.end), state.x + state.width / 2, state.y - 6, 'translate(-50%,-100%)'); // NEW
+        const duration = compactDurationText(ctx.dates.start, ctx.dates.end), durationBox = inlineDurationBadgeGeometry(ctx.cell, state, duration, graph.view.scale || 1, 1); // NEW
+        badge('trellis-roadmap-date-badge-duration trellis-roadmap-inline-duration-badge', duration, durationBox.x, durationBox.y, 'none', durationBox); // CHANGE
     } // NEW
     function ensureObjectDateBadgeOverlay() { // NEW
         if (!objectDateBadgeOverlay) { objectDateBadgeOverlay = element('div', null, 'trellis-roadmap-object-date-badge-layer'); objectDateBadgeOverlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10024;pointer-events:none;font:11px Arial,sans-serif;color:#111827;'; graph.container.appendChild(objectDateBadgeOverlay); } // NEW
         return objectDateBadgeOverlay; // NEW
     } // NEW
-    function objectDateBadge(host, className, text, left, top, transform) { // NEW
+    function objectDateBadge(host, className, text, left, top, transform, size) { // CHANGE
         const node = element('div', text, 'trellis-roadmap-date-badge trellis-roadmap-object-date-badge ' + className); // NEW
         node.style.cssText = 'position:absolute;background:#fff;border:1px solid #111;border-radius:4px;padding:2px 5px;line-height:13px;white-space:pre;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.12);'; // NEW
+        if (size) { node.style.boxSizing = 'border-box'; node.style.width = Math.round(size.width) + 'px'; node.style.height = Math.round(size.height) + 'px'; node.style.padding = '1px 5px'; node.style.whiteSpace = 'nowrap'; } // NEW
         node.style.left = Math.round(left) + 'px'; node.style.top = Math.round(top) + 'px'; node.style.transform = transform; host.appendChild(node); return node; // NEW
     } // NEW
     function renderObjectDateBadgeLayer() { // NEW
@@ -1384,10 +1413,10 @@ Draw.loadPlugin(function (ui) {
         const host = ensureObjectDateBadgeOverlay(); host.replaceChildren(); // NEW
         collectDescendants([model.getRoot()]).filter(cell => kind(cell) === 'object' && processObjectBadgesEnabled(parent(cell)) && shouldRenderRoadmapControlsFor(cell) && graph.isCellVisible(cell)).forEach(cell => { // NEW
             const state = graph.view.getState(cell); if (!state) return; // NEW
-            const dates = range(cell), sideGap = 14; // NEW
+            const dates = range(cell), sideGap = 14, duration = compactDurationText(dates.start, dates.end), durationBox = inlineDurationBadgeGeometry(cell, state, duration, graph.view.scale || 1, 1); // CHANGE
             objectDateBadge(host, 'trellis-roadmap-object-date-badge-start', compactDateText(dates.start), state.x - sideGap, state.y + state.height / 2, 'translate(-100%,-50%)'); // NEW
             objectDateBadge(host, 'trellis-roadmap-object-date-badge-end', compactDateText(dates.end), state.x + state.width + sideGap, state.y + state.height / 2, 'translate(0,-50%)'); // NEW
-            objectDateBadge(host, 'trellis-roadmap-object-date-badge-duration', compactDurationText(dates.start, dates.end), state.x + state.width / 2, state.y - 6, 'translate(-50%,-100%)'); // NEW
+            objectDateBadge(host, 'trellis-roadmap-object-date-badge-duration trellis-roadmap-inline-duration-badge', duration, durationBox.x, durationBox.y, 'none', durationBox); // CHANGE
         }); // NEW
         host.style.display = host.children.length ? 'block' : 'none'; // NEW
     } // NEW
@@ -1409,9 +1438,37 @@ Draw.loadPlugin(function (ui) {
         if (!dependencyOverlay) { dependencyOverlay = element('div', null, 'trellis-roadmap-dependency-layer'); dependencyOverlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10027;pointer-events:none;font:11px Arial,sans-serif;color:#111827;'; graph.container.appendChild(dependencyOverlay); } // NEW
         return dependencyOverlay; // NEW
     } // NEW
+    function renderDependencyArrowLayer(host, reveal) { // NEW
+        let svg = null; // NEW
+        function ensureSvg(maxX, maxY) { // NEW
+            if (!svg) { // NEW
+                svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); // NEW
+                svg.setAttribute('class', 'trellis-roadmap-dependency-arrows'); // NEW
+                svg.style.cssText = 'position:absolute;left:0;top:0;overflow:visible;pointer-events:none;'; // NEW
+                const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs'), marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker'), head = document.createElementNS('http://www.w3.org/2000/svg', 'path'); // NEW
+                marker.setAttribute('id', 'trellis-roadmap-dependency-arrowhead'); marker.setAttribute('markerWidth', '8'); marker.setAttribute('markerHeight', '6'); marker.setAttribute('refX', '7'); marker.setAttribute('refY', '3'); marker.setAttribute('orient', 'auto'); marker.setAttribute('markerUnits', 'strokeWidth'); // NEW
+                head.setAttribute('d', 'M0,0 L7,3 L0,6 Z'); head.setAttribute('fill', DEPENDENCY_COLOR); marker.appendChild(head); defs.appendChild(marker); svg.appendChild(defs); host.appendChild(svg); // NEW
+            } // NEW
+            const width = Math.ceil(Math.max(graph.container.scrollWidth || 0, graph.container.clientWidth || 0, graph.container.offsetWidth || 0, maxX + 24)); // NEW
+            const height = Math.ceil(Math.max(graph.container.scrollHeight || 0, graph.container.clientHeight || 0, graph.container.offsetHeight || 0, maxY + 24)); // NEW
+            svg.setAttribute('width', String(width)); svg.setAttribute('height', String(height)); // NEW
+            return svg; // NEW
+        } // NEW
+        dependencyRevealPairs(reveal.objects).forEach(pair => { // NEW
+            if (dependencyRangesOverlap(pair[0], pair[1]) || !graph.isCellVisible(pair[0]) || !graph.isCellVisible(pair[1])) return; // NEW
+            const from = graph.view.getState(pair[0]), to = graph.view.getState(pair[1]); if (!from || !to) return; // NEW
+            const startX = from.x + from.width, startY = from.y + from.height / 2, endX = to.x, endY = to.y + to.height / 2, curve = Math.max(36, Math.abs(endX - startX) * 0.45); // NEW
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); // NEW
+            path.setAttribute('class', 'trellis-roadmap-dependency-arrow'); // NEW
+            path.setAttribute('d', 'M ' + startX.toFixed(1) + ' ' + startY.toFixed(1) + ' C ' + (startX + curve).toFixed(1) + ' ' + startY.toFixed(1) + ', ' + (endX - curve).toFixed(1) + ' ' + endY.toFixed(1) + ', ' + endX.toFixed(1) + ' ' + endY.toFixed(1)); // NEW
+            path.setAttribute('fill', 'none'); path.setAttribute('stroke', DEPENDENCY_COLOR); path.setAttribute('stroke-width', '2'); path.setAttribute('stroke-linecap', 'round'); path.setAttribute('marker-end', 'url(#trellis-roadmap-dependency-arrowhead)'); // NEW
+            ensureSvg(Math.max(startX, endX), Math.max(startY, endY)).appendChild(path); // NEW
+        }); // NEW
+    } // NEW
     function renderDependencyLayer() { // NEW
         if (!document || !graph.container) return; // NEW
         const host = ensureDependencyOverlay(), reveal = dependencyRevealState(); host.replaceChildren(); // NEW
+        renderDependencyArrowLayer(host, reveal); // NEW
         reveal.objects.forEach(cell => { // NEW
             if (!graph.isCellVisible(cell)) return; // NEW
             const state = graph.view.getState(cell), number = reveal.numberById.get(id(cell)); if (!state || !number) return; // NEW

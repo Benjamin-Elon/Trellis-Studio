@@ -55,35 +55,35 @@ Draw.loadPlugin(function (ui) {
 
     const MIRROR_ATTRS = {
         sunExposure: "sun_exposure",
-        soilMoisture: "soil_moisture",
         drainage: "drainage",
         soilTexture: "soil_texture",
         fertility: "fertility",
-        irrigation: "irrigation",
         trellis: "trellis",
         seasonExtension: "season_extension",
         cropProtection: "crop_protection",
         bedUse: "bed_use",
         windExposure: "wind_exposure",
-        frostRisk: "frost_risk",
         seasonExtensionAirOffsetC: "season_extension_air_offset_c",
         seasonExtensionSoilOffsetC: "season_extension_soil_offset_c",
         seasonExtensionFrostShiftDays: "season_extension_frost_shift_days",
         seasonExtensionMinAirTempC: "season_extension_min_air_temp_c"
     };
 
+    const LEGACY_REMOVED_MIRROR_ATTRS = {
+        soilMoisture: "soil_moisture",
+        irrigation: "irrigation",
+        frostRisk: "frost_risk"
+    };
+
     const FIELD_DEFS = [
         { key: "sunExposure", label: "Sun exposure", values: ["unknown", "full_sun", "part_sun", "part_shade", "shade"], fallback: "unknown" },
-        { key: "soilMoisture", label: "Soil moisture", values: ["unknown", "dry", "moderate", "moist", "wet"], fallback: "unknown" },
         { key: "drainage", label: "Drainage", values: ["unknown", "fast", "normal", "slow"], fallback: "unknown" },
         { key: "soilTexture", label: "Soil texture", values: ["unknown", "sandy", "loamy", "clay", "mixed", "amended"], fallback: "unknown" },
         { key: "fertility", label: "Fertility", values: ["unknown", "low", "medium", "high"], fallback: "unknown" },
-        { key: "irrigation", label: "Irrigation", values: ["unknown", "none", "manual", "drip", "sprinkler", "self_watering"], fallback: "unknown" },
         { key: "trellis", label: "Trellis", values: ["unknown", "none", "available", "required_structure"], fallback: "unknown" },
         { key: "seasonExtension", label: "Season extension", values: ["unknown", "none", "row_cover", "low_tunnel", "cold_frame", "greenhouse", "high_tunnel", "heated_greenhouse"], fallback: "unknown" },
         { key: "cropProtection", label: "Crop protection", values: ["unknown", "none", "shade_cloth", "insect_netting", "bird_netting", "hail_netting"], fallback: "unknown" },
         { key: "windExposure", label: "Wind exposure", values: ["unknown", "sheltered", "moderate", "exposed"], fallback: "unknown" },
-        { key: "frostRisk", label: "Frost risk", values: ["unknown", "none", "low", "medium", "high"], fallback: "unknown" },
         { key: "bedUse", label: "Bed use", values: ["unknown", "annuals", "perennials", "nursery", "seed_starting", "mixed", "resting"], fallback: "unknown" }
     ];
 
@@ -160,14 +160,13 @@ Draw.loadPlugin(function (ui) {
 
     const PRESETS = {
         "": { label: "Choose preset", values: {} },
-        sunny_vegetable: { label: "Sunny vegetable bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", soilTexture: "loamy", fertility: "high", irrigation: "unknown", trellis: "unknown", bedUse: "annuals" } },
-        shady_greens: { label: "Shady greens bed", values: { sunExposure: "part_shade", soilMoisture: "moist", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "annuals" } },
-        dry_herb: { label: "Dry herb bed", values: { sunExposure: "full_sun", soilMoisture: "dry", drainage: "fast", soilTexture: "sandy", fertility: "low", irrigation: "unknown", trellis: "unknown", bedUse: "perennials" } },
-        wet_moist: { label: "Wet/moist bed", values: { sunExposure: "part_sun", soilMoisture: "moist", drainage: "slow", fertility: "medium", irrigation: "none", trellis: "unknown", bedUse: "unknown" } },
-        nursery: { label: "Nursery bed", values: { sunExposure: "part_sun", soilMoisture: "moderate", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "nursery" } },
-        greenhouse: { label: "Greenhouse bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", soilTexture: "amended", fertility: "high", irrigation: "drip", trellis: "unknown", seasonExtension: "greenhouse", cropProtection: "unknown", windExposure: "sheltered", frostRisk: "low", bedUse: "seed_starting" } },
-        perennial: { label: "Perennial bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "perennials" } },
-        resting: { label: "Resting bed", values: { sunExposure: "unknown", soilMoisture: "unknown", drainage: "unknown", fertility: "low", irrigation: "unknown", trellis: "unknown", bedUse: "resting" } }
+        sunny_vegetable: { label: "Sunny vegetable bed", values: { sunExposure: "full_sun", drainage: "normal", soilTexture: "loamy", fertility: "high", trellis: "unknown", bedUse: "annuals" } },
+        shady_greens: { label: "Shady greens bed", values: { sunExposure: "part_shade", drainage: "normal", fertility: "medium", trellis: "unknown", bedUse: "annuals" } },
+        dry_herb: { label: "Dry herb bed", values: { sunExposure: "full_sun", drainage: "fast", soilTexture: "sandy", fertility: "low", trellis: "unknown", bedUse: "perennials" } },
+        nursery: { label: "Nursery bed", values: { sunExposure: "part_sun", drainage: "normal", fertility: "medium", trellis: "unknown", bedUse: "nursery" } },
+        greenhouse: { label: "Greenhouse bed", values: { sunExposure: "full_sun", drainage: "normal", soilTexture: "amended", fertility: "high", trellis: "unknown", seasonExtension: "greenhouse", cropProtection: "unknown", windExposure: "sheltered", bedUse: "seed_starting" } },
+        perennial: { label: "Perennial bed", values: { sunExposure: "full_sun", drainage: "normal", fertility: "medium", trellis: "unknown", bedUse: "perennials" } },
+        resting: { label: "Resting bed", values: { sunExposure: "unknown", drainage: "unknown", fertility: "low", trellis: "unknown", bedUse: "resting" } }
     };
 
     let copiedProfile = null;
@@ -246,7 +245,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function listConditionOptionGroups() {
-        return FIELD_DEFS.filter(function (field) { return field.key !== "irrigation"; }).map(function (field) {
+        return FIELD_DEFS.map(function (field) {
             return {
                 id: field.key,
                 name: field.label,
@@ -410,7 +409,6 @@ Draw.loadPlugin(function (ui) {
         FIELD_DEFS.forEach(function (field) {
             out[field.key] = normalizeEnumValue(field.key, source[field.key]);
         });
-        out.irrigation = "unknown";
         const presetKey = String(source.presetKey || "").trim();
         if (options && options.allowPreset && isValidPresetKey(presetKey)) out.presetKey = presetKey;
         out.notes = String(source.notes || "").trim();
@@ -443,6 +441,9 @@ Draw.loadPlugin(function (ui) {
         const attrs = {};
         Object.keys(MIRROR_ATTRS).forEach(function (key) {
             attrs[MIRROR_ATTRS[key]] = profile[key];
+        });
+        Object.keys(LEGACY_REMOVED_MIRROR_ATTRS).forEach(function (key) {
+            attrs[LEGACY_REMOVED_MIRROR_ATTRS[key]] = null;
         });
         return attrs;
     }
@@ -521,6 +522,9 @@ Draw.loadPlugin(function (ui) {
         Object.keys(MIRROR_ATTRS).forEach(function (key) {
             attrs[MIRROR_ATTRS[key]] = null;
         });
+        Object.keys(LEGACY_REMOVED_MIRROR_ATTRS).forEach(function (key) {
+            attrs[LEGACY_REMOVED_MIRROR_ATTRS[key]] = null;
+        });
         if (keepIdentity) {
             Object.assign(attrs, buildIdentityMirrorAttrs(identityOnly));
             attrs.label = buildGeneratedBedLabel(identityOnly, bedCell);
@@ -530,29 +534,17 @@ Draw.loadPlugin(function (ui) {
     }
 
     function isMeaningfulOverride(key, value) {
-        if (key === "irrigation") return !!value && value !== "unknown";
         if (key === "trellis") return value === "none" || value === "available" || value === "required_structure";
         return !!value && value !== "unknown";
-    }
-
-    function derivedIrrigationDisplayValue(bedCell) {
-        const moduleCell = findGardenModuleAncestor(bedCell);
-        const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner);
-        if (!planner || typeof planner.getBedIrrigationMethods !== "function") return "unknown";
-        const methods = planner.getBedIrrigationMethods(moduleCell, bedCell) || [];
-        const labels = methods.map(function (method) { return String(method && method.label || "").trim(); }).filter(Boolean);
-        return labels.length ? labels.join(", ") : "unknown";
     }
 
     function getDisplayBedConditions(bedCell) {
         const bedRecord = parseProfileRecord(bedCell, ATTRS.BED_JSON);
         const out = normalizeProfile({}, { keepExistingDate: true });
         FIELD_DEFS.forEach(function (field) {
-            if (field.key === "irrigation") return;
             const value = bedRecord.profile[field.key];
             if (isMeaningfulOverride(field.key, value)) out[field.key] = value;
         });
-        out.irrigation = derivedIrrigationDisplayValue(bedCell);
         if (bedRecord.profile.notes) out.notes = bedRecord.profile.notes;
         if (isValidPresetKey(bedRecord.profile.presetKey)) out.presetKey = bedRecord.profile.presetKey;
         out.lastUpdated = bedRecord.profile.lastUpdated || "";
@@ -592,17 +584,6 @@ Draw.loadPlugin(function (ui) {
         });
         select.value = normalizeEnumValue(field.key, value);
         return select;
-    }
-
-    function makeReadOnlyText(value) {
-        const span = document.createElement("span");
-        span.textContent = valueLabel(value);
-        span.setAttribute("data-bed-derived-irrigation", "1");
-        span.style.display = "block";
-        span.style.padding = "3px 0";
-        span.style.color = "#374151";
-        span.style.fontWeight = "600";
-        return span;
     }
 
     function appendSection(container, title) {
@@ -813,13 +794,12 @@ Draw.loadPlugin(function (ui) {
         body.appendChild(presetRow);
 
         const growing = appendSection(body, "Growing Conditions");
-        ["sunExposure", "windExposure", "frostRisk", "soilMoisture", "drainage", "soilTexture", "fertility"].forEach(function (key) {
+        ["sunExposure", "windExposure", "drainage", "soilTexture", "fertility"].forEach(function (key) {
             controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]);
             appendField(growing, FIELD_BY_KEY[key], controls[key]);
         });
 
         const infra = appendSection(body, "Infrastructure");
-        appendField(infra, FIELD_BY_KEY.irrigation, makeReadOnlyText(derivedIrrigationDisplayValue(targetCell)));
         ["trellis", "seasonExtension", "cropProtection"].forEach(function (key) {
             controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]);
             appendField(infra, FIELD_BY_KEY[key], controls[key]);

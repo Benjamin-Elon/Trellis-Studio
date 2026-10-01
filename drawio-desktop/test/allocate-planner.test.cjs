@@ -8,45 +8,108 @@ const PLUGIN_PATH = path.join(__dirname, "..", "drawio", "src", "main", "webapp"
 const YEAR_PLANNER_PATH = path.join(__dirname, "..", "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins", "Year_Planner.js");
 const SOURCE = fs.readFileSync(PLUGIN_PATH, "utf8");
 
-function makeNode() {
-    return {
+function makeNode(ownerDocument) {
+    function selectorMatches(candidate, selector) {
+        const raw = String(selector || "");
+        if (raw.charAt(0) === ".") return String(candidate.className || "").split(/\s+/).includes(raw.slice(1));
+        const attrExists = /^\[([^=\]]+)\]$/.exec(raw);
+        if (attrExists) return candidate.getAttribute(attrExists[1]) != null;
+        const attr = /^\[([^=\]]+)="([^"]*)"\]$/.exec(raw);
+        if (attr) return candidate.getAttribute(attr[1]) === attr[2];
+        return false;
+    }
+    const node = {
         style: {},
         children: [],
         attributes: new Map(),
-        appendChild(child) { this.children.push(child); child.parentNode = this; return child; },
-        removeChild(child) { this.children = this.children.filter(item => item !== child); child.parentNode = null; },
-        setAttribute(key, value) { this.attributes.set(String(key), String(value)); },
+        listeners: new Map(),
+        className: "",
+        ownerDocument,
+        parentNode: null,
+        appendChild(child) { this.children.push(child); child.parentNode = this; if (!child.ownerDocument) child.ownerDocument = this.ownerDocument; return child; },
+        removeChild(child) { this.children = this.children.filter(item => item !== child); child.parentNode = null; if (this.ownerDocument && this.ownerDocument.activeElement === child) this.ownerDocument.activeElement = null; },
+        setAttribute(key, value) { this.attributes.set(String(key), String(value)); if (String(key) === "class") this.className = String(value); },
         getAttribute(key) { return this.attributes.get(String(key)) || null; },
-        addEventListener() {},
-        removeEventListener() {},
-        querySelector() { return null; },
-        set innerHTML(_) { this.children = []; },
+        addEventListener(type, fn) { const key = String(type || ""); this.listeners.set(key, (this.listeners.get(key) || []).concat(fn)); },
+        removeEventListener(type, fn) { const key = String(type || ""); this.listeners.set(key, (this.listeners.get(key) || []).filter(item => item !== fn)); },
+        dispatchEvent(evt) { (this.listeners.get(String(evt && evt.type || "")) || []).forEach(fn => fn.call(this, evt)); return true; },
+        click() { this.dispatchEvent({ type: "click", target: this }); },
+        focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; },
+        blur() { if (this.ownerDocument && this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = null; },
+        contains(target) { return this === target || this.children.some(child => child && typeof child.contains === "function" && child.contains(target)); },
+        querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
+        querySelectorAll(selector) { const out = []; (function visit(candidate) { if (selectorMatches(candidate, selector)) out.push(candidate); (candidate.children || []).forEach(visit); })(this); return out; },
+        set innerHTML(_) { const active = this.ownerDocument && this.ownerDocument.activeElement; if (active && active !== this && this.contains(active)) this.ownerDocument.activeElement = null; this.children.forEach(child => { child.parentNode = null; }); this.children = []; }, // CHANGE: fake DOM now models focus loss when a focused descendant subtree is cleared.
         get innerHTML() { return ""; }
     };
+    return node;
+}
+
+function makeEventSource(target = {}) {
+    const listeners = new Map();
+    target.addListener = function (eventName, fn) {
+        const key = String(eventName || "");
+        listeners.set(key, (listeners.get(key) || []).concat(fn));
+    };
+    target.removeListener = function (fn) {
+        listeners.forEach((items, key) => listeners.set(key, items.filter(item => item !== fn)));
+    };
+    target.fireEvent = function (eventName) {
+        (listeners.get(String(eventName || "")) || []).slice().forEach(fn => fn(target, { getProperty: () => null }));
+    };
+    return target;
 }
 
 function loadAllocatePlugin() {
-    const root = makeNode();
     const document = {
-        body: root,
-        createElement: () => makeNode(),
-        createElementNS: () => makeNode()
+        activeElement: null,
+        body: null,
+        createElement: () => makeNode(document),
+        createElementNS: () => makeNode(document)
     };
+    const root = makeNode(document);
+    const graphContainer = makeNode(document);
+    graphContainer.getBoundingClientRect = () => ({ left: 20, top: 30 });
+    graphContainer.scrollLeft = 7;
+    graphContainer.scrollTop = 11;
+    document.body = root;
+    root.appendChild(graphContainer);
+    const view = makeEventSource({
+        scale: 1,
+        translate: { x: 0, y: 0 },
+        getState(cell) {
+            if (!cell) return null;
+            if (cell.__state) return cell.__state;
+            const geo = cell.getGeometry ? cell.getGeometry() : null;
+            if (!geo) return null;
+            const scale = Number(this.scale) || 1;
+            const tr = this.translate || { x: 0, y: 0 };
+            return {
+                x: (Number(geo.x) + Number(tr.x || 0)) * scale,
+                y: (Number(geo.y) + Number(tr.y || 0)) * scale,
+                width: Math.max(1, Number(geo.width || 1) * scale),
+                height: Math.max(1, Number(geo.height || 1) * scale)
+            };
+        }
+    });
+    const graphEvents = makeEventSource({});
     const graph = {
-        container: { getBoundingClientRect: () => ({ left: 0, top: 0 }) },
-        view: { scale: 1, translate: { x: 0, y: 0 } },
+        container: graphContainer,
+        view,
+        getView: () => view,
         getModel: () => ({
             getCell: () => null,
             getParent: () => null,
             beginUpdate() {},
             endUpdate() {}
         }),
-        addListener() {},
-        removeListener() {}
+        addListener: graphEvents.addListener,
+        removeListener: graphEvents.removeListener
     };
     const window = {
         USL: {},
         Trellis: {},
+        getComputedStyle(node) { return { position: node && node.style && node.style.position || "static" }; },
         addEventListener() {},
         removeEventListener() {},
         localStorage: {
@@ -67,12 +130,27 @@ function loadAllocatePlugin() {
         clearTimeout,
         document,
         window,
+        mxEvent: {
+            CELLS_MOVED: "cellsMoved",
+            CELLS_RESIZED: "cellsResized",
+            CELLS_ADDED: "cellsAdded",
+            CELLS_REMOVED: "cellsRemoved",
+            CHANGE: "change",
+            SCALE: "scale",
+            TRANSLATE: "translate",
+            SCALE_AND_TRANSLATE: "scaleAndTranslate",
+            REPAINT: "repaint"
+        },
         Draw: { loadPlugin(callback) { callback({ editor: { graph }, showDialog() {}, hideDialog() {} }); } }
     });
     vm.runInContext(SOURCE, context, { filename: PLUGIN_PATH });
     const api = window.USL.allocate.__test;
     api.__window = window;
     api.__root = root;
+    api.__graphContainer = graphContainer; // CHANGE: graph-local overlay assertions inspect the container, not document.body.
+    api.__document = document; // CHANGE: focus regression tests inspect the fake DOM active element.
+    api.__graph = graph; // CHANGE: zoom anchoring tests mutate the fake mxGraph view.
+    api.__fireViewEvent = name => view.fireEvent(name); // CHANGE
     return api;
 }
 
@@ -265,14 +343,21 @@ test("Allocate open renders a progress state before sow-week scheduling complete
         getGeometry() { return { x: 0, y: 0, width: 120, height: 40 }; }
     };
     const plan = {
-        crops: [{ id: "cilantro", plantId: "1", plant: "Cilantro", method: "direct_sow.field", kgPerPlant: 1 }]
+        crops: [
+            { id: "cilantro", plantId: "1", plant: "Cilantro", method: "direct_sow.field", kgPerPlant: 1 },
+            { id: "radish", plantId: "2", plant: "Radish", method: "direct_sow.field", kgPerPlant: 1 }
+        ]
     };
     const coverage = {
-        totals: { targetKg: 3, shortKg: 3 },
-        cropSummaries: [{ cropId: "cilantro", targetKg: 3, shortKg: 3 }],
+        totals: { targetKg: 5, shortKg: 5 },
+        cropSummaries: [
+            { cropId: "cilantro", targetKg: 3, shortKg: 3 },
+            { cropId: "radish", targetKg: 2, shortKg: 2 }
+        ],
         weekSummaries: [
             { weekIndex: 17, start: "2027-05-01", targetKg: 0, shortKg: 0, cropShortages: [] },
-            { weekIndex: 23, start: "2027-06-07", targetKg: 3, shortKg: 3, cropShortages: [{ cropId: "cilantro", label: "Cilantro", shortKg: 3 }] }
+            { weekIndex: 23, start: "2027-06-07", targetKg: 3, shortKg: 3, cropShortages: [{ cropId: "cilantro", label: "Cilantro", shortKg: 3 }] },
+            { weekIndex: 24, start: "2027-06-14", targetKg: 2, shortKg: 2, cropShortages: [{ cropId: "radish", label: "Radish", shortKg: 2 }] }
         ]
     };
     api.__window.USL.scheduler = {
@@ -282,7 +367,7 @@ test("Allocate open renders a progress state before sow-week scheduling complete
         },
         async proposeLifecycleForDemandWindow() {
             lifecycleCalls += 1;
-            await new Promise(resolve => setTimeout(resolve, 15));
+            await new Promise(resolve => setTimeout(resolve, 20));
             return {
                 ok: true,
                 status: "compatible",
@@ -311,27 +396,155 @@ test("Allocate open renders a progress state before sow-week scheduling complete
 
     assert.equal(state.scheduleProgress.phase, "scanning demand");
     assert.equal(state.scheduleProgress.processedRows, 0);
-    assert.equal(state.scheduleProgress.totalRows, 1);
-    assert.match(api.scheduleProgressText(state), /0 of 1 demand rows/);
+    assert.equal(state.scheduleProgress.totalRows, 2);
+    assert.match(api.scheduleProgressText(state), /0 of 2 demand rows/);
+
+    const weekSelect = state.hudRefs.weekSelect;
+    weekSelect.focus();
+    await waitUntil(() => state.scheduleProgress.processedRows >= 1);
+    assert.equal(api.__document.activeElement, weekSelect); // CHANGE: progress renders must not replace the focused week dropdown.
+
+    const cropSelect = state.hudRefs.cropSelect;
+    cropSelect.focus();
 
     await waitUntil(() => state.scheduleProgress.phase === "complete");
 
+    assert.equal(api.__document.activeElement, cropSelect); // CHANGE: final progress render must keep the focused crop dropdown stable.
     assert.equal(state.scheduleProgress.phase, "complete");
-    assert.equal(state.scheduleProgress.processedRows, 1);
-    assert.equal(state.scheduleProgress.totalRows, 1);
-    assert.equal(state.scheduleProgress.foundActions, 1);
+    assert.equal(state.scheduleProgress.processedRows, 2);
+    assert.equal(state.scheduleProgress.totalRows, 2);
+    assert.equal(state.scheduleProgress.foundActions, 2);
     assert.deepEqual(Array.from(state.actionSchedule.actionableWeekIndices), [17]);
-    assert.equal(lifecycleCalls, 1);
+    assert.equal(lifecycleCalls, 2);
     assert.ok(collectText(api.__root).includes("Review Schedule"));
+
+    cropSelect.value = "cilantro";
+    cropSelect.dispatchEvent({ type: "change", target: cropSelect });
+    await waitUntil(() => !!state.draft);
+
+    const controlLayer = api.__graphContainer.querySelector(".trellis-graph-control-layer");
+    const allocateLayer = api.__graphContainer.querySelector(".trellis-allocate-overlay-layer");
+    const badge = api.__graphContainer.querySelector('[data-bed-id="bed-1"]');
+    const annotationLayer = api.__graphContainer.querySelector(".trellis-graph-annotation-layer");
+    const ghost = api.__graphContainer.querySelector(".trellis-allocate-ghost");
+    assert.ok(controlLayer, "expected Allocate to create the shared graph control layer"); // CHANGE
+    assert.equal(allocateLayer.parentNode, controlLayer); // CHANGE: Allocate badges should be graph-local controls, not body-fixed nodes.
+    assert.equal(badge.parentNode, allocateLayer); // CHANGE
+    assert.match(badge.textContent, /Cilantro/); // CHANGE
+    assert.match(badge.style.cssText, /position:absolute/); // CHANGE
+    assert.equal(badge.style.left, "6px"); // CHANGE: bed badge position follows the rendered bed state, not scroll math.
+    assert.equal(badge.style.top, "6px"); // CHANGE
+    assert.equal(ghost.parentNode, annotationLayer); // CHANGE: draft ghost sits below controls on the graph annotation layer.
+    assert.match(ghost.style.cssText, /position:absolute/); // CHANGE
+    assert.match(ghost.style.cssText, /left:7px/); // CHANGE
+    assert.match(ghost.style.cssText, /top:11px/); // CHANGE
+
+    api.__window.USL.allocate.close("cache-test");
+    const reopened = await api.__window.USL.allocate.open(moduleCell, 2027);
+
+    assert.equal(reopened.scheduleProgress.phase, "complete");
+    assert.equal(reopened.scheduleProgress.foundActions, 2);
+    assert.deepEqual(Array.from(reopened.actionSchedule.actionableWeekIndices), [17]);
+    assert.equal(lifecycleCalls, 2);
 });
 
 test("Allocate graph proposal coordinates convert directly to screen coordinates", () => {
     const api = loadAllocatePlugin();
     const point = api.graphPointToScreen(50, 80);
 
-    assert.equal(point.left, 50);
-    assert.equal(point.top, 80);
+    assert.equal(point.left, 70);
+    assert.equal(point.top, 110);
     assert.equal(point.scale, 1);
+});
+
+test("Allocate graph overlay coordinates are relative to the graph container", () => {
+    const api = loadAllocatePlugin();
+    const point = api.graphPointToContainer(50, 80);
+
+    assert.equal(point.left, 57); // CHANGE: graph-local overlays include container scroll, not viewport origin.
+    assert.equal(point.top, 91); // CHANGE
+    assert.equal(point.scale, 1);
+});
+
+test("Allocate bed badges stay anchored to distinct rendered bed states after zoom", async () => {
+    const api = loadAllocatePlugin();
+    let geometryCalls = 0;
+    const moduleCell = { id: "module-1" };
+    const bed1 = {
+        id: "bed-1",
+        getAttribute(key) { return key === "label" ? "Bed 1" : ""; },
+        getGeometry() { return { x: 0, y: 0, width: 120, height: 40 }; }
+    };
+    const bed2 = {
+        id: "bed-2",
+        getAttribute(key) { return key === "label" ? "Bed 2" : ""; },
+        getGeometry() { return { x: 200, y: 80, width: 140, height: 50 }; }
+    };
+    const plan = { crops: [{ id: "cilantro", plantId: "1", plant: "Cilantro", method: "direct_sow.field", kgPerPlant: 1 }] };
+    const coverage = {
+        totals: { targetKg: 2, shortKg: 2 },
+        cropSummaries: [{ cropId: "cilantro", targetKg: 2, shortKg: 2 }],
+        weekSummaries: [
+            { weekIndex: 17, start: "2027-05-01", targetKg: 0, shortKg: 0, cropShortages: [] },
+            { weekIndex: 23, start: "2027-06-07", targetKg: 2, shortKg: 2, cropShortages: [{ cropId: "cilantro", label: "Cilantro", shortKg: 2 }] }
+        ]
+    };
+    api.__window.USL.scheduler = {
+        async resolveCityForModule() { return { ok: true, city: { name: "Test" } }; },
+        async resolvePlantForPlanCrop() {
+            return { ok: true, plant: { plant_id: 1, plant_name: "Cilantro", spacing_cm: 10, yield_per_plant_kg: 1 }, plantId: "1", varietyId: "", varietyName: "", label: "Cilantro" };
+        },
+        async proposeLifecycleForDemandWindow() {
+            return {
+                ok: true,
+                status: "compatible",
+                startISO: "2027-05-01",
+                primaryDateISO: "2027-05-01",
+                attributePatch: { sow_date: "2027-05-01", harvest_start: "2027-06-07", harvest_end: "2027-06-14" },
+                warnings: [],
+                taskPreview: []
+            };
+        }
+    };
+    api.__window.USL.planningCore = {
+        loadPlanForYear() { return plan; },
+        computeYearCoverage() { return coverage; },
+        recommendPlantCount() { return { plantCount: 2, reachableShortKg: 2 }; },
+        simulateCandidatePlanting() { return { demandServedKg: 2 }; }
+    };
+    api.__window.USL.tiler = {
+        listGardenBeds() { return [bed1, bed2]; },
+        listPlantingFootprints() { return []; },
+        readBedProfile() { return {}; },
+        proposePlantingGeometry() {
+            geometryCalls += 1;
+            return { ok: true, status: "compatible", capacity: 12, geometry: { x: 0, y: 0, width: 100, height: 40 }, slots: [] };
+        }
+    };
+
+    const state = await api.__window.USL.allocate.open(moduleCell, 2027);
+    await waitUntil(() => state.scheduleProgress.phase === "complete");
+    state.hudRefs.cropSelect.value = "cilantro";
+    state.hudRefs.cropSelect.dispatchEvent({ type: "change", target: state.hudRefs.cropSelect });
+    await waitUntil(() => !!api.__graphContainer.querySelector('[data-bed-id="bed-2"]'));
+
+    const badge1 = api.__graphContainer.querySelector('[data-bed-id="bed-1"]');
+    const badge2 = api.__graphContainer.querySelector('[data-bed-id="bed-2"]');
+    assert.equal(badge1.style.left, "6px"); // CHANGE: badges are anchored per bed, not stacked.
+    assert.equal(badge1.style.top, "6px"); // CHANGE
+    assert.equal(badge2.style.left, "206px"); // CHANGE
+    assert.equal(badge2.style.top, "86px"); // CHANGE
+
+    const callsBeforeZoom = geometryCalls;
+    api.__graph.view.scale = 2;
+    api.__graph.view.translate = { x: 10, y: 5 };
+    api.__fireViewEvent("scaleAndTranslate");
+
+    assert.equal(geometryCalls, callsBeforeZoom); // CHANGE: view-only anchoring must not recompute allocation fit.
+    assert.equal(badge1.style.left, "26px"); // CHANGE: x=(0+10)*2 + 6.
+    assert.equal(badge1.style.top, "16px"); // CHANGE
+    assert.equal(badge2.style.left, "426px"); // CHANGE
+    assert.equal(badge2.style.top, "176px"); // CHANGE
 });
 
 test("Allocate close cancels a pending sow-week schedule job", async () => {
@@ -810,7 +1023,7 @@ test("Allocate plugin owns launch, draft review, and one-transaction create cont
     assert.match(SOURCE, /listPlantingFootprints/);
     assert.match(SOURCE, /currentBedContext/);
     assert.match(SOURCE, /Review Schedule/);
-    assert.match(SOURCE, /graphPointToScreen\(geo\.x, geo\.y\)/);
+    assert.match(SOURCE, /graphPointToContainer\(geo\.x, geo\.y\)/); // CHANGE: draft ghosts render in graph-local overlay coordinates.
     assert.match(SOURCE, /vegHeightCm: context\.plantResolution\.plant\.veg_height_cm \|\| null/);
     assert.match(SOURCE, /vegHeightCm: d\.geometry\.vegHeightCm \|\| null/);
 });

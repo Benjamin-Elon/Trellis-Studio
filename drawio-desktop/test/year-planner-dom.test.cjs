@@ -947,7 +947,10 @@ test("Demand invalid badge shows count, tooltip, and navigates to the first inva
     await harness.openModal(2026);
 
     const firstLine = findDemandLine(harness.document, "demand_1");
-    Array.from(firstLine.querySelectorAll(".yp-demand-line-header button")).find(button => button.textContent === "Collapse").click();
+    const firstLineToggle = firstLine.querySelector(".yp-demand-line-header .yp-demand-line-toggle"); // CHANGE
+    assert.equal(firstLineToggle.textContent, "-"); // CHANGE
+    assert.equal(firstLineToggle.getAttribute("aria-label"), "Collapse demand line"); // CHANGE
+    firstLineToggle.click(); // CHANGE
     Array.from(findStripDetails(harness.document, "demand").querySelector("[data-demand-channel-id='farm_store']").querySelectorAll("button")).find(button => button.textContent === "Collapse").click();
     setStripExpanded(harness.document, "demand", false);
     scrollSpy.reset();
@@ -1434,7 +1437,9 @@ test("Demand lines collapse to operational summaries without losing edits", asyn
     harness.setControlValue(qty, 7);
     await harness.settle(130);
 
-    const collapse = Array.from(line.querySelectorAll(".yp-demand-line-header button")).find(button => button.textContent === "Collapse");
+    const collapse = line.querySelector(".yp-demand-line-header .yp-demand-line-toggle"); // CHANGE
+    assert.equal(collapse.textContent, "-"); // CHANGE
+    assert.equal(collapse.getAttribute("aria-label"), "Collapse demand line"); // CHANGE
     collapse.click();
     const collapsedLine = findDemandLine(harness.document);
     assert.equal(collapsedLine.querySelector(".yp-demand-line-details").style.display, "none");
@@ -1447,7 +1452,10 @@ test("Demand lines collapse to operational summaries without losing edits", asyn
     assert.match(collapsedLine.textContent, /Potential\s*\$14\.00/);
     assert.match(collapsedLine.textContent, /Fulfilled\s*\$0\.00/);
 
-    Array.from(collapsedLine.querySelectorAll(".yp-demand-line-header button")).find(button => button.textContent === "Expand").click();
+    const expand = collapsedLine.querySelector(".yp-demand-line-header .yp-demand-line-toggle"); // CHANGE
+    assert.equal(expand.textContent, "+"); // CHANGE
+    assert.equal(expand.getAttribute("aria-label"), "Expand demand line"); // CHANGE
+    expand.click(); // CHANGE
     const expandedLine = findDemandLine(harness.document);
     assert.equal(expandedLine.querySelector(".yp-demand-line-details").style.display, "grid");
     assert.equal(expandedLine.querySelector('input[type="number"]').value, "7");
@@ -1463,7 +1471,7 @@ test("Year Planner collapse preferences persist by garden and year", async t => 
 
     setStripExpanded(harness.document, "crop-plan", false);
     setStripExpanded(harness.document, "csa", true);
-    findDemandLine(harness.document).querySelector(".yp-demand-line-header button").click();
+    findDemandLine(harness.document).querySelector(".yp-demand-line-header .yp-demand-line-toggle").click(); // CHANGE
     const channelButtons = findStripDetails(harness.document, "demand").querySelectorAll("[data-demand-channel-id]");
     Array.from(channelButtons[1].querySelectorAll("button")).find(button => button.textContent === "Collapse").click();
     const key = harness.api.YearPlanCollapsePreferences.storageKey(harness.moduleCell, 2026);
@@ -1510,7 +1518,9 @@ test("Demand line warning chips expand the line and highlight relevant fields", 
     t.after(() => scrollSpy.restore());
     savePlan(harness, 2026, plan => addDemand(plan, { from: "2026-07-01", to: "2026-06-01" }));
     await harness.openModal(2026);
-    Array.from(findDemandLine(harness.document).querySelectorAll(".yp-demand-line-header button")).find(button => button.textContent === "Collapse").click();
+    const demandLineToggle = findDemandLine(harness.document).querySelector(".yp-demand-line-header .yp-demand-line-toggle"); // CHANGE
+    assert.equal(demandLineToggle.textContent, "-"); // CHANGE
+    demandLineToggle.click(); // CHANGE
     scrollSpy.reset();
 
     const dates = findClickableChip(findDemandLine(harness.document).querySelector(".yp-demand-line-summary"), /Dates/);

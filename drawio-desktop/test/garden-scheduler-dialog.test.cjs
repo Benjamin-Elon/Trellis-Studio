@@ -900,6 +900,33 @@ test('scheduler adjacent gap hints label overlaps by occupancy start delta', () 
     assert.equal(hints.overlaps.length, 2);
 });
 
+test('scheduler classifies occupancy overlaps by companion rating', () => {
+    assert.equal(hooks.schedulerConflictKindFromRelationship({ known: true, rating: 1 }), 'companion');
+    assert.equal(hooks.schedulerConflictKindFromRelationship({ known: true, rating: 0 }), 'companion');
+    assert.equal(hooks.schedulerConflictKindFromRelationship({ known: true, rating: -1 }), 'incompatible');
+    assert.equal(hooks.schedulerConflictKindFromRelationship(null), 'unknown');
+
+    const relationships = new Map([
+        ['2', { known: true, rating: -1 }],
+        ['3', { known: true, rating: 1 }]
+    ]);
+    const incompatible = hooks.classifySchedulerOccupancyConflict({ plantId: '2', label: 'Fennel' }, relationships); // CHANGE
+    assert.equal(incompatible.kind, 'incompatible'); // CHANGE
+    assert.equal(incompatible.severity, 'block'); // CHANGE
+    assert.equal(incompatible.label, 'Fennel'); // CHANGE
+    assert.equal(incompatible.message, 'Incompatible overlap with Fennel'); // CHANGE
+    assert.equal(incompatible.relationship.rating, -1); // CHANGE
+    assert.equal(hooks.classifySchedulerOccupancyConflict({ plantId: '3', label: 'Basil' }, relationships).kind, 'companion');
+    assert.equal(hooks.classifySchedulerOccupancyConflict({ plantId: '4', label: 'Mystery crop' }, relationships).kind, 'unknown');
+});
+
+test('bed-first scheduler entrypoint is separate from strict planting-group scheduler', () => {
+    assert.match(schedulerSource, /async function openBedScheduleDialog\(ui, bedCell, openOptions = \{\}\)/);
+    assert.match(schedulerSource, /openBedScheduleDialog: \(ui, bedCell, options\) => openBedScheduleDialog\(ui, bedCell, options\)/);
+    assert.match(schedulerSource, /async function openScheduleDialog\(ui, cell, openOptions = \{\}\) \{\s*requireCanSchedulePlantingGroup\(cell\);/);
+    assert.match(schedulerSource, /createTargetCell: bedTargetCreation && bedTargetCreation\.createTargetCell/);
+});
+
 test('scheduler start hints use selected-cluster occupancy context', () => {
     const hints = hooks.computeSchedulerAdjacentGapHints([
         { cellId: 'overhang', label: 'Apple', cropName: 'Apple', startISO: '2025-01-01', endISO: '2030-12-31' }
@@ -1278,7 +1305,7 @@ test('schedule summary view state de-duplicates warning bullet messages', () => 
     const viewState = makeSummaryViewState({
         scheduleWarnings: [
             { message: 'There is not enough growing-degree accumulation to reach maturity.' },
-            { message: 'Selected sow date yield multiplier 0.49 is below the minimum 0.50.' },
+            { message: 'Selected date predicts a 51% yield reduction (49% of normal yield), below your 50% minimum.' }, // CHANGE: summary tests use the user-facing yield risk wording.
             { message: 'There is not enough growing-degree accumulation to reach maturity.' },
             { message: '   ' },
             { type: 'missing_message' }
@@ -1288,7 +1315,7 @@ test('schedule summary view state de-duplicates warning bullet messages', () => 
     assert.equal(viewState.feasibility.status, 'warning');
     assert.deepEqual(Array.from(viewState.feasibility.warningMessages), [
         'There is not enough growing-degree accumulation to reach maturity.',
-        'Selected sow date yield multiplier 0.49 is below the minimum 0.50.'
+        'Selected date predicts a 51% yield reduction (49% of normal yield), below your 50% minimum.' // CHANGE: summary warning de-dupe preserves the new low-yield message.
     ]);
 });
 
@@ -1297,7 +1324,7 @@ test('schedule summary renders warnings as bullet list in double-wide feasibilit
     const viewState = makeSummaryViewState({
         scheduleWarnings: [
             { message: 'There is not enough growing-degree accumulation to reach maturity.' },
-            { message: 'Selected sow date yield multiplier 0.49 is below the minimum 0.50.' }
+            { message: 'Selected date predicts a 51% yield reduction (49% of normal yield), below your 50% minimum.' } // CHANGE: rendered bullet copy matches the scheduler low-yield message.
         ]
     });
 

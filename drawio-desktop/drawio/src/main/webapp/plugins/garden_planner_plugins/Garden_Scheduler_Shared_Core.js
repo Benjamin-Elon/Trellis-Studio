@@ -266,11 +266,9 @@
         const pickNum = (key) => finiteNumberOrNull(source[key]);
         return {
             sunExposure: pick('sunExposure', 'full_sun'),
-            soilMoisture: pick('soilMoisture', 'moderate'),
             drainage: pick('drainage', 'normal'),
             soilTexture: pick('soilTexture', 'loamy'),
             windExposure: pick('windExposure', 'moderate'),
-            frostRisk: pick('frostRisk', 'low'),
             seasonExtension: pick('seasonExtension', pick('season_extension', 'unknown')),
             seasonExtensionAirOffsetC: pickNum('seasonExtensionAirOffsetC') ?? pickNum('season_extension_air_offset_c'),
             seasonExtensionSoilOffsetC: pickNum('seasonExtensionSoilOffsetC') ?? pickNum('season_extension_soil_offset_c'),
@@ -298,18 +296,12 @@
         else if (bed.sunExposure === 'part_sun') add(0.1);
         else if (bed.sunExposure === 'part_shade') add(-0.9);
         else if (bed.sunExposure === 'shade') add(-1.8);
-        if (bed.soilMoisture === 'dry') add(0.4);
-        else if (bed.soilMoisture === 'moist') add(-0.5);
-        else if (bed.soilMoisture === 'wet') add(-1.0);
         if (bed.drainage === 'fast') add(0.3);
         else if (bed.drainage === 'slow') add(-0.6);
         if (bed.soilTexture === 'sandy' || bed.soilTexture === 'amended') add(0.4);
         else if (bed.soilTexture === 'clay') add(-0.5);
         if (bed.windExposure === 'sheltered') add(0.2);
         else if (bed.windExposure === 'exposed') add(-0.5);
-        if (bed.frostRisk === 'none') add(0.2);
-        else if (bed.frostRisk === 'medium') add(-0.3);
-        else if (bed.frostRisk === 'high') add(-0.7);
         return Math.max(-1.5, Math.min(5.0, offset)) + seasonExtensionEffects(bed).soilOffsetC;
     }
     function bedAirTemperatureOffsetC(profile) {
@@ -321,20 +313,10 @@
         else if (bed.sunExposure === 'shade') offset -= 0.7;
         if (bed.windExposure === 'sheltered') offset += 0.2;
         else if (bed.windExposure === 'exposed') offset -= 0.3;
-        if (bed.soilMoisture === 'dry') offset += 0.15;
-        else if (bed.soilMoisture === 'wet') offset -= 0.2;
-        if (bed.frostRisk === 'none') offset += 0.15;
-        else if (bed.frostRisk === 'medium') offset -= 0.2;
-        else if (bed.frostRisk === 'high') offset -= 0.4;
         return Math.max(-1.0, Math.min(1.0, offset)) + seasonExtensionEffects(bed).airOffsetC;
     }
     function bedFrostGateShiftDays(profile) {
-        const bed = normalizeBedProfile(profile);
-        let shift = 0;
-        if (bed.frostRisk === 'none') shift = -3;
-        else if (bed.frostRisk === 'medium') shift = 5;
-        else if (bed.frostRisk === 'high') shift = 10;
-        return shift + seasonExtensionEffects(bed).frostShiftDays;
+        return seasonExtensionEffects(profile).frostShiftDays;
     }
     function estimateSoilTempC(date, monthlyAvgTemp, bedProfile = null) {
         const air = meanTemperatureOnDate(date, monthlyAvgTemp);
@@ -650,11 +632,17 @@
         const resolved = resolveFallFrostByRisk(city, risk);
         return resolved.doy == null ? null : resolved.doy; // ADDED: preserve annual-core numeric/null API.
     }
-    function isCrossYearCrop(plant) {
+    function requiresOverwinterSchedule(plant) {
+        return Number(plant?.overwinter_ok ?? 0) === 1;
+    }
+    function isLifecycleMultiYearPlant(plant) {
         if (!plant) return false;
         const perennial = typeof plant.isPerennial === 'function' && plant.isPerennial();
         const biennial = typeof plant.isBiennial === 'function' && plant.isBiennial();
-        return perennial || biennial || Number(plant.overwinter_ok ?? 0) === 1;
+        return perennial || biennial;
+    }
+    function isCrossYearCrop(plant) {
+        return isLifecycleMultiYearPlant(plant) || requiresOverwinterSchedule(plant);
     }
     function getPlantScanYears(plant) {
         if (plant.isPerennial()) {
@@ -673,7 +661,7 @@
             return Math.floor(lifespan);
         }
 
-        return 1 + (Number(plant.overwinter_ok) === 1 ? 1 : 0);
+        return 1 + (requiresOverwinterSchedule(plant) ? 1 : 0);
     }
     function asCoolingThresholdC(v) {
         if (v === null || v === undefined || v === '') return null;
@@ -681,7 +669,7 @@
         return Number.isFinite(n) ? n : null;
     }
     function coolingGateThresholdC(plant) {
-        if (!isCrossYearCrop(plant)) return null; // FIX: heat-stress metadata must not force annual fall-only scheduling
+        if (!requiresOverwinterSchedule(plant)) return null; // FIX: heat-stress metadata must not force annual fall-only scheduling
         return asCoolingThresholdC(plant?.start_cooling_threshold_c);
     }
     function dateFromDOY(year, doy) {
@@ -722,7 +710,7 @@
 
         static fromResolvedBehavior(plant, resolvedBehavior, climatePolicy = null) {
             const threshold = finiteNumberOrNull(plant?.soil_temp_min_plant_c);
-            const overwinterAllowed = isCrossYearCrop(plant);
+            const overwinterAllowed = requiresOverwinterSchedule(plant);
             return new PolicyFlags({
                 useSpringFrostGate: true,
                 springFrostRisk: climatePolicy?.springFrostRisk || 'p50',
@@ -987,6 +975,8 @@
         resolveFallFrostByRisk,
         inferFallFrostFromMonthlyLows,
         pickFallFrostByRisk,
+        requiresOverwinterSchedule,
+        isLifecycleMultiYearPlant,
         isCrossYearCrop,
         getPlantScanYears,
         asCoolingThresholdC,

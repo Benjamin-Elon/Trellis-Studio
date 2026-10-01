@@ -2570,7 +2570,7 @@ Draw.loadPlugin(function (ui) {
 
         static fromResolvedBehavior(plant, resolvedBehavior, climatePolicy = null) {
             const threshold = finiteNumberOrNull(plant?.soil_temp_min_plant_c);
-            const overwinterAllowed = isCrossYearCrop(plant); // FIX: biennials are cross-year crops
+            const overwinterAllowed = requiresOverwinterSchedule(plant); // CHANGE: only overwinter-required crops get cooling/fall-window policy.
             const modelPolicy = mergeClimateModelPolicy(null, climatePolicy);
 
             return new PolicyFlags({
@@ -2591,12 +2591,20 @@ Draw.loadPlugin(function (ui) {
 
     }
 
-    // Cross-year capability is a lifecycle property, independent of frost-gate policy.
-    function isCrossYearCrop(plant) { // FIX: centralize lifecycle scheduling rules
+    function requiresOverwinterSchedule(plant) { // CHANGE: overwinter means the crop's intended schedule needs winter/cooling.
+        return Number(plant?.overwinter_ok ?? 0) === 1;
+    }
+
+    function isLifecycleMultiYearPlant(plant) { // CHANGE: biennial/perennial lifecycle is not the same as overwinter scheduling.
         if (!plant) return false;
         const perennial = typeof plant.isPerennial === 'function' && plant.isPerennial();
         const biennial = typeof plant.isBiennial === 'function' && plant.isBiennial();
-        return perennial || biennial || Number(plant.overwinter_ok ?? 0) === 1; // FIX: centralize lifecycle policy
+        return perennial || biennial;
+    }
+
+    // Cross-year capability is a lifecycle property or an explicit overwinter-required schedule.
+    function isCrossYearCrop(plant) { // FIX: centralize lifecycle scheduling rules
+        return isLifecycleMultiYearPlant(plant) || requiresOverwinterSchedule(plant);
     }
 
     function getPlantScanYears(plant) { // FIX: centralize lifecycle-aware scan bounds
@@ -2616,7 +2624,7 @@ Draw.loadPlugin(function (ui) {
             return Math.floor(lifespan);
         }
 
-        return 1 + (Number(plant.overwinter_ok) === 1 ? 1 : 0);
+        return 1 + (requiresOverwinterSchedule(plant) ? 1 : 0);
     }
 
     function annualSchedulerScanEndYear(plant, year) {
@@ -2938,7 +2946,7 @@ Draw.loadPlugin(function (ui) {
             useSpringFrostGate: true,
             lastSpringFrostDOY: pickFrostByRisk(prepared.city, prepared.climatePolicy.springFrostRisk),
             daysTransplant: prepared.transplantDays,
-            overwinterAllowed: isCrossYearCrop(prepared.effectivePlant),
+            overwinterAllowed: requiresOverwinterSchedule(prepared.effectivePlant),
             plantMetadata: prepared.effectivePlant,
             cityLatitudeDeg: finiteNumberOrNull(prepared.city.latitude ?? prepared.city.lat),
             bedProfile: prepared.bedProfile,
@@ -3469,7 +3477,7 @@ Draw.loadPlugin(function (ui) {
         return Number.isFinite(n) ? n : null;
     }
     function coolingGateThresholdC(plant) {
-        if (!isCrossYearCrop(plant)) return null; // FIX: heat-stress metadata must not force annual fall-only scheduling
+        if (!requiresOverwinterSchedule(plant)) return null; // FIX: heat-stress metadata must not force annual fall-only scheduling
         return asCoolingThresholdC(plant?.start_cooling_threshold_c);
     }
 
@@ -3791,6 +3799,16 @@ Draw.loadPlugin(function (ui) {
                 profile: normalizeBedProfile(bedsApi.readBedConditions(bed)),
                 source: `garden bed${bed.id ? ' ' + bed.id : ''}`
             }; // ADDED: use configured bed conditions when available.
+        }
+        return { profile: normalizeBedProfile(null), source: 'generic garden bed' };
+    }
+    function resolveScheduleBedContextForBed(bedCell) {
+        const bedsApi = typeof window !== 'undefined' ? window.TrellisGardenBeds : null;
+        if (isGardenBedCell(bedCell) && bedsApi && typeof bedsApi.readBedConditions === 'function') {
+            return {
+                profile: normalizeBedProfile(bedsApi.readBedConditions(bedCell)),
+                source: `garden bed${bedCell.id ? ' ' + bedCell.id : ''}`
+            }; // CHANGE: bed-first scheduling reads conditions directly from the selected bed.
         }
         return { profile: normalizeBedProfile(null), source: 'generic garden bed' };
     }
@@ -4893,10 +4911,20 @@ Draw.loadPlugin(function (ui) {
     }
     function buildLifecycleTimelineBounds({ plant = null, seasonStartYear = null } = {}) {
         const year = Math.round(finiteNumberOrNull(seasonStartYear) ?? new Date().getUTCFullYear());
-        const scanYears = Math.max(1, Math.round(finiteNumberOrNull(plant ? getPlantScanYears(plant) : 1) ?? 1));
+        const scanYears = plant && typeof plant.isBiennial === 'function' && plant.isBiennial()
+            ? Math.max(2, Math.round(finiteNumberOrNull(plant.lifespan_years) ?? 2))
+            : 1; // CHANGE: annual overwinter capability no longer stretches the visible lifecycle timeline.
         const start = asUTCDate(year, 1, 1);
         const end = asUTCDate(year + scanYears - 1, 12, 31);
         return { start, end, startISO: fmtISO(start), endISO: fmtISO(end), multiYear: start.getUTCFullYear() !== end.getUTCFullYear() };
+    }
+    function isSelectedScheduleOverwintered({ scheduleResult = null, seasonStartYear = null, startISO = '' } = {}) {
+        const year = Math.round(finiteNumberOrNull(seasonStartYear) ?? new Date().getUTCFullYear());
+        const seasonEnd = asUTCDate(year, 12, 31);
+        const firstTimeline = Array.isArray(scheduleResult?.timelines) ? scheduleResult.timelines[0] : null;
+        const scheduleEnd = parseISODateUTCValue(scheduleResult?.lastScheduledHarvestEndISO) || parseISODateUTCValue(firstTimeline?.harvestEnd);
+        const selectedStart = Array.isArray(scheduleResult?.schedule) ? scheduleResult.schedule[0] : parseISODateUTCValue(startISO);
+        return !!((scheduleEnd && scheduleEnd > seasonEnd) || (selectedStart && selectedStart.getUTCFullYear() !== year)); // CHANGE: schedule instance, not plant metadata, drives overwinter display.
     }
     function lifecycleTimelineLabel(stage) {
         const labels = {
@@ -5077,7 +5105,7 @@ Draw.loadPlugin(function (ui) {
         const firstTimelineForBounds = Array.isArray(scheduleResult?.timelines) ? scheduleResult.timelines[0] : null;
         const scheduleEndForBounds = parseISODateUTCValue(scheduleResult?.lastScheduledHarvestEndISO) || parseISODateUTCValue(firstTimelineForBounds?.harvestEnd);
         const latestHarvestEndForBounds = parseISODateUTCValue(latestHarvestEndISO);
-        const endForBounds = [scheduleEndForBounds, latestHarvestEndForBounds]
+        const endForBounds = [isSelectedScheduleOverwintered({ scheduleResult, seasonStartYear, startISO }) ? scheduleEndForBounds : null]
             .filter(date => date && date > bounds.end)
             .sort((left, right) => right.getTime() - left.getTime())[0] || null;
         if (endForBounds) {
@@ -5299,7 +5327,7 @@ Draw.loadPlugin(function (ui) {
         const planner = new annualCore.Planner(inputs);
         const out = [];
         const scanStart = isUsableDate(options.scanStartDate) ? options.scanStartDate : planner.ctx.scanStart;
-        const defaultScanEnd = planner.ctx.overwinterAllowed ? planner.ctx.scanEndHard : (planner.ctx.sowScanEnd || planner.ctx.scanEndHard);
+        const defaultScanEnd = (planner.ctx.overwinterAllowed || isLifecycleMultiYearPlant(planner.ctx.plant)) ? planner.ctx.scanEndHard : (planner.ctx.sowScanEnd || planner.ctx.scanEndHard);
         const scanEnd = isUsableDate(options.scanEndDate) ? options.scanEndDate : defaultScanEnd;
         const spanDays = Math.max(0, Math.ceil((scanEnd.getTime() - scanStart.getTime()) / 86400000) + 1);
         const scanLimit = Number.isFinite(Number(maxDays)) && Number(maxDays) > 0 ? Math.min(Math.floor(Number(maxDays)), spanDays) : spanDays; // FIX: callers may now request a first-season-only explain scan.
@@ -6778,7 +6806,7 @@ Draw.loadPlugin(function (ui) {
         const lifeRow = row('Lifespan (years):', lifespanInput);
         leftCol.appendChild(lifeRow.row);
 
-        const overwinterRow = row('Overwinter OK:', overwinterChk);
+        const overwinterRow = row('Requires overwintering:', overwinterChk); // CHANGE: column now means garlic-style required overwinter schedule, not winter survivability.
         leftCol.appendChild(overwinterRow.row);
 
         function lifecycleToFixedYears(lifecycle) {
@@ -7574,7 +7602,7 @@ Draw.loadPlugin(function (ui) {
             if (methodCount) chips.push(`${methodCount} method${methodCount === 1 ? '' : 's'}`);
             const defaultMethod = labelForSelectValue(defaultMethodSel);
             if (defaultMethod) chips.push(defaultMethod);
-            if (overwinterChk.checked) chips.push('Overwinter');
+            if (overwinterChk.checked) chips.push('Requires overwintering'); // CHANGE: avoid implying ordinary cold-hardy crops are selected overwinter schedules.
             const overrideChip = sectionOverrideChip(['overwinter_ok']);
             if (overrideChip) chips.push(overrideChip);
             return chips;
@@ -8367,9 +8395,11 @@ Draw.loadPlugin(function (ui) {
             dailyClimate: initialDailyClimate = null,
             dailyClimateKey: initialDailyClimateKey = '',
             initialTransplantDaysOverrideValue = null,
-            derivedContext = null
+            derivedContext = null,
+            bedCreationContext = null
         } = options || {};
         const cropMetadataByPlantId = derivedContext?.metadataByPlantId || new Map();
+        let scheduleConflictRelationshipByPlantId = new Map(); // CHANGE: regular Start warnings classify overlaps by known companion rating when available.
         const initialGrowthStage = readGrowthStageFromCell(cell);
         let hasPersistedSchedule = !!initialHasPersistedSchedule; // FIX: provenance changes after an automatic replacement
 
@@ -9084,6 +9114,7 @@ Draw.loadPlugin(function (ui) {
         let userEditedStartThisSession = false; // FIX: distinguish session intent from persisted state
         let generatedStartThisSession = !hasPersistedSchedule && !mode.perennial && !!initialInternalStartISO;
         let latestScheduleResult = null;
+        let blockingStartConflictMessage = ''; // CHANGE: incompatible occupancy overlap blocks Save but keeps warning copy next to Start.
 
         const startNoteSpan = document.createElement('span');
         startNoteSpan.style.marginLeft = '8px'; startNoteSpan.style.fontSize = '12px'; startNoteSpan.style.color = '#92400e';
@@ -9208,6 +9239,7 @@ Draw.loadPlugin(function (ui) {
             transplantDaysOverrideEnabled: transplantDaysOverrideInitial != null,
             transplantDaysOverrideValue: transplantDaysOverrideInitial
         };
+        scheduleConflictRelationshipByPlantId = await companionRelationshipMapForPlant(formState.plantId); // CHANGE: seed Start overlap classification for ordinary scheduling.
         const layoutTab = document.createElement('div');
         layoutTab.className = 'usl-scheduler-layout-tab';
         const layoutTemplateSel = makeSelect([
@@ -9948,13 +9980,19 @@ Draw.loadPlugin(function (ui) {
 
         function updateScheduleGapHint() {
             const context = currentSchedulerGapWindowAndExclusions();
+            blockingStartConflictMessage = ''; // CHANGE
             const hints = context ? computeSchedulerAdjacentGapHints(schedulerClusterOccupancyItemsForGap(), context.window, {
                 excludeCellIds: context.excludeCellIds,
                 basisLabel: context.basisLabel
             }) : null;
+            const conflicts = context ? (hints?.overlaps || []).map(hint => classifySchedulerOccupancyConflict(hint.item, scheduleConflictRelationshipByPlantId)) : []; // CHANGE
+            const blocking = conflicts.find(conflict => conflict.kind === 'incompatible');
+            if (blocking) blockingStartConflictMessage = blocking.message; // CHANGE
             const text = hints?.text || '';
-            scheduleGapHint.textContent = text;
-            scheduleGapHint.style.display = text ? '' : 'none';
+            const conflictText = conflicts.length ? conflicts.slice(0, 2).map(conflict => conflict.message).join('; ') + (conflicts.length > 2 ? `; +${conflicts.length - 2} more` : '') : ''; // CHANGE
+            scheduleGapHint.textContent = conflictText || text;
+            scheduleGapHint.style.color = blockingStartConflictMessage ? '#b91c1c' : (conflictText ? '#92400e' : '#6b7280'); // CHANGE
+            scheduleGapHint.style.display = (conflictText || text) ? '' : 'none';
             scheduleGapTooltipText = ''; // CHANGE: occupancy relationship context is shown inline beside Start, not duplicated into native tooltips.
             setTooltip(scheduleGapHint, '');
             updatePrimaryDateTooltip();
@@ -10065,7 +10103,7 @@ Draw.loadPlugin(function (ui) {
         setTooltip(sowingSeasonBoundsInput, 'Earliest and latest sow dates for the selected sowing season.');
 
         const firstSowRowObj = row('Sow date:', startInput);
-        if (startNote) firstSowRowObj.row.appendChild(startNoteSpan);
+        firstSowRowObj.row.appendChild(startNoteSpan); // CHANGE: ordinary conflict warnings can appear even without an initial note.
         firstSowRowObj.row.appendChild(scheduleGapHint);
         if (derivedContext?.mode === 'companion') firstSowRowObj.row.appendChild(companionTimingHelp);
         const transplantDaysRowObj = row('Transplant lead days:', transplantDaysWrap);
@@ -10099,7 +10137,7 @@ Draw.loadPlugin(function (ui) {
             const gardenName = formatGardenName(climateModelModuleCell);
             const cityName = String(formState.cityName || citySel.value || '').trim() || '(no city)';
             const bedSource = String(formState.bedProfileSource || 'generic garden bed');
-            const bedText = `sun ${prettifyBedConditionValue(bed.sunExposure)}; moisture ${prettifyBedConditionValue(bed.soilMoisture)}; drainage ${prettifyBedConditionValue(bed.drainage)}; texture ${prettifyBedConditionValue(bed.soilTexture)}; frost ${prettifyBedConditionValue(bed.frostRisk)}`;
+            const bedText = `sun ${prettifyBedConditionValue(bed.sunExposure)}; drainage ${prettifyBedConditionValue(bed.drainage)}; texture ${prettifyBedConditionValue(bed.soilTexture)}; wind ${prettifyBedConditionValue(bed.windExposure)}; season extension ${prettifyBedConditionValue(bed.seasonExtension)}`;
             contextSummary.textContent = `${gardenName} | ${cityName} | ${bedSource} | ${bedText}`;
             setTooltip(contextSummary, `Garden: ${gardenName}\nCity: ${cityName}\nBed source: ${bedSource}\nBed conditions: ${bedText}`);
         }
@@ -10443,7 +10481,7 @@ Draw.loadPlugin(function (ui) {
 
                 const HW_DAYS = resolveHarvestWindowDays(formState.harvestWindowDays, p); // FIX: use the canonical fallback
 
-                const overwinterAllowed = isCrossYearCrop(p); // FIX: biennials may harvest in a later year
+                const overwinterAllowed = requiresOverwinterSchedule(p); // CHANGE: biennials are lifecycle crops, not garlic-style overwinter crops.
                 const scanStart = asUTCDate(seasonStartYear, 1, 1);
                 const scanEndYear = annualSchedulerScanEndYear(p, seasonStartYear);
                 const scanEndHard = asUTCDate(scanEndYear, 12, 31);
@@ -11056,6 +11094,7 @@ Draw.loadPlugin(function (ui) {
 
             formState.plantId = Number(plantSel.value);
             currentCropPickerSelectedValue = String(formState.plantId || '');
+            scheduleConflictRelationshipByPlantId = await companionRelationshipMapForPlant(formState.plantId); // CHANGE: refreshed crop selection updates overlap severity copy.
 
             const preferredVarietyId = Number(preferVarietyId);
             const hasPreferredVariety = Number.isFinite(preferredVarietyId) && preferredVarietyId > 0;
@@ -11608,6 +11647,9 @@ Draw.loadPlugin(function (ui) {
                 // Validate the complete schedule before mutating the DB or graph.
                 const scheduleResult = computeScheduleResult(inputs);
                 syncScheduleWarningState(scheduleResult.warnings || []);
+                latestScheduleResult = scheduleResult; // CHANGE: Save validation reuses the exact computed occupancy window for conflict blocking.
+                updateScheduleGapHint(); // CHANGE
+                if (blockingStartConflictMessage) throw new Error(blockingStartConflictMessage); // CHANGE: incompatible crop overlap is the only Start conflict that blocks Save.
                 const activeWindow = getActiveSowingSeason(formState);
                 handleClimateModelControlChanged();
                 const climateModelAttributePatch = buildClimateModelModuleAttributePatch();
@@ -11675,8 +11717,9 @@ Draw.loadPlugin(function (ui) {
                 let derivedRelationshipPatch = {};
                 let layoutGraphApplication = null;
                 const graphForLayoutDefaults = ui?.editor?.graph;
-                let spacingLayoutBaseline = !derivedContext ? await captureSpacingLayoutContext(graphForLayoutDefaults, targetCell) : null; // CHANGE: snapshot old bed overlap before schedule dates mutate.
+                let spacingLayoutBaseline = !derivedContext && !bedCreationContext ? await captureSpacingLayoutContext(graphForLayoutDefaults, targetCell) : null; // CHANGE: bed-first creation has no preexisting planting layout to snapshot.
                 let forceCompanionSetDefaults = false;
+                let bedTargetCreation = null; // CHANGE
                 if (derivedContext) {
                     const graph = ui?.editor?.graph;
                     const relationshipSourceCell = derivedContext.sourceCell || cell;
@@ -11697,7 +11740,10 @@ Draw.loadPlugin(function (ui) {
                         forceCompanionSetDefaults = derivedContext.mode === 'companion'; // CHANGE: newly guided companion plantings should adopt the current set/plant defaults immediately.
                     }
                 }
-                layoutGraphApplication = buildLayoutGraphApplication(targetCell);
+                if (bedCreationContext) {
+                    bedTargetCreation = await prepareBedScheduleCreation(ui, bedCreationContext.bedCell || cell, inputs, scheduleResult); // CHANGE
+                }
+                layoutGraphApplication = bedCreationContext ? { targetPatch: {}, extraAttributePatches: [] } : buildLayoutGraphApplication(targetCell); // CHANGE
                 const targetLayoutPatch = Object.assign({}, derivedRelationshipPatch, layoutGraphApplication.targetPatch || {});
 
                 try {
@@ -11711,11 +11757,12 @@ Draw.loadPlugin(function (ui) {
                     effectiveTransplantDays: inputs?.plant?.days_transplant,
                     targetAttributePatch: targetLayoutPatch,
                     targetGeometryRect: layoutGraphApplication.targetRect,
-                    preserveTargetGeometry: !!derivedContext,
+                    preserveTargetGeometry: !!derivedContext || !!bedCreationContext,
                     extraAttributePatches: (layoutGraphApplication.extraAttributePatches || []).concat(climateModelAttributePatch ? [climateModelAttributePatch] : []),
                     applyCompanionSetDefaults: true,
                     spacingLayoutBaseline,
                     forceCompanionSetDefaults,
+                    createTargetCell: bedTargetCreation && bedTargetCreation.createTargetCell, // CHANGE: bed-first save materializes the planting only after validation.
                     afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
                     });
                 } catch (saveError) {
@@ -14200,7 +14247,8 @@ Draw.loadPlugin(function (ui) {
 
 
     async function applyScheduleToGraph(ui, cell, inputs, options = {}) {
-        requireCanSchedulePlantingGroup(cell);
+        const hasTargetCreator = typeof options.createTargetCell === 'function'; // CHANGE: bed-first scheduling creates the planting group during Save.
+        if (!hasTargetCreator) requireCanSchedulePlantingGroup(cell);
         const { plant, city } = inputs;
         const method = normId(inputs.methodId);
     
@@ -14224,7 +14272,6 @@ Draw.loadPlugin(function (ui) {
         async function buildTaskReplacementForPlan({
             method,
             plant,
-            cell,
             schedule,
             timelines,
             plantId = null,
@@ -14237,7 +14284,6 @@ Draw.loadPlugin(function (ui) {
             const tasks = await buildTasksForPlan({
                 method,
                 plant,
-                cell,
                 schedule,
                 timelines,
                 taskTemplate,
@@ -14261,15 +14307,15 @@ Draw.loadPlugin(function (ui) {
         const model = graph.getModel();
         const attributePatch = buildScheduleAttributePatch(inputs, result, options);
         Object.assign(attributePatch, options.targetAttributePatch || {});
-        const attributeSnapshot = snapshotCellAttributes(cell, Object.keys(attributePatch));
-        const geometrySnapshot = cell?.getGeometry?.()?.clone?.() || null;
+        const attributeSnapshot = hasTargetCreator ? null : snapshotCellAttributes(cell, Object.keys(attributePatch)); // CHANGE
+        const geometrySnapshot = hasTargetCreator ? null : cell?.getGeometry?.()?.clone?.() || null; // CHANGE
         const extraAttributePatches = (options.extraAttributePatches || []).filter(spec => spec && spec.cell && spec.patch);
         const extraAttributeSnapshots = extraAttributePatches.map(spec => ({
             cell: spec.cell,
             snapshot: snapshotCellAttributes(spec.cell, Object.keys(spec.patch)),
             geometry: spec.cell?.getGeometry?.()?.clone?.() || null
         }));
-        const taskReplacement = await buildTaskReplacementForPlan({
+        const taskReplacementBase = await buildTaskReplacementForPlan({
             method,
             plant,
             cell,
@@ -14284,31 +14330,36 @@ Draw.loadPlugin(function (ui) {
         });
         const applySchedulerTaskReplacement = getSchedulerTaskReplacementCommand();
         if (!applySchedulerTaskReplacement) throw new Error("Cannot save schedule tasks: Task manager command is unavailable.");
+        let appliedTargetCell = cell; // CHANGE
 
         const applyGraphPatch = async () => {
             return runTrellisHistoryTransaction({ category: "Garden scheduling", action: "saveSchedule", origin: "Garden_Scheduler_Dialog", title: "Save schedule and generated tasks", affectedCellIds: [cell && cell.id].filter(Boolean), tags: ["Tasks"] }, function () {
                 model.beginUpdate();
                 try {
-                    applyCellAttributePatch(cell, attributePatch, model);
-                    if (options.targetGeometryRect) setCellAbsoluteRect(graph, cell, options.targetGeometryRect, model);
+                    const targetCell = hasTargetCreator ? options.createTargetCell({ graph, model, inputs, result, attributePatch, schedule, timelines }) : cell; // CHANGE
+                    if (!targetCell || !isTilerGroup(targetCell)) throw new Error('Scheduler save target is not a planting group.'); // CHANGE
+                    appliedTargetCell = targetCell; // CHANGE
+                    applyCellAttributePatch(targetCell, attributePatch, model);
+                    if (options.targetGeometryRect) setCellAbsoluteRect(graph, targetCell, options.targetGeometryRect, model);
                     extraAttributePatches.forEach(spec => {
                         applyCellAttributePatch(spec.cell, spec.patch, model);
                         if (spec.geometryRect) setCellAbsoluteRect(graph, spec.cell, spec.geometryRect, model);
                     });
+                    const taskReplacement = Object.assign({}, taskReplacementBase, { targetGroupId: targetCell.id }); // CHANGE
                     applySchedulerTaskReplacement(taskReplacement, { insideUpdate: true });
                     const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
                     extraAttributePatches.forEach(spec => {
                         if (spec.retile && tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, spec.cell, { inTransaction: true, preferInPlace: true });
                     });
                     if (options.preserveTargetGeometry) {
-                        if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, cell, { inTransaction: true });
+                        if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, targetCell, { inTransaction: true });
                     } else {
-                        retileAndFitGroupIfAvailable(graph, cell, { source: 'schedule-save' });
+                        retileAndFitGroupIfAvailable(graph, targetCell, { source: 'schedule-save' });
                     }
                 } finally {
                     model.endUpdate();
                 }
-                graph.refresh(cell);
+                graph.refresh(appliedTargetCell);
                 extraAttributePatches.forEach(spec => graph.refresh(spec.cell));
             });
         };
@@ -14316,14 +14367,14 @@ Draw.loadPlugin(function (ui) {
         const restoreGraphPatch = async () => {
             model.beginUpdate();
             try {
-                restoreCellAttributeSnapshot(cell, attributeSnapshot, model);
+                if (attributeSnapshot) restoreCellAttributeSnapshot(cell, attributeSnapshot, model); // CHANGE
                 if (geometrySnapshot && typeof model.setGeometry === 'function') model.setGeometry(cell, geometrySnapshot);
                 extraAttributeSnapshots.forEach(spec => restoreCellAttributeSnapshot(spec.cell, spec.snapshot, model));
                 extraAttributeSnapshots.forEach(spec => { if (spec.geometry && typeof model.setGeometry === 'function') model.setGeometry(spec.cell, spec.geometry); });
             } finally {
                 model.endUpdate();
             }
-            graph.refresh(cell);
+            graph.refresh(appliedTargetCell || cell);
             extraAttributeSnapshots.forEach(spec => graph.refresh(spec.cell));
         };
 
@@ -14332,10 +14383,10 @@ Draw.loadPlugin(function (ui) {
             persist: options.afterGraphUpdate,
             finalizeGraph: async () => {
                 if (options.applyCompanionSetDefaults) {
-                    await applyScheduleCompanionSetDefaults(graph, cell, options.spacingLayoutBaseline || null, { force: !!options.forceCompanionSetDefaults }); // CHANGE: schedule saves can reapply anchorless companion-set defaults after occupancy changes.
+                    await applyScheduleCompanionSetDefaults(graph, appliedTargetCell || cell, options.spacingLayoutBaseline || null, { force: !!options.forceCompanionSetDefaults }); // CHANGE: schedule saves can reapply anchorless companion-set defaults after occupancy changes.
                 }
-                graph.refresh(cell);
-                requestSelectionVisualsRefresh(graph, cell);
+                graph.refresh(appliedTargetCell || cell);
+                requestSelectionVisualsRefresh(graph, appliedTargetCell || cell);
             },
             restoreGraphPatch
         });
@@ -14572,6 +14623,116 @@ Draw.loadPlugin(function (ui) {
         return { before: beforeHint, after: afterHint, overlaps: overlapHints, text, tooltip }; // CHANGE: keep legacy before/after fields while adding overlap-specific hints.
     }
 
+    function schedulerConflictKindFromRelationship(relationship) {
+        if (!relationship || relationship.known === false) return 'unknown'; // CHANGE: missing companion data is explicit but non-blocking.
+        const rating = finiteNumberOrNull(relationship.rating);
+        if (rating != null && rating < 0) return 'incompatible'; // CHANGE: negative companion rating is the only blocking crop relationship.
+        return 'companion'; // CHANGE: known neutral/positive relationships may share space with a warning.
+    }
+
+    function schedulerConflictLabelForKind(kind, label) {
+        const name = String(label || 'existing planting').trim();
+        if (kind === 'incompatible') return `Incompatible overlap with ${name}`;
+        if (kind === 'companion') return `Companion overlap with ${name}`;
+        return `Unknown overlap with ${name}`;
+    }
+
+    function relationshipForOccupancyItem(item, relationshipByPlantId) {
+        if (item && item.relationship) return item.relationship;
+        const plantId = String(item?.plantId || item?.plant_id || '').trim();
+        return plantId && relationshipByPlantId && relationshipByPlantId.get ? relationshipByPlantId.get(plantId) : null;
+    }
+
+    function classifySchedulerOccupancyConflict(item, relationshipByPlantId) {
+        const relationship = relationshipForOccupancyItem(item, relationshipByPlantId);
+        const kind = schedulerConflictKindFromRelationship(relationship);
+        const label = String(item?.cropName || item?.plantName || item?.label || item?.groupId || item?.cellId || 'planting').trim();
+        return {
+            kind,
+            severity: kind === 'incompatible' ? 'block' : 'warning',
+            label,
+            message: schedulerConflictLabelForKind(kind, label),
+            relationship: relationship || null
+        }; // CHANGE: one conflict policy feeds Start notes and bed-fill placement.
+    }
+
+    async function companionRelationshipMapForPlant(plantId) {
+        const id = finiteNumberOrNull(plantId);
+        if (id == null) return new Map();
+        try {
+            const relationships = await CompanionRelationshipModel.listForSourcePlant(id);
+            return new Map((relationships || []).map(rel => [String(rel.companionPlantId || ''), rel]).filter(entry => entry[0]));
+        } catch (_) {
+            return new Map();
+        }
+    }
+
+    function schedulerPlantSpacingForGeometry(plant) {
+        const fallback = finiteNumberOrNull(plant?.spacing_cm) ?? 30;
+        return {
+            spacingCm: fallback,
+            spacingXCm: finiteNumberOrNull(plant?.spacing_x_cm) ?? fallback,
+            spacingYCm: finiteNumberOrNull(plant?.spacing_y_cm) ?? fallback,
+            vegHeightCm: finiteNumberOrNull(plant?.veg_height_cm)
+        }; // CHANGE: bed-first geometry uses the same spacing attributes saved by the schedule patch.
+    }
+
+    async function prepareBedScheduleCreation(ui, bedCell, inputs, result) {
+        const graph = ui?.editor?.graph;
+        const model = graph && typeof graph.getModel === 'function' ? graph.getModel() : null;
+        const tiler = typeof window !== 'undefined' && window.USL && window.USL.tiler;
+        if (!graph || !model) throw new Error('Trellis graph is unavailable.');
+        if (!tiler || typeof tiler.proposePlantingGeometry !== 'function' || typeof tiler.createPlantingFromProposal !== 'function') {
+            throw new Error('Plant tiler creation API is unavailable.');
+        }
+        const moduleCell = findGardenModuleAncestor(model, bedCell);
+        if (!moduleCell) throw new Error('Selected garden bed is not inside a garden module.');
+        const startISO = derivedOccupancyStartISO(result);
+        const endISO = derivedOccupancyEndISO(result);
+        if (!startISO || !endISO) throw new Error('Schedule occupancy window is unavailable.');
+        const relationships = await companionRelationshipMapForPlant(inputs?.plant?.plant_id);
+        const occupancy = typeof tiler.listPlantingFootprints === 'function'
+            ? tiler.listPlantingFootprints(moduleCell, { year: Number(inputs?.seasonStartYear || startISO.slice(0, 4)), includeUndatedOccupancy: false })
+            : [];
+        const annotatedOccupancy = (occupancy || []).map(item => {
+            const conflict = classifySchedulerOccupancyConflict(item, relationships);
+            return Object.assign({}, item, {
+                conflictKind: conflict.kind,
+                conflictSeverity: conflict.severity,
+                conflictMessage: conflict.message
+            });
+        }); // CHANGE: tiler placement ranks companion/unknown/incompatible overlaps without needing scheduler internals.
+        const spacing = schedulerPlantSpacingForGeometry(inputs?.plant);
+        const proposal = tiler.proposePlantingGeometry({
+            bedCell,
+            fillAvailableBed: true,
+            spacingCm: spacing.spacingCm,
+            spacingXCm: spacing.spacingXCm,
+            spacingYCm: spacing.spacingYCm,
+            vegHeightCm: spacing.vegHeightCm,
+            entryISO: startISO,
+            harvestEndISO: endISO,
+            occupancy: annotatedOccupancy
+        });
+        if (!proposal || !proposal.ok) {
+            const incompatible = (proposal && proposal.conflictGroupIds && proposal.conflictGroupIds.length) ? ' Incompatible overlap blocks automatic placement.' : '';
+            throw new Error((proposal && proposal.reason === 'incompatible_overlap' ? 'Incompatible crop occupancy in this bed.' : 'Could not fit this planting in the selected bed.') + incompatible);
+        }
+        return {
+            proposal,
+            createTargetCell: function () {
+                return tiler.createPlantingFromProposal({
+                    graph,
+                    moduleCell,
+                    proposal,
+                    attributes: {},
+                    source: 'bed-schedule-create',
+                    insideUpdate: true
+                }, { insideUpdate: true });
+            }
+        }; // CHANGE: target creation is deferred until applyScheduleToGraph enters the save transaction.
+    }
+
     function getBedOccupancyItemsForDerived(sourceCell, graph) {
         const api = graph?.__trellisBedSuccessionNavigator;
         if (api && typeof api.getSelectedBedOccupancy === 'function') {
@@ -14804,6 +14965,17 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Orchestrator: open schedule dialog --------------------------------
     async function openScheduleDialog(ui, cell, openOptions = {}) {
         requireCanSchedulePlantingGroup(cell);
+        return openScheduleDialogForTarget(ui, cell, openOptions);
+    }
+
+    async function openBedScheduleDialog(ui, bedCell, openOptions = {}) {
+        if (!isGardenBedCell(bedCell)) throw new Error('Schedule Planting requires a garden bed.'); // CHANGE
+        return openScheduleDialogForTarget(ui, bedCell, Object.assign({}, openOptions, {
+            bedCreationContext: { bedCell }
+        })); // CHANGE
+    }
+
+    async function openScheduleDialogForTarget(ui, cell, openOptions = {}) {
         // 1) Load reference data
         const plants = await PlantModel.listBasic();
         const cities = await CityClimate.loadAll();
@@ -14842,7 +15014,9 @@ Draw.loadPlugin(function (ui) {
         const storedHarvestEndDate = parseISODateUTCValue(cell?.getAttribute?.('harvest_end'));
         const storedSeasonYear = finiteNumberOrNull(cell?.getAttribute?.('season_start_year'));
         const initialTransplantDaysOverrideValue = readCellTransplantDaysOverride(cell);
-        const scheduleBedContext = resolveScheduleBedContext(cell); // ADDED: resolve bed conditions once for scheduler soil modeling.
+        const scheduleBedContext = openOptions?.bedCreationContext
+            ? resolveScheduleBedContextForBed(openOptions.bedCreationContext.bedCell || cell)
+            : resolveScheduleBedContext(cell); // CHANGE: bed-first scheduling models the selected bed directly.
         const year = storedSeasonYear != null && storedSeasonYear >= 1900 && storedSeasonYear <= 3000
             ? Math.trunc(storedSeasonYear)
             : (storedSowDate ? storedSowDate.getUTCFullYear() : currentYear);
@@ -14911,7 +15085,7 @@ Draw.loadPlugin(function (ui) {
         const budget = selectedIsPerennial ? null : selectedPlantForSchedule.firstHarvestBudget();
 
         // --- compute initial auto anchors safely ---
-        const overwinterAllowed0 = isCrossYearCrop(selectedPlantForSchedule);
+        const overwinterAllowed0 = requiresOverwinterSchedule(selectedPlantForSchedule);
         const scanStart = asUTCDate(year, 1, 1);
         const scanEndHard = asUTCDate(annualSchedulerScanEndYear(selectedPlantForSchedule, year), 12, 31);
 
@@ -15047,7 +15221,8 @@ Draw.loadPlugin(function (ui) {
             dailyClimate: initialDailyClimate,
             dailyClimateKey: initialDailyClimate ? `${cityInit.city_name || initialCityName}|${fmtISO(scanStart)}|${fmtISO(scanEndHard)}|${JSON.stringify(initialClimatePolicy)}` : '',
             initialTransplantDaysOverrideValue,
-            derivedContext
+            derivedContext,
+            bedCreationContext: openOptions?.bedCreationContext || null
         });
     }
 
@@ -15200,7 +15375,7 @@ Draw.loadPlugin(function (ui) {
                             policy: options.policy || new PolicyFlags({
                                 useSpringFrostGate: options.useSpringFrostGate !== false,
                                 useSoilTempGate: options.useSoilTempGate !== false && behavior.usesSoilTempGate !== false,
-                                overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
+                                overwinterAllowed: requiresOverwinterSchedule(plant)
                             }),
                             dailyClimate: options.dailyClimate || null,
                             bedProfile: normalizeBedProfile(options.bedProfile || null),
@@ -15231,7 +15406,7 @@ Draw.loadPlugin(function (ui) {
                 policy: options.policy || new PolicyFlags({
                     useSpringFrostGate: options.useSpringFrostGate !== false,
                     useSoilTempGate: options.useSoilTempGate !== false && behavior.usesSoilTempGate !== false,
-                    overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
+                    overwinterAllowed: requiresOverwinterSchedule(plant)
                 }),
                 dailyClimate: options.dailyClimate || null,
                 bedProfile: normalizeBedProfile(options.bedProfile || null),
@@ -15303,7 +15478,7 @@ Draw.loadPlugin(function (ui) {
             const policy = options.policy || new PolicyFlags({
                 useSpringFrostGate: options.useSpringFrostGate !== false,
                 useSoilTempGate: options.useSoilTempGate !== false && behavior.usesSoilTempGate !== false,
-                overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
+                overwinterAllowed: requiresOverwinterSchedule(plant)
             });
             let lastFailure = null;
             for (const sowISO of candidates) {
@@ -16046,6 +16221,7 @@ Draw.loadPlugin(function (ui) {
     window.USL = window.USL || {};
     window.USL.scheduler = Object.assign({}, window.USL.scheduler, {
         openScheduleDialog: (ui, cell) => openScheduleDialog(ui, cell),
+        openBedScheduleDialog: (ui, bedCell, options) => openBedScheduleDialog(ui, bedCell, options), // CHANGE
         openDerivedScheduleDialog: (ui, sourceCell, options) => openDerivedScheduleDialog(ui, sourceCell, options),
         openSetPlantDialog: (ui, cell) => openSetPlantDialog(ui, cell),
         listPlantOptions: listPlantOptions,
@@ -16187,6 +16363,8 @@ Draw.loadPlugin(function (ui) {
             Planner: annualCore.Planner,
             computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward,
             computeAnnualSowingSeasons: annualCore.computeAnnualSowingSeasons,
+            requiresOverwinterSchedule,
+            isLifecycleMultiYearPlant,
             getPlantScanYears,
             isCrossYearCrop, // FIX: expose lifecycle behavior to the opt-in regression harness
             resolveHarvestWindowDays, // FIX: expose fallback behavior to the opt-in regression harness
@@ -16199,6 +16377,7 @@ Draw.loadPlugin(function (ui) {
             applyGrowthStageToPlant,
             computeStageDatesForPlanting: annualCore.computeStageDatesForPlanting, // CHANGED: expose canonical annual core behavior.
             buildLifecycleTimelineViewModel,
+            isSelectedScheduleOverwintered,
             buildLifecycleTimelineAxisMarkers,
             lifecycleTimelineAbbreviation,
             lifecycleTimelineTooltipText,
@@ -16577,6 +16756,7 @@ Draw.loadPlugin(function (ui) {
         window.USL.scheduler = Object.assign({}, window.USL.scheduler, {
             loadError: message,
             openScheduleDialog: function (uiArg) { showDisabledMessage(uiArg); },
+            openBedScheduleDialog: function (uiArg) { showDisabledMessage(uiArg); }, // CHANGE
             openDerivedScheduleDialog: function (uiArg) { showDisabledMessage(uiArg); },
             openSetPlantDialog: function (uiArg) { showDisabledMessage(uiArg); },
             listPlantOptions: async function () { throw new Error(message); },
@@ -16629,6 +16809,8 @@ Draw.loadPlugin(function (ui) {
             computeStageDatesForPlanting: annualCore.computeStageDatesForPlanting,
             computePerennialLifespanEndISO,
             firstCoolingCrossingDate: annualCore.firstCoolingCrossingDate,
+            requiresOverwinterSchedule,
+            isLifecycleMultiYearPlant,
             getPlantScanYears,
             getCropLifecycle,
             buildLifecycleFilterControl,
@@ -16731,6 +16913,7 @@ Draw.loadPlugin(function (ui) {
             renderScheduleSummary,
             updateScheduleSummary,
             buildLifecycleTimelineViewModel,
+            isSelectedScheduleOverwintered,
             buildLifecycleTimelineAxisMarkers,
             lifecycleTimelineAbbreviation,
             lifecycleTimelineTooltipText,
@@ -16771,6 +16954,8 @@ Draw.loadPlugin(function (ui) {
             daysDeltaISO,
             isoRangesOverlap,
             computeSchedulerAdjacentGapHints,
+            schedulerConflictKindFromRelationship, // CHANGE
+            classifySchedulerOccupancyConflict, // CHANGE
             computeAnnualTurnoverWindowForCandidate,
             turnoverComputedWindowFitsSourceCluster,
             turnoverCandidateFitsSourceCluster,

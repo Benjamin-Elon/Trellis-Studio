@@ -74,6 +74,19 @@ test('Garden Settings entry points route through the overlay-suppressed opener',
     assert.equal(directDialogReferences.length, 4);
 });
 
+test('planting geometry ranks bed-first overlap candidates by relationship severity', () => {
+    const source = readPlantTilerSource();
+    const rankFn = sourceFunction(source, 'plantingProposalConflictRank');
+    const proposeFn = sourceSlice(source, 'function proposePlantingGeometry', 'function buildProposalSlots'); // CHANGE
+
+    assert.match(rankFn, /conflictKind \|\| item\.relationshipKind/);
+    assert.match(rankFn, /"incompatible"[\s\S]*return Infinity/);
+    assert.match(rankFn, /"unknown"[\s\S]*return 2/);
+    assert.match(rankFn, /return 1; \/\/ CHANGE: known non-negative companion overlap/);
+    assert.match(proposeFn, /const fillAvailableBed = input\.fillAvailableBed === true/);
+    assert.match(proposeFn, /status: blocked \? "blocked" : \(conflicts\.length \? "warning" : "compatible"\)/);
+});
+
 test('Garden Settings close can focus newly-created gardens using dashboard zoom pattern', () => { // NEW
     const source = readPlantTilerSource(); // NEW
 
@@ -114,7 +127,7 @@ test('Garden module and bed overlays expose exclusive mode launchers', () => { /
     assert.match(source, /const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";/); // NEW
     assert.match(source, /allocateModeBtn = makeButton\("Enter Allocation Mode", "open"\);/); // NEW
     assert.match(source, /irrigationModeBtn = makeButton\("Enter Irrigation Design Mode", "open"\);/); // CHANGE
-    assert.match(source, /toolbar\.appendChild\(addGroupBtn\);[\s\S]*toolbar\.appendChild\(allocateModeBtn\);[\s\S]*toolbar\.appendChild\(irrigationModeBtn\);/); // NEW
+    assert.match(source, /toolbar\.appendChild\(schedulePlantingBtn\);[\s\S]*toolbar\.appendChild\(allocateModeBtn\);[\s\S]*toolbar\.appendChild\(irrigationModeBtn\);/); // CHANGE
     assert.doesNotMatch(source, /function gardenModuleHasIrrigationSource\(moduleCell\)/); // CHANGE
     assert.doesNotMatch(source, /getXmlAttr\(cell, "irrigation_endpoint_type", ""\) === "source"/); // CHANGE
     assert.match(source, /window\.dispatchEvent\(new CustomEvent\(ALLOCATE_PLAN_EVENT, \{ detail: \{ moduleCellId: moduleCellId, year: getCurrentGardenYear\(moduleCell\) \} \}\)\)/); // NEW
@@ -152,7 +165,7 @@ test('Garden module settings expose external margin but no internal margin', () 
     assert.match(source, /nextGeo\.height = chosenGardenHeightUnits;/); // CHANGE
     assert.doesNotMatch(dialogSource, /setGardenModuleMargin\(moduleCell,/); // CHANGE
     assert.match(source, /setGardenModuleExternalMargin\(moduleCell, chosenModuleExternalMargin\);/); // NEW
-    assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !allocateModeBtn \|\| !irrigationModeBtn \|\| !moduleCell\) return;/); // CHANGE
+    assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !schedulePlantingBtn \|\| !allocateModeBtn \|\| !irrigationModeBtn \|\| !moduleCell\) return;/); // CHANGE
 });
 
 test('Garden Settings exposes fixed path width presets with explicit enablement', () => { // NEW
@@ -500,28 +513,35 @@ test('Layering orders bed assemblies between beds and planting groups', () => {
     assert.match(exportSource, /reorderModuleChildrenForLayering/);
 });
 
-test('Garden module overlay exposes plant group creation only in bed mode', () => { // CHANGE
+test('Garden module overlay exposes schedule-first planting only in bed mode', () => { // CHANGE
     const source = readPlantTilerSource();
-    const overlayAdd = sourceSlice(source, 'mxEvent.addListener(addGroupBtn, "click"', 'mxEvent.addListener(irrigationModeBtn, "click"'); // CHANGE
+    const overlaySchedule = sourceSlice(source, 'mxEvent.addListener(schedulePlantingBtn, "click"', 'mxEvent.addListener(allocateModeBtn, "click"'); // CHANGE
+    const toolbarCreate = sourceSlice(source, 'function ensureToolbar()', 'mxEvent.addListener(settingsBtn, "click"'); // CHANGE
     const toolbarState = sourceSlice(source, 'function syncToolbarState()', 'function refreshForSelection()'); // CHANGE
 
-    assert.match(overlayAdd, /const bedCell = activeBedCell;/); // CHANGE
-    assert.match(overlayAdd, /if \(!moduleCell \|\| !bedCell \|\| activeOverlayMode !== "bed" \|\| !pt \|\| !hasGardenSettingsSet\(moduleCell\)\) return;/); // CHANGE
-    assert.match(overlayAdd, /createEmptyTilerGroup\(graph, moduleCell, pt\.x, pt\.y, \{ source: "overlay-bed-add" \}\);/); // CHANGE
-    assert.doesNotMatch(overlayAdd, /overlay-module-add/); // CHANGE
-    assert.doesNotMatch(overlayAdd, /retileAndFitToContainingBed\(graph, group/);
-    assert.match(toolbarState, /addGroupBtn\.style\.display = bedMode \? "" : "none";/); // CHANGE
+    assert.match(source, /let schedulePlantingBtn = null;/); // CHANGE
+    assert.match(toolbarCreate, /schedulePlantingBtn = makeButton\("Schedule Planting", "add"\);/); // CHANGE
+    assert.doesNotMatch(source, /addGroupBtn/); // CHANGE
+    assert.doesNotMatch(toolbarCreate, /Add New Plant Group/); // CHANGE
+    assert.match(toolbarCreate, /toolbar\.appendChild\(schedulePlantingBtn\);[\s\S]*toolbar\.appendChild\(allocateModeBtn\);/); // CHANGE
+    assert.match(overlaySchedule, /const bedCell = activeBedCell;/); // CHANGE
+    assert.match(overlaySchedule, /if \(!moduleCell \|\| !bedCell \|\| activeOverlayMode !== "bed" \|\| !hasGardenSettingsSet\(moduleCell\)\) return;/); // CHANGE
+    assert.match(overlaySchedule, /openBedScheduleDialogFromOverlay\(bedCell\);/); // CHANGE
+    assert.doesNotMatch(source, /overlay-bed-add/); // CHANGE
+    assert.match(source, /function openBedScheduleDialogFromOverlay\(bedCell\)[\s\S]*scheduler\.openBedScheduleDialog\(ui, bedCell\)/); // CHANGE
+    assert.match(source, /Scheduler plugin is unavailable\./); // CHANGE
+    assert.match(toolbarState, /schedulePlantingBtn\.style\.display = bedMode \? "" : "none";/); // CHANGE
+    assert.match(toolbarState, /schedulePlantingBtn\.disabled = !canAddGroupInBed;/); // CHANGE
+    assert.match(toolbarState, /schedulePlantingBtn\.title = !bedMode \|\| !activeBedCell \? "Select a garden bed before scheduling plants" : \(hasSettings \? "Schedule a new planting fitted to this garden bed" : "Set garden settings before scheduling plants"\);/); // CHANGE
 });
 
-test('Context menu plant group creation requires a garden bed target', () => { // CHANGE
+test('Context menu omits direct empty plant group creation for garden beds', () => { // CHANGE
     const source = readPlantTilerSource();
-    const contextMenu = sourceSlice(source, 'function resolveGardenBedTarget', 'log("[bed] empty tiler group created"'); // CHANGE
     const wrapCreate = sourceSlice(source, 'function createTilerGroupFromCircle', 'function computeGridStatsXY');
 
-    assert.match(contextMenu, /const t = isGardenBed\(cand\) \? cand : null;/); // CHANGE
-    assert.match(contextMenu, /if \(targetBed && targetMod && isGardenModule\(targetMod\)\)/); // CHANGE
-    assert.match(contextMenu, /createEmptyTilerGroup\(graph, targetMod, pt\.x, pt\.y, \{ source: "context-bed-add" \}\);/); // CHANGE
-    assert.doesNotMatch(contextMenu, /createEmptyTilerGroup\(graph, targetMod, pt\.x, pt\.y\);/); // CHANGE
+    assert.doesNotMatch(source, /function resolveGardenBedTarget/); // CHANGE
+    assert.doesNotMatch(source, /context-bed-add/); // CHANGE
+    assert.doesNotMatch(source, /Set garden settings to add plants/); // CHANGE
     assert.match(wrapCreate, /model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, parent\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, parent, "plant-circle-wrap"\);[\s\S]*model\.endUpdate\(\);/);
     assert.match(wrapCreate, /model\.setGeometry\(c, local\);/);
     assert.doesNotMatch(wrapCreate, /retileGroup\(graph, group\);/);
@@ -543,7 +563,7 @@ test('Plant Tiler exposes Allocate proposal and creation contracts', () => {
     assert.match(source, /listGardenBeds,/);
     assert.match(source, /readBedProfile,/);
     assert.match(source, /listPlantingFootprints,/);
-    assert.match(source, /slots: buildProposalSlots\(best, plantCount\)/);
+    assert.match(source, /slots: buildProposalSlots\(best, resolvedPlantCount\)/); // CHANGE
     assert.match(source, /lodCollapsed: best\.capacity > LOD_TILE_THRESHOLD/);
     assert.match(source, /const vegHeightCm = Number\(input\.vegHeightCm \?\? input\.veg_height_cm\)/);
     assert.match(source, /vegHeightCm: Number\.isFinite\(vegHeightCm\) && vegHeightCm > 0 \? vegHeightCm : null/);

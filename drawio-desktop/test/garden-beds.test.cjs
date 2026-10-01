@@ -92,6 +92,7 @@ function loadPlugin(options = {}) {
         addListener() {},
         addMouseListener(listener) { mouseListeners.push(listener); } // NEW
     };
+    if (options.scheduler) dom.window.USL = { scheduler: options.scheduler }; // CHANGE
     if (options.irrigationMethods) graph.__trellisIrrigationPlanner = { getBedIrrigationMethods() { return options.irrigationMethods; } };
     const ui = {
         editor: { graph },
@@ -117,7 +118,7 @@ function loadPlugin(options = {}) {
     };
 
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH });
-    return { api: dom.window.TrellisGardenBeds, legacyApi: dom.window.TrellisBedConditions, contributors, graph, model, root, moduleCell, bed, bed2, ui, document, mouseListeners }; // CHANGE
+    return { api: dom.window.TrellisGardenBeds, legacyApi: dom.window.TrellisBedConditions, contributors, graph, model, root, moduleCell, bed, bed2, ui, document, mouseListeners, window: dom.window }; // CHANGE
 }
 
 function getDialogButton(ui, label) {
@@ -209,6 +210,7 @@ test("bed conditions persist, mirror, and clear safely", () => {
         sunExposure: "part_shade",
         soilMoisture: "bogus",
         irrigation: "drip",
+        frostRisk: "high",
         trellis: "available",
         notes: "Gets fence shade.",
         tags: ["near_path", "near_path"]
@@ -216,9 +218,13 @@ test("bed conditions persist, mirror, and clear safely", () => {
 
     const stored = JSON.parse(bed.getAttribute("bed_conditions_json"));
     assert.equal(bed.getAttribute("label"), "Bed 1");
-    assert.equal(stored.soilMoisture, "unknown");
+    assert.equal(Object.prototype.hasOwnProperty.call(stored, "soilMoisture"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(stored, "irrigation"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(stored, "frostRisk"), false);
     assert.equal(bed.getAttribute("sun_exposure"), "part_shade");
-    assert.equal(bed.getAttribute("irrigation"), "unknown");
+    assert.equal(bed.getAttribute("soil_moisture"), null);
+    assert.equal(bed.getAttribute("irrigation"), null);
+    assert.equal(bed.getAttribute("frost_risk"), null);
     assert.equal(bed.getAttribute("trellis"), "available");
     assert.equal(bed.getAttribute("season_extension"), "unknown");
     assert.equal(bed.getAttribute("crop_protection"), "unknown");
@@ -227,7 +233,9 @@ test("bed conditions persist, mirror, and clear safely", () => {
     const effective = api.getDisplayBedConditions(bed);
     assert.equal(effective.sunExposure, "part_shade");
     assert.equal(effective.soilTexture, "unknown");
-    assert.equal(effective.irrigation, "unknown");
+    assert.equal(Object.prototype.hasOwnProperty.call(effective, "soilMoisture"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(effective, "irrigation"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(effective, "frostRisk"), false);
     assert.equal(effective.trellis, "available");
     assert.equal(effective.seasonExtension, "unknown");
     assert.equal(effective.cropProtection, "unknown");
@@ -236,6 +244,9 @@ test("bed conditions persist, mirror, and clear safely", () => {
     api.clearBedConditions(bed);
     assert.equal(bed.getAttribute("bed_conditions_json"), null);
     assert.equal(bed.getAttribute("sun_exposure"), null);
+    assert.equal(bed.getAttribute("soil_moisture"), null);
+    assert.equal(bed.getAttribute("irrigation"), null);
+    assert.equal(bed.getAttribute("frost_risk"), null);
     assert.equal(bed.getAttribute("season_extension"), null);
     assert.equal(bed.getAttribute("crop_protection"), null);
     assert.equal(bed.getAttribute("label"), "Bed 1");
@@ -322,38 +333,34 @@ test("legacy module default attributes are ignored", () => {
     const effective = api.getDisplayBedConditions(bed);
     assert.equal(effective.sunExposure, "unknown");
     assert.equal(effective.soilTexture, "unknown");
-    assert.equal(effective.irrigation, "unknown");
+    assert.equal(Object.prototype.hasOwnProperty.call(effective, "irrigation"), false);
 });
 
-test("irrigation is read-only and derived from irrigation bed assemblies", () => {
-    const { api, bed, graph, ui } = loadPlugin({ irrigationMethods: [{ id: "drip_tape", label: "Drip tape" }, { id: "microspray", label: "Microspray" }] });
-    api.writeBedConditions(bed, { irrigation: "drip" });
+test("legacy moisture frost and irrigation values are ignored by bed conditions", () => {
+    const { api, bed, graph, ui } = loadPlugin({ irrigationMethods: [{ id: "drip_tape", label: "Drip tape" }] });
+    bed.value.setAttribute("soil_moisture", "wet");
+    bed.value.setAttribute("irrigation", "drip");
+    bed.value.setAttribute("frost_risk", "high");
+    bed.value.setAttribute("bed_conditions_json", JSON.stringify({ soilMoisture: "wet", irrigation: "drip", frostRisk: "high", sunExposure: "full_sun" }));
 
-    const effective = api.getDisplayBedConditions(bed);
-    assert.equal(JSON.parse(bed.getAttribute("bed_conditions_json")).irrigation, "unknown");
-    assert.equal(effective.irrigation, "Drip tape, Microspray");
+    const read = api.readBedConditions(bed);
+    assert.equal(Object.prototype.hasOwnProperty.call(read, "soilMoisture"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(read, "irrigation"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(read, "frostRisk"), false);
+    assert.equal(read.sunExposure, "full_sun");
 
     api._test.showConditionEditorDialog(bed);
-    const readOnly = ui.lastDialog.querySelector("[data-bed-derived-irrigation='1']");
-    assert.ok(readOnly, "missing read-only derived irrigation field");
-    assert.equal(readOnly.textContent, "Drip tape, Microspray");
-    assert.equal(Array.from(ui.lastDialog.querySelectorAll("label")).find(label => label.firstChild && label.firstChild.textContent === "Irrigation").querySelector("select"), null);
+    assert.equal(ui.lastDialog.querySelector("[data-bed-derived-irrigation='1']"), null);
+    assert.equal(Array.from(ui.lastDialog.querySelectorAll("label")).some(label => label.firstChild && /^(Soil moisture|Frost risk|Irrigation)$/.test(label.firstChild.textContent)), false);
 
     graph.getSelectionCells = () => [bed];
     api._test.syncSelectedBedOverlays();
-    assert.match(getSelectedBedOverlays(graph)[0].textContent, /IrrigationDrip tape, Microspray/);
-});
+    assert.doesNotMatch(getSelectedBedOverlays(graph)[0].textContent, /Soil moisture|Frost risk|Irrigation|Drip tape/);
 
-test("derived irrigation shows unknown in the editor and stays hidden in overlays when no assemblies exist", () => {
-    const { api, bed, graph, ui } = loadPlugin({ irrigationMethods: [] });
-    api.writeBedConditions(bed, { irrigation: "drip" });
-
-    api._test.showConditionEditorDialog(bed);
-    assert.equal(ui.lastDialog.querySelector("[data-bed-derived-irrigation='1']").textContent, "Unknown");
-
-    graph.getSelectionCells = () => [bed];
-    api._test.syncSelectedBedOverlays();
-    assert.doesNotMatch(getSelectedBedOverlays(graph)[0].textContent, /Irrigation/);
+    api.writeBedConditions(bed, read);
+    assert.equal(bed.getAttribute("soil_moisture"), null);
+    assert.equal(bed.getAttribute("irrigation"), null);
+    assert.equal(bed.getAttribute("frost_risk"), null);
 });
 
 test("invalid JSON and invalid enum values normalize to non-throwing fallbacks", () => {
@@ -394,7 +401,7 @@ test("bed dialog exposes copy, paste, and clear actions", () => {
     getDialogButton(ui, "Paste").click();
 
     assert.equal(bed2.getAttribute("sun_exposure"), "full_sun");
-    assert.equal(bed2.getAttribute("irrigation"), "unknown");
+    assert.equal(bed2.getAttribute("irrigation"), null);
     assert.equal(bed2.getAttribute("trellis"), "available");
     assert.equal(bed2.getAttribute("bed_type"), "raised_bed");
     assert.equal(bed2.getAttribute("user_bed_name"), "Cloned name");
@@ -427,6 +434,7 @@ test("selected bed overlays render for garden-bed-only selections", () => {
     assert.equal(overlays[0].children[1].style.width, "100%");
     assert.equal(getOverlayNameInput(overlays[0]).value, "");
     assert.match(overlays[0].textContent, /Set Bed Conditions/);
+    assert.doesNotMatch(overlays[0].textContent, /Schedule Planting/); // CHANGE
     assert.match(overlays[0].textContent, /Sun exposureFull sun/);
     assert.equal(overlays[0].style.left, "-188px");
     assert.equal(Number.parseInt(overlays[0].style.top, 10) >= 20, true);
@@ -435,7 +443,8 @@ test("selected bed overlays render for garden-bed-only selections", () => {
     api._test.syncSelectedBedOverlays();
     overlays = getSelectedBedOverlays(graph);
     assert.equal(overlays.length, 2);
-    assert.match(overlayText(overlays), /Soil moistureMoist/);
+    assert.match(overlayText(overlays), /DrainageSlow drainage/);
+    assert.doesNotMatch(overlayText(overlays), /Soil moisture/);
 
     graph.getSelectionCells = () => [bed, root];
     api._test.syncSelectedBedOverlays();
@@ -523,7 +532,7 @@ test("selected bed overlay edits user names without changing conditions", () => 
     assert.equal(bed.getAttribute("label"), "Raised bed (45.7 cm) - East Bed");
     let stored = JSON.parse(bed.getAttribute("bed_conditions_json"));
     assert.equal(stored.userBedName, "East Bed");
-    assert.equal(stored.irrigation, "unknown");
+    assert.equal(Object.prototype.hasOwnProperty.call(stored, "irrigation"), false);
     assert.equal(stored.notes, "Keep watered.");
 
     api._test.syncSelectedBedOverlays();
@@ -533,7 +542,7 @@ test("selected bed overlay edits user names without changing conditions", () => 
     assert.equal(bed.getAttribute("label"), "Raised bed (45.7 cm) - West Bed");
     stored = JSON.parse(bed.getAttribute("bed_conditions_json"));
     assert.equal(stored.userBedName, "West Bed");
-    assert.equal(stored.irrigation, "unknown");
+    assert.equal(Object.prototype.hasOwnProperty.call(stored, "irrigation"), false);
 });
 
 test("selected bed overlay escape reverts and blank user names keep prefix only", () => {
@@ -569,12 +578,12 @@ test("selected bed overlay position is not clamped to the viewport", () => {
 test("selected bed overlay autosizes from conditions but not bed names", () => {
     const { api, bed, graph } = loadPlugin();
     graph.__states.set(bed, { x: 420, y: 20, width: 100, height: 60 });
-    api.writeBedConditions(bed, { irrigation: "drip" });
+    api.writeBedConditions(bed, { sunExposure: "full_sun" });
     graph.getSelectionCells = () => [bed];
     api._test.syncSelectedBedOverlays();
     let overlay = getSelectedBedOverlays(graph)[0];
     const shortWidth = Number.parseInt(overlay.style.width, 10);
-    assert.equal(shortWidth, 190);
+    assert.equal(shortWidth >= 190, true);
 
     getOverlayNameInput(overlay).value = "A very long bed name that should not control the overlay width";
     getOverlayNameInput(overlay).dispatchEvent(new overlay.ownerDocument.defaultView.Event("blur"));
@@ -582,7 +591,7 @@ test("selected bed overlay autosizes from conditions but not bed names", () => {
     overlay = getSelectedBedOverlays(graph)[0];
     assert.equal(Number.parseInt(overlay.style.width, 10), shortWidth);
 
-    api.writeBedConditions(bed, { irrigation: "self_watering", notes: "This condition note is intentionally long enough to widen the overlay panel." });
+    api.writeBedConditions(bed, { notes: "This condition note is intentionally long enough to widen the overlay panel." });
     api._test.syncSelectedBedOverlays();
     overlay = getSelectedBedOverlays(graph)[0];
     const wideWidth = Number.parseInt(overlay.style.width, 10);
@@ -838,21 +847,18 @@ test("advanced season extension controls sit at the bottom of infrastructure", (
     assert.equal(advanced.parentNode.lastElementChild, advanced);
 });
 
-test("wind exposure and frost risk live under growing conditions", () => {
+test("bed condition dialog omits derived and climate-inferred fields", () => {
     const { api, bed, ui } = loadPlugin();
     api._test.showConditionEditorDialog(bed);
 
     assert.deepEqual(getSectionFieldLabels(ui, "Growing Conditions"), [
         "Sun exposure",
         "Wind exposure",
-        "Frost risk",
-        "Soil moisture",
         "Drainage",
         "Soil texture",
         "Fertility"
     ]);
     assert.deepEqual(getSectionFieldLabels(ui, "Infrastructure"), [
-        "Irrigation",
         "Trellis",
         "Season extension",
         "Crop protection"

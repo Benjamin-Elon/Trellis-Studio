@@ -166,6 +166,23 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
+    function isRoadmapObjectCell(cell) { return !!cell && getAttr(cell, 'roadmap_type') === 'object'; } // NEW
+
+    function findRoadmapModuleAncestor(cell) { // NEW
+        let cur = cell; // NEW
+        while (cur) { // NEW
+            if (getAttr(cur, 'roadmap_type') === 'module' || getAttr(cur, 'roadmap_module') === '1') return cur; // NEW
+            cur = model.getParent(cur); // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
+    function shouldSuppressStandardRoadmapDependencyOverlay(source, target) { // NEW
+        if (!graph.__trellisRoadmapManager || !isRoadmapObjectCell(source) || !isRoadmapObjectCell(target)) return false; // NEW
+        const sourceModule = findRoadmapModuleAncestor(source), targetModule = findRoadmapModuleAncestor(target); // NEW
+        return !!sourceModule && sourceModule === targetModule && getLinkSet(source).has(target.id) && getLinkSet(target).has(source.id); // NEW
+    } // NEW
+
     function findDashboardCellInModule(moduleCell) {
         if (!moduleCell) return null;
         const stack = [moduleCell];
@@ -4005,7 +4022,7 @@ Draw.loadPlugin(function (ui) {
                     const edgeColor = laneColor ? laneColor : ((selIsPrimary || otherIsPrimary) ? YELLOW : ORDINARY_LINK_OVERLAY_COLOR); // CHANGE: only connector overlays use blue for ordinary links.
                     const label = getRawTextLabel ? getRawTextLabel(other) : '';
                     const exitHint = exitMap.get(other.id);
-                    if (shouldShowEdgeInternal(cell, other)) {
+                    if (shouldShowEdgeInternal(cell, other) && !shouldSuppressStandardRoadmapDependencyOverlay(cell, other)) { // CHANGE
                         visibleLinkOverlayRecords.push({ source: cell, other, exitHint, edgeColor, label, labelOffset: { x: 0, y: 0 } });
                     }
                 }
@@ -4089,7 +4106,7 @@ Draw.loadPlugin(function (ui) {
 
                 // Decide visibility using internal lane-based policy               
                 const shouldShow = shouldShowEdgeInternal(cell, other);
-                if (shouldShow) {
+                if (shouldShow && !shouldSuppressStandardRoadmapDependencyOverlay(cell, other)) { // CHANGE
                     visibleLinkOverlayRecords.push({ other, exitHint, edgeColor, label, labelOffset: { x: 0, y: 0 } });
                 }
             }

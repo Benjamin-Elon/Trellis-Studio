@@ -320,6 +320,21 @@ test("standard link overlays and ordinary outlines use blue fallback color with 
     assert.doesNotMatch(source, /const RED = '#ff0000';/); // CHANGE: ordinary outline red is no longer part of link highlighting.
 });
 
+test("standard link overlays skip reciprocal roadmap object dependencies", () => { // NEW
+    const source = readSource();
+    const roadmapPredicateSource = sourceBetween(source, "function isRoadmapObjectCell", "function findDashboardCellInModule");
+    const roleCardHighlightSource = sourceBetween(source, "function highlightLinkedRoleCards", "function highlightLinked(cell)");
+    const singleHighlightSource = sourceBetween(source, "function highlightLinked(cell)", "// -------------------- Ctrl Click Handling");
+
+    assert.match(roadmapPredicateSource, /function shouldSuppressStandardRoadmapDependencyOverlay\(source, target\)/); // NEW
+    assert.match(roadmapPredicateSource, /!graph\.__trellisRoadmapManager/); // NEW
+    assert.match(roadmapPredicateSource, /isRoadmapObjectCell\(source\)[\s\S]*isRoadmapObjectCell\(target\)/); // NEW
+    assert.match(roadmapPredicateSource, /findRoadmapModuleAncestor\(source\)[\s\S]*findRoadmapModuleAncestor\(target\)/); // NEW
+    assert.match(roadmapPredicateSource, /getLinkSet\(source\)\.has\(target\.id\)[\s\S]*getLinkSet\(target\)\.has\(source\.id\)/); // NEW
+    assert.match(roleCardHighlightSource, /shouldShowEdgeInternal\(cell, other\) && !shouldSuppressStandardRoadmapDependencyOverlay\(cell, other\)/); // NEW
+    assert.match(singleHighlightSource, /shouldShow && !shouldSuppressStandardRoadmapDependencyOverlay\(cell, other\)/); // NEW
+});
+
 test("standard link overlays navigate on plain left click without a vertex shift fallback", () => {
     const source = readSource();
     const labelClickSource = sourceBetween(source, "txt.node.__manualLinkMeta = {", "entry.labelElt = txt;");
@@ -345,7 +360,7 @@ test("selected linked vertices draw direct connections even when task overlay is
     const drawDecisionSource = sourceBetween(source, "// Decide visibility using internal lane-based policy", "for (const otherCard of sameBoardLinkedCards)");
 
     assert.match(drawDecisionSource, /const shouldShow = shouldShowEdgeInternal\(cell, other\);/);
-    assert.match(drawDecisionSource, /if \(shouldShow\) \{/);
+    assert.match(drawDecisionSource, /if \(shouldShow && !shouldSuppressStandardRoadmapDependencyOverlay\(cell, other\)\) \{/); // CHANGE
     assert.match(drawDecisionSource, /linkOverlays\.setLinkOverlay\(/);
     assert.doesNotMatch(drawDecisionSource, /!taskOverlayActive/);
 });

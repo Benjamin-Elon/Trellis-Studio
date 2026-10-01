@@ -122,7 +122,7 @@ function makeInputs(hooks, {
         policy: policy || new hooks.PolicyFlags({
             useSpringFrostGate: false,
             useSoilTempGate: false,
-            overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
+            overwinterAllowed: hooks.requiresOverwinterSchedule(plant)
         }),
         seasonStartYear,
         harvestWindowDays,

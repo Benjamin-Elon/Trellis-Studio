@@ -455,16 +455,13 @@ Draw.loadPlugin(function (ui) {
 
     const FALLBACK_BED_CONDITION_GROUPS = [
         conditionGroup("sunExposure", "Sun exposure", [["full_sun", "Full sun"], ["part_sun", "Part sun"], ["part_shade", "Part shade"], ["shade", "Shade"]]),
-        conditionGroup("soilMoisture", "Soil moisture", [["dry", "Dry"], ["moderate", "Moderate"], ["moist", "Moist"], ["wet", "Wet"]]),
         conditionGroup("drainage", "Drainage", [["fast", "Fast drainage"], ["normal", "Normal drainage"], ["slow", "Slow drainage"]]),
         conditionGroup("soilTexture", "Soil texture", [["sandy", "Sandy"], ["loamy", "Loamy"], ["clay", "Clay"], ["mixed", "Mixed"], ["amended", "Amended"]]),
         conditionGroup("fertility", "Fertility", [["low", "Low"], ["medium", "Medium"], ["high", "High"]]),
-        conditionGroup("irrigation", "Irrigation", [["none", "None"], ["manual", "Manual"], ["drip", "Drip"], ["sprinkler", "Sprinkler"], ["self_watering", "Self watering"]]),
         conditionGroup("trellis", "Trellis", [["none", "None"], ["available", "Available"], ["required_structure", "Structure required"]]),
         conditionGroup("seasonExtension", "Season extension", [["none", "None"], ["row_cover", "Row cover"], ["low_tunnel", "Low tunnel"], ["cold_frame", "Cold frame"], ["greenhouse", "Greenhouse"], ["high_tunnel", "High tunnel"], ["heated_greenhouse", "Heated greenhouse"]]),
         conditionGroup("cropProtection", "Crop protection", [["none", "None"], ["shade_cloth", "Shade cloth"], ["insect_netting", "Insect netting"], ["bird_netting", "Bird netting"], ["hail_netting", "Hail netting"]]),
         conditionGroup("windExposure", "Wind exposure", [["sheltered", "Sheltered"], ["moderate", "Moderate"], ["exposed", "Exposed"]]),
-        conditionGroup("frostRisk", "Frost risk", [["none", "None"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]]),
         conditionGroup("bedUse", "Bed use", [["annuals", "Annuals"], ["perennials", "Perennials"], ["nursery", "Nursery"], ["seed_starting", "Seed starting"], ["mixed", "Mixed"], ["resting", "Resting"]])
     ];
 

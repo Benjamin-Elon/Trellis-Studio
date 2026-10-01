@@ -1173,7 +1173,6 @@ Draw.loadPlugin(function (ui) {
                     if (!weekMap.has(sourceId)) weekMap.set(sourceId, {
                         sourceId,
                         cellId: String(sourceRow.cellId || sourceId),
-                        cell: sourceRow.cell || null,
                         label: String(sourceRow.label || "Planting"),
                         plantName: String(sourceRow.plantName || ""), // CHANGE
                         varietyName: String(sourceRow.varietyName || ""), // CHANGE
@@ -2573,6 +2572,28 @@ Draw.loadPlugin(function (ui) {
             return String(value || "").trim().toLocaleLowerCase();
         }
 
+        function logHarvestWindowDiagnostic(reason, tilerGroup, year, key, label, start, end, count) { // CHANGE: console diagnostics identify the exact diagram cell behind malformed harvest-window warnings.
+            if (!window.console || typeof window.console.warn !== "function") return; // CHANGE
+            window.console.warn("[Year Planner] Ignored diagram harvest window", { // CHANGE
+                reason,
+                cellId: cellId(tilerGroup),
+                parentCellId: cellId(tilerGroup && (tilerGroup.parent || tilerGroup.getParent && tilerGroup.getParent())),
+                year,
+                key,
+                label,
+                plantCount: count,
+                harvestStart: start,
+                harvestEnd: end,
+                seasonStartYear: String(DiagramStore.getCellAttr(tilerGroup, "season_start_year", "") || "").trim(),
+                plantId: String(DiagramStore.getCellAttr(tilerGroup, "plant_id", "") || "").trim(),
+                plantName: String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || "").trim(),
+                varietyId: String(DiagramStore.getCellAttr(tilerGroup, "variety_id", "") || "").trim(),
+                varietyName: String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim(),
+                lifeCycle: String(DiagramStore.getCellAttr(tilerGroup, "life_cycle", "") || "").trim(),
+                isPerennial: String(DiagramStore.getCellAttr(tilerGroup, "is_perennial", "") || "").trim()
+            });
+        }
+
         /**
          * Resolves legacy variety-name-only tiler groups against unique planned crop identities.
          */
@@ -2640,10 +2661,12 @@ Draw.loadPlugin(function (ui) {
                 const end = harvestEndYmd(tilerGroup);
                 const label = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || key).trim();
                 if (!PlanMath.hasYmd(start) || !PlanMath.hasYmd(end)) {
+                    logHarvestWindowDiagnostic("incomplete", tilerGroup, year, key, label, start, end, count); // CHANGE
                     diagnostics.push(`Diagram harvest window for "${label}" is incomplete and was ignored.`);
                     continue;
                 }
                 if (start > end) {
+                    logHarvestWindowDiagnostic("reversed", tilerGroup, year, key, label, start, end, count); // CHANGE
                     diagnostics.push(`Diagram harvest window for "${label}" has start date after end date and was ignored.`);
                     continue;
                 }
@@ -2678,7 +2701,6 @@ Draw.loadPlugin(function (ui) {
                 ensureSourceRows(key).push({ // CHANGE
                     sourceId: cellId(tilerGroup),
                     cellId: cellId(tilerGroup),
-                    cell: tilerGroup,
                     label: plantingSourceLabel(tilerGroup, count),
                     plantName: namesRecord.plant, // CHANGE
                     varietyName: namesRecord.variety, // CHANGE
@@ -3921,7 +3943,7 @@ Draw.loadPlugin(function (ui) {
 
     function cropTimelineSourceIsActionable(sourceRow, kind, options) { // CHANGE
         if (!options || typeof options.onActivateSource !== "function") return false;
-        if (kind === "planting") return !!(sourceRow && (sourceRow.cell || sourceRow.cellId));
+        if (kind === "planting") return !!(sourceRow && sourceRow.cellId);
         return !!(sourceRow && sourceRow.target);
     } // CHANGE
 
@@ -4320,6 +4342,7 @@ Draw.loadPlugin(function (ui) {
                 .yp-demand-line-shell{border:1px solid #e1e1e1;border-radius:6px;background:#fcfcfc;overflow:hidden}
                 .yp-demand-line-header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 8px;background:#fff}
                 .yp-demand-line-summary{flex:1 1 320px;min-width:0;color:var(--yp-neutral-700);overflow-wrap:anywhere}
+                .yp-demand-line-toggle{min-width:30px;padding-left:0!important;padding-right:0!important;text-align:center} /* CHANGE */
                 .yp-demand-line{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:8px;padding:9px;border:1px solid #e1e1e1;border-radius:6px;background:#fcfcfc}
                 .yp-demand-line-details{border:0;border-top:1px solid var(--yp-neutral-300);border-radius:0}
                 .yp-picker-layer{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.62);padding:16px} /* CHANGE */
@@ -7179,7 +7202,7 @@ Draw.loadPlugin(function (ui) {
                     storeTimelineReturnContext(state.selectedCropId, weekRow && weekRow.week ? PlanMath.weekIndexForDate(runtime.weekStarts || [], weekRow.week.iso) : 0);
                     saveDraftIfDirty();
                     SessionController.close();
-                    const target = sourceRow && (sourceRow.cell || Env.model.getCell && Env.model.getCell(sourceRow.cellId));
+                    const target = sourceRow && Env.model.getCell && Env.model.getCell(sourceRow.cellId);
                     if (target && graph.setSelectionCell) graph.setSelectionCell(target);
                     if (target && graph.scrollCellToVisible) graph.scrollCellToVisible(target, true);
                     requestPlanButtonFlash();
@@ -7997,13 +8020,16 @@ Draw.loadPlugin(function (ui) {
                 const collapsed = state.collapsedDemandLineIds.has(lineId);
                 const header = document.createElement("div");
                 header.className = "yp-demand-line-header";
-                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral");
+                const toggle = mkBtn(collapsed ? "+" : "-", "neutral");
+                toggle.className += " yp-demand-line-toggle"; // CHANGE
                 toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+                toggle.setAttribute("aria-label", collapsed ? "Expand demand line" : "Collapse demand line"); // CHANGE
+                toggle.title = collapsed ? "Expand demand line" : "Collapse demand line"; // CHANGE
                 const summary = document.createElement("div");
                 summary.className = "yp-demand-line-summary";
                 setChipRow(summary, demandLineSummaryChips(line, crop));
                 demandRefs.lineSummaries.set(lineId, summary);
-                header.appendChild(toggle); header.appendChild(summary);
+                header.appendChild(summary); header.appendChild(toggle); // CHANGE
                 const row = document.createElement("div");
                 row.className = "yp-demand-line yp-demand-line-details";
                 row.style.display = collapsed ? "none" : "grid";

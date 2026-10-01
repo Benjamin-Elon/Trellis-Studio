@@ -52,7 +52,8 @@ CROP_PROMPT_FIELD_GUIDE = {
     "lifecycle": "Set annual, biennial, and perennial to a coherent lifecycle; normally exactly one is 1.",  # prompt quality
     "units": "Fields ending _c are Celsius, _cm centimeters, _kg kilograms, and day fields are days.",  # prompt quality
     "temperature": "Use plausible crop physiology values: killtemp_c is lethal cold tolerance, and tmin_c <= topt_low_c <= topt_high_c <= tmax_c describes growth.",
-    "start_cooling_threshold_c": "This is a fall/overwinter cooling trigger, not a heat-stress threshold; use 0 for normal spring/summer annual crops.",  # scheduler semantics
+    "overwinter_ok": "Use 1 only for crops whose normal schedule requires overwintering and cooling, such as garlic; use 0 for crops that merely can survive winter in suitable climates or protected beds.",  # scheduler semantics
+    "start_cooling_threshold_c": "This is a fall/overwinter cooling trigger for overwinter-required crops, not a heat-stress threshold; use 0 for normal spring/summer annual crops and winter-survivable crops that do not require overwintering.",  # scheduler semantics
     "spacing": "spacing_x_cm and spacing_y_cm should describe in-row and between-row spacing when useful.",  # prompt quality
     "methods": "allowed_method_categories are broad capabilities; allowed_method_ids are concrete fixed_methods that truly fit the crop.",  # prompt quality
     "default_method": "default_planting_method must be one of allowed_method_ids and should reflect the most common reliable home-garden method.",  # prompt quality

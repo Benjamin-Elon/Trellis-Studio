@@ -235,6 +235,17 @@
         if (T <= ToptHigh) return 1;
         return (Tmax - T) / Math.max(1e-9, (Tmax - ToptHigh));
     }
+    function displayYieldPercent(value) { // CHANGE: express yield feasibility in user-facing percentages.
+        const n = Number(value);
+        const bounded = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+        return Math.round(bounded * 100);
+    }
+    function lowYieldFeasibilityMessage(yieldMultiplier, minYieldMultiplier) { // CHANGE: translate multiplier internals into risk language.
+        const yieldPercent = displayYieldPercent(yieldMultiplier);
+        const reductionPercent = displayYieldPercent(1 - yieldMultiplier);
+        const minimumPercent = displayYieldPercent(minYieldMultiplier);
+        return `Selected date predicts a ${reductionPercent}% yield reduction (${yieldPercent}% of normal yield), below your ${minimumPercent}% minimum.`;
+    }
     function weightedMeanTempOverRange(startDate, endDate, monthlyAvgTemp, dailyRatesMap, Tbase = 10, dailyClimate = null, bedProfile = null) {
         let cur = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
         const sampleEnd = endDate > startDate ? endDate : addDaysUTC(startDate, 1);
@@ -1148,7 +1159,7 @@
         const yieldMultipliers = [thermalYieldFactor(feasibility.TmeanHarvest, env)];
         const minYieldMultiplier = finiteNumberOrNull(inputs.minYieldMultiplier) ?? 0;
         if (yieldMultipliers[0] < minYieldMultiplier) {
-            const message = `Selected sow date yield multiplier ${yieldMultipliers[0].toFixed(2)} is below the minimum ${minYieldMultiplier.toFixed(2)}.`;
+            const message = lowYieldFeasibilityMessage(yieldMultipliers[0], minYieldMultiplier); // CHANGE: show predicted yield reduction, not raw multiplier values.
             if (options.allowThermalWarnings === true) warnings.push(thermalWarning('yield_multiplier_below_minimum', message));
             else throw new Error(message);
         }

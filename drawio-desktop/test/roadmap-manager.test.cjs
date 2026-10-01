@@ -49,7 +49,10 @@ function controlWithButton(h, text) { const button = graphButton(h, text); retur
 function linkIdSet(cell) { return new Set(String(cell.getAttribute('linkedTo') || '').split(',').filter(Boolean)); } // NEW
 function setLinkedTo(cell, ids) { cell.value.setAttribute('linkedTo', ids.join(',')); } // NEW
 function dependencyPills(h) { return Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-dependency-pill')).map(node => node.textContent); } // NEW
-function objectDateBadges(h) { return Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-object-date-badge')).map(node => node.textContent); } // NEW
+function dependencyArrows(h) { return Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-dependency-arrow')); } // NEW
+function genericLinkOverlayNodes(h) { return Array.from(h.graph.container.querySelectorAll('*')).filter(node => node.__manualLinkMeta); } // NEW
+function objectDateBadgeNodes(h) { return Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-object-date-badge')); } // NEW
+function objectDateBadges(h) { return objectDateBadgeNodes(h).map(node => node.textContent); } // CHANGE
 const THIS_WEEK_DAY_PX = 400 / 7; // NEW
 const BOUNDARY_SCALES = [0.31, 0.73, 5, 11, 2, 6, 1.3, 0.42]; // NEW
 function compactHudDate(c, day) { const iso = c.formatDay(day); return iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(2, 4); } // NEW
@@ -133,6 +136,8 @@ test('roadmap selected date HUD previews resize dates in place', t => { // CHANG
     assert.deepEqual(hudSnapshot(h), expectedHud(c, { start: today, end: today + 10 }, { right: true })); // CHANGE
     assert.equal(parseInt(hudBadge(h, 'trellis-roadmap-date-badge-start').style.left, 10), Math.round(state.x - 14)); // NEW
     assert.equal(parseInt(hudBadge(h, 'trellis-roadmap-date-badge-end').style.left, 10), Math.round(state.x + state.width + 14)); // NEW
+    const inlineObjectDuration = hudBadge(h, 'trellis-roadmap-date-badge-duration'); // NEW
+    assert.equal(inlineObjectDuration.style.transform, 'none'); assert.equal(parseInt(inlineObjectDuration.style.top, 10), Math.round(state.y + state.height / 2 - 8)); // NEW
     h.api._test.endGesture(true); // NEW
     const left = { button: 0, clientX: state.x, clientY: state.y + 13, preventDefault() {} }; // NEW
     h.api._test.beginGesture(h.object, 'left', left); h.api._test.previewGesture({ ...left, clientX: left.clientX + 2 * THIS_WEEK_DAY_PX }); // NEW
@@ -141,6 +146,8 @@ test('roadmap selected date HUD previews resize dates in place', t => { // CHANG
     h.graph.refresh(); const processState = h.graph.view.getState(h.process), processRight = { button: 0, clientX: processState.x + processState.width, clientY: processState.y + 13, preventDefault() {} }, processDx = timelineDx(h, today + 31, today + 34); // CHANGE
     h.api._test.beginGesture(h.process, 'right', processRight); h.api._test.previewGesture({ ...processRight, clientX: processRight.clientX + processDx * h.graph.view.scale }); // CHANGE
     assert.deepEqual(hudSnapshot(h), expectedHud(c, { start: today, end: today + 33 }, { right: true })); // CHANGE
+    const inlineProcessDuration = hudBadge(h, 'trellis-roadmap-date-badge-duration'); // NEW
+    assert.equal(inlineProcessDuration.style.transform, 'none'); assert.equal(parseInt(inlineProcessDuration.style.top, 10), Math.round(processState.y + 6)); // NEW
     h.api._test.endGesture(true); // NEW
     const processLeft = { button: 0, clientX: processState.x, clientY: processState.y + 13, preventDefault() {} }; // NEW
     h.api._test.beginGesture(h.process, 'left', processLeft); h.api._test.previewGesture({ ...processLeft, clientX: processLeft.clientX + 2 * THIS_WEEK_DAY_PX }); // NEW
@@ -338,14 +345,26 @@ test('process object date badges are opt-in, undoable, and exported', async t =>
     assert.equal(h.process.getAttribute('roadmap_object_badges_enabled'), '1'); // NEW
     assert.equal(objectDateBadges(h).join('|'), [compactHudDate(c, today), compactHudDate(c, today + 7), '8d'].join('|')); // NEW
     assert.equal(objectDateBadges(h).length, 3); assert.ok(otherObject); // NEW
+    const durationBadge = objectDateBadgeNodes(h).find(node => node.className.indexOf('trellis-roadmap-object-date-badge-duration') >= 0), objectState = h.graph.view.getState(h.object); // NEW
+    assert.ok(durationBadge); assert.equal(durationBadge.style.transform, 'none'); assert.equal(parseInt(durationBadge.style.top, 10), Math.round(objectState.y + objectState.height / 2 - 8)); // NEW
     let records = h.api.exportProjection()[''].filter(record => record.synthetic && /^trellis-roadmap-object-date-badge-/.test(record.id)); // NEW
     assert.equal(records.map(record => record.label).join('|'), [compactHudDate(c, today), compactHudDate(c, today + 7), '8d'].join('|')); // NEW
     assert.equal(records.every(record => record.parentId === h.process.id && styleValue(record.style, 'strokeColor') === '#111111'), true); // NEW
+    const durationRecord = records.find(record => /-duration$/.test(record.id)), objectGeometry = h.graph.getCellGeometry(h.object); // NEW
+    assert.ok(durationRecord); assert.equal(Math.round(durationRecord.geometry.y), Math.round(objectGeometry.y + objectGeometry.height / 2 - 8)); // NEW
     const enabledXml = h.xml(); h.api.setProcessObjectBadges(h.process, false); await frame(h); // NEW
     assert.ok(!h.process.getAttribute('roadmap_object_badges_enabled')); assert.equal(objectDateBadges(h).join('|'), ''); // NEW
     assert.equal((h.api.exportProjection()[''] || []).some(record => record.synthetic && /^trellis-roadmap-object-date-badge-/.test(record.id)), false); // NEW
     h.undo.undo(); assert.equal(h.xml(), enabledXml); await frame(h); assert.equal(objectDateBadges(h).join('|'), [compactHudDate(c, today), compactHudDate(c, today + 7), '8d'].join('|')); // NEW
     h.undo.redo(); await frame(h); assert.equal(objectDateBadges(h).join('|'), ''); // NEW
+}); // NEW
+
+test('process object inline duration badge renders for short object bars', async t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); // NEW
+    h.api.setProcessObjectBadges(h.process, true); h.api.editObject(h.object, { startISO: c.formatDay(today), endISO: c.formatDay(today) }); // NEW
+    h.api.setViewState(h.board, { today: { multiplier: 0.01 } }); h.graph.refresh(); await frame(h); // NEW
+    const durationBadge = objectDateBadgeNodes(h).find(node => node.className.indexOf('trellis-roadmap-object-date-badge-duration') >= 0); // NEW
+    assert.ok(durationBadge); assert.equal(durationBadge.textContent, '1d'); assert.equal(durationBadge.style.transform, 'none'); // NEW
 }); // NEW
 
 test('process object date badges follow object edits and respect permissions', async t => { // NEW
@@ -443,7 +462,7 @@ test('roadmap object dependency unlink is undoable and permission checked', asyn
     assert.equal(h.api.linkRoadmapObjects([h.object, second]), null); assert.equal(h.xml(), beforeDenied); // NEW
 }); // NEW
 
-test('roadmap dependency reveal filters links, avoids lines, and export projection includes selected pills', async t => { // NEW
+test('roadmap dependency reveal filters links, draws arrows, and export projection includes selected pills', async t => { // CHANGE
     const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(), second = h.api.addObject(h.process), third = h.api.addObject(h.process); // NEW
     h.api.editObject(h.object, { startISO: c.formatDay(today), endISO: c.formatDay(today + 1) }); h.api.editObject(second, { startISO: c.formatDay(today + 2), endISO: c.formatDay(today + 3) }); h.api.editObject(third, { startISO: c.formatDay(today + 4), endISO: c.formatDay(today + 5) }); // NEW
     h.api.linkRoadmapObjects([third, second, h.object]); // NEW
@@ -453,13 +472,37 @@ test('roadmap dependency reveal filters links, avoids lines, and export projecti
     h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
     assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-dependency-highlight').length, 3); // NEW
     assert.deepEqual(dependencyPills(h), ['1', '2', '3']); // NEW
-    assert.equal(h.graph.container.querySelector('.trellis-roadmap-dependency-line'), null); assert.equal(h.graph.container.querySelector('.trellis-roadmap-dependency-layer svg'), null); // NEW
+    const arrows = dependencyArrows(h), firstState = h.graph.view.getState(h.object), secondState = h.graph.view.getState(second); // NEW
+    assert.equal(arrows.length, 2); assert.ok(h.graph.container.querySelector('.trellis-roadmap-dependency-layer svg')); // CHANGE
+    assert.ok(arrows[0].getAttribute('d').startsWith('M ' + (firstState.x + firstState.width).toFixed(1) + ' ' + (firstState.y + firstState.height / 2).toFixed(1))); // NEW
+    assert.ok(arrows[0].getAttribute('d').endsWith(secondState.x.toFixed(1) + ' ' + (secondState.y + secondState.height / 2).toFixed(1))); // NEW
     const projection = h.api.exportProjection()[''], objectRecords = projection.filter(record => [h.object.id, second.id, third.id].includes(record.id)); // NEW
     assert.equal(objectRecords.every(record => record.stylePatch && record.stylePatch.strokeColor === '#2563eb' && record.stylePatch.strokeWidth === '3'), true); // NEW
     assert.equal(projection.filter(record => record.synthetic && /^trellis-roadmap-dependency-badge-/.test(record.id)).map(record => record.label).join('|'), '1|2|3'); // NEW
     h.graph.setSelectionCell(h.board); h.api.refresh(); await frame(h); // NEW
     assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-dependency-pill').length, 0); // NEW
+    assert.equal(dependencyArrows(h).length, 0); // NEW
     assert.equal((h.api.exportProjection()[''] || []).some(record => record.synthetic && /^trellis-roadmap-dependency-badge-/.test(record.id)), false); // NEW
+}); // NEW
+
+test('roadmap dependency arrows skip date-overlapping linked pairs while keeping reveal badges', async t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(), overlapping = h.api.addObject(h.process), later = h.api.addObject(h.process); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today), endISO: c.formatDay(today + 3) }); h.api.editObject(overlapping, { startISO: c.formatDay(today + 2), endISO: c.formatDay(today + 4) }); h.api.editObject(later, { startISO: c.formatDay(today + 5), endISO: c.formatDay(today + 6) }); // NEW
+    h.api.linkRoadmapObjects([later, overlapping, h.object]); // NEW
+    h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
+    assert.deepEqual(dependencyPills(h), ['1', '2', '3']); // NEW
+    assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-dependency-highlight').length, 3); // NEW
+    assert.equal(dependencyArrows(h).length, 1); // NEW
+}); // NEW
+
+test('generic vertex link overlay does not duplicate roadmap dependency arrows', async t => { // NEW
+    const h = harness(t, ['Vertex_Linking_Standalone.js']), c = h.w.TrellisRoadmapCore, today = c.todayDay(), second = h.api.addObject(h.process), third = h.api.addObject(h.process); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today), endISO: c.formatDay(today + 1) }); h.api.editObject(second, { startISO: c.formatDay(today + 2), endISO: c.formatDay(today + 3) }); h.api.editObject(third, { startISO: c.formatDay(today + 4), endISO: c.formatDay(today + 5) }); // NEW
+    h.api.linkRoadmapObjects([third, second, h.object]); // NEW
+    h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); await frame(h); // NEW
+    assert.deepEqual(dependencyPills(h), ['1', '2', '3']); // NEW
+    assert.equal(dependencyArrows(h).length, 2); // NEW
+    assert.equal(genericLinkOverlayNodes(h).length, 0); // NEW
 }); // NEW
 
 test('readers can change their view but cannot mutate roadmap content', t => {

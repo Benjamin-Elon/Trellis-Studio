@@ -94,7 +94,8 @@ test("graph overlay plugins share a dialog-safe layer contract", () => {
         "Deep_Click_Through.js",
         "Vertex_Linking_Standalone.js",
         "Bed_Succession_Navigator.js",
-        "Created_Change_Map.js"
+        "Created_Change_Map.js",
+        "Allocate_Planner.js"
     ].forEach(assertLayerContract);
 
     assert.match(readProjectFile("drawio/src/main/webapp/js/diagramly/EditorUi.js"), /zIndex: 2e9/);
@@ -165,6 +166,8 @@ test("graph-local Trellis controls use control layers", () => {
     assert.match(readPlugin("Created_Change_Map.js"), /panel\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
     assert.match(readPlugin("Garden_Task_Manager.js"), /trellis-task-board-header-controls[\s\S]*bar\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
     assert.match(readPlugin("Garden_Task_Manager.js"), /trellis-task-selected-card-actions[\s\S]*overlay\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
+    assert.match(readPlugin("Allocate_Planner.js"), /ensureGraphOverlayHtmlLayer\("control"\)[\s\S]*trellis-allocate-overlay-layer/); // CHANGE: Allocate bed badges use graph-local control overlays.
+    assert.match(readPlugin("Allocate_Planner.js"), /trellis-allocate-ghost[\s\S]*ensureGraphOverlayHtmlLayer\("annotation"\)/); // CHANGE: Allocate draft ghosts use graph-local annotation overlays.
     assert.match(readPlugin("Garden_Task_Manager.js"), /const paneIsSvg = !!\(pane && pane\.namespaceURI === 'http:\/\/www\.w3\.org\/2000\/svg'\)/);
     assert.match(readPlugin("Garden_Task_Manager.js"), /const baseHost = pane && !paneIsSvg \? pane : \(graph\.container \|\| pane \|\| null\)/);
     assert.match(readPlugin("Garden_Task_Manager.js"), /trellis-task-control-layer/);

@@ -2630,7 +2630,7 @@ Draw.loadPlugin(function (ui) {
         let labelInputWrap = null;
         let settingsBtn = null;
         let addBedBtn = null;
-        let addGroupBtn = null;
+        let schedulePlantingBtn = null; // CHANGE
         let allocateModeBtn = null; // NEW
         let irrigationModeBtn = null; // CHANGE
         let activeModuleCell = null;
@@ -2751,6 +2751,27 @@ Draw.loadPlugin(function (ui) {
             if (moduleCell && isGardenModule(moduleCell)) labelInputWrap.appendChild(makeGardenModuleLabelInput(moduleCell));
         }
 
+        function alertSchedulePlantingError(error) {
+            const message = error && error.message ? error.message : String(error || "Unknown scheduling error");
+            if (ui && typeof ui.alert === "function") ui.alert("Scheduling error: " + message);
+            else if (typeof mxUtils !== "undefined" && typeof mxUtils.alert === "function") mxUtils.alert("Scheduling error: " + message);
+        } // CHANGE
+
+        function openBedScheduleDialogFromOverlay(bedCell) {
+            const scheduler = typeof window !== "undefined" && window.USL && window.USL.scheduler;
+            if (!scheduler || typeof scheduler.openBedScheduleDialog !== "function") {
+                if (ui && typeof ui.alert === "function") ui.alert("Scheduler plugin is unavailable.");
+                else if (typeof mxUtils !== "undefined" && typeof mxUtils.alert === "function") mxUtils.alert("Scheduler plugin is unavailable.");
+                return;
+            }
+            try {
+                Promise.resolve(scheduler.openBedScheduleDialog(ui, bedCell)).catch(alertSchedulePlantingError);
+                hideToolbar();
+            } catch (error) {
+                alertSchedulePlantingError(error);
+            }
+        } // CHANGE
+
         function ensureToolbar() {
             if (toolbar) return toolbar;
             toolbar = document.createElement("div");
@@ -2774,13 +2795,13 @@ Draw.loadPlugin(function (ui) {
             labelInputWrap.style.cssText = "display:flex;flex-direction:column;gap:4px;padding:2px 2px 4px;border-bottom:1px solid #e5e7eb;";
             settingsBtn = makeButton("Set Garden Settings", "open");
             addBedBtn = makeButton("Add Garden Bed", "add");
-            addGroupBtn = makeButton("Add New Plant Group", "add");
+            schedulePlantingBtn = makeButton("Schedule Planting", "add"); // CHANGE
             allocateModeBtn = makeButton("Enter Allocation Mode", "open"); // NEW
             irrigationModeBtn = makeButton("Enter Irrigation Design Mode", "open"); // CHANGE
             toolbar.appendChild(labelInputWrap);
             toolbar.appendChild(settingsBtn);
             toolbar.appendChild(addBedBtn);
-            toolbar.appendChild(addGroupBtn);
+            toolbar.appendChild(schedulePlantingBtn); // CHANGE
             toolbar.appendChild(allocateModeBtn); // NEW
             toolbar.appendChild(irrigationModeBtn); // CHANGE
 
@@ -2804,15 +2825,13 @@ Draw.loadPlugin(function (ui) {
                 }
             });
 
-            mxEvent.addListener(addGroupBtn, "click", function (evt) {
+            mxEvent.addListener(schedulePlantingBtn, "click", function (evt) {
                 mxEvent.consume(evt);
                 const moduleCell = activeModuleCell;
-                const bedCell = activeBedCell; // CHANGE
-                const pt = anchorModelPoint;
-                if (!moduleCell || !bedCell || activeOverlayMode !== "bed" || !pt || !hasGardenSettingsSet(moduleCell)) return; // CHANGE
-                createEmptyTilerGroup(graph, moduleCell, pt.x, pt.y, { source: "overlay-bed-add" }); // CHANGE
-                hideToolbar();
-            });
+                const bedCell = activeBedCell;
+                if (!moduleCell || !bedCell || activeOverlayMode !== "bed" || !hasGardenSettingsSet(moduleCell)) return;
+                openBedScheduleDialogFromOverlay(bedCell);
+            }); // CHANGE
 
             mxEvent.addListener(allocateModeBtn, "click", function (evt) { // NEW
                 mxEvent.consume(evt); // NEW
@@ -3024,14 +3043,14 @@ Draw.loadPlugin(function (ui) {
 
         function syncToolbarState() {
             const moduleCell = activeModuleCell;
-            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !addGroupBtn || !allocateModeBtn || !irrigationModeBtn || !moduleCell) return; // CHANGE
+            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !schedulePlantingBtn || !allocateModeBtn || !irrigationModeBtn || !moduleCell) return; // CHANGE
             const hasSettings = hasGardenSettingsSet(moduleCell);
             const bedMode = activeOverlayMode === "bed";
             labelInputWrap.style.display = bedMode ? "none" : "flex";
             if (!bedMode) renderGardenModuleLabelInput(moduleCell);
             settingsBtn.style.display = bedMode ? "none" : "";
             addBedBtn.style.display = bedMode ? "none" : "";
-            addGroupBtn.style.display = bedMode ? "" : "none"; // CHANGE
+            schedulePlantingBtn.style.display = bedMode ? "" : "none"; // CHANGE
             allocateModeBtn.style.display = bedMode ? "" : "none"; // NEW
             irrigationModeBtn.style.display = ""; // CHANGE
             settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings";
@@ -3040,10 +3059,10 @@ Draw.loadPlugin(function (ui) {
             addBedBtn.style.opacity = hasSettings ? "1" : "0.55";
             addBedBtn.style.cursor = hasSettings ? "pointer" : "default";
             const canAddGroupInBed = bedMode && !!activeBedCell && hasSettings; // CHANGE
-            addGroupBtn.disabled = !canAddGroupInBed; // CHANGE
-            addGroupBtn.title = !bedMode || !activeBedCell ? "Select a garden bed before adding plants" : (hasSettings ? "Add a new plant group fitted to this garden bed" : "Set garden settings before adding plants"); // CHANGE
-            addGroupBtn.style.opacity = canAddGroupInBed ? "1" : "0.55"; // CHANGE
-            addGroupBtn.style.cursor = canAddGroupInBed ? "pointer" : "default"; // CHANGE
+            schedulePlantingBtn.disabled = !canAddGroupInBed; // CHANGE
+            schedulePlantingBtn.title = !bedMode || !activeBedCell ? "Select a garden bed before scheduling plants" : (hasSettings ? "Schedule a new planting fitted to this garden bed" : "Set garden settings before scheduling plants"); // CHANGE
+            schedulePlantingBtn.style.opacity = canAddGroupInBed ? "1" : "0.55"; // CHANGE
+            schedulePlantingBtn.style.cursor = canAddGroupInBed ? "pointer" : "default"; // CHANGE
             allocateModeBtn.disabled = !hasSettings; // NEW
             allocateModeBtn.title = hasSettings ? "Enter allocation mode" : "Set garden settings before entering allocation mode"; // NEW
             allocateModeBtn.style.opacity = hasSettings ? "1" : "0.55"; // NEW
@@ -5176,16 +5195,6 @@ Draw.loadPlugin(function (ui) {
             return t;
         }
 
-        function resolveGardenBedTarget(cell, evt) { // CHANGE
-            const byParam = cell || null; // CHANGE
-            const byHit = evt ? hitTestCell(evt) : null; // CHANGE
-            const bySel = graph.getSelectionCell() || null; // CHANGE
-            const cand = byParam || byHit || bySel; // CHANGE
-            const t = isGardenBed(cand) ? cand : null; // CHANGE
-            log("[popup][bed] cand=" + JSON.stringify(dbgCellInfo(cand)) + " -> target=" + JSON.stringify(dbgCellInfo(t))); // CHANGE
-            return t; // CHANGE
-        }
-
         function collectSelectedTilerGroups(graph, fallbackTarget) {
             const sel = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
             const out = new Map();
@@ -5263,7 +5272,6 @@ Draw.loadPlugin(function (ui) {
 
                 // ----- MODULE CONTEXT MENU -----
                 const targetMod = resolveModuleTarget(cell, evt);
-                const targetBed = resolveGardenBedTarget(cell, evt); // CHANGE
 
                 // -------------------- Garden Beds (selection-aware) --------------------
                 try {
@@ -5437,23 +5445,6 @@ Draw.loadPlugin(function (ui) {
                     });
                 }
 
-                // --- Add New Plant Group (requires selected garden bed context) ----------------------------------
-                if (targetBed && targetMod && isGardenModule(targetMod)) { // CHANGE
-                    if (hasGardenSettingsSet(targetMod)) {
-                        menu.addItem("Add New Plant Group", null, function () {
-                            try {
-                                const pt = graph.getPointForEvent(evt);
-                                createEmptyTilerGroup(graph, targetMod, pt.x, pt.y, { source: "context-bed-add" }); // CHANGE
-                                log("[bed] empty tiler group created"); // CHANGE
-                            } catch (e) {
-                                mxUtils.alert("Error creating tiler group: " + e.message);
-                            }
-                        });
-                    } else {
-                        // Disabled hint (non-clickable)
-                        menu.addItem("Set garden settings to add plants", null, function () { }, null, null, false);
-                    }
-                }
             }
         });
 
@@ -5674,6 +5665,13 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
+    function plantingProposalConflictRank(conflicts) {
+        if (!(conflicts || []).length) return 0; // CHANGE: bed-first scheduling prefers open space before shared companion space.
+        if ((conflicts || []).some(function (item) { return String(item.conflictKind || item.relationshipKind || "") === "incompatible" || String(item.conflictSeverity || "") === "block"; })) return Infinity; // CHANGE: incompatible crop overlap is never an automatic placement candidate.
+        if ((conflicts || []).some(function (item) { return String(item.conflictKind || item.relationshipKind || "") === "unknown"; })) return 2; // CHANGE: unknown overlap is allowed only after known companion placements.
+        return 1; // CHANGE: known non-negative companion overlap is allowed, but still trails clean space.
+    }
+
     function chooseProposalPlacement(input, base, spacingXpx, spacingYpx, maxW, maxH, originX, originY) {
         if (!base || !base.complete) return Object.assign({}, base);
         const stepX = Math.max(8, Math.min(spacingXpx, Math.max(8, base.geometry.width)));
@@ -5681,6 +5679,7 @@ Draw.loadPlugin(function (ui) {
         const maxX = Math.max(originX, originX + maxW - base.geometry.width);
         const maxY = Math.max(originY, originY + maxH - base.geometry.height);
         let warningCandidate = null;
+        let blockedCandidate = null;
         const xs = [];
         const ys = [];
         for (let x = originX; x <= maxX + 0.1; x += stepX) xs.push(Math.min(x, maxX));
@@ -5692,14 +5691,21 @@ Draw.loadPlugin(function (ui) {
                 const placed = Object.assign({}, base, { geometry: Object.assign({}, base.geometry, { x, y }) });
                 const conflicts = proposalConflictsForRect(input, placed.geometry);
                 if (!conflicts.length) return Object.assign(placed, { placementStatus: "compatible", conflicts: [] });
-                if (!warningCandidate) warningCandidate = Object.assign(placed, { placementStatus: "warning", conflicts });
+                const rank = plantingProposalConflictRank(conflicts);
+                if (!Number.isFinite(rank)) {
+                    if (!blockedCandidate) blockedCandidate = Object.assign(placed, { placementStatus: "blocked", conflicts }); // CHANGE
+                    continue;
+                }
+                const candidate = Object.assign(placed, { placementStatus: "warning", placementRank: rank, conflicts }); // CHANGE
+                if (!warningCandidate || rank < Number(warningCandidate.placementRank || Infinity)) warningCandidate = candidate; // CHANGE
             }
         }
-        return warningCandidate || Object.assign({}, base, { placementStatus: "compatible", conflicts: [] });
+        return warningCandidate || blockedCandidate || Object.assign({}, base, { placementStatus: "compatible", conflicts: [] });
     }
 
     function proposePlantingGeometry(input = {}) {
-        const plantCount = Math.max(0, Math.trunc(Number(input.plantCount) || 0));
+        const fillAvailableBed = input.fillAvailableBed === true; // CHANGE: bed-first scheduling can request maximum fitted capacity instead of a preselected count.
+        const requestedPlantCount = Math.max(0, Math.trunc(Number(input.plantCount) || 0));
         const spacingXCm = Number(input.spacingXCm ?? input.spacingCm ?? 30);
         const spacingYCm = Number(input.spacingYCm ?? input.spacingCm ?? 30);
         const vegHeightCm = Number(input.vegHeightCm ?? input.veg_height_cm);
@@ -5714,9 +5720,10 @@ Draw.loadPlugin(function (ui) {
         function candidate(spacingXpx, spacingYpx, orientation) {
             const usableW = Math.max(spacingXpx, maxW - GROUP_PADDING_PX * 2);
             const cols = Math.max(1, Math.floor(usableW / spacingXpx));
-            const rows = plantCount > 0 ? Math.max(1, Math.ceil(plantCount / cols)) : 1;
-            const width = Math.min(maxW, Math.max(spacingXpx + GROUP_PADDING_PX * 2, Math.min(cols, Math.max(1, plantCount)) * spacingXpx + GROUP_PADDING_PX * 2));
-            const height = Math.min(maxH, Math.max(spacingYpx + GROUP_PADDING_PX * 2 + GROUP_LABEL_BAND_PX, rows * spacingYpx + GROUP_PADDING_PX * 2 + GROUP_LABEL_BAND_PX));
+            const maxRows = Math.max(1, Math.floor(Math.max(0, maxH - GROUP_PADDING_PX * 2 - GROUP_LABEL_BAND_PX) / spacingYpx));
+            const rows = fillAvailableBed ? maxRows : (requestedPlantCount > 0 ? Math.max(1, Math.ceil(requestedPlantCount / cols)) : 1); // CHANGE
+            const width = fillAvailableBed ? maxW : Math.min(maxW, Math.max(spacingXpx + GROUP_PADDING_PX * 2, Math.min(cols, Math.max(1, requestedPlantCount)) * spacingXpx + GROUP_PADDING_PX * 2)); // CHANGE
+            const height = fillAvailableBed ? maxH : Math.min(maxH, Math.max(spacingYpx + GROUP_PADDING_PX * 2 + GROUP_LABEL_BAND_PX, rows * spacingYpx + GROUP_PADDING_PX * 2 + GROUP_LABEL_BAND_PX)); // CHANGE
             const capacityRows = Math.max(1, Math.floor(Math.max(0, height - GROUP_PADDING_PX * 2 - GROUP_LABEL_BAND_PX) / spacingYpx));
             const capacityCols = Math.max(1, Math.floor(Math.max(0, width - GROUP_PADDING_PX * 2) / spacingXpx));
             const capacity = capacityRows * capacityCols;
@@ -5727,8 +5734,8 @@ Draw.loadPlugin(function (ui) {
                 rows: capacityRows,
                 cols: capacityCols,
                 capacity,
-                complete: capacity >= plantCount,
-                wastedSlots: Math.max(0, capacity - plantCount),
+                complete: fillAvailableBed || capacity >= requestedPlantCount, // CHANGE
+                wastedSlots: Math.max(0, capacity - (fillAvailableBed ? capacity : requestedPlantCount)), // CHANGE
                 area: width * height,
                 geometry: { x: originX, y: originY, width, height }
             };
@@ -5744,20 +5751,23 @@ Draw.loadPlugin(function (ui) {
             return chooseProposalPlacement(input, item, item.spacingXpx, item.spacingYpx, maxW, maxH, originX, originY);
         }).sort((a, b) => {
             if (a.complete !== b.complete) return a.complete ? -1 : 1;
-            if ((a.placementStatus || "compatible") !== (b.placementStatus || "compatible")) return (a.placementStatus === "compatible") ? -1 : 1;
+            if ((a.placementStatus || "compatible") !== (b.placementStatus || "compatible")) return (a.placementStatus === "compatible") ? -1 : (b.placementStatus === "compatible" ? 1 : String(a.placementStatus || "").localeCompare(String(b.placementStatus || ""))); // CHANGE
+            if (Number(a.placementRank || 0) !== Number(b.placementRank || 0)) return Number(a.placementRank || 0) - Number(b.placementRank || 0); // CHANGE
             if (a.wastedSlots !== b.wastedSlots) return a.wastedSlots - b.wastedSlots;
             if (a.area !== b.area) return a.area - b.area;
             return a.orientation.localeCompare(b.orientation);
         });
         const best = candidates[0] || candidate(sx, sy, "normal");
         const conflicts = best && Array.isArray(best.conflicts) ? best.conflicts : [];
+        const blocked = String(best && best.placementStatus || "") === "blocked"; // CHANGE
+        const resolvedPlantCount = fillAvailableBed ? Math.max(0, Number(best && best.capacity) || 0) : requestedPlantCount; // CHANGE
         return {
-            ok: plantCount === 0 || !!(best && best.complete),
-            status: conflicts.length ? "warning" : "compatible",
-            reason: plantCount > 0 && !best.complete ? "insufficient_space" : "",
+            ok: !blocked && (resolvedPlantCount === 0 || !!(best && best.complete)), // CHANGE
+            status: blocked ? "blocked" : (conflicts.length ? "warning" : "compatible"), // CHANGE
+            reason: blocked ? "incompatible_overlap" : (resolvedPlantCount > 0 && !best.complete ? "insufficient_space" : ""), // CHANGE
             warnings: conflicts.length ? ["Temporal overlap with " + conflicts.length + " dated planting" + (conflicts.length === 1 ? "" : "s") + "."] : [],
             conflictGroupIds: conflicts.map(function (item) { return String(item.groupId || ""); }).filter(Boolean),
-            plantCount,
+            plantCount: resolvedPlantCount, // CHANGE
             rows: best.rows,
             cols: best.cols,
             capacity: best.capacity,
@@ -5766,7 +5776,7 @@ Draw.loadPlugin(function (ui) {
             spacingXCm: best.orientation === "normal" ? spacingXCm : spacingYCm,
             spacingYCm: best.orientation === "normal" ? spacingYCm : spacingXCm,
             vegHeightCm: Number.isFinite(vegHeightCm) && vegHeightCm > 0 ? vegHeightCm : null,
-            slots: buildProposalSlots(best, plantCount),
+            slots: buildProposalSlots(best, resolvedPlantCount), // CHANGE
             geometry: best.geometry
         };
     }
@@ -5921,7 +5931,7 @@ Draw.loadPlugin(function (ui) {
 
     function readBedProfile(bedCell) {
         if (!bedCell || !bedCell.getAttribute) return {};
-        const keys = ["sun", "moisture", "drainage", "fertility", "irrigation", "trellis", "season_extension", "protection", "wind", "frost_risk", "bed_use"];
+        const keys = ["sun", "drainage", "fertility", "trellis", "season_extension", "protection", "wind", "bed_use"];
         const profile = {};
         keys.forEach(function (key) {
             const value = String(bedCell.getAttribute(key) || "").trim();

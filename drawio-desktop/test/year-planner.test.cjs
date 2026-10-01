@@ -884,6 +884,45 @@ test("PlanMath tracks planting source provenance through FIFO inventory", () => 
     assert.equal(cropWeekly.plantingSourcesByWeek[secondWeek][0].endingKg, 6);
 });
 
+test("PlanningCore keeps diagram planting provenance JSON-safe after allocation refresh", () => {
+    const { api, root, addCell, TestCell } = createHarness();
+    const moduleCell = addCell(root, new TestCell("module"));
+    const planting = addCell(moduleCell, new TestCell("planting_1", {
+        tiler_group: "1",
+        plant_id: "1",
+        plant_name: "Tomato",
+        plant_count: "10",
+        season_start_year: "2026",
+        harvest_start: "2026-06-01",
+        harvest_end: "2026-06-14"
+    }));
+    planting.parent = moduleCell;
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestStart: "2026-06-01", harvestEnd: "2026-06-14", shelfLifeDays: 7 }));
+    addDemand(plan, { from: "2026-06-08", to: "2026-06-14", qty: 15 });
+
+    const coverage = api.PlanningCore.computeYearCoverage({ moduleCell, year: 2026, plan });
+    const rows = coverage.plan.crops[0].__actualHarvestSourceRows;
+
+    assert.equal(Array.isArray(rows), true);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].cell, undefined);
+    assert.equal(rows[0].cellId, "planting_1");
+    assert.doesNotThrow(() => JSON.stringify(rows));
+    assert.doesNotThrow(() => api.PlanningCore.recommendPlantCount({
+        moduleCell,
+        year: 2026,
+        plan: coverage.plan,
+        candidate: { cropId: "crop_1", harvestStart: "2026-06-08", harvestEnd: "2026-06-14", kgPerPlant: 1, shelfLifeDays: 7 }
+    }));
+    assert.doesNotThrow(() => api.PlanningCore.simulateCandidatePlanting({
+        moduleCell,
+        year: 2026,
+        plan: coverage.plan,
+        candidate: { cropId: "crop_1", harvestStart: "2026-06-08", harvestEnd: "2026-06-14", kgPerPlant: 1, plantCount: 1, shelfLifeDays: 7 }
+    }));
+});
+
 test("PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors", () => {
     const { api } = createHarness();
     const weeks = api.PlanMath.buildWeekStartsForYearLocal(2024, 1);

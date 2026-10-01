@@ -4,9 +4,14 @@ Draw.loadPlugin(function (ui) {
     const MODE_ID = "allocate";
     const ALLOCATE_EVENT = "usl:allocatePlanRequested";
     const HUD_Z = 2000000000;
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE: Allocate graph overlays share the Trellis layer contract.
+    const GRAPH_OVERLAY_LAYER_CLASS = Object.freeze({ annotation: "trellis-graph-annotation-layer", connection: "trellis-graph-connection-layer", control: "trellis-graph-control-layer", controlTop: "trellis-graph-control-top-layer" }); // CHANGE
+    const GRAPH_OVERLAY_LAYER_Z = Object.freeze({ annotation: GRAPH_OVERLAY_Z.ANNOTATION, connection: GRAPH_OVERLAY_Z.CONNECTION, control: GRAPH_OVERLAY_Z.CONTROL, controlTop: GRAPH_OVERLAY_Z.CONTROL_TOP }); // CHANGE
     const EPS = 0.0001;
     const STORE_PREFIX = "trellis.allocate.reviewSuppressed.";
     const DEBUG_STORAGE_KEY = "trellis.allocate.debug"; // CHANGE: gated diagnostics explain Allocate week selection without normal console noise.
+    const SCHEDULE_CACHE_VERSION = "sow-week-cache-v1"; // CHANGE: session cache invalidates when Allocate scheduling semantics change.
+    const BED_PROFILE_ATTRS = Object.freeze(["sun", "drainage", "fertility", "trellis", "season_extension", "protection", "wind", "bed_use"]); // CHANGE: cache signatures include only active bed conditions that affect lifecycle gates.
 
     function ensureInteractionModes() {
         window.Trellis = window.Trellis || {};
@@ -120,7 +125,7 @@ Draw.loadPlugin(function (ui) {
 
     function progressIsActive(progress) {
         const phase = String(progress && progress.phase || "");
-        return phase === "loading" || phase === "scanning demand" || phase === "checking beds";
+        return phase === "loading" || phase === "refreshing" || phase === "scanning demand" || phase === "checking beds";
     }
 
     function scheduleProgressText(state) {
@@ -132,6 +137,7 @@ Draw.loadPlugin(function (ui) {
         if (phase === "complete") return "Sow/start actions ready - " + plural(progress.foundActions, "action", "actions") + " found.";
         if (phase === "cancelled") return "Restarting sow/start action search...";
         if (phase === "loading") return "Loading Allocate...";
+        if (phase === "refreshing") return "Refreshing recommendations...";
         if (phase === "scanning demand" || phase === "checking beds") {
             return "Finding sow/start actions... " + progress.processedRows + " of " + progress.totalRows + " demand rows - " + plural(progress.foundActions, "action", "actions") + " found.";
         }
@@ -231,6 +237,107 @@ Draw.loadPlugin(function (ui) {
         }
         return { x, y };
     }
+
+    function ensureGraphOverlayContainer() {
+        const host = graph.container;
+        if (!host) return null;
+        try {
+            if (window.getComputedStyle && window.getComputedStyle(host).position === "static") host.style.position = "relative";
+        } catch (_) { }
+        return host;
+    } // CHANGE: Allocate overlays now attach to the graph container like roadmap overlays.
+
+    function ensureGraphOverlayHtmlLayer(layerKey) {
+        const host = ensureGraphOverlayContainer();
+        const key = GRAPH_OVERLAY_LAYER_CLASS[layerKey] ? layerKey : "control";
+        const className = GRAPH_OVERLAY_LAYER_CLASS[key];
+        if (!host || !className || !host.querySelector || !host.appendChild) return null;
+        let layer = host.querySelector("." + className);
+        if (!layer) {
+            layer = document.createElement("div");
+            layer.className = className;
+            layer.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:" + GRAPH_OVERLAY_LAYER_Z[key] + ";";
+            host.appendChild(layer);
+        }
+        return layer;
+    } // CHANGE: reuse the shared graph-local HTML overlay layer pattern.
+
+    function graphPointToContainer(x, y) {
+        const container = graph.container || {};
+        const view = graph.view || {};
+        const scale = Number(view.scale) || 1;
+        const tr = view.translate || { x: 0, y: 0 };
+        return {
+            left: (Number(x || 0) + Number(tr.x || 0)) * scale + Number(container.scrollLeft || 0),
+            top: (Number(y || 0) + Number(tr.y || 0)) * scale + Number(container.scrollTop || 0),
+            scale
+        };
+    } // CHANGE: graph-local overlays need container-relative coordinates, not viewport coordinates.
+
+    function graphView() {
+        return graph.getView && graph.getView() || graph.view || null;
+    } // CHANGE: view listeners and visual bounds use the same graph view source.
+
+    function stateHostBounds(cell, state, host) {
+        if (!state) return null;
+        const shapeNode = state.shape && state.shape.node ? state.shape.node : null;
+        if (shapeNode && shapeNode.getBoundingClientRect && host && host.getBoundingClientRect) {
+            const rect = shapeNode.getBoundingClientRect();
+            const hostRect = host.getBoundingClientRect();
+            if (rect && hostRect && rect.width > 0 && rect.height > 0) {
+                return {
+                    left: rect.left - hostRect.left + Number(host.scrollLeft || 0),
+                    top: rect.top - hostRect.top + Number(host.scrollTop || 0),
+                    width: rect.width,
+                    height: rect.height,
+                    scale: Number((graphView() || {}).scale) || 1
+                };
+            }
+        }
+        return {
+            left: Number(state.x) || 0,
+            top: Number(state.y) || 0,
+            width: Math.max(1, Number(state.width) || 1),
+            height: Math.max(1, Number(state.height) || 1),
+            scale: Number((graphView() || {}).scale) || 1
+        };
+    } // CHANGE: bed badges anchor to the rendered mxGraph state, including zoom/pan.
+
+    function cellVisualBounds(cell, host) {
+        const shared = graph.__trellisTaskUi;
+        if (shared && typeof shared.getCellVisualBounds === "function") {
+            const bounds = shared.getCellVisualBounds(cell, host || graph.container);
+            if (bounds) {
+                return {
+                    left: Number(bounds.x) || 0,
+                    top: Number(bounds.y) || 0,
+                    width: Math.max(1, Number(bounds.width) || 1),
+                    height: Math.max(1, Number(bounds.height) || 1),
+                    scale: Number((graphView() || {}).scale) || 1
+                };
+            }
+        }
+        const view = graphView();
+        const state = view && typeof view.getState === "function" ? view.getState(cell) : null;
+        return stateHostBounds(cell, state, host || graph.container);
+    } // CHANGE: reuse shared visual bounds when present so rotated beds stay anchored.
+
+    function cellContainerRect(cell, host) {
+        const visual = cellVisualBounds(cell, host);
+        if (visual) return visual;
+        const geo = cell && cell.getGeometry ? cell.getGeometry() : null;
+        const view = graphView() || {};
+        const scale = Number(view.scale) || 1;
+        const origin = graphOriginForCell(model.getParent ? model.getParent(cell) : null);
+        const point = graphPointToContainer(origin.x + Number(geo && geo.x || 0), origin.y + Number(geo && geo.y || 0));
+        return {
+            left: point.left,
+            top: point.top,
+            width: Math.max(1, Number(geo && geo.width || 1) * scale),
+            height: Math.max(1, Number(geo && geo.height || 1) * scale),
+            scale
+        };
+    } // CHANGE: bed badges are positioned inside the graph overlay layer.
 
     function cellScreenRect(cell) {
         const geo = cell && cell.getGeometry ? cell.getGeometry() : null;
@@ -575,6 +682,74 @@ Draw.loadPlugin(function (ui) {
         try { return JSON.stringify(out); } catch (_) { return ""; }
     }
 
+    function stableSignatureValue(value, depth, seen) {
+        if (value == null) return null;
+        if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value;
+        if (typeof value !== "object") return String(value || "");
+        if (value.getId || value.getAttribute) return { cellId: cellId(value) };
+        if ((depth || 0) > 8) return "[depth]";
+        const prior = seen || [];
+        if (prior.includes(value)) return "[circular]";
+        const nextSeen = prior.concat([value]);
+        if (Array.isArray(value)) return value.map(item => stableSignatureValue(item, (depth || 0) + 1, nextSeen));
+        const out = {};
+        Object.keys(value).sort().forEach(key => {
+            if (key === "cell" || key === "parent" || key === "children") return;
+            const child = value[key];
+            if (typeof child === "function") return;
+            out[key] = stableSignatureValue(child, (depth || 0) + 1, nextSeen);
+        });
+        return out;
+    }
+
+    function stableSignature(value) {
+        try { return JSON.stringify(stableSignatureValue(value, 0, [])); } catch (_) { return ""; }
+    }
+
+    function geometrySignature(cell) {
+        const geo = cell && cell.getGeometry && cell.getGeometry();
+        return geo ? {
+            x: Number(geo.x) || 0,
+            y: Number(geo.y) || 0,
+            width: Number(geo.width) || 0,
+            height: Number(geo.height) || 0
+        } : null;
+    }
+
+    function bedSignature(bed) {
+        const attrs = {};
+        BED_PROFILE_ATTRS.forEach(key => {
+            const value = String(getAttr(bed, key) || "").trim();
+            if (value) attrs[key] = value;
+        });
+        return { id: cellId(bed), label: String(getAttr(bed, "label") || ""), geometry: geometrySignature(bed), attrs };
+    }
+
+    function schedulerDefaultsSignature(scheduler) {
+        try {
+            if (scheduler && typeof scheduler.getAllocationDefaultsVersion === "function") return String(scheduler.getAllocationDefaultsVersion() || "");
+            return String(scheduler && (scheduler.allocationDefaultsVersion || scheduler.defaultsVersion) || "");
+        } catch (_) {
+            return "";
+        }
+    }
+
+    function buildScheduleCacheSignature(state) {
+        return stableSignature({
+            version: SCHEDULE_CACHE_VERSION,
+            moduleId: cellId(state && state.moduleCell),
+            year: Number(state && state.year) || 0,
+            plan: state && state.plan || null,
+            beds: (state && state.beds || []).map(bedSignature).sort((a, b) => a.id.localeCompare(b.id)),
+            occupancy: (state && state.occupancy || []).map(item => stableSignatureValue(item, 0, [])).sort((a, b) => stableSignature(a).localeCompare(stableSignature(b))),
+            schedulerDefaults: schedulerDefaultsSignature(window.USL && window.USL.scheduler)
+        });
+    }
+
+    function clonePlain(value) {
+        try { return JSON.parse(JSON.stringify(value == null ? null : value)); } catch (_) { return null; }
+    }
+
     function occupancySignature(state) {
         return (state && state.occupancy || []).map(item => [item && item.groupId || item && item.id || "", item && item.entryISO || "", item && item.harvestEndISO || ""].join(":"))
             .sort()
@@ -913,6 +1088,85 @@ Draw.loadPlugin(function (ui) {
 
     const AllocateController = (() => {
         let session = null;
+        const scheduleCache = new Map(); // CHANGE: session-only cache makes unchanged Allocate reopen instant.
+
+        function cacheKeyForState(state) {
+            return state && state.scheduleCacheSignature || "";
+        }
+
+        function restoreCachedSchedule(state) {
+            const key = cacheKeyForState(state);
+            const cached = key && scheduleCache.get(key);
+            if (!state || !cached) return false;
+            const schedule = clonePlain(cached.actionSchedule);
+            const progress = clonePlain(cached.scheduleProgress);
+            if (!schedule || !progress) return false;
+            state.actionSchedule = refreshActionSchedule(Object.assign(emptyActionSchedule(), schedule));
+            state.scheduleProgress = Object.assign(createScheduleProgress("complete", progress.totalRows), progress, {
+                phase: "complete",
+                error: "",
+                finishedAt: Date.now ? Date.now() : 0
+            });
+            state.weekIndex = Number.isFinite(Number(cached.weekIndex)) ? Number(cached.weekIndex) : state.weekIndex;
+            applyScheduleModel(state);
+            return true;
+        }
+
+        function cacheCompletedSchedule(state) {
+            const key = cacheKeyForState(state);
+            if (!state || !key || state.scheduleProgress && state.scheduleProgress.phase !== "complete") return;
+            scheduleCache.set(key, {
+                actionSchedule: clonePlain(state.actionSchedule),
+                scheduleProgress: clonePlain(state.scheduleProgress),
+                weekIndex: Number(state.weekIndex) || 0,
+                cachedAt: Date.now ? Date.now() : 0
+            });
+        }
+
+        function removeCreatedActionOptimistically(state, draft) {
+            const schedule = state && state.actionSchedule;
+            if (!schedule || !draft || !draft.crop) return;
+            const cropId = String(draft.crop.cropId || draft.crop.id || "");
+            const actionStartISO = String(draft.actionStartISO || draft.lifecycle && (draft.lifecycle.startISO || draft.lifecycle.primaryDateISO) || "");
+            const targetDemandStartISO = String(draft.targetDemandStartISO || "");
+            schedule.actions = (schedule.actions || []).filter(row => {
+                if (cropId && String(row.cropId || row.crop && (row.crop.cropId || row.crop.id) || "") !== cropId) return true;
+                if (actionStartISO && String(row.actionStartISO || "") !== actionStartISO) return true;
+                if (targetDemandStartISO && String(row.targetDemandStartISO || "") !== targetDemandStartISO) return true;
+                return false;
+            });
+            refreshActionSchedule(schedule);
+            applyScheduleModel(state);
+        }
+
+        function beginBackgroundStateRefresh(state, options = {}) {
+            if (!state || state.closed) return;
+            const previousCropId = String(options.previousCropId || state.selectedCropId || "");
+            cancelDeferred(state.refreshTimer);
+            state.scheduleProgress = createScheduleProgress("refreshing", state.scheduleRows && state.scheduleRows.length || 0);
+            state.noticeMessage = "";
+            renderHud(state);
+            const refreshId = (Number(state.refreshJobId) || 0) + 1;
+            state.refreshJobId = refreshId;
+            state.refreshTimer = defer(async function () {
+                state.refreshTimer = null;
+                try {
+                    if (state.closed || state.refreshJobId !== refreshId) return;
+                    await loadState(state);
+                    if (state.closed || state.refreshJobId !== refreshId) return;
+                    state.selectedCropId = opportunityContainsCrop(state.opportunityModel, previousCropId) ? previousCropId : "";
+                    renderHud(state);
+                    if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
+                    else scheduleOverlayEvaluation(state);
+                } catch (err) {
+                    if (state.closed || state.refreshJobId !== refreshId) return;
+                    state.scheduleProgress.phase = "failed";
+                    state.scheduleProgress.error = err && err.message ? err.message : String(err || "Refresh failed.");
+                    state.scheduleProgress.finishedAt = Date.now ? Date.now() : 0;
+                    renderHud(state);
+                }
+            }, 0);
+        }
 
         function cancelSowWeekScheduleJob(state, phase) {
             if (!state) return;
@@ -949,6 +1203,7 @@ Draw.loadPlugin(function (ui) {
                 state.scheduleProgress.phase = "complete";
                 state.scheduleProgress.finishedAt = Date.now ? Date.now() : 0;
                 renderScheduleProgress(state);
+                cacheCompletedSchedule(state);
                 logAllocationDebugSnapshot(state, "open");
             } catch (err) {
                 if (state.closed || jobId !== state.scheduleJobId) return;
@@ -971,6 +1226,7 @@ Draw.loadPlugin(function (ui) {
             renderHud(state);
             if (!rows.length) {
                 state.scheduleProgress.finishedAt = Date.now ? Date.now() : 0;
+                cacheCompletedSchedule(state);
                 logAllocationDebugSnapshot(state, "open");
                 return null;
             }
@@ -986,17 +1242,27 @@ Draw.loadPlugin(function (ui) {
         function scheduleStateRefresh(state) {
             if (!state || state.closed) return;
             cancelSowWeekScheduleJob(state, "cancelled");
+            const refreshId = (Number(state.refreshJobId) || 0) + 1;
+            state.refreshJobId = refreshId;
             state.draft = null;
             renderHud(state);
             cancelDeferred(state.refreshTimer);
             state.refreshTimer = defer(async function () {
                 state.refreshTimer = null;
-                if (state.closed) return;
-                await loadState(state);
-                if (state.closed) return;
-                renderHud(state);
-                if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
-                else scheduleOverlayEvaluation(state);
+                try {
+                    if (state.closed || state.refreshJobId !== refreshId) return;
+                    await loadState(state);
+                    if (state.closed || state.refreshJobId !== refreshId) return;
+                    renderHud(state);
+                    if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
+                    else scheduleOverlayEvaluation(state);
+                } catch (err) {
+                    if (state.closed || state.refreshJobId !== refreshId) return;
+                    state.scheduleProgress.phase = "failed";
+                    state.scheduleProgress.error = err && err.message ? err.message : String(err || "Refresh failed.");
+                    state.scheduleProgress.finishedAt = Date.now ? Date.now() : 0;
+                    renderHud(state);
+                }
             }, 150);
         }
 
@@ -1034,6 +1300,8 @@ Draw.loadPlugin(function (ui) {
                 scheduleJobId: 0,
                 scheduleTimer: null,
                 refreshTimer: null,
+                refreshJobId: 0,
+                scheduleCacheSignature: "",
                 lifecycleCache: new Map(),
                 bedResultCache: new Map(),
                 opportunityModel: null,
@@ -1053,7 +1321,10 @@ Draw.loadPlugin(function (ui) {
             renderHud(state);
             await loadState(state);
             renderHud(state);
-            if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
+            const restored = !state.message && restoreCachedSchedule(state);
+            renderHud(state);
+            if (restored) scheduleOverlayEvaluation(state);
+            else if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
             else scheduleOverlayEvaluation(state);
             installListeners(state);
             return state;
@@ -1085,6 +1356,7 @@ Draw.loadPlugin(function (ui) {
             state.coverage = planning.computeYearCoverage({ moduleCell: state.moduleCell, year: state.year, plan: state.plan });
             state.beds = tiler.listGardenBeds(state.moduleCell);
             state.occupancy = typeof tiler.listPlantingFootprints === "function" ? tiler.listPlantingFootprints(state.moduleCell, { year: state.year, includeUndatedOccupancy: false }) : [];
+            state.scheduleCacheSignature = buildScheduleCacheSignature(state);
             resetScheduleCaches(state);
             state.scheduleRows = demandShortageRows(state.plan, state.coverage);
             state.actionSchedule = emptyActionSchedule();
@@ -1143,21 +1415,104 @@ Draw.loadPlugin(function (ui) {
             return panel;
         }
 
-        function renderHud(state) {
-            const panel = state.hud;
-            if (!panel) return;
-            const bedContext = currentBedContext(state);
-            const progressText = scheduleProgressText(state);
-            panel.style.display = state.message || state.noticeMessage || bedContext || state.opportunityModel || progressText ? "flex" : "none";
+        function showHudNode(node, visible, display) {
+            if (node) node.style.display = visible ? (display || "") : "none";
+        }
+
+        function optionSignature(items) {
+            return (items || []).map(item => [item.group || "", item.value || "", item.label || "", item.disabled ? "1" : "0"].join("\u0001")).join("\u0002");
+        }
+
+        function clearSelectOptions(select) {
+            select.innerHTML = "";
+        }
+
+        function buildWeekOptionItems(state) {
+            const weeks = state.opportunityModel && state.opportunityModel.actionableWeekIndices && state.opportunityModel.actionableWeekIndices.length
+                ? state.opportunityModel.actionableWeekIndices
+                : [state.weekIndex];
+            return weeks.map(weekIndex => ({
+                value: String(weekIndex),
+                label: buildWeekOptionLabel(state, weekIndex),
+                disabled: false
+            }));
+        } // CHANGE: stable HUD rendering compares week options before touching the focused select.
+
+        function buildCropOptionGroups(state) {
+            function cropItem(group, row, disabled) {
+                return {
+                    group,
+                    value: row.cropId,
+                    label: row.label + (row.shortKg > EPS ? " - " + formatKg(row.shortKg) + " short" : "") + (row.unresolvedReason ? " - " + row.unresolvedReason : ""),
+                    disabled: !!disabled
+                };
+            }
+            const model = state.opportunityModel || { actionable: [], unresolved: [], satisfied: [] };
+            return [
+                { label: "", items: [{ group: "", value: "", label: "Select crop...", disabled: false }] },
+                { label: "Sow/start this week", items: (model.actionable || []).map(row => cropItem("Sow/start this week", row, false)) },
+                { label: "Unresolved future demand", items: (model.unresolved || []).map(row => cropItem("Unresolved future demand", row, true)) },
+                { label: "Already satisfied", items: (model.satisfied || []).map(row => cropItem("Already satisfied", row, true)) }
+            ];
+        } // CHANGE: crop option signatures include group, label, value, and disabled state.
+
+        function updateWeekSelectOptions(select, state) {
+            const items = buildWeekOptionItems(state);
+            const signature = optionSignature(items);
+            if (select.__trellisOptionSignature !== signature) {
+                clearSelectOptions(select);
+                items.forEach(item => {
+                    const opt = document.createElement("option");
+                    opt.value = item.value;
+                    opt.textContent = item.label;
+                    opt.disabled = !!item.disabled;
+                    select.appendChild(opt);
+                });
+                select.__trellisOptionSignature = signature;
+            }
+            const value = String(state.weekIndex);
+            if (items.some(item => item.value === value)) select.value = value;
+        }
+
+        function updateCropSelectOptions(select, state) {
+            const groups = buildCropOptionGroups(state);
+            const signature = groups.map(group => group.label + "\u0003" + optionSignature(group.items)).join("\u0004");
+            if (select.__trellisOptionSignature !== signature) {
+                clearSelectOptions(select);
+                groups.forEach(group => {
+                    if (!group.label) {
+                        group.items.forEach(item => {
+                            const opt = document.createElement("option");
+                            opt.value = item.value;
+                            opt.textContent = item.label;
+                            opt.disabled = !!item.disabled;
+                            select.appendChild(opt);
+                        });
+                        return;
+                    }
+                    const optgroup = document.createElement("optgroup");
+                    optgroup.label = group.label;
+                    group.items.forEach(item => {
+                        const opt = document.createElement("option");
+                        opt.value = item.value;
+                        opt.textContent = item.label;
+                        opt.disabled = !!item.disabled;
+                        optgroup.appendChild(opt);
+                    });
+                    select.appendChild(optgroup);
+                });
+                select.__trellisOptionSignature = signature;
+            }
+            select.value = state.selectedCropId;
+        }
+
+        function ensureHudRefs(state, panel) {
+            if (state.hudRefs) return state.hudRefs;
             panel.innerHTML = "";
             const header = document.createElement("div");
             header.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;";
             const title = document.createElement("div");
-            title.style.cssText = "font-weight:700;";
-            title.textContent = bedContext
-                ? ((getAttr(bedContext.bed, "label") || "Garden bed") + " - " + state.year + (bedContext.planting ? "\n" + (getAttr(bedContext.planting, "label") || getAttr(bedContext.planting, "plant_name") || "Planting") : ""))
-                : "Allocate - " + state.year;
-            title.style.whiteSpace = "pre-line";
+            title.style.cssText = "font-weight:700;white-space:pre-line;";
             const closeBtn = createButton("Close");
             closeBtn.addEventListener("click", () => close("user"));
             header.appendChild(title);
@@ -1166,22 +1521,12 @@ Draw.loadPlugin(function (ui) {
 
             const status = document.createElement("div");
             status.style.cssText = "line-height:1.35;color:#374151;";
-            if (state.message) status.textContent = state.message;
-            else if (state.coverage && state.coverage.totals) status.textContent = formatKg(state.coverage.totals.shortKg) + " unmet of " + formatKg(state.coverage.totals.targetKg) + " demand" + (state.noticeMessage ? " - " + state.noticeMessage : "");
-            else status.textContent = "Loading Allocate...";
             panel.appendChild(status);
 
-            if (progressText) {
-                const progress = document.createElement("div");
-                progress.style.cssText = "font-size:11px;line-height:1.3;color:#4b5563;";
-                progress.textContent = progressText;
-                panel.appendChild(progress);
-            }
+            const progress = document.createElement("div");
+            progress.style.cssText = "font-size:11px;line-height:1.3;color:#4b5563;";
+            panel.appendChild(progress);
 
-            if (state.message) return;
-            if (!state.coverage) return;
-
-            const week = selectedWeek(state);
             const weekRow = document.createElement("div");
             weekRow.style.cssText = "display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center;";
             const prev = createButton("<");
@@ -1189,8 +1534,6 @@ Draw.loadPlugin(function (ui) {
             const weekSelect = document.createElement("select");
             weekSelect.title = "Select sow/start week";
             weekSelect.style.cssText = "width:100%;min-width:0;box-sizing:border-box;font-weight:700;";
-            appendWeekOptions(weekSelect, state);
-            weekSelect.value = String(state.weekIndex);
             weekSelect.addEventListener("change", function () {
                 void selectWeek(state, Number(weekSelect.value));
             });
@@ -1201,12 +1544,12 @@ Draw.loadPlugin(function (ui) {
             weekRow.appendChild(next);
             panel.appendChild(weekRow);
 
-            renderUnresolvedReasons(state, panel);
+            const unresolvedBox = document.createElement("div");
+            unresolvedBox.style.cssText = "border:1px solid #fed7aa;border-radius:6px;background:#fff7ed;color:#92400e;padding:7px;display:flex;flex-direction:column;gap:3px;line-height:1.3;";
+            panel.appendChild(unresolvedBox);
 
             const cropSelect = document.createElement("select");
             cropSelect.style.cssText = "width:100%;box-sizing:border-box;";
-            appendCropOptions(cropSelect, state);
-            cropSelect.value = state.selectedCropId;
             cropSelect.addEventListener("change", function () {
                 state.selectedCropId = String(cropSelect.value || "");
                 state.draft = null;
@@ -1217,62 +1560,61 @@ Draw.loadPlugin(function (ui) {
 
             const draftBox = document.createElement("div");
             draftBox.style.cssText = "border:1px solid #e5e7eb;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:5px;background:#f9fafb;";
-            renderDraftSummary(state, draftBox);
             panel.appendChild(draftBox);
 
             const actions = document.createElement("div");
             actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
             const rotate = createButton("Rotate", "open");
-            rotate.disabled = !state.draft || !state.draft.geometry;
             rotate.addEventListener("click", () => rotateDraft(state));
             const create = createButton("Review Schedule", "add"); // CHANGE: HUD action opens review/configuration before committing.
-            create.disabled = !state.draft || state.draft.status === "structural_failure" || state.draft.status === "unavailable";
             create.addEventListener("click", () => beginCreate(state));
             actions.appendChild(rotate);
             actions.appendChild(create);
             panel.appendChild(actions);
+
+            state.hudRefs = { title, status, progress, weekRow, prev, weekSelect, next, unresolvedBox, cropSelect, draftBox, actions, rotate, create }; // CHANGE: keep HUD controls stable across progress renders.
+            return state.hudRefs;
         }
 
-        function appendCropOptions(select, state) {
-            function group(label, rows, disabled) {
-                const optgroup = document.createElement("optgroup");
-                optgroup.label = label;
-                rows.forEach(row => {
-                    const opt = document.createElement("option");
-                    opt.value = row.cropId;
-                    opt.textContent = row.label + (row.shortKg > EPS ? " - " + formatKg(row.shortKg) + " short" : "") + (row.unresolvedReason ? " - " + row.unresolvedReason : "");
-                    opt.disabled = !!disabled;
-                    optgroup.appendChild(opt);
-                });
-                select.appendChild(optgroup);
-            }
-            const placeholder = document.createElement("option");
-            placeholder.value = "";
-            placeholder.textContent = "Select crop...";
-            select.appendChild(placeholder);
-            const model = state.opportunityModel || { actionable: [], unresolved: [], satisfied: [] };
-            group("Sow/start this week", model.actionable || [], false);
-            group("Unresolved future demand", model.unresolved || [], true);
-            group("Already satisfied", model.satisfied || [], true);
+        function renderHud(state) {
+            const panel = state.hud;
+            if (!panel) return;
+            const refs = ensureHudRefs(state, panel);
+            const bedContext = currentBedContext(state);
+            const progressText = scheduleProgressText(state);
+            panel.style.display = state.message || state.noticeMessage || bedContext || state.opportunityModel || progressText ? "flex" : "none";
+            refs.title.textContent = bedContext
+                ? ((getAttr(bedContext.bed, "label") || "Garden bed") + " - " + state.year + (bedContext.planting ? "\n" + (getAttr(bedContext.planting, "label") || getAttr(bedContext.planting, "plant_name") || "Planting") : ""))
+                : "Allocate - " + state.year;
+
+            if (state.message) refs.status.textContent = state.message;
+            else if (state.coverage && state.coverage.totals) refs.status.textContent = formatKg(state.coverage.totals.shortKg) + " unmet of " + formatKg(state.coverage.totals.targetKg) + " demand" + (state.noticeMessage ? " - " + state.noticeMessage : "");
+            else refs.status.textContent = "Loading Allocate...";
+
+            refs.progress.textContent = progressText;
+            showHudNode(refs.progress, !!progressText);
+
+            const hasControls = !state.message && !!state.coverage;
+            showHudNode(refs.weekRow, hasControls, "grid");
+            showHudNode(refs.unresolvedBox, hasControls && !!(state.opportunityModel && state.opportunityModel.unresolved && state.opportunityModel.unresolved.length), "flex");
+            showHudNode(refs.cropSelect, hasControls);
+            showHudNode(refs.draftBox, hasControls, "flex");
+            showHudNode(refs.actions, hasControls, "flex");
+            if (!hasControls) return;
+
+            updateWeekSelectOptions(refs.weekSelect, state);
+            renderUnresolvedReasons(state, refs.unresolvedBox);
+            updateCropSelectOptions(refs.cropSelect, state);
+            renderDraftSummary(state, refs.draftBox);
+
+            refs.rotate.disabled = !state.draft || !state.draft.geometry;
+            refs.create.disabled = !state.draft || state.draft.status === "structural_failure" || state.draft.status === "unavailable";
         }
 
-        function appendWeekOptions(select, state) {
-            const weeks = state.opportunityModel && state.opportunityModel.actionableWeekIndices && state.opportunityModel.actionableWeekIndices.length
-                ? state.opportunityModel.actionableWeekIndices
-                : [state.weekIndex];
-            weeks.forEach(weekIndex => {
-                const opt = document.createElement("option");
-                opt.value = String(weekIndex);
-                opt.textContent = buildWeekOptionLabel(state, weekIndex);
-                select.appendChild(opt);
-            });
-        } // CHANGE: replace step-only week navigation with direct shortage-week navigation.
-
-        function renderUnresolvedReasons(state, panel) {
+        function renderUnresolvedReasons(state, box) {
             const unresolved = state.opportunityModel && state.opportunityModel.unresolved || [];
             if (!unresolved.length) return;
-            const box = document.createElement("div");
-            box.style.cssText = "border:1px solid #fed7aa;border-radius:6px;background:#fff7ed;color:#92400e;padding:7px;display:flex;flex-direction:column;gap:3px;line-height:1.3;";
+            box.innerHTML = "";
             const title = document.createElement("div");
             title.style.cssText = "font-weight:700;";
             title.textContent = "Unresolved future demand";
@@ -1287,7 +1629,6 @@ Draw.loadPlugin(function (ui) {
                 more.textContent = "+" + (unresolved.length - 5) + " more";
                 box.appendChild(more);
             }
-            panel.appendChild(box);
         }
 
         function renderDraftSummary(state, box) {
@@ -1338,12 +1679,16 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE: dropdown and step buttons share the same week-change behavior.
 
         function createOverlayHost() {
-            const host = document.createElement("div");
-            host.className = "trellis-allocate-overlay-layer";
-            host.style.cssText = "position:fixed;left:0;top:0;right:0;bottom:0;z-index:" + (HUD_Z - 50) + ";pointer-events:none;font:12px Arial,sans-serif;";
-            (document.body || graph.container).appendChild(host);
+            const layer = ensureGraphOverlayHtmlLayer("control") || graph.container || document.body;
+            let host = layer && layer.querySelector ? layer.querySelector(".trellis-allocate-overlay-layer") : null;
+            if (!host) {
+                host = document.createElement("div");
+                host.className = "trellis-allocate-overlay-layer";
+                host.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font:12px Arial,sans-serif;";
+                if (layer && layer.appendChild) layer.appendChild(host);
+            }
             return host;
-        }
+        } // CHANGE: Allocate bed controls now live on the graph control layer instead of the document body.
 
         function scheduleOverlayEvaluation(state) {
             const version = ++state.overlayVersion;
@@ -1387,7 +1732,6 @@ Draw.loadPlugin(function (ui) {
         }
 
         function renderBedOverlay(state, bed, modelValue) {
-            const rect = cellScreenRect(bed);
             let node = state.overlayHost.querySelector('[data-bed-id="' + cellId(bed) + '"]');
             if (!node) {
                 node = document.createElement("button");
@@ -1401,14 +1745,37 @@ Draw.loadPlugin(function (ui) {
                 });
                 state.overlayHost.appendChild(node);
             }
+            node.__allocateBedCell = bed; // CHANGE: view-only refreshes can reposition badges without recomputing fit.
             node.__allocateResult = modelValue.result || null;
             node.textContent = modelValue.label;
-            node.style.left = Math.round(rect.left + 6) + "px";
-            node.style.top = Math.round(rect.top + 6) + "px";
+            positionBedOverlayNode(state, node, bed);
             node.style.border = modelValue.tone === "good" ? "1px solid #188038" : (modelValue.tone === "warn" ? "1px solid #d97706" : "1px solid #b91c1c");
             node.style.background = modelValue.tone === "good" ? "#f0fff4" : (modelValue.tone === "warn" ? "#fffbeb" : "#fff7ed");
             node.style.color = modelValue.tone === "good" ? "#166534" : "#92400e";
         }
+
+        function positionBedOverlayNode(state, node, bed) {
+            const rect = cellContainerRect(bed, state && state.overlayHost);
+            if (!node || !rect) return false;
+            node.style.left = Math.round(rect.left + 6) + "px";
+            node.style.top = Math.round(rect.top + 6) + "px";
+            return true;
+        } // CHANGE: bed badges stay pinned inside the bed's rendered top-left corner.
+
+        function repositionBedOverlays(state) {
+            if (!state || !state.overlayHost || !state.overlayHost.querySelectorAll) return;
+            const byId = new Map((state.beds || []).map(bed => [cellId(bed), bed]));
+            Array.from(state.overlayHost.querySelectorAll("[data-bed-id]")).forEach(node => {
+                const bed = node.__allocateBedCell || byId.get(node.getAttribute("data-bed-id"));
+                if (bed) positionBedOverlayNode(state, node, bed);
+            });
+        } // CHANGE: zoom/pan updates move existing badges instead of rebuilding recommendations.
+
+        function repositionGraphOverlays(state) {
+            if (!state || state.closed) return;
+            repositionBedOverlays(state);
+            renderGhost(state);
+        } // CHANGE: view-only changes keep Allocate DOM overlays attached to graph content.
 
         function setDraft(state, result) {
             state.draft = Object.assign({}, result, {
@@ -1448,11 +1815,11 @@ Draw.loadPlugin(function (ui) {
             const d = state.draft;
             if (!d || !d.geometry || !d.geometry.geometry) return;
             const geo = d.geometry.geometry;
-            const screen = graphPointToScreen(geo.x, geo.y); // CHANGE: proposal geometry is already in graph coordinates.
+            const screen = graphPointToContainer(geo.x, geo.y); // CHANGE: proposal geometry is already in graph coordinates and rendered graph-locally.
             const scale = screen.scale || 1;
             const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
             svg.setAttribute("class", "trellis-allocate-ghost");
-            svg.style.cssText = "position:fixed;left:" + Math.round(screen.left) + "px;top:" + Math.round(screen.top) + "px;width:" + Math.round(geo.width * scale) + "px;height:" + Math.round(geo.height * scale) + "px;z-index:" + (HUD_Z - 40) + ";pointer-events:none;overflow:visible;";
+            svg.style.cssText = "position:absolute;left:" + Math.round(screen.left) + "px;top:" + Math.round(screen.top) + "px;width:" + Math.round(geo.width * scale) + "px;height:" + Math.round(geo.height * scale) + "px;pointer-events:none;overflow:visible;";
             svg.setAttribute("viewBox", "0 0 " + geo.width + " " + geo.height);
             const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
             rect.setAttribute("x", "0");
@@ -1484,7 +1851,7 @@ Draw.loadPlugin(function (ui) {
                     svg.appendChild(c);
                 });
             }
-            (document.body || graph.container).appendChild(svg);
+            (ensureGraphOverlayHtmlLayer("annotation") || state.overlayHost || graph.container || document.body).appendChild(svg); // CHANGE: ghost previews use the graph annotation layer.
             state.ghost = svg;
         }
 
@@ -1682,11 +2049,11 @@ Draw.loadPlugin(function (ui) {
                 operation();
             }
             cancelSowWeekScheduleJob(state, "cancelled");
-            await loadState(state);
-            state.selectedCropId = opportunityContainsCrop(state.opportunityModel, previousCropId) ? previousCropId : "";
-            renderHud(state);
-            if (!state.message && state.scheduleRows && state.scheduleRows.length) startSowWeekScheduleJob(state);
-            else scheduleOverlayEvaluation(state);
+            state.draft = null;
+            state.selectedBedId = "";
+            state.selectedCropId = "";
+            removeCreatedActionOptimistically(state, draft);
+            beginBackgroundStateRefresh(state, { previousCropId });
         }
 
         function installListeners(state) {
@@ -1701,6 +2068,9 @@ Draw.loadPlugin(function (ui) {
                 if (state.closed) return;
                 renderHud(state);
                 scheduleOverlayEvaluation(state);
+            };
+            const viewRefresh = function () {
+                repositionGraphOverlays(state);
             };
             if (graph.addListener && typeof mxEvent !== "undefined") {
                 graph.addListener(mxEvent.CELLS_MOVED, refresh);
@@ -1718,6 +2088,17 @@ Draw.loadPlugin(function (ui) {
                     if (selectionModel.removeListener) selectionModel.removeListener(selectionRefresh);
                 });
             }
+            const view = graphView();
+            if (view && view.addListener && typeof mxEvent !== "undefined") {
+                [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE, mxEvent.REPAINT].filter(Boolean).forEach(eventName => view.addListener(eventName, viewRefresh));
+                state.cleanups.push(function () {
+                    if (view.removeListener) view.removeListener(viewRefresh);
+                });
+            } // CHANGE: zoom/pan/repaint only reposition existing Allocate overlays.
+            if (graph.container && graph.container.addEventListener) {
+                graph.container.addEventListener("scroll", viewRefresh);
+                state.cleanups.push(function () { if (graph.container && graph.container.removeEventListener) graph.container.removeEventListener("scroll", viewRefresh); });
+            } // CHANGE: graph-container scroll keeps DOM badges glued to their rendered beds.
             window.addEventListener("resize", layoutRefresh);
             state.cleanups.push(function () { window.removeEventListener("resize", layoutRefresh); });
         }
@@ -1756,8 +2137,13 @@ Draw.loadPlugin(function (ui) {
             scheduleProgressText,
             progressIsActive,
             graphPointToScreen,
+            graphPointToContainer,
+            cellContainerRect,
+            cellVisualBounds,
             computeBedResult,
             partialAllocationWarning,
+            buildScheduleCacheSignature,
+            stableSignature,
             resolveCropMethodContext,
             reviewKey,
             methodBedEntryLabel

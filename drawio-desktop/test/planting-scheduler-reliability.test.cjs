@@ -226,7 +226,7 @@ function makeInputs({
         policy: policy || new hooks.PolicyFlags({
             useSpringFrostGate: false,
             useSoilTempGate: false,
-            overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
+            overwinterAllowed: hooks.requiresOverwinterSchedule(plant)
         }),
         seasonStartYear,
         harvestWindowDays,
@@ -285,7 +285,7 @@ function makeAutoWindowParams({
         useSpringFrostGate: false,
         lastSpringFrostDOY: city.last_spring_frost_p50_doy || city.last_spring_frost_doy || 1,
         daysTransplant: Number(plant.days_transplant || 0),
-        overwinterAllowed: plant.overwinter_ok === 1,
+        overwinterAllowed: hooks.requiresOverwinterSchedule(plant),
         plantMetadata: plant,
         cityLatitudeDeg: Number.isFinite(Number(city.latitude)) ? Number(city.latitude) : null,
         bedProfile,
@@ -536,6 +536,61 @@ test('lifecycle timeline shows annual direct sow and harvest milestones', () => 
     assert.equal(model.visibleMilestones.find(m => m.stage === 'HARVEST_START').iso, '2026-05-01');
     assert.equal(model.visibleMilestones.find(m => m.stage === 'HARVEST_END').iso, '2026-05-08');
     assert.equal(model.visibleMilestones.find(m => m.stage === 'HARVEST_START').tooltip, 'HS - First harvest: 2026-05-01');
+});
+
+test('spring annual timeline stays in the selected year even when crop is winter-hardy', () => {
+    const plant = makePlant({ plant_name: 'Lettuce', overwinter_ok: 0, killtemp_c: -5, tmin_c: 4 });
+    const result = hooks.computeScheduleResult(makeInputs({ plant }));
+    const model = hooks.buildLifecycleTimelineViewModel({
+        plant,
+        seasonStartYear: 2026,
+        startISO: '2026-04-01',
+        scheduleResult: result
+    });
+    assert.equal(model.bounds.startISO, '2026-01-01');
+    assert.equal(model.bounds.endISO, '2026-12-31');
+    assert.equal(model.bounds.multiYear, false);
+    assert.equal(hooks.requiresOverwinterSchedule(plant), false);
+});
+
+test('fall overwinter-required crop timeline extends from the selected cross-year result', () => {
+    const plant = makePlant({
+        plant_name: 'Garlic',
+        days_maturity: 240,
+        gdd_to_maturity: null,
+        overwinter_ok: 1,
+        start_cooling_threshold_c: 12
+    });
+    const city = makeSeasonalCity({
+        1: 2, 2: 3, 3: 8, 4: 12, 5: 18, 6: 22,
+        7: 24, 8: 22, 9: 16, 10: 10, 11: 5, 12: 2
+    });
+    const result = hooks.computeScheduleResult(makeInputs({
+        plant,
+        city,
+        startISO: '2026-10-25',
+        seasonEndISO: '2027-12-31'
+    }));
+    const model = hooks.buildLifecycleTimelineViewModel({
+        plant,
+        seasonStartYear: 2026,
+        startISO: '2026-10-25',
+        scheduleResult: result
+    });
+    assert.equal(hooks.requiresOverwinterSchedule(plant), true);
+    assert.equal(hooks.isSelectedScheduleOverwintered({ scheduleResult: result, seasonStartYear: 2026, startISO: '2026-10-25' }), true);
+    assert.equal(model.bounds.startISO, '2026-01-01');
+    assert.equal(model.bounds.endISO, result.rows[0].harvEnd);
+    assert.equal(model.bounds.multiYear, true);
+});
+
+test('winter-survivable annuals do not require overwinter metadata', () => {
+    const spinach = makePlant({ plant_name: 'Spinach', overwinter_ok: 0, killtemp_c: -8, tmin_c: 2, days_maturity: 45 });
+    const broadBean = makePlant({ plant_name: 'Broad Bean', overwinter_ok: 0, killtemp_c: -8, tmin_c: 3, days_maturity: 95 });
+    assert.equal(hooks.requiresOverwinterSchedule(spinach), false);
+    assert.equal(hooks.requiresOverwinterSchedule(broadBean), false);
+    assert.equal(hooks.getPlantScanYears(spinach), 1);
+    assert.equal(hooks.getPlantScanYears(broadBean), 1);
 });
 
 test('lifecycle timeline exposes latest harvest as a separate non-task boundary', () => {
@@ -874,7 +929,7 @@ test('bed-aware soil model opens Vancouver sweet corn threshold by early June', 
     assert.ok(genericReady <= new Date('2026-06-10T00:00:00Z'));
 });
 
-test('wet shaded high-frost bed delays soil readiness', () => {
+test('shaded slow-draining clay bed delays soil readiness', () => {
     const city = makeVancouverCity();
     const monthly = city.calibratedMonthlyMeans(2026);
     const genericReady = hooks.firstSoilReadyDate({
@@ -885,7 +940,7 @@ test('wet shaded high-frost bed delays soil readiness', () => {
         monthlyAvgTemp: monthly,
         scanStart: new Date('2026-01-01T00:00:00Z'),
         scanEndHard: new Date('2026-12-31T00:00:00Z'),
-        bedProfile: { sunExposure: 'shade', soilMoisture: 'wet', drainage: 'slow', soilTexture: 'clay', windExposure: 'exposed', frostRisk: 'high' }
+        bedProfile: { sunExposure: 'shade', drainage: 'slow', soilTexture: 'clay', windExposure: 'exposed' }
     });
     assert.ok(genericReady);
     assert.ok(coldBedReady === null || coldBedReady > genericReady);
@@ -953,12 +1008,12 @@ test('daily GDD calibration scales GDD rates without changing climate temperatur
     assert.ok(Math.abs(rates.__diagnostics.cityBaseAnnualGdd * rates.__diagnostics.gddScale - 1000) < 0.5);
 });
 
-test('bed frost risk shifts frost gate independently from soil temperature', () => {
+test('season extension shifts frost gate independently from soil temperature', () => {
     const shared = hooks.sharedCore;
-    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'none' }), -3);
-    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'low' }), 0);
-    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'medium' }), 5);
-    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'high' }), 10);
+    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'high' }), 0);
+    assert.equal(shared.bedFrostGateShiftDays({ seasonExtension: 'row_cover' }), -3);
+    assert.equal(shared.bedFrostGateShiftDays({ seasonExtension: 'greenhouse' }), -21);
+    assert.equal(shared.bedFrostGateShiftDays({ seasonExtension: 'greenhouse', seasonExtensionFrostShiftDays: -12 }), -12);
 });
 
 test('corn-like annual December sowing is blocked when daily lows exceed cold-survival tolerance', () => {
@@ -1239,8 +1294,13 @@ test('thermal harvest and yield issues are warnings for selected-date schedules'
     const hot = hooks.computeScheduleResult(makeInputs({ plant: makePlant({ tmin_c: 0, tmax_c: 40 }), city: makeCity(50), startISO: '2026-01-01' }));
     assert.ok(hot.warnings.some(warning => warning.type === 'harvest_too_hot'), JSON.stringify(hot.warnings));
     const lowYieldPlant = makePlant({ tmin_c: 0, topt_low_c: 15, topt_high_c: 20, tmax_c: 40 });
+    const lowYieldMessage = 'Selected date predicts a 97% yield reduction (3% of normal yield), below your 50% minimum.'; // CHANGE: pin user-facing yield risk copy for warning and error paths.
     const lowYield = hooks.computeScheduleResult(makeInputs({ plant: lowYieldPlant, city: makeCity(39), startISO: '2026-01-01', minYieldMultiplier: 0.5 }));
-    assert.ok(lowYield.warnings.some(warning => warning.type === 'yield_multiplier_below_minimum'), JSON.stringify(lowYield.warnings));
+    assert.ok(lowYield.warnings.some(warning => warning.type === 'yield_multiplier_below_minimum' && warning.message === lowYieldMessage), JSON.stringify(lowYield.warnings)); // CHANGE: warning path uses improved copy.
+    assert.throws(
+        () => hooks.annualCore.computeAnnualScheduleResult(makeInputs({ plant: lowYieldPlant, city: makeCity(39), startISO: '2026-01-01', minYieldMultiplier: 0.5 })),
+        new RegExp(lowYieldMessage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    ); // CHANGE: direct core error path uses the same improved copy.
 });
 
 test('warning-tolerant annual schedule still blocks non-thermal gates', () => {
@@ -1264,7 +1324,7 @@ test('feasibility diagnostics include soil, bed, calibration, and failing gate s
     const inputs = new hooks.ScheduleInputs({
         plant, city, planningMode: 'direct_sow', methodCategoryId: 'direct_sow', methodId: 'direct_sow.field',
         startISO: '2026-01-01', seasonEndISO: '2026-12-31', policy, seasonStartYear: 2026, harvestWindowDays: 7,
-        bedProfile: { sunExposure: 'full_sun', soilMoisture: 'moderate', drainage: 'normal', soilTexture: 'loamy', windExposure: 'moderate', frostRisk: 'low' },
+        bedProfile: { sunExposure: 'full_sun', drainage: 'normal', soilTexture: 'loamy', windExposure: 'moderate' },
         bedProfileSource: 'garden bed bed1'
     });
     const rows = makeSegmentedFeasibilityRows([{ start: '2026-01-01', end: '2026-01-10', ok: false, reason: 'soil_gate' }]); // CHANGE
@@ -1905,9 +1965,12 @@ test('biennial scan window uses its configured lifespan', () => {
     const plant = makePlant({
         annual: 0,
         biennial: 1,
+        overwinter_ok: 0,
         lifespan_years: 2
     });
     assert.equal(hooks.getPlantScanYears(plant), 2);
+    assert.equal(hooks.isLifecycleMultiYearPlant(plant), true);
+    assert.equal(hooks.requiresOverwinterSchedule(plant), false);
 });
 
 test('lifespan-only perennial saves without maturity dates', () => {
@@ -3884,7 +3947,7 @@ test('schedule save requests selection overlay refresh after final graph refresh
     const source = fs.readFileSync(schedulerPath, 'utf8');
     assert.match(source, /function requestSelectionVisualsRefresh\(graph, cell\)/);
     assert.match(source, /new mxEventObject\('trellisSelectionVisualsRefresh', 'cell', cell\)/);
-    assert.match(source, /finalizeGraph:\s*async \(\) => \{[\s\S]*graph\.refresh\(cell\);[\s\S]*requestSelectionVisualsRefresh\(graph, cell\);/);
+    assert.match(source, /finalizeGraph:\s*async \(\) => \{[\s\S]*graph\.refresh\(appliedTargetCell \|\| cell\);[\s\S]*requestSelectionVisualsRefresh\(graph, appliedTargetCell \|\| cell\);/);
 });
 
 test('scheduler clears stale no-window warning after feasible crop recovery', () => {
