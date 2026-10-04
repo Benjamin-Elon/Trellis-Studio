@@ -60,3 +60,18 @@ test('Electron Builder configs expose Trellis Studio labels while preserving com
 	assert.equal(readBuilderConfig('electron-builder-linux-mac.json').linux.executableName, 'trellis-studio');
 	assert.equal(readBuilderConfig('electron-builder-snap.json').linux.executableName, 'trellis-studio');
 });
+
+test('Windows NSIS drawio file associations use the Trellis document icon', () => {
+	const windowsConfigs = [
+		'electron-builder-win.json',
+		'electron-builder-win32.json',
+		'electron-builder-win-arm64.json',
+	];
+
+	for (const fileName of windowsConfigs) {
+		const config = readBuilderConfig(fileName);
+		const diagramAssociation = config.fileAssociations?.find((association) => association.ext === 'drawio'); // CHANGE
+
+		assert.equal(diagramAssociation?.icon, 'icon.ico', `${fileName} drawio association must use the Trellis icon`); // CHANGE
+	}
+});

@@ -103,6 +103,23 @@ function makeCity(meanC = 20) {
     return new hooks.CityClimate(row);
 }
 
+function makeRecipeCity(id, name, meanC, attrs = {}) {
+    const row = Object.assign({
+        city_id: id,
+        city_name: name,
+        latitude: 45,
+        last_spring_frost_p50_doy: 100,
+        last_spring_frost_doy: 100,
+        first_fall_frost_p50_doy: 300,
+        first_fall_frost_doy: 300
+    }, attrs);
+    for (let month = 1; month <= 12; month += 1) {
+        row[`avg_monthly_high_c${month}`] = meanC + 2;
+        row[`avg_monthly_low_c${month}`] = meanC - 2;
+    }
+    return new hooks.CityClimate(row);
+}
+
 function makeSeasonalCity(monthlyMeans) {
     const row = {
         city_name: 'Seasonal Test City',
@@ -316,6 +333,22 @@ function makeAttributeCell(initial = {}) {
         value,
         getAttribute: value.getAttribute,
         attrs
+    };
+}
+
+function makeGardenModuleCell(id, attrs = {}, children = []) {
+    const cell = makeAttributeCell(Object.assign({ garden_module: '1', label: id }, attrs));
+    cell.id = id;
+    cell.children = children;
+    cell.getId = () => id;
+    return cell;
+}
+
+function makeModel(root) {
+    return {
+        getRoot: () => root,
+        getChildCount: cell => (cell.children || []).length,
+        getChildAt: (cell, index) => (cell.children || [])[index]
     };
 }
 
@@ -2548,6 +2581,14 @@ test('task template resolution uses cell, variety, plant, method, none precedenc
     }
 });
 
+test('plant task template rows match legacy method ids and recipe method metadata', async () => {
+    const model = hooks.TaskTemplateModel;
+    assert.equal(model._rowMatchesMethod({ method_id: 'direct_sow.field' }, 'direct_sow.field'), true);
+    assert.equal(model._rowMatchesMethod({ method_id: 'legacy.default', method_ids_json: '["direct_sow.field","transplant.indoor"]' }, 'direct_sow.field'), true);
+    assert.equal(model._rowMatchesMethod({ method_id: 'legacy.default', method_ids_json: '["transplant.indoor"]' }, 'direct_sow.field'), false);
+    assert.equal(model._rowMatchesMethod({ method_id: 'legacy.default', method_ids_json: 'not-json' }, 'direct_sow.field'), false);
+});
+
 test('purchased transplant built-in template backfills hardening off before transplant', async () => {
     const testWindow = hooks.__testWindow;
     const previousBridge = testWindow.dbBridge;
@@ -3031,6 +3072,229 @@ test('generated tasks include stable scheduler anchor and method metadata', asyn
     assert.equal(tasks[0].scheduler_method_id, 'transplant.indoor');
     assert.equal(tasks[0].scheduler_task_key, 'start::0::0');
     assert.equal(tasks[0].scheduler_occurrence_index, 0);
+});
+
+test('task recipe registry normalizes module storage and filters by plant, method, and growth stage', async () => {
+    const current = makeGardenModuleCell('garden-a', { garden_name: 'Current' });
+    const other = makeGardenModuleCell('garden-b', { garden_name: 'Other' });
+    const root = { id: 'root', children: [other, current] };
+    const model = makeModel(root);
+    const template = { version: 2, rules: [hooks.taskRuleLibraryForPlanningMode('direct_sow').sow] };
+    const resolver = async moduleCell => ({ ok: true, city: makeRecipeCity(moduleCell.id === 'garden-a' ? 1 : 2, moduleCell.id, moduleCell.id === 'garden-a' ? 15 : 16) });
+
+    const savedCurrent = hooks.upsertTaskRecipe(current, {
+        name: 'Standard',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        template
+    });
+    hooks.upsertTaskRecipe(other, {
+        name: 'Other direct',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field', 'transplant.indoor'],
+        growthStageKeys: ['mature'],
+        growthStageLabels: ['Mature'],
+        template
+    });
+    hooks.upsertTaskRecipe(other, {
+        name: 'Micro direct',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        growthStageKeys: ['microgreens'],
+        growthStageLabels: ['Microgreens'],
+        template
+    });
+    hooks.upsertTaskRecipe(other, {
+        name: 'Wrong plant',
+        plantId: 11,
+        plantName: 'Beet',
+        methodIds: ['direct_sow.field'],
+        template
+    });
+    hooks.upsertTaskRecipe(other, {
+        name: 'Wrong method',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['transplant.indoor'],
+        template
+    });
+
+    const stored = JSON.parse(current.getAttribute(hooks.TASK_RECIPE_LIBRARY_ATTR));
+    assert.equal(stored.version, 1);
+    assert.equal(stored.items[0].id, savedCurrent.id);
+    assert.equal(JSON.stringify(stored.items[0].growthStageKeys), JSON.stringify(['mature']));
+    assert.equal(JSON.stringify(stored.items[0].growthStageLabels), JSON.stringify(['Mature']));
+
+    const groups = await hooks.listCompatibleTaskRecipesByModule(model, current, 10, 'direct_sow.field', 'mature', { resolveCityForModule: resolver });
+    assert.equal(JSON.stringify(groups.map(group => group.moduleId)), JSON.stringify(['garden-a', 'garden-b']));
+    assert.equal(JSON.stringify(groups.map(group => group.recipes.map(recipe => recipe.name))), JSON.stringify([['Standard'], ['Other direct']]));
+
+    const microGroups = await hooks.listCompatibleTaskRecipesByModule(model, current, 10, 'direct_sow.field', 'microgreens', { resolveCityForModule: resolver });
+    assert.equal(JSON.stringify(microGroups.map(group => group.moduleId)), JSON.stringify(['garden-b']));
+    assert.equal(microGroups[0].recipes[0].name, 'Micro direct');
+});
+
+test('task recipe upsert blocks duplicate plant names unless updating selected recipe', () => {
+    const current = makeGardenModuleCell('garden-a');
+    const template = { version: 2, rules: [hooks.taskRuleLibraryForPlanningMode('direct_sow').sow] };
+    const first = hooks.upsertTaskRecipe(current, {
+        name: 'Standard',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        template
+    });
+
+    assert.throws(() => hooks.upsertTaskRecipe(current, {
+        name: ' standard ',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        template
+    }), /already exists/);
+
+    assert.throws(() => hooks.upsertTaskRecipe(current, {
+        name: 'Stage-less',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        growthStageKeys: [],
+        template
+    }), /required/);
+
+    const updated = hooks.upsertTaskRecipe(current, {
+        id: first.id,
+        name: 'Standard',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field', 'direct_sow.pre_germinated'],
+        growthStageKeys: ['baby_leaf'],
+        growthStageLabels: ['Baby leaf'],
+        template
+    }, { allowUpdateId: first.id });
+    assert.equal(JSON.stringify(updated.methodIds), JSON.stringify(['direct_sow.field', 'direct_sow.pre_germinated']));
+    assert.equal(JSON.stringify(updated.growthStageKeys), JSON.stringify(['baby_leaf']));
+    assert.equal(hooks.readTaskRecipeLibrary(current).length, 1);
+});
+
+test('task recipe auto-select helper only chooses one clean current-garden recipe', () => {
+    const currentOnly = { current: true, moduleId: 'current', recipes: [{ id: 'one', name: 'One' }] };
+    const externalOnly = { current: false, moduleId: 'external', recipes: [{ id: 'external', name: 'External' }] };
+    const multipleCurrent = { current: true, moduleId: 'current', recipes: [{ id: 'one' }, { id: 'two' }] };
+
+    assert.equal(hooks.autoSelectableTaskRecipeFromGroups([currentOnly])?.recipe.id, 'one');
+    assert.equal(hooks.autoSelectableTaskRecipeFromGroups([externalOnly]), null);
+    assert.equal(hooks.autoSelectableTaskRecipeFromGroups([multipleCurrent]), null);
+    assert.equal(hooks.autoSelectableTaskRecipeFromGroups([currentOnly], { taskDirty: true }), null);
+    assert.equal(hooks.autoSelectableTaskRecipeFromGroups([currentOnly], { userSelectionMade: true }), null);
+    assert.equal(hooks.autoSelectableTaskRecipeFromGroups([currentOnly], { hasCellTemplate: true }), null);
+    assert.equal(hooks.autoSelectableTaskRecipeFromGroups([currentOnly], { selectionKind: 'built_in' }), null);
+});
+
+test('task recipe delete removes editable recipes without touching other module recipes', () => {
+    const current = makeGardenModuleCell('garden-a');
+    const other = makeGardenModuleCell('garden-b');
+    const template = { version: 2, rules: [hooks.taskRuleLibraryForPlanningMode('direct_sow').sow] };
+    const first = hooks.upsertTaskRecipe(current, {
+        name: 'Delete me',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        template
+    });
+    hooks.upsertTaskRecipe(other, {
+        name: 'Keep external',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        template
+    });
+
+    assert.equal(hooks.deleteTaskRecipe(current, first.id), true);
+    assert.equal(hooks.readTaskRecipeLibrary(current).length, 0);
+    assert.equal(hooks.readTaskRecipeLibrary(other).length, 1);
+    assert.equal(hooks.deleteTaskRecipe(current, first.id), false);
+});
+
+test('task recipe search matches recipe, owner, module, method, and growth stage metadata', () => {
+    const group = { moduleName: 'North Ridge Garden' };
+    const recipe = {
+        name: 'Fast spring starts',
+        ownerName: 'Mina Patel',
+        plantName: 'Carrot',
+        methodIds: ['transplant.indoor'],
+        growthStageKeys: ['baby_leaf'],
+        growthStageLabels: ['Baby leaf']
+    };
+    const methodLabels = { 'transplant.indoor': 'Transplant / Indoor starts' };
+    const stageLabels = { baby_leaf: 'Baby leaf' };
+
+    assert.equal(hooks.taskRecipeSearchMatches(group, recipe, 'spring starts', methodLabels, stageLabels), true);
+    assert.equal(hooks.taskRecipeSearchMatches(group, recipe, 'Mina', methodLabels, stageLabels), true);
+    assert.equal(hooks.taskRecipeSearchMatches(group, recipe, 'north ridge', methodLabels, stageLabels), true);
+    assert.equal(hooks.taskRecipeSearchMatches(group, recipe, 'indoor starts', methodLabels, stageLabels), true);
+    assert.equal(hooks.taskRecipeSearchMatches(group, recipe, 'baby leaf', methodLabels, stageLabels), true);
+    assert.equal(hooks.taskRecipeSearchMatches(group, recipe, 'desert garden', methodLabels, stageLabels), false);
+});
+
+test('task recipe groups sort current garden first and other modules by climate similarity', async () => {
+    const current = makeGardenModuleCell('current', { garden_name: 'Current' });
+    const unknown = makeGardenModuleCell('unknown', { garden_name: 'Unknown climate' });
+    const hot = makeGardenModuleCell('hot', { garden_name: 'Hot inland' });
+    const near = makeGardenModuleCell('near', { garden_name: 'Near coastal' });
+    const same = makeGardenModuleCell('same', { garden_name: 'Same city' });
+    const root = { id: 'root', children: [unknown, hot, near, same, current] };
+    const model = makeModel(root);
+    const template = { version: 2, rules: [hooks.taskRuleLibraryForPlanningMode('direct_sow').sow] };
+    [current, unknown, hot, near, same].forEach(cell => hooks.upsertTaskRecipe(cell, {
+        name: `Recipe ${cell.id}`,
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        growthStageKeys: ['mature'],
+        growthStageLabels: ['Mature'],
+        template
+    }));
+    const cities = {
+        current: makeRecipeCity(1, 'Cool Bay', 14, { latitude: 45, last_spring_frost_p50_doy: 105, first_fall_frost_p50_doy: 295 }),
+        same: makeRecipeCity(1, 'Cool Bay', 14, { latitude: 45, last_spring_frost_p50_doy: 105, first_fall_frost_p50_doy: 295 }),
+        near: makeRecipeCity(2, 'Near Bay', 15, { latitude: 46, last_spring_frost_p50_doy: 108, first_fall_frost_p50_doy: 292 }),
+        hot: makeRecipeCity(3, 'Hot Plains', 25, { latitude: 32, last_spring_frost_p50_doy: 60, first_fall_frost_p50_doy: 340 })
+    };
+    const resolver = async moduleCell => cities[moduleCell.id] ? { ok: true, city: cities[moduleCell.id] } : { ok: false, reason: 'missing_city' };
+
+    const groups = await hooks.listCompatibleTaskRecipesByModule(model, current, 10, 'direct_sow.field', 'mature', { resolveCityForModule: resolver });
+    assert.equal(JSON.stringify(groups.map(group => group.moduleId)), JSON.stringify(['current', 'same', 'near', 'hot', 'unknown']));
+});
+
+test('task recipe ownership blocks updates when users are enabled', () => {
+    const current = makeGardenModuleCell('garden-a');
+    const template = { version: 2, rules: [hooks.taskRuleLibraryForPlanningMode('direct_sow').sow] };
+    hooks.__testWindow.Trellis = { users: { isEnabled: () => true, getCurrentUser: () => ({ id: 'owner-1', name: 'Owner One' }) } };
+    const first = hooks.upsertTaskRecipe(current, {
+        name: 'Owned',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.field'],
+        template
+    });
+
+    hooks.__testWindow.Trellis.users.getCurrentUser = () => ({ id: 'owner-2', name: 'Owner Two' });
+    assert.throws(() => hooks.upsertTaskRecipe(current, {
+        id: first.id,
+        name: 'Owned',
+        plantId: 10,
+        plantName: 'Carrot',
+        methodIds: ['direct_sow.pre_germinated'],
+        template
+    }, { allowUpdateId: first.id }), /Only the recipe owner/);
+
+    assert.throws(() => hooks.deleteTaskRecipe(current, first.id), /Only the recipe owner/);
+
+    delete hooks.__testWindow.Trellis;
 });
 
 test('database persistence failure prevents graph mutation', async () => {

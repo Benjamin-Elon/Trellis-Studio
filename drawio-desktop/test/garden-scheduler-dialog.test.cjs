@@ -1007,6 +1007,14 @@ test('plant editor exposes layout defaults without a diagram preview', () => {
     assert.doesNotMatch(schedulerSource, /CompanionRelationshipModel\.saveLayoutDefaults\(relationship\.relationId, readCompanionLayoutDraft\(\), relationship\)/);
 });
 
+test('plant editor yield inputs use tenth-step affordance without rejecting precise values', () => { // CHANGE
+    assert.match(schedulerSource, /const YIELD_INPUT_PREFERRED_STEP = 0\.1;/); // CHANGE
+    assert.match(schedulerSource, /function configurePreferredNumberStep\(input, preferredStep\)[\s\S]*input\.step = 'any';[\s\S]*input\.dataset\.preferredStep/); // CHANGE
+    assert.match(schedulerSource, /const yieldInput = configurePreferredNumberStep\(makeNullableNumber\(existing\?\.yield_per_plant_kg \?\? null, \{ min: 0, step: 'any' \}\), YIELD_INPUT_PREFERRED_STEP\);/); // CHANGE
+    assert.match(schedulerSource, /\{ key: 'yield_per_plant_kg', type: 'num_ge0', step: 'any', preferredStep: YIELD_INPUT_PREFERRED_STEP \}/); // CHANGE
+    assert.doesNotMatch(schedulerSource, /yield_per_plant_kg[\s\S]{0,120}step: 0\.001/); // CHANGE
+}); // CHANGE
+
 test('add variety editor focuses and temporarily highlights the variety name field', () => { // CHANGE
     assert.match(schedulerSource, /\.usl-plant-editor-field-highlight\{/); // CHANGE
     assert.match(schedulerSource, /function focusAndHighlightVarietyNameField\(\) \{[\s\S]*basics\.setOpen\(true\)[\s\S]*varietyNameInput[\s\S]*classList\.add\('usl-plant-editor-field-highlight'\)[\s\S]*setTimeout\(\(\) => \{ if \(target && target\.classList\) target\.classList\.remove\('usl-plant-editor-field-highlight'\); \}, 1200\)[\s\S]*target\.focus/); // CHANGE

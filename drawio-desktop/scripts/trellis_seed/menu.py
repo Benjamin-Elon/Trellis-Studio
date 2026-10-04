@@ -23,6 +23,7 @@ from .suggestions import (
 )
 from .paths import PROJECT_DIR
 from .validator import validate_input, validate_run
+from .verify import VerifyOptions, verify_database_sweep
 
 
 def run_menu() -> None:
@@ -40,7 +41,8 @@ def run_menu() -> None:
         print("8. Run live tests")
         print("9. Compare scheduler to sowing-season references")  # terminology alignment
         print("10. Generate climate benchmark")
-        print("11. Exit")
+        print("11. Verify database sweep")  # NEW: round-robin crop verification artifact generation.
+        print("12. Exit")
         choice = input("Choose an option: ").strip()
         if choice == "1":
             _suggest_input_flow(settings)
@@ -63,6 +65,8 @@ def run_menu() -> None:
         elif choice == "10":
             _climate_benchmark_flow(settings)
         elif choice == "11":
+            _verify_flow(settings)
+        elif choice == "12":
             return
         else:
             print("Unknown option.")
@@ -451,6 +455,30 @@ def _live_tests_flow() -> None:
     from .live_tests import run_live_tests
     ok = run_live_tests()
     print("Live tests:", "ok" if ok else "failed")
+
+
+def _verify_flow(settings) -> None:
+    raw = input("Crops to verify this run [1]: ").strip()
+    try:
+        batch_size = int(raw) if raw else 1
+    except ValueError:
+        print("Enter a whole number greater than zero.")
+        return
+    if batch_size <= 0:
+        print("Enter a number greater than zero.")
+        return
+    print("Generating verify artifact; database will not be modified.")
+    try:
+        run_dir = verify_database_sweep(settings, VerifyOptions(batch_size=batch_size))
+    except Exception as exc:
+        print(f"Verify sweep failed: {exc}")
+        return
+    report = read_json(run_dir / "validation_report.json", {}) or {}
+    verify_report = read_json(run_dir / "verify_report.json", {}) or {}
+    print(f"Verify run generated: {run_dir}")
+    print("Validation:", "ok" if report.get("ok") else "failed")
+    print(f"Checked: {(verify_report.get('summary') or {}).get('checked', 0)} crop(s)")
+    print(f"Generated proposed rows: {(verify_report.get('summary') or {}).get('generated_rows', 0)}")
 
 
 def _sowing_window_diagnostics_flow(settings) -> None:

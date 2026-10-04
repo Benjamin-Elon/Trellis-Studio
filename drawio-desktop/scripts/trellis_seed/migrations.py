@@ -35,6 +35,8 @@ def city_has_unique_name_constraint(conn: sqlite3.Connection) -> bool:
 def pending_migrations(conn: sqlite3.Connection) -> list[str]:
     tables = existing_tables(conn)
     pending = []
+    if "PlantTaskTemplates" not in tables or "recipe_id" not in table_columns(conn, "PlantTaskTemplates"):
+        pending.append("migrate PlantTaskTemplates to task recipe metadata")  # NEW: legacy defaults become curated system recipes.
     if "Cities" in tables and any(column not in table_columns(conn, "Cities") for column in ("country_name", "country_code", "region_name", "region_code")):
         pending.append("add city geography columns")
     if "Cities" in tables and any(column not in table_columns(conn, "Cities") for column in ("is_major_city", "climate_band")):
@@ -75,6 +77,10 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
 
 def apply_migrations(conn: sqlite3.Connection) -> list[str]:
     applied = []
+    tables = existing_tables(conn)
+    recipe_migration = _ensure_plant_task_template_recipe_columns(conn)
+    if recipe_migration:
+        applied.append(recipe_migration)  # NEW: first-class recipe metadata while preserving legacy key semantics.
     tables = existing_tables(conn)
     if "Cities" in tables:
         if city_has_unique_name_constraint(conn):
@@ -320,6 +326,127 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
         if label not in tables or label == "VarietyTaskTemplates":
             applied.append(f"ensured {label}")
     return applied
+
+
+PLANT_TASK_TEMPLATE_RECIPE_COLUMNS = {
+    "recipe_id": "TEXT",
+    "recipe_name": "TEXT",
+    "method_ids_json": "TEXT",
+    "growth_stage_keys_json": "TEXT",
+    "growth_stage_labels_json": "TEXT",
+    "recipe_origin": "TEXT",
+    "visibility": "TEXT",
+    "owner_user_id": "TEXT",
+    "owner_name": "TEXT",
+    "source_url": "TEXT",
+    "source_note": "TEXT",
+    "provenance_json": "TEXT",
+    "review_status": "TEXT",
+    "created_at": "TEXT",
+}
+
+
+def _ensure_plant_task_template_recipe_columns(conn: sqlite3.Connection) -> str | None:
+    tables = existing_tables(conn)
+    if "PlantTaskTemplates" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS PlantTaskTemplates (
+                plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+                method_id TEXT NOT NULL REFERENCES PlantingMethods(method_id) ON DELETE CASCADE,
+                template_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                recipe_id TEXT,
+                recipe_name TEXT,
+                method_ids_json TEXT,
+                growth_stage_keys_json TEXT,
+                growth_stage_labels_json TEXT,
+                recipe_origin TEXT,
+                visibility TEXT,
+                owner_user_id TEXT,
+                owner_name TEXT,
+                source_url TEXT,
+                source_note TEXT,
+                provenance_json TEXT,
+                review_status TEXT,
+                created_at TEXT,
+                PRIMARY KEY (plant_id, method_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_PlantTaskTemplates_recipe_id ON PlantTaskTemplates(recipe_id);
+            """
+        )
+        return "created PlantTaskTemplates recipe metadata"
+    columns = set(table_columns(conn, "PlantTaskTemplates"))
+    added = []
+    for column, column_type in PLANT_TASK_TEMPLATE_RECIPE_COLUMNS.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE PlantTaskTemplates ADD COLUMN {column} {column_type};")
+            added.append(column)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_PlantTaskTemplates_recipe_id ON PlantTaskTemplates(recipe_id);")
+    backfilled = _backfill_legacy_plant_task_templates(conn)
+    if added or backfilled:
+        detail = f"added {len(added)} column(s)" if added else "columns already present"
+        return f"migrated PlantTaskTemplates recipe metadata ({detail}, backfilled {backfilled} row(s))"
+    return None
+
+
+def _backfill_legacy_plant_task_templates(conn: sqlite3.Connection) -> int:
+    now = datetime.now(timezone.utc).isoformat()
+    rows = conn.execute(
+        """
+        SELECT t.plant_id, t.method_id, t.updated_at, p.plant_name, m.method_name
+        FROM PlantTaskTemplates t
+        LEFT JOIN Plants p ON p.plant_id = t.plant_id
+        LEFT JOIN PlantingMethods m ON m.method_id = t.method_id
+        WHERE COALESCE(t.recipe_id, '') = '';
+        """
+    ).fetchall()
+    for row in rows:
+        plant_id = int(row[0])
+        method_id = str(row[1] or "").strip()
+        method_name = str(row[4] or method_id or "default").strip()
+        plant_name = str(row[3] or f"Plant {plant_id}").strip()
+        recipe_id = _recipe_id("system", plant_id, method_id)
+        conn.execute(
+            """
+            UPDATE PlantTaskTemplates
+            SET recipe_id=?, recipe_name=?, method_ids_json=?, growth_stage_keys_json=?,
+                growth_stage_labels_json=?, recipe_origin=?, visibility=?, owner_user_id=?,
+                owner_name=?, source_url=?, source_note=?, provenance_json=?, review_status=?,
+                created_at=?, updated_at=COALESCE(updated_at, ?)
+            WHERE plant_id=? AND method_id=?;
+            """,
+            [
+                recipe_id,
+                f"{plant_name} default - {method_name}",
+                _json_array([method_id]),
+                _json_array(["mature"]),
+                _json_array(["Mature"]),
+                "curated_system",
+                "curated",
+                "system",
+                "Trellis",
+                None,
+                "Migrated from legacy PlantTaskTemplates plant-default row.",
+                '{"migration":"PlantTaskTemplates recipe metadata"}',
+                "legacy_migrated",
+                row[2] or now,
+                now,
+                plant_id,
+                method_id,
+            ],
+        )
+    return len(rows)
+
+
+def _recipe_id(prefix: str, plant_id: int, method_id: str) -> str:
+    token = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(method_id or "method")).strip("_")
+    return f"{prefix}_plant_{plant_id}_{token or 'method'}"
+
+
+def _json_array(values: list[str]) -> str:
+    import json
+    return json.dumps(values, separators=(",", ":"))
 
 
 def _normalize_name(value: object) -> str:

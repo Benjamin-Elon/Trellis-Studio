@@ -2271,28 +2271,28 @@ Draw.loadPlugin(function (ui) {
 
         const gardenWidthInput = document.createElement("input"); // CHANGE
         gardenWidthInput.type = "number"; // CHANGE
-        gardenWidthInput.step = "0.01"; // CHANGE
+        gardenWidthInput.step = "0.1"; // CHANGE
         gardenWidthInput.min = "0.01"; // CHANGE
         gardenWidthInput.style.flex = "1"; // CHANGE
         const gardenWidthRow = row("Garden width:", gardenWidthInput); // CHANGE
 
         const gardenLengthInput = document.createElement("input"); // CHANGE
         gardenLengthInput.type = "number"; // CHANGE
-        gardenLengthInput.step = "0.01"; // CHANGE
+        gardenLengthInput.step = "0.1"; // CHANGE
         gardenLengthInput.min = "0.01"; // CHANGE
         gardenLengthInput.style.flex = "1"; // CHANGE
         const gardenLengthRow = row("Garden length:", gardenLengthInput); // CHANGE
 
         const bedWidthInput = document.createElement("input");
         bedWidthInput.type = "number";
-        bedWidthInput.step = "0.01";
+        bedWidthInput.step = "0.1"; // CHANGE
         bedWidthInput.min = "0.01";
         bedWidthInput.style.flex = "1";
         const bedWidthRow = row("Default bed width:", bedWidthInput);
 
         const bedLengthInput = document.createElement("input");
         bedLengthInput.type = "number";
-        bedLengthInput.step = "0.01";
+        bedLengthInput.step = "0.1"; // CHANGE
         bedLengthInput.min = "0.01";
         bedLengthInput.style.flex = "1";
         const bedLengthRow = row("Default bed length:", bedLengthInput);
@@ -2305,7 +2305,7 @@ Draw.loadPlugin(function (ui) {
             enabledInput.style.margin = "0"; // NEW
             const widthInput = document.createElement("input"); // NEW
             widthInput.type = "number"; // NEW
-            widthInput.step = "0.01"; // NEW
+            widthInput.step = "0.1"; // CHANGE
             widthInput.min = "0.01"; // NEW
             widthInput.style.flex = "1"; // NEW
             const control = document.createElement("div"); // NEW
@@ -2326,7 +2326,7 @@ Draw.loadPlugin(function (ui) {
 
         const moduleExternalMarginInput = document.createElement("input"); // NEW
         moduleExternalMarginInput.type = "number"; // NEW
-        moduleExternalMarginInput.step = "0.01"; // NEW
+        moduleExternalMarginInput.step = "0.1"; // CHANGE
         moduleExternalMarginInput.min = "0"; // NEW
         moduleExternalMarginInput.style.flex = "1"; // NEW
         const moduleExternalMarginRow = row("External margin:", moduleExternalMarginInput); // NEW

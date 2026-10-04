@@ -46,6 +46,7 @@
       "name": "Trellis Studio Diagram",
       "description": "Trellis Studio Diagram",
 	  	"mimeType": "application/vnd.jgraph.mxfile",
+      "icon": "icon.ico",
 	  	"role": "Editor"
 	  },
 	  {

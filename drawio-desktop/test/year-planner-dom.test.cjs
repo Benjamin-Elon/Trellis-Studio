@@ -553,7 +553,17 @@ test("Crop Plan Basics separates editable controls, derived totals, tooltips, an
 
     let kgField = findEditorField(harness, "kg/plant");
     assert.match(kgField.querySelector(".yp-yield-hint").textContent, /Using 1 kg\/plant default/);
-    harness.setControlValue(kgField.querySelector('input[type="number"]'), 2);
+    let kgInput = kgField.querySelector('input[type="number"]'); // CHANGE
+    assert.equal(kgInput.step, "any"); // CHANGE
+    assert.equal(kgInput.dataset.preferredStep, "0.1"); // CHANGE
+    harness.setControlValue(kgInput, 0.09); // CHANGE
+    await harness.settle(130); // CHANGE
+    assert.equal(kgInput.validity.stepMismatch, false); // CHANGE
+    assert.equal(session.plan.crops[0].kgPerPlant, 0.09); // CHANGE
+    assert.equal(session.plan.crops[0].kgPerPlantMode, "manual"); // CHANGE
+    kgField = findEditorField(harness, "kg/plant"); // CHANGE
+    kgInput = kgField.querySelector('input[type="number"]'); // CHANGE
+    harness.setControlValue(kgInput, 2);
     await harness.settle(130);
     editor = findEditorBox(harness);
     assert.deepEqual(Array.from(editor.querySelectorAll(".yp-derived-value")).map(value => value.textContent), ["0", "3", "4"]);

@@ -76,6 +76,7 @@ from trellis_seed.suggestions import (  # noqa: E402
     write_suggestion_artifacts,
 )
 from trellis_seed.validator import normalize_key, validate_input, validate_row, validate_run  # noqa: E402
+from trellis_seed.verify import VerifyOptions, advance_verify_state, select_verify_batch, verify_database_sweep  # noqa: E402
 from trellis_seed.weather import summarize_city_monthly_weather  # noqa: E402
 
 
@@ -188,6 +189,9 @@ class TrellisSeederTests(unittest.TestCase):
             cols = [row[1] for row in conn.execute("PRAGMA table_info(VarietyTaskTemplates);")]
             self.assertIn("method_id", cols)
             self.assertIn("template_json", cols)
+            recipe_cols = [row[1] for row in conn.execute("PRAGMA table_info(PlantTaskTemplates);")]
+            self.assertIn("recipe_id", recipe_cols)
+            self.assertIn("method_ids_json", recipe_cols)
             city_cols = [row[1] for row in conn.execute("PRAGMA table_info(Cities);")]
             self.assertIn("is_major_city", city_cols)
             self.assertIn("climate_band", city_cols)
@@ -215,6 +219,34 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("fdc_id", nutrition_mapping_cols)
             self.assertIn("match_confidence", nutrition_mapping_cols)
             self.assertIn("match_status", nutrition_mapping_cols)
+
+    def test_migration_backfills_legacy_plant_task_templates_as_system_recipes(self) -> None:
+        with closing(sqlite3.connect(":memory:")) as conn:
+            conn.executescript("""
+                CREATE TABLE Plants (plant_id INTEGER PRIMARY KEY, plant_name TEXT NOT NULL);
+                CREATE TABLE PlantingMethods (method_id TEXT PRIMARY KEY, method_name TEXT, method_category_id TEXT);
+                CREATE TABLE PlantTaskTemplates (
+                    plant_id INTEGER NOT NULL,
+                    method_id TEXT NOT NULL,
+                    template_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (plant_id, method_id)
+                );
+                INSERT INTO Plants VALUES (1, 'Carrot');
+                INSERT INTO PlantingMethods VALUES ('direct_sow.field', 'Direct sow field', 'direct_sow');
+                INSERT INTO PlantTaskTemplates VALUES (1, 'direct_sow.field', '{"version":2,"rules":[{"id":"sow"}]}', '2026-01-01T00:00:00+00:00');
+            """)
+            with conn:
+                apply_migrations(conn)
+            row = conn.execute("SELECT recipe_id, recipe_name, method_ids_json, growth_stage_keys_json, recipe_origin, visibility, owner_user_id, review_status FROM PlantTaskTemplates").fetchone()
+            self.assertEqual(row[0], "system_plant_1_direct_sow_field")
+            self.assertIn("Carrot default", row[1])
+            self.assertEqual(json.loads(row[2]), ["direct_sow.field"])
+            self.assertEqual(json.loads(row[3]), ["mature"])
+            self.assertEqual(row[4], "curated_system")
+            self.assertEqual(row[5], "curated")
+            self.assertEqual(row[6], "system")
+            self.assertEqual(row[7], "legacy_migrated")
 
     def test_packaged_seed_database_has_crop_nutrition_rows(self) -> None:
         with closing(sqlite3.connect(ROOT / "trellis_database" / "Trellis_database.sqlite")) as conn:
@@ -782,6 +814,11 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(list_artifacts(runs_dir, complete_runs_only=True), [complete])
         write_json(complete / "apply_report.json", {"targets": []})
         self.assertEqual(artifact_status(complete), "applied")
+
+        verify = runs_dir / "verify-20260625-010105-lettuce"
+        (verify / "generated").mkdir(parents=True, exist_ok=True)
+        write_json(verify / "validation_report.json", {"ok": True, "errors": []})
+        self.assertEqual(artifact_status(verify), "unapplied")
 
     def test_cleanup_candidate_selection_is_limited_to_direct_children(self) -> None:
         runs_dir = self.tmp_path / "runs"
@@ -2667,6 +2704,108 @@ class TrellisSeederTests(unittest.TestCase):
         report = compare_window_references(references, scheduler, tolerance_days=7)
         self.assertTrue(report["ok"])
         self.assertEqual(report["summary"]["outside_tolerance"], 1)
+
+    def test_verify_cursor_wraps_and_recovers_from_deleted_cursor_crop(self) -> None:
+        plants = [
+            {"plant_id": 1, "plant_name": "A"},
+            {"plant_id": 3, "plant_name": "C"},
+            {"plant_id": 5, "plant_name": "E"},
+        ]
+        selected, selection = select_verify_batch(plants, {"last_plant_id": 1}, batch_size=1)
+        self.assertEqual([row["plant_id"] for row in selected], [3])
+        self.assertFalse(selection["wrapped"])
+
+        selected, selection = select_verify_batch(plants, {"last_plant_id": 99}, batch_size=1)
+        self.assertEqual([row["plant_id"] for row in selected], [1])
+        self.assertTrue(selection["wrapped"])
+        state = advance_verify_state({"pass_number": 2, "checked_count": 4}, selected, selection, self.tmp_path / "verify-run")
+        self.assertEqual(state["last_plant_id"], 1)
+        self.assertEqual(state["pass_number"], 3)
+        self.assertEqual(state["checked_count"], 5)
+
+        selected, selection = select_verify_batch(plants, {"last_plant_id": 4}, batch_size=2)
+        self.assertEqual([row["plant_id"] for row in selected], [5, 1])
+        self.assertTrue(selection["wrapped"])
+
+    def test_verify_sweep_generates_reviewable_artifact_and_advances_state_without_applying(self) -> None:
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(self.tmp_path / "runs"),
+            "openai_model": "fake",
+            "openai_reasoning_effort": "low",
+        })
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            before = conn.execute("SELECT COUNT(*) FROM Plants").fetchone()[0]
+
+        run_dir = verify_database_sweep(settings, VerifyOptions(batch_size=1, use_openai=False, use_fdc=False))
+
+        self.assertTrue(run_dir.name.startswith("verify-"))
+        self.assertEqual(artifact_status(run_dir), "unapplied")
+        self.assertTrue((run_dir / "verify_report.json").exists())
+        self.assertTrue((settings.runs_dir / "verify_state.json").exists())
+        self.assertFalse((run_dir / "generated" / "PlantTaskTemplates.json").exists())
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            after = conn.execute("SELECT COUNT(*) FROM Plants").fetchone()[0]
+        self.assertEqual(after, before)
+        self.assertEqual(read_json(run_dir / "metadata.json", {})["mode"], "verify")
+
+    def test_verify_sweep_proposes_minimal_expert_gdd_fix_for_suspicious_crop(self) -> None:
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(self.tmp_path / "runs"),
+            "openai_model": "fake",
+            "openai_reasoning_effort": "low",
+        })
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            garlic = conn.execute("SELECT plant_id FROM Plants WHERE plant_name='Garlic'").fetchone()
+            self.assertIsNotNone(garlic)
+            previous = conn.execute("SELECT plant_id FROM Plants WHERE plant_id < ? ORDER BY plant_id DESC LIMIT 1", [garlic[0]]).fetchone()
+        write_json(settings.runs_dir / "verify_state.json", {"last_plant_id": previous[0] if previous else 0, "pass_number": 1})
+
+        run_dir = verify_database_sweep(settings, VerifyOptions(batch_size=1, use_openai=False, use_fdc=False))
+
+        rows = read_json(run_dir / "generated" / "Plants.json", [])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["plant_name"], "Garlic")
+        self.assertIsNotNone(rows[0]["gdd_to_maturity"])
+        report = read_json(run_dir / "verify_report.json", {})
+        self.assertEqual(report["selection"]["plant_names"], ["Garlic"])
+        self.assertGreaterEqual(report["summary"]["findings"], 1)
+        self.assertFalse((run_dir / "generated" / "PlantTaskTemplates.json").exists())
+
+    def test_verify_sweep_uses_openai_web_bundle_for_source_backed_crop_fix(self) -> None:
+        class FakeOpenAI:
+            def generate_json_with_web_search(self, **kwargs):
+                plant = complete_plant_row(plant_name="Garlic", gdd_to_maturity=1400.0)
+                return {
+                    "confidence": "high",
+                    "source_urls": ["https://example.test/garlic"],
+                    "source_notes": ["Source-backed garlic growing degree day correction."],
+                    "plant_row": {key: value for key, value in plant.items() if key in PLANT_TEXT_FIELDS | PLANT_INTEGER_FIELDS | PLANT_REAL_FIELDS},
+                    "allowed_method_categories": [],
+                    "growth_stages": [],
+                }, ProviderTrace("openai", {"mode": "verify_web_search"}, {"ok": True})
+
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(self.tmp_path / "runs"),
+            "openai_model": "fake",
+            "openai_reasoning_effort": "low",
+        })
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            garlic = conn.execute("SELECT plant_id FROM Plants WHERE plant_name='Garlic'").fetchone()
+            self.assertIsNotNone(garlic)
+            previous = conn.execute("SELECT plant_id FROM Plants WHERE plant_id < ? ORDER BY plant_id DESC LIMIT 1", [garlic[0]]).fetchone()
+        write_json(settings.runs_dir / "verify_state.json", {"last_plant_id": previous[0] if previous else 0, "pass_number": 1})
+
+        run_dir = verify_database_sweep(settings, VerifyOptions(batch_size=1, use_fdc=False), openai=FakeOpenAI())
+
+        rows = read_json(run_dir / "generated" / "Plants.json", [])
+        self.assertEqual(rows[0]["gdd_to_maturity"], 1400.0)
+        report = read_json(run_dir / "verify_report.json", {})
+        self.assertEqual(report["plants"][0]["source_urls"], ["https://example.test/garlic"])
+        provenance = read_json(run_dir / "provenance.json", {})
+        self.assertEqual(provenance["traces"][0]["provider"], "openai")
 
 
 if __name__ == "__main__":

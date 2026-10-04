@@ -519,12 +519,42 @@ def _upsert_evidence(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> in
 
 def _replace_plant_templates(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
     now = datetime.now(timezone.utc).isoformat()
+    existing_columns = set(_table_columns(conn, "PlantTaskTemplates"))
     for row in rows:
         plant_id = _resolve_plant_id(conn, row)
         method_id = str(row["method_id"])
         conn.execute("DELETE FROM PlantTaskTemplates WHERE plant_id=? AND method_id=?", [plant_id, method_id])
-        conn.execute("INSERT INTO PlantTaskTemplates (plant_id, method_id, template_json, updated_at) VALUES (?, ?, ?, ?)", [plant_id, method_id, row["template_json"], now])
+        payload = {
+            "plant_id": plant_id,
+            "method_id": method_id,
+            "template_json": row["template_json"],
+            "updated_at": row.get("updated_at") or now,
+            "recipe_id": row.get("recipe_id") or _task_recipe_id("system", plant_id, method_id),
+            "recipe_name": row.get("recipe_name") or f"{row.get('plant_name') or _db_plant_name(conn, plant_id)} default - {method_id}",
+            "method_ids_json": row.get("method_ids_json") or json.dumps([method_id], separators=(",", ":")),
+            "growth_stage_keys_json": row.get("growth_stage_keys_json") or json.dumps(row.get("growth_stage_keys") or ["mature"], separators=(",", ":")),
+            "growth_stage_labels_json": row.get("growth_stage_labels_json") or json.dumps(row.get("growth_stage_labels") or ["Mature"], separators=(",", ":")),
+            "recipe_origin": row.get("recipe_origin") or "curated_system",
+            "visibility": row.get("visibility") or "curated",
+            "owner_user_id": row.get("owner_user_id") or "system",
+            "owner_name": row.get("owner_name") or "Trellis",
+            "source_url": row.get("source_url"),
+            "source_note": row.get("source_note") or "Seeder-generated plant-default task recipe.",
+            "provenance_json": row.get("provenance_json") or json.dumps(row.get("provenance") or {}, sort_keys=True),
+            "review_status": row.get("review_status") or "pending_review",
+            "created_at": row.get("created_at") or now,
+        }
+        cols = [column for column in payload if column in existing_columns]
+        conn.execute(
+            f"INSERT INTO PlantTaskTemplates ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})",
+            [payload[column] for column in cols],
+        )
     return len(rows)
+
+
+def _task_recipe_id(prefix: str, plant_id: int, method_id: str) -> str:
+    token = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(method_id or "method")).strip("_")
+    return f"{prefix}_plant_{plant_id}_{token or 'method'}"
 
 
 def _replace_variety_templates(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:

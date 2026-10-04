@@ -43,13 +43,13 @@ def unique_artifact_dir(base_dir: Path, prefix: str, timestamp: str, summary_slu
 def artifact_status(path: Path) -> str:
     if path.name.startswith("suggestion-"):
         return "suggestion"
-    if not path.name.startswith("run-"):
+    if not path.name.startswith("run-") and not path.name.startswith("verify-"):  # NEW: verify sweeps are normal review/apply artifacts.
         return "unknown"
     generated_dir = path / "generated"
     metadata = read_json(path / "metadata.json", {}) or {}
     if metadata.get("status") == "failed":
         return "failed"
-    if not generated_dir.exists() or not any(generated_dir.glob("*.json")):
+    if not generated_dir.exists():
         return "incomplete"
     if not (path / "validation_report.json").exists():
         return "incomplete"

@@ -4687,6 +4687,27 @@ Draw.loadPlugin(function (ui) {
                 return input;
             }
 
+            function configurePreferredNumberStep(input, preferredStep) { // CHANGE
+                if (!input) return input; // CHANGE
+                const step = Number(preferredStep); // CHANGE
+                input.step = "any"; // CHANGE
+                input.dataset.preferredStep = Number.isFinite(step) ? String(step) : ""; // CHANGE
+                input.addEventListener("keydown", event => { // CHANGE
+                    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return; // CHANGE
+                    if (!Number.isFinite(step) || step <= 0) return; // CHANGE
+                    event.preventDefault(); // CHANGE
+                    const current = Number(input.value); // CHANGE
+                    const min = input.min === "" ? NaN : Number(input.min); // CHANGE
+                    const base = Number.isFinite(current) ? current : (Number.isFinite(min) ? min : 0); // CHANGE
+                    const direction = event.key === "ArrowUp" ? 1 : -1; // CHANGE
+                    const next = Math.round((base + direction * step) * 1000000000) / 1000000000; // CHANGE
+                    input.value = String(Number.isFinite(min) ? Math.max(min, next) : next); // CHANGE
+                    const EventCtor = input.ownerDocument?.defaultView?.Event || Event; // CHANGE
+                    input.dispatchEvent(new EventCtor("input", { bubbles: true })); // CHANGE
+                }); // CHANGE
+                return input; // CHANGE
+            } // CHANGE
+
             function mkSelect(options, value, width) {
                 const select = document.createElement("select");
                 select.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;";
@@ -7744,6 +7765,7 @@ Draw.loadPlugin(function (ui) {
                 const kg = mkInput("number", crop.kgPerPlant ?? "");
                 setYearPlanField(kg, "kgPerPlant", { cropId: crop.id });
                 kg.min = "0";
+                configurePreferredNumberStep(kg, 0.1); // CHANGE
                 const kgHost = document.createElement("div");
                 const yieldMeta = document.createElement("div");
                 yieldMeta.className = "yp-yield-hint";

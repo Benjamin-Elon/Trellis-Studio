@@ -57,10 +57,12 @@ class OpenAIJsonClient:
         trace.request["action"] = "structured output preflight"
         return trace
 
-    def generate_json(self, *, system: str, user: str, schema_name: str, json_schema: dict[str, Any]) -> tuple[dict[str, Any], ProviderTrace]:
+    def generate_json(self, *, system: str, user: str, schema_name: str, json_schema: dict[str, Any], tools: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], ProviderTrace]:
         if not self.api_key:
             raise ProviderError("OPENAI_API_KEY is missing.")
         request = {"model": self.model, "reasoning_effort": self.reasoning_effort, "schema_name": schema_name, "system": system, "user": user}
+        if tools:
+            request["tools"] = tools  # NEW: verify mode can request source-backed web search traces.
         trace = ProviderTrace("openai", request)
         try:
             from openai import OpenAI  # type: ignore
@@ -71,14 +73,14 @@ class OpenAIJsonClient:
         client = OpenAI(api_key=self.api_key)
         try:
             try:
-                response = client.responses.create(
-                    model=self.model,
-                    reasoning={"effort": self.reasoning_effort},
-                    input=[
+                response_kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "reasoning": {"effort": self.reasoning_effort},
+                    "input": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
-                    text={
+                    "text": {
                         "format": {
                             "type": "json_schema",
                             "name": schema_name,
@@ -86,11 +88,16 @@ class OpenAIJsonClient:
                             "strict": True,
                         }
                     },
-                )
+                }
+                if tools:
+                    response_kwargs["tools"] = tools
+                response = client.responses.create(**response_kwargs)
                 text = getattr(response, "output_text", "")
                 if not text:
                     text = response.output[0].content[0].text  # type: ignore[attr-defined]
             except (AttributeError, TypeError) as compat_exc:
+                if tools:
+                    raise ProviderError("The installed OpenAI Python SDK does not support Responses API tools; upgrade openai.") from compat_exc
                 if str(self.model).startswith("gpt-5"):
                     raise ProviderError(
                         "The installed OpenAI Python SDK could not make a Responses API structured-output call. "
@@ -120,6 +127,29 @@ class OpenAIJsonClient:
                     "Set OPENAI_MODEL to a model ID available to your API key, for example 'gpt-5'."
                 ) from exc
             raise ProviderError(f"OpenAI generation failed: {exc}") from exc
+
+    def generate_json_with_web_search(self, *, system: str, user: str, schema_name: str, json_schema: dict[str, Any]) -> tuple[dict[str, Any], ProviderTrace]:
+        try:
+            return self.generate_json(
+                system=system,
+                user=user,
+                schema_name=schema_name,
+                json_schema=json_schema,
+                tools=[{"type": "web_search", "search_context_size": "medium"}],  # NEW: current Responses API web-search tool.
+            )
+        except ProviderError as first_exc:
+            try:
+                result, trace = self.generate_json(
+                    system=system,
+                    user=user,
+                    schema_name=schema_name,
+                    json_schema=json_schema,
+                    tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
+                )
+                trace.request["web_search_fallback"] = "web_search_preview"
+                return result, trace
+            except ProviderError as second_exc:
+                raise ProviderError(f"OpenAI web search failed: {first_exc}; fallback failed: {second_exc}") from second_exc
 
 
 class OpenMeteoClient:

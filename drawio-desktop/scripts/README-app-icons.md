@@ -2,19 +2,20 @@
 
 The application identity assets are generated from these canonical RGBA sources:
 
-- `build/branding/trellis-mark-full.png` contains Diagram T for outputs 64 px and larger.
-- `build/branding/trellis-mark-small.png` contains Negative Space T for outputs from 16 px through 48 px.
+- `build/branding/trellis-mark-small.png` contains Negative Space T for all generated app-icon outputs.
+- `build/branding/trellis-mark-full.png` is retained as a historical source and is not used for generated app icons.
 - `build/branding/trellis-wordmark-text.png` for the `Trellis Studio` wordmark.
 
-`drawio/src/main/webapp/images/window-icon.png` is a 256 px high-DPI source
-generated from Negative Space T for Electron title-bar and taskbar placements.
-`drawio/src/main/webapp/images/header-icon.png` is a separate 256 px high-DPI
-source generated from Diagram T for the in-app header.
+`drawio/src/main/webapp/images/window-icon.png` and
+`drawio/src/main/webapp/images/header-icon.png` are 256 px high-DPI sources
+generated from Negative Space T for Electron title-bar, taskbar, and in-app
+header placements.
 
-The icon sources intentionally include their pale-yellow and green backgrounds.
+The active icon source intentionally includes its green rounded-square background.
 They are center-cropped to square, pixels with alpha values from 0 through 8
 are cleared, and the result is resized to 1024 px before derivatives are built.
-The native container color is the Diagram T source yellow, `#FBFEBD`.
+Platform containers are transparent so the old Diagram T yellow does not show
+behind the active green mark.
 
 Compact transparent identity outputs from 16 through 48 px use the full canvas
 without generator-added margins. Larger transparent outputs retain a 5% margin

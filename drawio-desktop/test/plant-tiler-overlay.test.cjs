@@ -119,7 +119,9 @@ test('Garden Settings starts new garden dimensions from whole-number unit preset
     assert.match(dialogSource, /const curGardenDimsCm = useNewGardenDimensionPresets \? null : geometryDimensionsCm\(moduleCell\);/); // NEW
     assert.match(dialogSource, /const nextDims = priorDims \|\| curGardenDimsCm \|\| defaultGardenDimensionsCmForUnits\(nextUnits\);/); // NEW
     assert.match(dialogSource, /setGardenInputsFromCm\(enabled \? nextDims : null, nextUnits, \{ roundWhole: !!\(priorDims && priorUnits !== nextUnits\) \}\);/); // NEW
-    assert.match(dialogSource, /gardenWidthInput\.step = "0\.01";[\s\S]*gardenLengthInput\.step = "0\.01";/); // NEW
+    assert.match(dialogSource, /gardenWidthInput\.step = "0\.1";[\s\S]*gardenLengthInput\.step = "0\.1";/); // CHANGE
+    assert.match(dialogSource, /bedWidthInput\.step = "0\.1";[\s\S]*bedLengthInput\.step = "0\.1";/); // CHANGE
+    assert.match(dialogSource, /widthInput\.step = "0\.1";[\s\S]*moduleExternalMarginInput\.step = "0\.1";/); // CHANGE
 });
 
 test('Garden module and bed overlays expose exclusive mode launchers', () => { // CHANGE

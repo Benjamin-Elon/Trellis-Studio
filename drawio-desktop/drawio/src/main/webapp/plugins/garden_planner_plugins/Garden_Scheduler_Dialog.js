@@ -1481,6 +1481,20 @@ Draw.loadPlugin(function (ui) {
                   method_id     TEXT    NOT NULL,
                   template_json TEXT    NOT NULL,
                   updated_at    TEXT    NOT NULL,
+                  recipe_id     TEXT,
+                  recipe_name   TEXT,
+                  method_ids_json TEXT,
+                  growth_stage_keys_json TEXT,
+                  growth_stage_labels_json TEXT,
+                  recipe_origin TEXT,
+                  visibility    TEXT,
+                  owner_user_id TEXT,
+                  owner_name    TEXT,
+                  source_url    TEXT,
+                  source_note   TEXT,
+                  provenance_json TEXT,
+                  review_status TEXT,
+                  created_at    TEXT,
                   PRIMARY KEY (plant_id, method_id)
                 );`;
             const varietyTemplateSql = `
@@ -1493,6 +1507,33 @@ Draw.loadPlugin(function (ui) {
                 );`;
             await execAll(plantTemplateSql, []); // FIX: dbBridge.exec prepares one SQL statement per call
             await execAll(varietyTemplateSql, []); // FIX: keep table creation single-statement for better-sqlite3
+            await this._ensurePlantRecipeColumns(); // NEW: migrate legacy plant defaults into first-class recipe metadata.
+        }
+
+        static async _ensurePlantRecipeColumns() {
+            const existing = new Set((await queryAll("PRAGMA table_info(PlantTaskTemplates);", [])).map(row => String(row.name || row[1] || "")));
+            for (const [name, type] of Object.entries(this._plantRecipeColumnDefinitions())) {
+                if (!existing.has(name)) await execAll(`ALTER TABLE PlantTaskTemplates ADD COLUMN ${name} ${type};`, []); // NEW
+            }
+        }
+
+        static _plantRecipeColumnDefinitions() {
+            return {
+                recipe_id: "TEXT",
+                recipe_name: "TEXT",
+                method_ids_json: "TEXT",
+                growth_stage_keys_json: "TEXT",
+                growth_stage_labels_json: "TEXT",
+                recipe_origin: "TEXT",
+                visibility: "TEXT",
+                owner_user_id: "TEXT",
+                owner_name: "TEXT",
+                source_url: "TEXT",
+                source_note: "TEXT",
+                provenance_json: "TEXT",
+                review_status: "TEXT",
+                created_at: "TEXT"
+            };
         }
 
         static _safeParseTemplateRow(row) {
@@ -1509,17 +1550,33 @@ Draw.loadPlugin(function (ui) {
             await this.ensureTables();
             const normalizedMethodId = normId(methodId);
             const sql = `
-                SELECT template_json
+                SELECT *
                 FROM PlantTaskTemplates
-                WHERE plant_id = ? AND LOWER(TRIM(method_id)) = ?
+                WHERE plant_id = ?
                 ORDER BY CASE
-                           WHEN TRIM(method_id) = LOWER(TRIM(method_id)) THEN 0
-                           ELSE 1
-                         END,
-                         method_id
-                LIMIT 1;`;
-            const rows = await queryAll(sql, [Number(plantId), normalizedMethodId]);
-            return this._safeParseTemplateRow(rows[0] || null);
+                            WHEN TRIM(method_id) = LOWER(TRIM(method_id)) THEN 0
+                            ELSE 1
+                          END,
+                          method_id
+                ;`;
+            const rows = await queryAll(sql, [Number(plantId)]);
+            const match = rows.find(row => this._rowMatchesMethod(row, normalizedMethodId));
+            return this._safeParseTemplateRow(match || null);
+        }
+
+        static _rowMatchesMethod(row, normalizedMethodId) {
+            if (!row || !normalizedMethodId) return false;
+            if (normId(row.method_id) === normalizedMethodId) return true;
+            return this._jsonList(row.method_ids_json).some(id => normId(id) === normalizedMethodId); // NEW: recipe metadata compatibility.
+        }
+
+        static _jsonList(value) {
+            try {
+                const parsed = JSON.parse(String(value || "[]"));
+                return Array.isArray(parsed) ? parsed.map(item => String(item || "").trim()).filter(Boolean) : [];
+            } catch (_) {
+                return [];
+            }
         }
 
         static async loadVarietyTemplate(varietyId, methodId) {
@@ -1551,15 +1608,28 @@ Draw.loadPlugin(function (ui) {
             if (!normalizedMethodId) throw new Error('methodId is required.');
             const json = JSON.stringify(template ?? {});
             const now = new Date().toISOString();
+            const actor = getCurrentTaskRecipeActor();
+            const recipeId = `user_plant_${Number(plantId)}_${normalizedMethodId.replace(/[^a-z0-9]+/g, "_")}`;
+            const recipeName = `Plant default - ${normalizedMethodId}`;
             await withDbTransaction(async dbId => { // FIX: replace case-only task-template duplicates atomically
                 await execRunOnDb(dbId, `
                     DELETE FROM PlantTaskTemplates
                     WHERE plant_id = ? AND LOWER(TRIM(method_id)) = ?;`,
                 [Number(plantId), normalizedMethodId]);
                 await execRunOnDb(dbId, `
-                    INSERT INTO PlantTaskTemplates (plant_id, method_id, template_json, updated_at)
-                    VALUES (?, ?, ?, ?);`,
-                [Number(plantId), normalizedMethodId, json, now]);
+                    INSERT INTO PlantTaskTemplates (
+                      plant_id, method_id, template_json, updated_at, recipe_id, recipe_name,
+                      method_ids_json, growth_stage_keys_json, growth_stage_labels_json,
+                      recipe_origin, visibility, owner_user_id, owner_name, source_note,
+                      provenance_json, review_status, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+                [
+                    Number(plantId), normalizedMethodId, json, now, recipeId, recipeName,
+                    JSON.stringify([normalizedMethodId]), JSON.stringify(["mature"]), JSON.stringify(["Mature"]),
+                    "user", "private", actor.id, actor.name, "Saved from the scheduler plant-default editor.",
+                    JSON.stringify({ source: "scheduler" }), "user_saved", now
+                ]);
             });
         }
 
@@ -4266,7 +4336,7 @@ Draw.loadPlugin(function (ui) {
     }
     // --- helpers: find garden module ancestor & scoped board lookup ---
     function isGardenModule(cell) {
-        return !!(cell && cell.getAttribute && cell.getAttribute('garden_module') === '1');
+        return !!(cell && cell.getAttribute && (cell.getAttribute('garden_module') === '1' || cell.getAttribute('trellis_garden_module') === '1' || cell.getAttribute('module_type') === 'garden')); // CHANGE: task recipes can be shared from every garden module flavor.
     }
     function findGardenModuleAncestor(model, cell) {
         if (!cell) return null;
@@ -4621,6 +4691,8 @@ Draw.loadPlugin(function (ui) {
         return el;
     }
 
+    const YIELD_INPUT_PREFERRED_STEP = 0.1; // CHANGE
+
     function makeNullableNumber(initial, { min = null, step = null } = {}) {
         const el = document.createElement('input');
         el.type = 'number';
@@ -4630,6 +4702,27 @@ Draw.loadPlugin(function (ui) {
         el.style.width = '100%'; el.style.padding = '6px';
         return el;
     }
+
+    function configurePreferredNumberStep(input, preferredStep) { // CHANGE
+        if (!input) return input; // CHANGE
+        const step = Number(preferredStep); // CHANGE
+        input.step = 'any'; // CHANGE
+        input.dataset.preferredStep = Number.isFinite(step) ? String(step) : ''; // CHANGE
+        input.addEventListener('keydown', event => { // CHANGE
+            if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return; // CHANGE
+            if (!Number.isFinite(step) || step <= 0) return; // CHANGE
+            event.preventDefault(); // CHANGE
+            const current = Number(input.value); // CHANGE
+            const min = input.min === '' ? NaN : Number(input.min); // CHANGE
+            const base = Number.isFinite(current) ? current : (Number.isFinite(min) ? min : 0); // CHANGE
+            const direction = event.key === 'ArrowUp' ? 1 : -1; // CHANGE
+            const next = Math.round((base + direction * step) * 1000000000) / 1000000000; // CHANGE
+            input.value = String(Number.isFinite(min) ? Math.max(min, next) : next); // CHANGE
+            const EventCtor = input.ownerDocument?.defaultView?.Event || Event; // CHANGE
+            input.dispatchEvent(new EventCtor('input', { bubbles: true })); // CHANGE
+        }); // CHANGE
+        return input; // CHANGE
+    } // CHANGE
 
     function readNullableNumber(inputEl) {
         const s = String(inputEl?.value ?? '').trim();
@@ -6951,6 +7044,8 @@ Draw.loadPlugin(function (ui) {
                 input.type = 'text';
             }
 
+            if (def.preferredStep != null) configurePreferredNumberStep(input, def.preferredStep); // CHANGE
+
             if (def.type !== 'bool01') {
                 input.style.width = '120px';
                 input.style.padding = '6px';
@@ -7016,7 +7111,7 @@ Draw.loadPlugin(function (ui) {
             { key: 'gdd_to_maturity', type: 'num_ge0', step: 1 },
             { key: 'days_germ', type: 'int_ge0' },
             { key: 'days_transplant', type: 'int_ge0' },
-            { key: 'yield_per_plant_kg', type: 'num_ge0', step: 0.001 },
+            { key: 'yield_per_plant_kg', type: 'num_ge0', step: 'any', preferredStep: YIELD_INPUT_PREFERRED_STEP }, // CHANGE
             { key: 'harvest_window_days', type: 'int_ge0' },
 
             { key: 'soil_temp_min_plant_c', type: 'nullable_num', step: 0.1 },
@@ -7135,12 +7230,12 @@ Draw.loadPlugin(function (ui) {
         attachInlineOverrideToRow(daysTransRow, { key: 'days_transplant', type: 'int_ge0' });
 
         // --- Yield ---
-        const yieldInput = makeNullableNumber(existing?.yield_per_plant_kg ?? null, { min: 0, step: 0.001 });
+        const yieldInput = configurePreferredNumberStep(makeNullableNumber(existing?.yield_per_plant_kg ?? null, { min: 0, step: 'any' }), YIELD_INPUT_PREFERRED_STEP); // CHANGE
         const hwInput = makeNullableNumber(existing?.harvest_window_days ?? null, { min: 0, step: 1 });
 
         const yieldRow = row('Yield per plant (kg):', yieldInput);
         leftCol.appendChild(yieldRow.row);
-        attachInlineOverrideToRow(yieldRow, { key: 'yield_per_plant_kg', type: 'num_ge0', step: 0.001 });
+        attachInlineOverrideToRow(yieldRow, { key: 'yield_per_plant_kg', type: 'num_ge0', step: 'any', preferredStep: YIELD_INPUT_PREFERRED_STEP }); // CHANGE
 
         const hwRow = row('Harvest window (days):', hwInput);
         leftCol.appendChild(hwRow.row);
@@ -9188,6 +9283,15 @@ Draw.loadPlugin(function (ui) {
         let taskDirty = false;
         let taskTemplateResetRequested = false;
         let plantDefaultTaskDeleteRequested = false;
+        let selectedTaskRecipeRef = { kind: "resolved", recipeId: "", moduleId: "" }; // NEW
+        let recipeSaveEnabled = false; // NEW
+        let recipeSaveNameValue = ""; // NEW
+        let recipeSaveMethodIds = []; // NEW
+        let recipeSaveGrowthStageKeys = []; // NEW: recipes are compatible with explicit grown-for stages.
+        let recipeSearchQuery = ""; // NEW: search saved recipes by recipe, owner, module, method, or stage.
+        let taskRecipePickerRequestId = 0; // NEW: ignore stale async climate-sort renders.
+        let recipeComboOpen = false; // NEW: combobox popup state for the recipe tree.
+        let taskRecipeUserSelectionMade = false; // NEW: auto-select only before the user makes an explicit recipe choice.
 
         const saveDefaultChk = makeCheckbox(false);
         const climateModelModuleCell = (() => {
@@ -11655,6 +11759,7 @@ Draw.loadPlugin(function (ui) {
                 const climateModelAttributePatch = buildClimateModelModuleAttributePatch();
 
                 const persistPlantTaskDefault = async () => { // FIX: run DB persistence only after graph mutation succeeds
+                    await persistTaskRecipeSelection(); // NEW
                     if (saveDefaultChk.checked) {
                         const methodId = normId(formState.methodId);
                         if (!methodId) {
@@ -11708,7 +11813,7 @@ Draw.loadPlugin(function (ui) {
                     }
                 };
 
-                const taskTemplateJson = taskDirty
+                const taskTemplateJson = (taskDirty || (saveTaskRecipeChk && saveTaskRecipeChk.checked))
                     ? JSON.stringify(taskTemplate)
                     : (taskTemplateResetRequested ? "" : undefined);
 
@@ -11870,6 +11975,39 @@ Draw.loadPlugin(function (ui) {
         tasksHeaderRow.appendChild(leftHeaderCol);
 
         tasksTab.appendChild(tasksHeaderRow);
+
+        const recipePickerSection = document.createElement('div'); // NEW
+        recipePickerSection.style.cssText = 'border:1px solid #d1d5db;border-radius:6px;padding:10px;margin-bottom:12px;background:#fff;'; // NEW
+        const recipePickerTitle = document.createElement('div'); // NEW
+        recipePickerTitle.textContent = 'Task recipe'; // NEW
+        recipePickerTitle.style.cssText = 'font-weight:600;margin-bottom:8px;'; // NEW
+        const recipeComboButton = document.createElement('button'); // NEW
+        recipeComboButton.type = 'button'; // NEW
+        recipeComboButton.style.cssText = 'width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border:1px solid #bbb;border-radius:6px;background:#fff;text-align:left;'; // NEW
+        const recipeComboLabel = document.createElement('span'); // NEW
+        recipeComboLabel.textContent = 'Resolved task rules'; // NEW
+        recipeComboLabel.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'; // NEW
+        const recipeComboChevron = document.createElement('span'); // NEW
+        recipeComboChevron.textContent = 'v'; // NEW
+        recipeComboChevron.style.cssText = 'flex:0 0 auto;color:#6b7280;'; // NEW
+        recipeComboButton.appendChild(recipeComboLabel); // NEW
+        recipeComboButton.appendChild(recipeComboChevron); // NEW
+        const recipeComboPopup = document.createElement('div'); // NEW
+        recipeComboPopup.style.cssText = 'display:none;margin-top:6px;border:1px solid #d1d5db;border-radius:6px;padding:8px;background:#fff;'; // NEW
+        recipeComboButton.addEventListener('click', function () { recipeComboOpen = !recipeComboOpen; void renderTaskRecipePicker(); }); // NEW
+        const recipeSearchInput = document.createElement('input'); // NEW
+        recipeSearchInput.type = 'search'; // NEW
+        recipeSearchInput.placeholder = 'Search recipes, owners, gardens, methods, or stages'; // NEW
+        recipeSearchInput.style.cssText = 'width:100%;margin-bottom:8px;padding:5px 6px;border:1px solid #bbb;border-radius:4px;'; // NEW
+        recipeSearchInput.addEventListener('input', function () { recipeSearchQuery = recipeSearchInput.value; void renderTaskRecipePicker(); }); // NEW
+        const recipePickerTree = document.createElement('div'); // NEW
+        recipePickerTree.style.cssText = 'display:flex;flex-direction:column;gap:6px;'; // NEW
+        recipePickerSection.appendChild(recipePickerTitle); // NEW
+        recipePickerSection.appendChild(recipeComboButton); // NEW
+        recipeComboPopup.appendChild(recipeSearchInput); // NEW
+        recipeComboPopup.appendChild(recipePickerTree); // NEW
+        recipePickerSection.appendChild(recipeComboPopup); // NEW
+        tasksTab.appendChild(recipePickerSection); // NEW
 
         const taskPreviewSection = document.createElement('div');
         taskPreviewSection.style.border = '1px solid #d1d5db';
@@ -12040,6 +12178,330 @@ Draw.loadPlugin(function (ui) {
             });
         }
 
+        function taskRecipeSelectionKey(kind, moduleId, recipeId) {
+            return [kind || "", moduleId || "", recipeId || ""].join("|"); // NEW
+        }
+
+        function currentTaskRecipeSelectionKey() {
+            return taskRecipeSelectionKey(selectedTaskRecipeRef.kind, selectedTaskRecipeRef.moduleId, selectedTaskRecipeRef.recipeId); // NEW
+        }
+
+        function selectedTaskRecipeRecord() {
+            if (selectedTaskRecipeRef.kind !== "recipe" || !selectedTaskRecipeRef.moduleCell) return null; // NEW
+            return readTaskRecipeLibrary(selectedTaskRecipeRef.moduleCell).find(function (recipe) { return recipe.id === selectedTaskRecipeRef.recipeId; }) || null; // NEW
+        }
+
+        function hasCellTaskTemplateSnapshot() {
+            return String(cell?.getAttribute?.('task_template_json') || '').trim().length > 0; // NEW
+        }
+
+        function selectedTaskRecipeLabel() {
+            if (selectedTaskRecipeRef.kind === "built_in") return "Built-in method recipe"; // NEW
+            const recipe = selectedTaskRecipeRecord(); // NEW
+            if (recipe) { // NEW
+                const moduleName = selectedTaskRecipeRef.moduleCell ? formatGardenName(selectedTaskRecipeRef.moduleCell) : ""; // NEW
+                return [moduleName, recipe.name].filter(Boolean).join(" / "); // NEW
+            }
+            return taskTemplateSource === "recipe" ? "Selected task recipe" : "Resolved task rules"; // NEW
+        }
+
+        function updateTaskRecipeComboboxChrome() {
+            recipeComboLabel.textContent = selectedTaskRecipeLabel(); // NEW
+            recipeComboPopup.style.display = recipeComboOpen ? "block" : "none"; // NEW
+            recipeComboChevron.textContent = recipeComboOpen ? "^" : "v"; // NEW
+        }
+
+        function selectedTaskRecipeCanDelete() {
+            const recipe = selectedTaskRecipeRecord(); // NEW
+            return !!(recipe && selectedTaskRecipeRef.moduleCell && canUpdateTaskRecipe(recipe)); // NEW
+        }
+
+        function taskRecipeMethodOptions() {
+            const options = []; // NEW
+            const seen = new Set(); // NEW
+            currentAllowedMethodCategories.forEach(function (category) { // NEW
+                const categoryName = String(category && (category.method_category_name || category.method_category_id) || "").trim(); // NEW
+                const methods = currentMethodsByCategory.get(normId(category && category.method_category_id)) || []; // NEW
+                methods.forEach(function (method) { // NEW
+                    const methodId = normId(method && method.method_id); // NEW
+                    if (!methodId || seen.has(methodId)) return; // NEW
+                    seen.add(methodId); // NEW
+                    options.push({ methodId, label: (categoryName ? categoryName + " / " : "") + String(method.method_name || methodId) }); // NEW
+                });
+            });
+            uniqueMethodIds(recipeSaveMethodIds).forEach(function (methodId) { // NEW
+                if (!seen.has(methodId)) options.push({ methodId, label: methodId }); // NEW
+            });
+            return options; // NEW
+        }
+
+        function taskRecipeGrowthStageOptions() {
+            const options = []; // NEW
+            const seen = new Set(); // NEW
+            (currentGrowthStages || []).forEach(function (stage) { // NEW
+                const stageKey = normalizeGrowthStageKey(stage && stage.stageKey); // NEW
+                if (!stageKey || seen.has(stageKey)) return; // NEW
+                seen.add(stageKey); // NEW
+                options.push({ stageKey, label: String(stage.stageLabel || stageKey).trim() || stageKey }); // NEW
+            });
+            uniqueGrowthStageKeys(recipeSaveGrowthStageKeys).forEach(function (stageKey) { // NEW
+                if (!seen.has(stageKey)) options.push({ stageKey, label: stageKey === DEFAULT_GROWTH_STAGE_KEY ? DEFAULT_GROWTH_STAGE_LABEL : stageKey }); // NEW
+            });
+            return options; // NEW
+        }
+
+        function syncTaskRecipeSaveState() {
+            recipeSaveEnabled = !!(saveTaskRecipeChk && saveTaskRecipeChk.checked); // NEW
+            recipeSaveNameValue = String(taskRecipeNameInput && taskRecipeNameInput.value || "").trim(); // NEW
+            recipeSaveMethodIds = Array.from(taskRecipeMethodsDiv.querySelectorAll('input[type="checkbox"]')).filter(function (input) { return input.checked; }).map(function (input) { return normId(input.value); }).filter(Boolean); // NEW
+            recipeSaveGrowthStageKeys = Array.from(taskRecipeGrowthStagesDiv.querySelectorAll('input[type="checkbox"]')).filter(function (input) { return input.checked; }).map(function (input) { return normalizeGrowthStageKey(input.value); }).filter(Boolean); // NEW
+        }
+
+        function seedTaskRecipeSaveFields(recipe) {
+            recipeSaveNameValue = recipe ? String(recipe.name || "").trim() : recipeSaveNameValue; // NEW
+            recipeSaveMethodIds = recipe ? uniqueMethodIds(recipe.methodIds) : uniqueMethodIds([formState.methodId]); // NEW
+            recipeSaveGrowthStageKeys = recipe ? uniqueGrowthStageKeys(recipe.growthStageKeys) : uniqueGrowthStageKeys([formState.growthStageKey]); // NEW
+        }
+
+        function renderTaskRecipeSaveControls() {
+            taskRecipeSaveFields.style.display = saveTaskRecipeChk.checked ? "flex" : "none"; // NEW
+            if (!saveTaskRecipeChk.checked) return; // NEW
+            const selectedRecipe = selectedTaskRecipeRecord(); // NEW
+            const canUpdateSelected = selectedRecipe && selectedTaskRecipeRef.moduleCell === climateModelModuleCell && canUpdateTaskRecipe(selectedRecipe); // NEW
+            if (!taskRecipeNameInput.value && selectedRecipe) taskRecipeNameInput.value = selectedRecipe.name; // NEW
+            if (!taskRecipeNameInput.value) taskRecipeNameInput.value = recipeSaveNameValue || ""; // NEW
+            taskRecipeModeHint.textContent = canUpdateSelected ? "Updates the selected recipe in this garden module." : "Saves a new recipe in the current garden module."; // NEW
+            deleteSelectedTaskRecipeBtn.style.display = selectedTaskRecipeCanDelete() ? "" : "none"; // NEW
+            const selectedIds = new Set(uniqueMethodIds(recipeSaveMethodIds.length ? recipeSaveMethodIds : (selectedRecipe ? selectedRecipe.methodIds : [formState.methodId]))); // NEW
+            taskRecipeMethodsDiv.innerHTML = ""; // NEW
+            taskRecipeMethodOptions().forEach(function (option) { // NEW
+                const label = document.createElement("label"); // NEW
+                label.style.cssText = "display:inline-flex;align-items:center;gap:4px;margin-right:10px;margin-bottom:4px;"; // NEW
+                const chk = makeCheckbox(selectedIds.has(option.methodId)); // NEW
+                chk.value = option.methodId; // NEW
+                chk.addEventListener("change", syncTaskRecipeSaveState); // NEW
+                const text = document.createElement("span"); // NEW
+                text.textContent = option.label; // NEW
+                label.appendChild(chk); // NEW
+                label.appendChild(text); // NEW
+                taskRecipeMethodsDiv.appendChild(label); // NEW
+            });
+            const selectedStageKeys = new Set(uniqueGrowthStageKeys(recipeSaveGrowthStageKeys.length ? recipeSaveGrowthStageKeys : (selectedRecipe ? selectedRecipe.growthStageKeys : [formState.growthStageKey]))); // NEW
+            taskRecipeGrowthStagesDiv.innerHTML = ""; // NEW
+            taskRecipeGrowthStageOptions().forEach(function (option) { // NEW
+                const label = document.createElement("label"); // NEW
+                label.style.cssText = "display:inline-flex;align-items:center;gap:4px;margin-right:10px;margin-bottom:4px;"; // NEW
+                const chk = makeCheckbox(selectedStageKeys.has(option.stageKey)); // NEW
+                chk.value = option.stageKey; // NEW
+                chk.addEventListener("change", syncTaskRecipeSaveState); // NEW
+                const text = document.createElement("span"); // NEW
+                text.textContent = option.label; // NEW
+                label.appendChild(chk); // NEW
+                label.appendChild(text); // NEW
+                taskRecipeGrowthStagesDiv.appendChild(label); // NEW
+            });
+            syncTaskRecipeSaveState(); // NEW
+        }
+
+        async function validateRecipeRulesForMethods(methodIds, template) {
+            const rules = Array.isArray(template && template.rules) ? template.rules : []; // NEW
+            for (const methodId of uniqueMethodIds(methodIds)) { // NEW
+                const allowedStages = await getAllowedAnchorStagesForMethod(methodId); // NEW
+                rules.forEach(function (rule) { validateTaskRule(rule, { allowedStages, requireTaskType: !isCanonicalTaskId(rule && rule.id) }); }); // NEW
+            }
+        }
+
+        async function persistTaskRecipeSelection() {
+            syncTaskRecipeSaveState(); // NEW
+            if (!recipeSaveEnabled) return null; // NEW
+            if (!climateModelModuleCell) throw new Error("Select a garden module before saving a task recipe."); // NEW
+            const name = recipeSaveNameValue; // NEW
+            if (!name) throw new Error("Task recipe name is required."); // NEW
+            const methodIds = uniqueMethodIds(recipeSaveMethodIds); // NEW
+            if (!methodIds.length) throw new Error("Select at least one compatible method for the task recipe."); // NEW
+            const growthStageKeys = uniqueGrowthStageKeys(recipeSaveGrowthStageKeys); // NEW
+            if (!growthStageKeys.length) throw new Error("Select at least one compatible grown-for stage for the task recipe."); // NEW
+            const template = normalizeTaskTemplate({ version: 2, rules: taskRules }); // NEW
+            await validateRecipeRulesForMethods(methodIds, template); // NEW
+            const selectedRecipe = selectedTaskRecipeRecord(); // NEW
+            const allowUpdateId = selectedRecipe && selectedTaskRecipeRef.moduleCell === climateModelModuleCell && canUpdateTaskRecipe(selectedRecipe) ? selectedRecipe.id : ""; // NEW
+            const stageLabelByKey = new Map(taskRecipeGrowthStageOptions().map(function (option) { return [option.stageKey, option.label]; })); // NEW
+            const saved = upsertTaskRecipe(climateModelModuleCell, { // NEW
+                id: allowUpdateId,
+                name,
+                plantId: formState.plantId,
+                plantName: String(selPlant && (selPlant.plant_name || selPlant.abbr) || formState.plantId || ""),
+                methodIds,
+                growthStageKeys,
+                growthStageLabels: growthStageKeys.map(function (key) { return stageLabelByKey.get(key) || (key === DEFAULT_GROWTH_STAGE_KEY ? DEFAULT_GROWTH_STAGE_LABEL : key); }), // NEW
+                template
+            }, { allowUpdateId });
+            selectedTaskRecipeRef = { kind: "recipe", moduleId: cellStableId(climateModelModuleCell), recipeId: saved.id, moduleCell: climateModelModuleCell }; // NEW
+            recipeSaveNameValue = saved.name; // NEW
+            recipeSaveMethodIds = saved.methodIds.slice(); // NEW
+            recipeSaveGrowthStageKeys = saved.growthStageKeys.slice(); // NEW
+            return saved; // NEW
+        }
+
+        async function deleteSelectedTaskRecipe() {
+            const recipe = selectedTaskRecipeRecord(); // NEW
+            const moduleCell = selectedTaskRecipeRef.moduleCell; // NEW
+            if (!recipe || !moduleCell) return; // NEW
+            if (!canUpdateTaskRecipe(recipe)) throw new Error("Only the recipe owner can delete this task recipe."); // NEW
+            const ok = confirm(`Delete task recipe "${recipe.name}"? Existing plantings that already saved task snapshots will not change.`); // NEW
+            if (!ok) return; // NEW
+            deleteTaskRecipe(moduleCell, recipe.id); // NEW
+            recipeSaveNameValue = ""; // NEW
+            if (typeof taskRecipeNameInput !== "undefined" && taskRecipeNameInput) taskRecipeNameInput.value = ""; // NEW
+            await applyBuiltInTaskRecipe({ fallback: true }); // NEW
+        }
+
+        async function applyBuiltInTaskRecipe(options = {}) {
+            syncStateFromControls(); // NEW
+            const methodTemplate = await getDefaultTaskTemplateForPlantingMethods(formState.methodId); // NEW
+            taskTemplate = normalizeTaskTemplate(methodTemplate); // NEW
+            taskTemplateSource = methodTemplate ? "method_builtin" : "none"; // NEW
+            taskRules = Array.isArray(taskTemplate.rules) ? [...taskTemplate.rules] : []; // NEW
+            selectedTaskRecipeRef = { kind: "built_in", recipeId: "", moduleId: "" }; // NEW
+            if (!options.autoSelect && !options.fallback) taskRecipeUserSelectionMade = true; // NEW
+            recipeComboOpen = false; // NEW
+            recipeSaveMethodIds = uniqueMethodIds([formState.methodId]); // NEW
+            recipeSaveGrowthStageKeys = uniqueGrowthStageKeys([formState.growthStageKey]); // NEW
+            taskTemplateResetRequested = false; // NEW
+            plantDefaultTaskDeleteRequested = false; // NEW
+            taskDirty = true; // NEW
+            taskEditorDiv.innerHTML = ""; // NEW
+            await refreshTasksTabUI(); // NEW
+        }
+
+        async function applySavedTaskRecipe(group, recipe, options = {}) {
+            taskTemplate = normalizeTaskTemplate(clonePlain(recipe.template)); // NEW
+            taskTemplateSource = "recipe"; // NEW
+            taskRules = Array.isArray(taskTemplate.rules) ? [...taskTemplate.rules] : []; // NEW
+            selectedTaskRecipeRef = { kind: "recipe", moduleId: group.moduleId, recipeId: recipe.id, moduleCell: group.moduleCell }; // NEW
+            if (!options.autoSelect) taskRecipeUserSelectionMade = true; // NEW
+            recipeComboOpen = false; // NEW
+            recipeSaveNameValue = recipe.name; // NEW
+            recipeSaveMethodIds = recipe.methodIds.slice(); // NEW
+            recipeSaveGrowthStageKeys = recipe.growthStageKeys.slice(); // NEW
+            if (typeof taskRecipeNameInput !== "undefined" && taskRecipeNameInput) taskRecipeNameInput.value = recipe.name; // NEW
+            taskTemplateResetRequested = false; // NEW
+            plantDefaultTaskDeleteRequested = false; // NEW
+            taskDirty = true; // NEW
+            taskEditorDiv.innerHTML = ""; // NEW
+            await refreshTasksTabUI(); // NEW
+        }
+
+        function taskRecipeMethodLabelMap() {
+            return new Map(taskRecipeMethodOptions().map(function (option) { return [option.methodId, option.label]; })); // NEW
+        }
+
+        function taskRecipeStageLabelMap() {
+            return new Map(taskRecipeGrowthStageOptions().map(function (option) { return [option.stageKey, option.label]; })); // NEW
+        }
+
+        function taskRecipeMatchesSearch(group, recipe, query, methodLabels, stageLabels) {
+            return taskRecipeSearchMatches(group, recipe, query, methodLabels, stageLabels); // NEW
+        }
+
+        function appendBuiltInTaskRecipeOption() {
+            const builtInLabel = document.createElement("label"); // NEW
+            builtInLabel.style.cssText = "display:flex;align-items:center;gap:6px;"; // NEW
+            const builtInRadio = document.createElement("input"); // NEW
+            builtInRadio.type = "radio"; // NEW
+            builtInRadio.name = "trellis-task-recipe"; // NEW
+            builtInRadio.checked = selectedTaskRecipeRef.kind === "built_in"; // NEW
+            builtInRadio.addEventListener("change", function () { if (builtInRadio.checked) void applyBuiltInTaskRecipe(); }); // NEW
+            const builtInText = document.createElement("span"); // NEW
+            builtInText.textContent = "Built-in method recipe"; // NEW
+            builtInLabel.appendChild(builtInRadio); // NEW
+            builtInLabel.appendChild(builtInText); // NEW
+            recipePickerTree.appendChild(builtInLabel); // NEW
+        }
+
+        function autoSelectableCurrentGardenRecipe(groups) {
+            return autoSelectableTaskRecipeFromGroups(groups, { // NEW
+                taskDirty, // NEW
+                userSelectionMade: taskRecipeUserSelectionMade, // NEW
+                hasCellTemplate: hasCellTaskTemplateSnapshot(), // NEW
+                selectionKind: selectedTaskRecipeRef.kind // NEW
+            }); // NEW
+        }
+
+        async function renderTaskRecipePicker() {
+            const graph = ui && ui.editor && ui.editor.graph; // NEW
+            const model = graph && typeof graph.getModel === "function" ? graph.getModel() : null; // NEW
+            const requestId = ++taskRecipePickerRequestId; // NEW
+            const searchQuery = recipeSearchQuery; // NEW
+            const methodLabels = taskRecipeMethodLabelMap(); // NEW
+            const stageLabels = taskRecipeStageLabelMap(); // NEW
+            updateTaskRecipeComboboxChrome(); // NEW
+            recipePickerTree.innerHTML = ""; // NEW
+            appendBuiltInTaskRecipeOption(); // NEW
+            const loading = document.createElement("div"); // NEW
+            loading.textContent = "Loading saved recipes..."; // NEW
+            loading.style.cssText = "font-size:12px;color:#6b7280;"; // NEW
+            recipePickerTree.appendChild(loading); // NEW
+            const groups = await listCompatibleTaskRecipesByModule(model, climateModelModuleCell, formState.plantId, formState.methodId, formState.growthStageKey); // NEW
+            if (requestId !== taskRecipePickerRequestId) return; // NEW
+            const autoSelection = autoSelectableCurrentGardenRecipe(groups); // NEW
+            if (autoSelection) { // NEW
+                await applySavedTaskRecipe(autoSelection.group, autoSelection.recipe, { autoSelect: true }); // NEW
+                return; // NEW
+            }
+            recipePickerTree.innerHTML = ""; // NEW
+            appendBuiltInTaskRecipeOption(); // NEW
+            updateTaskRecipeComboboxChrome(); // NEW
+            const visibleGroups = groups.map(function (group) { // NEW
+                return Object.assign({}, group, { // NEW
+                    recipes: group.recipes.filter(function (recipe) { return taskRecipeMatchesSearch(group, recipe, searchQuery, methodLabels, stageLabels); }) // NEW
+                }); // NEW
+            }).filter(function (group) { return group.recipes.length > 0; }); // NEW
+            visibleGroups.forEach(function (group) { // NEW
+                const details = document.createElement("details"); // NEW
+                details.open = group.current || group.recipes.some(function (recipe) { return taskRecipeSelectionKey("recipe", group.moduleId, recipe.id) === currentTaskRecipeSelectionKey(); }); // NEW
+                const summary = document.createElement("summary"); // NEW
+                summary.textContent = (group.current ? "Current garden: " : "") + group.moduleName; // NEW
+                summary.style.cssText = "cursor:pointer;font-weight:600;"; // NEW
+                details.appendChild(summary); // NEW
+                group.recipes.forEach(function (recipe) { // NEW
+                    const rowWrap = document.createElement("div"); // NEW
+                    rowWrap.style.cssText = "display:flex;align-items:center;gap:6px;margin:5px 0 5px 18px;"; // NEW
+                    const label = document.createElement("label"); // NEW
+                    label.style.cssText = "display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto;"; // NEW
+                    const radio = document.createElement("input"); // NEW
+                    radio.type = "radio"; // NEW
+                    radio.name = "trellis-task-recipe"; // NEW
+                    radio.checked = taskRecipeSelectionKey("recipe", group.moduleId, recipe.id) === currentTaskRecipeSelectionKey(); // NEW
+                    radio.addEventListener("change", function () { if (radio.checked) void applySavedTaskRecipe(group, recipe); }); // NEW
+                    const text = document.createElement("span"); // NEW
+                    text.style.cssText = "min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"; // NEW
+                    const stageText = recipe.growthStageKeys.map(function (key, index) { return stageLabels.get(key) || recipe.growthStageLabels[index] || key; }).join(", "); // NEW
+                    text.textContent = recipe.name + (recipe.ownerName ? " - " + recipe.ownerName : "") + (stageText ? " (" + stageText + ")" : ""); // NEW
+                    label.appendChild(radio); // NEW
+                    label.appendChild(text); // NEW
+                    rowWrap.appendChild(label); // NEW
+                    if (radio.checked && canUpdateTaskRecipe(recipe)) { // NEW
+                        const deleteBtn = document.createElement("button"); // NEW
+                        deleteBtn.type = "button"; // NEW
+                        deleteBtn.textContent = "Delete"; // NEW
+                        deleteBtn.title = "Delete selected task recipe"; // NEW
+                        deleteBtn.style.cssText = "flex:0 0 auto;padding:2px 6px;border:1px solid #b91c1c;color:#b91c1c;background:#fff;border-radius:4px;font-size:11px;"; // NEW
+                        deleteBtn.addEventListener("click", function (event) { event.preventDefault(); event.stopPropagation(); void deleteSelectedTaskRecipe(); }); // NEW
+                        rowWrap.appendChild(deleteBtn); // NEW
+                    }
+                    details.appendChild(rowWrap); // NEW
+                });
+                recipePickerTree.appendChild(details); // NEW
+            });
+            if (!visibleGroups.length) { // NEW
+                const empty = document.createElement("div"); // NEW
+                empty.textContent = searchQuery ? "No matching recipes for this plant, method, and grown-for stage." : "No saved recipes for this plant, method, and grown-for stage."; // NEW
+                empty.style.cssText = "font-size:12px;color:#6b7280;"; // NEW
+                recipePickerTree.appendChild(empty); // NEW
+            }
+        }
+
         function renderCachedTaskPreview({ message = '', error = '' } = {}) {
             const selectedKeys = selectedPreviewRuleKeys();
             if (!selectedKeys.size && !error) message = 'Select at least one task rule to preview.';
@@ -12135,6 +12597,8 @@ Draw.loadPlugin(function (ui) {
                 taskDirty,
                 taskTemplateSource
             });
+            await renderTaskRecipePicker(); // NEW
+            renderTaskRecipeSaveControls(); // NEW
             await updateTaskPreview();
             renderTasksList();
             updateTimeline();
@@ -12155,7 +12619,11 @@ Draw.loadPlugin(function (ui) {
             // Do not overwrite if the cell already has a per-plan template
             const raw = String(cell?.getAttribute?.('task_template_json') || '').trim();
             const hasCellTpl = raw.length > 0;
-            if (hasCellTpl || taskDirty) return;
+            if (hasCellTpl || taskDirty) { // NEW
+                await renderTaskRecipePicker(); // NEW
+                renderTaskRecipeSaveControls(); // NEW
+                return; // NEW
+            }
 
             const resolved = await resolveTaskTemplate({
                 cell,
@@ -12167,9 +12635,14 @@ Draw.loadPlugin(function (ui) {
             taskTemplate = normalizeTaskTemplate(resolved?.template ?? null);
             taskTemplateSource = resolved?.source ?? "unknown";
             taskRules = Array.isArray(taskTemplate.rules) ? [...taskTemplate.rules] : [];
+            selectedTaskRecipeRef = { kind: "resolved", recipeId: "", moduleId: "" }; // NEW
+            recipeSaveMethodIds = uniqueMethodIds([formState.methodId]); // NEW
+            recipeSaveGrowthStageKeys = uniqueGrowthStageKeys([formState.growthStageKey]); // NEW
 
             taskEditorDiv.innerHTML = '';
             renderTasksList();
+            await renderTaskRecipePicker(); // NEW
+            renderTaskRecipeSaveControls(); // NEW
             updateTasksHeader({
                 methodCategorySel,
                 methodSel,
@@ -12497,6 +12970,11 @@ Draw.loadPlugin(function (ui) {
                 taskTemplate = normalizeTaskTemplate(methodTemplate);
                 taskTemplateSource = methodTemplate ? "method_builtin" : "none";
                 taskRules = Array.isArray(taskTemplate.rules) ? [...taskTemplate.rules] : [];
+                selectedTaskRecipeRef = { kind: "built_in", recipeId: "", moduleId: "" }; // NEW
+                taskRecipeUserSelectionMade = true; // NEW
+                recipeComboOpen = false; // NEW
+                recipeSaveMethodIds = uniqueMethodIds([formState.methodId]); // NEW
+                recipeSaveGrowthStageKeys = uniqueGrowthStageKeys([formState.growthStageKey]); // NEW
                 taskTemplateResetRequested = true;
                 plantDefaultTaskDeleteRequested = true;
                 taskDirty = false;
@@ -12509,6 +12987,35 @@ Draw.loadPlugin(function (ui) {
 
         applySharedButtonStyle(resetTasksBtn, 'danger');
 
+        const saveTaskRecipeChk = makeCheckbox(false); // NEW
+        const taskRecipeNameInput = document.createElement("input"); // NEW
+        taskRecipeNameInput.type = "text"; // NEW
+        taskRecipeNameInput.placeholder = "Recipe name"; // NEW
+        taskRecipeNameInput.style.cssText = "min-width:190px;padding:5px 6px;border:1px solid #bbb;border-radius:4px;"; // NEW
+        taskRecipeNameInput.addEventListener("input", syncTaskRecipeSaveState); // NEW
+        const taskRecipeModeHint = document.createElement("div"); // NEW
+        taskRecipeModeHint.style.cssText = "font-size:12px;color:#6b7280;"; // NEW
+        const deleteSelectedTaskRecipeBtn = mxUtils.button("Delete selected recipe", function () { void deleteSelectedTaskRecipe(); }); // NEW
+        applySharedButtonStyle(deleteSelectedTaskRecipeBtn, "danger"); // NEW
+        deleteSelectedTaskRecipeBtn.style.display = "none"; // NEW
+        const taskRecipeMethodsDiv = document.createElement("div"); // NEW
+        taskRecipeMethodsDiv.style.cssText = "display:flex;flex-wrap:wrap;gap:4px 8px;"; // NEW
+        const taskRecipeGrowthStagesDiv = document.createElement("div"); // NEW
+        taskRecipeGrowthStagesDiv.style.cssText = "display:flex;flex-wrap:wrap;gap:4px 8px;"; // NEW
+        const taskRecipeSaveFields = document.createElement("div"); // NEW
+        taskRecipeSaveFields.style.cssText = "display:none;flex-direction:column;gap:6px;flex-basis:100%;padding:8px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;"; // NEW
+        taskRecipeSaveFields.appendChild(row("Task Recipe Name", taskRecipeNameInput).row); // NEW
+        taskRecipeSaveFields.appendChild(taskRecipeModeHint); // NEW
+        taskRecipeSaveFields.appendChild(deleteSelectedTaskRecipeBtn); // NEW
+        taskRecipeSaveFields.appendChild(row("Compatible methods", taskRecipeMethodsDiv).row); // NEW
+        taskRecipeSaveFields.appendChild(row("Compatible grown for", taskRecipeGrowthStagesDiv).row); // NEW
+        saveTaskRecipeChk.addEventListener("change", function () { // NEW
+            const selectedRecipe = selectedTaskRecipeRecord(); // NEW
+            seedTaskRecipeSaveFields(selectedRecipe); // NEW
+            if (selectedRecipe && !taskRecipeNameInput.value) taskRecipeNameInput.value = selectedRecipe.name; // NEW
+            renderTaskRecipeSaveControls(); // NEW
+        });
+
         const taskDefaultsActions = document.createElement('div');
         taskDefaultsActions.style.marginTop = '10px';
         taskDefaultsActions.style.paddingTop = '10px';
@@ -12520,6 +13027,8 @@ Draw.loadPlugin(function (ui) {
         taskDefaultsActions.appendChild(resetTasksBtn);
         taskDefaultsActions.appendChild(restoreBuiltinsBtn);
         taskDefaultsActions.appendChild(row("Save these tasks as plant default", saveDefaultChk).row);
+        taskDefaultsActions.appendChild(row("Save task recipe", saveTaskRecipeChk).row); // NEW
+        taskDefaultsActions.appendChild(taskRecipeSaveFields); // NEW
         tasksTab.insertBefore(taskDefaultsActions, taskEditorDiv);
 
         applySharedButtonStyle(restoreBuiltinsBtn, 'neutral');
@@ -12788,6 +13297,8 @@ Draw.loadPlugin(function (ui) {
         thin: "thinning_check",
         harvest: "harvesting"
     });
+    const TASK_RECIPE_LIBRARY_ATTR = "task_recipe_library_json"; // NEW: garden-module scoped recipe registry.
+    const TASK_RECIPE_LIBRARY_VERSION = 1; // NEW
 
     function isCanonicalTaskId(id) {
         return CANONICAL_TASK_IDS.includes(String(id || "").trim());
@@ -12899,6 +13410,314 @@ Draw.loadPlugin(function (ui) {
 
     function safeJsonParse(s, fallback) {
         try { return JSON.parse(s); } catch (_) { return fallback; }
+    }
+
+    function clonePlain(value) {
+        try { return JSON.parse(JSON.stringify(value == null ? null : value)); } catch (_) { return value; } // NEW
+    }
+
+    function cellStableId(cell) {
+        return String(cell && (typeof cell.getId === "function" ? cell.getId() : cell.id) || "").trim(); // NEW
+    }
+
+    function readCellJsonAttr(cell, key, fallback) {
+        const raw = String(cell && cell.getAttribute ? cell.getAttribute(key) || "" : "").trim(); // NEW
+        if (!raw) return fallback; // NEW
+        return safeJsonParse(raw, fallback); // NEW
+    }
+
+    function writeCellJsonAttr(cell, key, value) {
+        if (!cell || !cell.value || typeof cell.value.setAttribute !== "function") return; // NEW
+        cell.value.setAttribute(key, JSON.stringify(value)); // NEW
+    }
+
+    function recipeNameKey(value) {
+        return String(value || "").trim().toLowerCase(); // NEW
+    }
+
+    function uniqueMethodIds(methodIds) {
+        return Array.from(new Set((Array.isArray(methodIds) ? methodIds : []).map(normId).filter(Boolean))).sort(); // NEW
+    }
+
+    function uniqueGrowthStageKeys(stageKeys) {
+        return Array.from(new Set((Array.isArray(stageKeys) ? stageKeys : []).map(normalizeGrowthStageKey).filter(Boolean))).sort(); // NEW
+    }
+
+    function taskRecipeStageLabelForKey(key, labelsByKey) {
+        return labelsByKey && labelsByKey.get && labelsByKey.get(key) || (key === DEFAULT_GROWTH_STAGE_KEY ? DEFAULT_GROWTH_STAGE_LABEL : key); // NEW
+    }
+
+    function recipeSearchKey(value) {
+        return String(value || "").trim().toLowerCase().replace(/\s+/g, " "); // NEW
+    }
+
+    function lookupTaskRecipeLabel(labels, key) {
+        if (!labels) return ""; // NEW
+        if (labels instanceof Map) return labels.get(key) || ""; // NEW
+        return labels[key] || ""; // NEW
+    }
+
+    function taskRecipeSearchMatches(group, recipe, query, methodLabels = null, stageLabels = null) {
+        const q = recipeSearchKey(query); // NEW
+        if (!q) return true; // NEW
+        const haystack = recipeSearchKey([ // NEW
+            recipe && recipe.name,
+            recipe && recipe.ownerName,
+            group && group.moduleName,
+            recipe && recipe.plantName,
+            (recipe && recipe.methodIds || []).map(function (id) { return lookupTaskRecipeLabel(methodLabels, id) || id; }).join(" "),
+            (recipe && recipe.growthStageKeys || []).map(function (key, index) { return lookupTaskRecipeLabel(stageLabels, key) || recipe.growthStageLabels?.[index] || key; }).join(" ")
+        ].filter(Boolean).join(" "));
+        return haystack.indexOf(q) >= 0; // NEW
+    }
+
+    function normalizeTaskRecipeGrowthStages(source) {
+        const hasStageField = Object.prototype.hasOwnProperty.call(source, "growthStageKeys") || Object.prototype.hasOwnProperty.call(source, "growth_stage_keys") || Object.prototype.hasOwnProperty.call(source, "growthStageKey") || Object.prototype.hasOwnProperty.call(source, "growth_stage_key"); // NEW
+        const rawKeys = Array.isArray(source.growthStageKeys) ? source.growthStageKeys // NEW
+            : Array.isArray(source.growth_stage_keys) ? source.growth_stage_keys // NEW
+                : (source.growthStageKey || source.growth_stage_key) ? [source.growthStageKey || source.growth_stage_key] : []; // NEW
+        const growthStageKeys = uniqueGrowthStageKeys(rawKeys.length ? rawKeys : (hasStageField ? [] : [DEFAULT_GROWTH_STAGE_KEY])); // NEW
+        const rawLabels = Array.isArray(source.growthStageLabels) ? source.growthStageLabels : Array.isArray(source.growth_stage_labels) ? source.growth_stage_labels : []; // NEW
+        const labelByKey = new Map(); // NEW
+        growthStageKeys.forEach(function (key, index) { // NEW
+            const label = String(rawLabels[index] || "").trim(); // NEW
+            labelByKey.set(key, label || taskRecipeStageLabelForKey(key)); // NEW
+        });
+        return { growthStageKeys, growthStageLabels: growthStageKeys.map(function (key) { return labelByKey.get(key); }) }; // NEW
+    }
+
+    function getCurrentTaskRecipeActor() {
+        const users = typeof window !== "undefined" && window.Trellis && window.Trellis.users; // NEW
+        const user = users && typeof users.getCurrentUser === "function" ? users.getCurrentUser() : null; // NEW
+        return user ? { id: String(user.id || "").trim(), name: String(user.name || user.email || "").trim() } : { id: "", name: "" }; // NEW
+    }
+
+    function recipeUsersEnabled() {
+        const users = typeof window !== "undefined" && window.Trellis && window.Trellis.users; // NEW
+        return !!(users && typeof users.isEnabled === "function" && users.isEnabled()); // NEW
+    }
+
+    function canUpdateTaskRecipe(recipe) {
+        if (!recipeUsersEnabled()) return true; // NEW
+        const actor = getCurrentTaskRecipeActor(); // NEW
+        return !!(actor.id && String(recipe && recipe.ownerUserId || "") === actor.id); // NEW
+    }
+
+    function generateTaskRecipeId(moduleCell) {
+        const base = "task_recipe_" + (Date.now()).toString(36) + "_" + Math.random().toString(36).slice(2, 8); // NEW
+        const existing = new Set(readTaskRecipeLibrary(moduleCell).map(recipe => recipe.id)); // NEW
+        let id = base; // NEW
+        let suffix = 2; // NEW
+        while (existing.has(id)) id = base + "_" + suffix++; // NEW
+        return id; // NEW
+    }
+
+    function normalizeTaskRecipe(recipe) {
+        const source = recipe && typeof recipe === "object" ? recipe : {}; // NEW
+        const name = String(source.name || "").trim(); // NEW
+        const plantId = Number(source.plantId); // NEW
+        const methodIds = uniqueMethodIds(source.methodIds); // NEW
+        const growthStages = normalizeTaskRecipeGrowthStages(source); // NEW
+        const template = normalizeTaskTemplate(source.template || source.taskTemplate || null); // NEW
+        if (!name || !Number.isFinite(plantId) || plantId <= 0 || !methodIds.length || !growthStages.growthStageKeys.length) return null; // NEW
+        return { // NEW
+            id: String(source.id || "").trim(),
+            name,
+            plantId,
+            plantName: String(source.plantName || "").trim(),
+            methodIds,
+            growthStageKeys: growthStages.growthStageKeys,
+            growthStageLabels: growthStages.growthStageLabels,
+            template,
+            ownerUserId: String(source.ownerUserId || "").trim(),
+            ownerName: String(source.ownerName || "").trim(),
+            createdAt: String(source.createdAt || "").trim(),
+            updatedAt: String(source.updatedAt || "").trim()
+        };
+    }
+
+    function readTaskRecipeLibrary(moduleCell) {
+        const raw = readCellJsonAttr(moduleCell, TASK_RECIPE_LIBRARY_ATTR, null); // NEW
+        const items = Array.isArray(raw && raw.items) ? raw.items : Array.isArray(raw) ? raw : []; // NEW
+        const seen = new Set(); // NEW
+        return items.map(normalizeTaskRecipe).filter(function (recipe) { // NEW
+            if (!recipe) return false; // NEW
+            if (!recipe.id) recipe.id = "task_recipe_" + recipeNameKey(recipe.name).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") + "_" + recipe.plantId; // NEW
+            const key = String(recipe.id || ""); // NEW
+            if (seen.has(key)) return false; // NEW
+            seen.add(key); // NEW
+            return true; // NEW
+        }).sort(function (a, b) { return a.name.localeCompare(b.name); }); // NEW
+    }
+
+    function writeTaskRecipeLibrary(moduleCell, recipes) {
+        const items = (Array.isArray(recipes) ? recipes : []).map(normalizeTaskRecipe).filter(Boolean).sort(function (a, b) { // NEW
+            return a.plantName.localeCompare(b.plantName) || a.name.localeCompare(b.name); // NEW
+        });
+        writeCellJsonAttr(moduleCell, TASK_RECIPE_LIBRARY_ATTR, { version: TASK_RECIPE_LIBRARY_VERSION, updatedAt: Date.now(), items }); // NEW
+        return items; // NEW
+    }
+
+    function upsertTaskRecipe(moduleCell, recipe, options) {
+        if (!moduleCell) throw new Error("Current garden module is required to save a task recipe."); // NEW
+        const normalized = normalizeTaskRecipe(recipe); // NEW
+        if (!normalized) throw new Error("Task recipe name, plant, method compatibility, and tasks are required."); // NEW
+        const allowUpdateId = String(options && options.allowUpdateId || "").trim(); // NEW
+        const recipes = readTaskRecipeLibrary(moduleCell); // NEW
+        const duplicate = recipes.find(function (existing) { // NEW
+            return existing.plantId === normalized.plantId && recipeNameKey(existing.name) === recipeNameKey(normalized.name) && existing.id !== allowUpdateId; // NEW
+        });
+        if (duplicate) throw new Error("A task recipe with this name already exists for this plant in the current garden module."); // NEW
+        const actor = getCurrentTaskRecipeActor(); // NEW
+        const now = new Date().toISOString(); // NEW
+        const existingIndex = allowUpdateId ? recipes.findIndex(function (existing) { return existing.id === allowUpdateId; }) : -1; // NEW
+        if (existingIndex >= 0 && !canUpdateTaskRecipe(recipes[existingIndex])) throw new Error("Only the recipe owner can update this task recipe."); // NEW
+        normalized.id = existingIndex >= 0 ? recipes[existingIndex].id : (normalized.id || generateTaskRecipeId(moduleCell)); // NEW
+        normalized.ownerUserId = existingIndex >= 0 ? recipes[existingIndex].ownerUserId : actor.id; // NEW
+        normalized.ownerName = existingIndex >= 0 ? recipes[existingIndex].ownerName : actor.name; // NEW
+        normalized.createdAt = existingIndex >= 0 ? recipes[existingIndex].createdAt : now; // NEW
+        normalized.updatedAt = now; // NEW
+        if (existingIndex >= 0) recipes[existingIndex] = normalized; else recipes.push(normalized); // NEW
+        writeTaskRecipeLibrary(moduleCell, recipes); // NEW
+        return normalized; // NEW
+    }
+
+    function deleteTaskRecipe(moduleCell, recipeId) {
+        if (!moduleCell) throw new Error("Current garden module is required to delete a task recipe."); // NEW
+        const id = String(recipeId || "").trim(); // NEW
+        if (!id) throw new Error("Task recipe is required."); // NEW
+        const recipes = readTaskRecipeLibrary(moduleCell); // NEW
+        const recipe = recipes.find(function (item) { return item.id === id; }); // NEW
+        if (!recipe) return false; // NEW
+        if (!canUpdateTaskRecipe(recipe)) throw new Error("Only the recipe owner can delete this task recipe."); // NEW
+        writeTaskRecipeLibrary(moduleCell, recipes.filter(function (item) { return item.id !== id; })); // NEW
+        return true; // NEW
+    }
+
+    function collectGardenModules(model, currentModuleCell) {
+        const modules = []; // NEW
+        const seen = new Set(); // NEW
+        function visit(cell) { // NEW
+            if (!cell) return; // NEW
+            if (isGardenModule(cell)) { // NEW
+                const id = cellStableId(cell); // NEW
+                if (id && !seen.has(id)) { seen.add(id); modules.push(cell); } // NEW
+            }
+            const count = model && typeof model.getChildCount === "function" ? model.getChildCount(cell) : (cell.children || []).length; // NEW
+            for (let i = 0; i < count; i += 1) visit(model && typeof model.getChildAt === "function" ? model.getChildAt(cell, i) : cell.children[i]); // NEW
+        }
+        if (currentModuleCell) visit(currentModuleCell); // NEW
+        const root = model && typeof model.getRoot === "function" ? model.getRoot() : null; // NEW
+        visit(root); // NEW
+        return modules.sort(function (a, b) { // NEW
+            if (a === currentModuleCell) return -1; // NEW
+            if (b === currentModuleCell) return 1; // NEW
+            return formatGardenName(a).localeCompare(formatGardenName(b)); // NEW
+        });
+    }
+
+    function cityClimateProfile(city) {
+        if (!city) return null; // NEW
+        const monthlyMeans = typeof city.monthlyMeans === "function" ? city.monthlyMeans() : {}; // NEW
+        const spring = sharedCore.resolveSpringFrostByRisk(city, "p50"); // NEW
+        const fall = sharedCore.resolveFallFrostByRisk(city, "p50"); // NEW
+        const latitude = finiteNumberOrNull(city.latitude ?? city.lat); // NEW
+        const monthCount = Object.keys(monthlyMeans || {}).filter(function (month) { return finiteNumberOrNull(monthlyMeans[month]) != null; }).length; // NEW
+        return { // NEW
+            cityId: String(city.city_id || "").trim(),
+            cityName: String(city.city_name || "").trim().toLowerCase(),
+            monthlyMeans,
+            monthCount,
+            springFrostDoy: finiteNumberOrNull(spring && spring.doy),
+            fallFrostDoy: finiteNumberOrNull(fall && fall.doy),
+            latitude,
+            usable: monthCount > 0 || latitude != null || finiteNumberOrNull(spring && spring.doy) != null || finiteNumberOrNull(fall && fall.doy) != null
+        };
+    }
+
+    function averageMonthlyTemperatureDistance(a, b) {
+        let total = 0; // NEW
+        let count = 0; // NEW
+        for (let month = 1; month <= 12; month += 1) { // NEW
+            const av = finiteNumberOrNull(a && a[month]); // NEW
+            const bv = finiteNumberOrNull(b && b[month]); // NEW
+            if (av == null || bv == null) continue; // NEW
+            total += Math.abs(av - bv); // NEW
+            count += 1; // NEW
+        }
+        return count ? total / count : Infinity; // NEW
+    }
+
+    function finiteDistance(a, b) {
+        return a == null || b == null ? Infinity : Math.abs(a - b); // NEW
+    }
+
+    function taskRecipeClimateRank(baseProfile, profile) {
+        if (!baseProfile || !profile || !baseProfile.usable || !profile.usable) return { known: false, sameCity: false, monthlyDistance: Infinity, frostDistance: Infinity, latitudeDistance: Infinity }; // NEW
+        const sameCity = !!((baseProfile.cityId && profile.cityId && baseProfile.cityId === profile.cityId) || (baseProfile.cityName && profile.cityName && baseProfile.cityName === profile.cityName)); // NEW
+        const springDistance = finiteDistance(baseProfile.springFrostDoy, profile.springFrostDoy); // NEW
+        const fallDistance = finiteDistance(baseProfile.fallFrostDoy, profile.fallFrostDoy); // NEW
+        return { // NEW
+            known: true,
+            sameCity,
+            monthlyDistance: averageMonthlyTemperatureDistance(baseProfile.monthlyMeans, profile.monthlyMeans),
+            frostDistance: (springDistance === Infinity && fallDistance === Infinity) ? Infinity : ((springDistance === Infinity ? 0 : springDistance) + (fallDistance === Infinity ? 0 : fallDistance)),
+            latitudeDistance: finiteDistance(baseProfile.latitude, profile.latitude)
+        };
+    }
+
+    async function resolveTaskRecipeModuleClimate(moduleCell, resolver) {
+        const resolve = typeof resolver === "function" ? resolver : resolveCityForModule; // NEW
+        try { // NEW
+            const result = await resolve(moduleCell); // NEW
+            const city = result && result.ok === false ? null : result && (result.city || result); // NEW
+            return { ok: !!city, city, profile: cityClimateProfile(city) }; // NEW
+        } catch (_) { // NEW
+            return { ok: false, city: null, profile: null }; // NEW
+        }
+    }
+
+    async function sortTaskRecipeGroupsByClimate(groups, currentModuleCell, options = {}) {
+        const resolver = options.resolveCityForModule; // NEW
+        const currentClimate = await resolveTaskRecipeModuleClimate(currentModuleCell, resolver); // NEW
+        const resolved = await Promise.all(groups.map(async function (group) { // NEW
+            const climate = group.current ? currentClimate : await resolveTaskRecipeModuleClimate(group.moduleCell, resolver); // NEW
+            return Object.assign({}, group, { climateRank: taskRecipeClimateRank(currentClimate.profile, climate.profile) }); // NEW
+        }));
+        return resolved.sort(function (a, b) { // NEW
+            if (a.current) return -1; // NEW
+            if (b.current) return 1; // NEW
+            const ar = a.climateRank || {}; // NEW
+            const br = b.climateRank || {}; // NEW
+            if (!!ar.known !== !!br.known) return ar.known ? -1 : 1; // NEW
+            if (!!ar.sameCity !== !!br.sameCity) return ar.sameCity ? -1 : 1; // NEW
+            return (ar.monthlyDistance - br.monthlyDistance) // NEW
+                || (ar.frostDistance - br.frostDistance) // NEW
+                || (ar.latitudeDistance - br.latitudeDistance) // NEW
+                || a.moduleName.localeCompare(b.moduleName); // NEW
+        });
+    }
+
+    async function listCompatibleTaskRecipesByModule(model, currentModuleCell, plantId, methodId, growthStageKey = DEFAULT_GROWTH_STAGE_KEY, options = {}) {
+        const pid = Number(plantId); // NEW
+        const mid = normId(methodId); // NEW
+        const stageKey = normalizeGrowthStageKey(growthStageKey) || DEFAULT_GROWTH_STAGE_KEY; // NEW
+        if (!Number.isFinite(pid) || pid <= 0 || !mid || !stageKey) return []; // NEW
+        const groups = collectGardenModules(model, currentModuleCell).map(function (moduleCell) { // NEW
+            const recipes = readTaskRecipeLibrary(moduleCell).filter(function (recipe) { // NEW
+                return recipe.plantId === pid && recipe.methodIds.includes(mid) && recipe.growthStageKeys.includes(stageKey); // NEW
+            });
+            return { moduleCell, moduleId: cellStableId(moduleCell), moduleName: formatGardenName(moduleCell), current: moduleCell === currentModuleCell, recipes }; // NEW
+        }).filter(function (group) { return group.recipes.length > 0; }); // NEW
+        return sortTaskRecipeGroupsByClimate(groups, currentModuleCell, options); // NEW
+    }
+
+    function autoSelectableTaskRecipeFromGroups(groups, options = {}) {
+        if (options.taskDirty || options.userSelectionMade || options.hasCellTemplate) return null; // NEW
+        if (String(options.selectionKind || "resolved") !== "resolved") return null; // NEW
+        const currentGroup = (Array.isArray(groups) ? groups : []).find(function (group) { return group && group.current; }); // NEW
+        if (!currentGroup || !Array.isArray(currentGroup.recipes) || currentGroup.recipes.length !== 1) return null; // NEW
+        return { group: currentGroup, recipe: currentGroup.recipes[0] }; // NEW
     }
 
     function normalizeTaskRule(rule) {
@@ -16849,6 +17668,18 @@ Draw.loadPlugin(function (ui) {
             resolveMethodBehavior,
             resolveValidMethodRecord,
             TaskTemplateModel,
+            TASK_RECIPE_LIBRARY_ATTR, // NEW
+            readTaskRecipeLibrary, // NEW
+            writeTaskRecipeLibrary, // NEW
+            upsertTaskRecipe, // NEW
+            deleteTaskRecipe, // NEW
+            uniqueGrowthStageKeys, // NEW
+            taskRecipeSearchMatches, // NEW
+            taskRecipeClimateRank, // NEW
+            sortTaskRecipeGroupsByClimate, // NEW
+            listCompatibleTaskRecipesByModule, // NEW
+            autoSelectableTaskRecipeFromGroups, // NEW
+            canUpdateTaskRecipe, // NEW
             resolveTaskTemplate,
             runUiAsyncOperation,
             computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward,

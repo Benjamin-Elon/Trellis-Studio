@@ -74,6 +74,8 @@ test('Trellis identity assets match the canonical raster masters', () => {
 	const generator = fs.readFileSync(path.join(projectRoot, 'scripts/generate_app_icons.py'), 'utf8'); // CHANGE
 	assert.match(generator, /FULL_MASTER_PATH = BRANDING_DIR \/ "trellis-mark-full\.png"/); // CHANGE
 	assert.match(generator, /SMALL_MASTER_PATH = BRANDING_DIR \/ "trellis-mark-small\.png"/); // CHANGE
+	assert.match(generator, /return masters\.small\s+# CHANGE: Negative Space T is now the app-wide icon mark\./); // CHANGE
+	assert.doesNotMatch(generator, /masters\.full/); // CHANGE
 	assert.equal(sha256('build/branding/trellis-mark-full.png'), 'aea15968cc71af4dff0fd6bd5ae1905beb11c7b4534c3593b908a16159f92871'); // CHANGE
 	assert.equal(sha256('build/branding/trellis-mark-small.png'), '9a4c4909e276e9fd210a8890718f3f06d4320815c8cf641949e0784ee483fdfb'); // CHANGE
 });
@@ -127,11 +129,12 @@ test('platform icon containers and multiresolution formats keep their required d
 		height: 256,
 		colorType: 6,
 	});
+	assert.ok(fs.existsSync(path.join(projectRoot, 'build/icon.ico'))); // CHANGE
 	assert.deepEqual(readIcoSizes('build/icon.ico'), [16, 24, 32, 48, 64, 128, 256]);
 	assert.equal(fs.readFileSync(path.join(projectRoot, 'build/icon.icns')).subarray(0, 4).toString(), 'icns');
 });
 
-test('header and native window placements use their dedicated Trellis assets', () => {
+test('header and native window placements use the Negative Space T mark', () => { // CHANGE
 	const generator = fs.readFileSync(path.join(projectRoot, 'scripts/generate_app_icons.py'), 'utf8');
 	const electronMain = fs.readFileSync(path.join(projectRoot, 'src/main/electron.js'), 'utf8');
 	const bootstrap = fs.readFileSync(path.join(projectRoot, 'drawio/src/main/webapp/js/bootstrap.js'), 'utf8');
@@ -146,9 +149,9 @@ test('header and native window placements use their dedicated Trellis assets', (
 	);
 	assert.match(
 		generator,
-		/header_icon = fit_image\(masters\.full, \(256, 256\), COMPACT_ICON_FILL_RATIO\)/,
+		/header_icon = fit_image\(masters\.small, \(256, 256\), COMPACT_ICON_FILL_RATIO\)/,
 	);
-	assert.notEqual(
+	assert.equal(
 		sha256('drawio/src/main/webapp/images/window-icon.png'),
 		sha256('drawio/src/main/webapp/images/header-icon.png'),
 	);
@@ -218,7 +221,7 @@ test('large transparent icons retain five-percent edge margins', () => {
 	}
 });
 
-test('ICO frames preserve the compact/full master routing boundary', () => {
+test('ICO frames preserve the generated Negative Space T frames', () => { // CHANGE
 	const desktopFrames = readIcoFrames('build/icon.ico');
 	assert.deepEqual(desktopFrames.get(16), fs.readFileSync(path.join(projectRoot, 'build/16x16.png')));
 	assert.deepEqual(desktopFrames.get(48), fs.readFileSync(path.join(projectRoot, 'build/48x48.png')));

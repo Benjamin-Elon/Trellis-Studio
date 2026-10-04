@@ -35,7 +35,6 @@ IMAGES_DIR = WEB_ROOT / "images"
 BUILD_DIR = ROOT / "build"
 APPX_DIR = BUILD_DIR / "appx"
 
-TILE_COLOR = (251, 254, 189, 255)
 TRANSPARENT = (0, 0, 0, 0)
 SMALL_MARK_MAX_SIZE = 48
 SOURCE_MIN_SIZE = 800
@@ -235,9 +234,9 @@ def fit_image(image: Image.Image, size: tuple[int, int], fill_ratio: float) -> I
 
 
 def choose_mark(masters: Masters, display_size: int) -> Image.Image:
-    """Select the simplified mark for small outputs and full mark otherwise."""
+    """Select the Negative Space T mark for all generated app-icon outputs."""
 
-    return masters.small if display_size <= SMALL_MARK_MAX_SIZE else masters.full
+    return masters.small  # CHANGE: Negative Space T is now the app-wide icon mark.
 
 
 def transparent_icon(
@@ -265,23 +264,16 @@ def contained_icon(
     fill_ratio: float,
     rounded: bool = False,
 ) -> Image.Image:
-    """Place the mark on the agreed light-yellow platform tile."""
+    """Place the mark on a transparent platform canvas."""
 
     width, height = size
-    canvas = Image.new("RGBA", size, TRANSPARENT if rounded else TILE_COLOR)
-    if rounded:
-        radius = round(min(width, height) * 0.228)
-        mask = Image.new("L", size, 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius, fill=255)
-        tile = Image.new("RGBA", size, TILE_COLOR)
-        canvas.alpha_composite(Image.composite(tile, Image.new("RGBA", size), mask))
+    canvas = Image.new("RGBA", size, TRANSPARENT)  # CHANGE: avoid the old pale-yellow tile behind the green mark.
 
     mark = fit_image(choose_mark(masters, min(size)), size, fill_ratio)
     validate_safe_area(mark, size)
     canvas.alpha_composite(mark)
-    expected_corner = TRANSPARENT if rounded else TILE_COLOR
-    if any(canvas.getpixel(corner) != expected_corner for corner in ((0, 0), (width - 1, height - 1))):
-        raise ValueError("platform container corner color does not match its native treatment")
+    if any(canvas.getpixel(corner)[3] != 0 for corner in ((0, 0), (width - 1, height - 1))):
+        raise ValueError("platform container corner transparency does not match its native treatment")
     return canvas
 
 
@@ -304,7 +296,7 @@ def stacked_wordmark(masters: Masters, size: tuple[int, int]) -> Image.Image:
 
     width, height = size
     mark_height = round(height * 0.72)
-    mark = fit_image(masters.full, (width, mark_height), 0.88)
+    mark = fit_image(masters.small, (width, mark_height), 0.88)  # CHANGE: wordmark lockups use Negative Space T.
     text_height = height - mark_height
     text = fit_image(masters.wordmark, (width, text_height), 0.94)
     canvas = Image.new("RGBA", size, TRANSPARENT)
@@ -318,7 +310,7 @@ def wide_wordmark(masters: Masters, size: tuple[int, int]) -> Image.Image:
 
     width, height = size
     mark_width = round(width * 0.30)
-    mark = fit_image(masters.full, (mark_width, height), 0.88)
+    mark = fit_image(masters.small, (mark_width, height), 0.88)  # CHANGE: wordmark lockups use Negative Space T.
     text = fit_image(masters.wordmark, (width - mark_width, height), 0.80)
     canvas = Image.new("RGBA", size, TRANSPARENT)
     canvas.alpha_composite(mark, (0, 0))
@@ -518,7 +510,7 @@ def generate_web_assets(masters: Masters, output_root: Path) -> list[str]:
     generated.append(window_icon_relative)
 
     header_icon_relative = "drawio/src/main/webapp/images/header-icon.png"
-    header_icon = fit_image(masters.full, (256, 256), COMPACT_ICON_FILL_RATIO)
+    header_icon = fit_image(masters.small, (256, 256), COMPACT_ICON_FILL_RATIO)  # CHANGE
     save_png(header_icon, output_path(output_root, header_icon_relative))
     generated.append(header_icon_relative)
 
