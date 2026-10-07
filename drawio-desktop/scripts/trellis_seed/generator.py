@@ -60,6 +60,7 @@ CROP_PROMPT_FIELD_GUIDE = {
     "varieties": "Do not return cultivar varieties; Trellis generates deterministic Very Early/Early/Mid/Late/Very Late maturity profiles after the crop row is accepted.",  # prompt quality
     "nutrition_aliases": "Return likely USDA FoodData Central raw-food search aliases, such as plural commodity names and raw edible forms; do not return nutrition values.",  # prompt quality
     "growth_stages": "Return harvest-form stages for the scheduler's 'Grown for' control, such as microgreens, baby leaf, shoots, immature harvest, or mature; do not return lifecycle milestones like germination, vegetative, flowering, or fruiting.",  # prompt quality
+    "growth_stage_yield": "yield_ratio is total stage-specific kg per plant divided by mature kg per plant over the corresponding harvest window; multiply the resolved variety-or-plant yield by it. Mature is 1. Use supplied sources first and horticultural estimates when incomplete; do not derive yield from GDD or spacing ratios. Ratios must be finite and positive and may exceed 1.",  # CHANGE
     "provenance": "For required provenance fields, use exact strings from allowed_provenance_references only.",  # prompt quality
 }
 
@@ -502,7 +503,8 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
                 "Lifecycle flags must be coherent, method flags must match allowed planting methods, and default_planting_method must be a concrete allowed method. "
                 "Do not return cultivar or variety rows; Trellis synthesizes generic Very Early/Early/Mid/Late/Very Late maturity profiles deterministically from the accepted crop row. "
                 "Return nutrition_aliases for FoodData Central search only; do not estimate nutrition values in this crop response. "
-                "Generate growth_stages as harvest-form 'grown for' targets that scale scheduler timing and layout; always include a Mature stage with gdd_ratio 1.0, and exclude lifecycle milestones such as germination, vegetative, flowering, and fruiting. "
+                "Generate growth_stages as harvest-form 'grown for' targets that scale scheduler timing, layout, and yield; always include a Mature stage with gdd_ratio 1.0 and yield_ratio 1.0, and exclude lifecycle milestones such as germination, vegetative, flowering, and fruiting. "  # CHANGE
+                "For every stage supply yield_ratio as stage kg per plant divided by mature kg per plant, applied after variety overrides; use sources first or realistic horticultural estimates, independently of timing and spacing. "  # CHANGE
                 "Do not include planting methods (such as propagation-by-cutting) unless the crop is normally grown using the method. "
                 "provenance.field_sources must cite exact supplied strings from allowed_provenance_references for required provenance fields; do not cite invented estimate labels."
             ),
@@ -1333,6 +1335,7 @@ def _canonical_mature_growth_stage() -> dict[str, Any]:
         "stage_key": MATURE_GROWTH_STAGE_KEY,
         "stage_label": MATURE_GROWTH_STAGE_LABEL,
         "gdd_ratio": 1.0,
+        "yield_ratio": 1.0,  # CHANGE: the baseline harvest form does not alter per-plant yield.
         "spacing_ratio": None,
         "plant_diameter_ratio": None,
         "plant_height_ratio": None,
@@ -1343,12 +1346,18 @@ def _canonical_mature_growth_stage() -> dict[str, Any]:
 
 
 def _prepare_growth_stages(raw_stages: Any, plant_name: Any) -> list[dict[str, Any]]:
+    """Normalize harvest forms; reject supplied yield errors before canonicalization."""  # CHANGE
     prepared = [_canonical_mature_growth_stage()]
     seen = {MATURE_GROWTH_STAGE_KEY}
     source_rows = raw_stages if isinstance(raw_stages, list) else []
     for raw in source_rows:
         if not isinstance(raw, dict):
             continue
+        if "yield_ratio" in raw:  # CHANGE: canonical Mature and filtered rows must not hide explicit invalid yields.
+            report = validate_row("PlantGrowthStages", {"plant_name": str(plant_name or ""), **raw})  # CHANGE
+            yield_errors = [error for error in report["errors"] if ".yield_ratio" in error]  # CHANGE
+            if yield_errors:  # CHANGE
+                raise ProviderError("Invalid growth-stage yield:\n" + "\n".join(yield_errors))  # CHANGE: use the existing model repair/failure path.
         stage_key = _normalize_growth_stage_key(raw.get("stage_key") or raw.get("stage_label"))
         if not stage_key or stage_key in seen:
             continue
@@ -1372,6 +1381,8 @@ def _prepare_growth_stages(raw_stages: Any, plant_name: Any) -> list[dict[str, A
         }
         if validate_row("PlantGrowthStages", row)["errors"]:
             continue
+        if "yield_ratio" in raw:  # CHANGE: preserve omission for legacy artifacts.
+            row["yield_ratio"] = raw["yield_ratio"]  # CHANGE: do not cap yield at 1 or silently replace it with a default.
         row.pop("plant_name", None)
         prepared.append(row)
         seen.add(stage_key)

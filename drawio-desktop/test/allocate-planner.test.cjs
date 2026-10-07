@@ -54,8 +54,8 @@ function makeEventSource(target = {}) {
     target.removeListener = function (fn) {
         listeners.forEach((items, key) => listeners.set(key, items.filter(item => item !== fn)));
     };
-    target.fireEvent = function (eventName) {
-        (listeners.get(String(eventName || "")) || []).slice().forEach(fn => fn(target, { getProperty: () => null }));
+    target.fireEvent = function (eventName, event = { getProperty: () => null }) { // CHANGE: model-edit scenarios provide actual change payloads.
+        (listeners.get(String(eventName || "")) || []).slice().forEach(fn => fn(target, event)); // CHANGE
     };
     return target;
 }
@@ -64,6 +64,7 @@ function loadAllocatePlugin() {
     const document = {
         activeElement: null,
         body: null,
+        createTextNode(text) { const node = makeNode(document); node.textContent = text; return node; }, // CHANGE: review labels include text nodes.
         createElement: () => makeNode(document),
         createElementNS: () => makeNode(document)
     };
@@ -93,16 +94,16 @@ function loadAllocatePlugin() {
         }
     });
     const graphEvents = makeEventSource({});
+    const model = makeEventSource({ getCell: () => null, getParent: cell => cell && cell.parent || null, beginUpdate() {}, endUpdate() {} }); // CHANGE: selections can resolve planting children and garden ancestors.
+    const selection = makeEventSource({ cells: [] }); // CHANGE
     const graph = {
         container: graphContainer,
         view,
         getView: () => view,
-        getModel: () => ({
-            getCell: () => null,
-            getParent: () => null,
-            beginUpdate() {},
-            endUpdate() {}
-        }),
+        getModel: () => model, // CHANGE
+        getSelectionModel: () => selection, getSelectionCells: () => selection.cells, getSelectionCell: () => selection.cells[0] || null, // CHANGE
+        setSelectionCells(cells) { selection.cells = cells; selection.fireEvent('change'); }, // CHANGE
+        setSelectionCell(cell) { this.setSelectionCells(cell ? [cell] : []); }, // CHANGE
         addListener: graphEvents.addListener,
         removeListener: graphEvents.removeListener
     };
@@ -141,7 +142,7 @@ function loadAllocatePlugin() {
             SCALE_AND_TRANSLATE: "scaleAndTranslate",
             REPAINT: "repaint"
         },
-        Draw: { loadPlugin(callback) { callback({ editor: { graph }, showDialog() {}, hideDialog() {} }); } }
+        Draw: { loadPlugin(callback) { callback({ editor: { graph }, showDialog(node) { document.lastDialog = node; root.appendChild(node); }, hideDialog() { if (document.lastDialog) root.removeChild(document.lastDialog); document.lastDialog = null; } }); } } // CHANGE: exercise the explicit review/create action.
     });
     vm.runInContext(SOURCE, context, { filename: PLUGIN_PATH });
     const api = window.USL.allocate.__test;
@@ -420,6 +421,7 @@ test("Allocate open renders a progress state before sow-week scheduling complete
 
     cropSelect.value = "cilantro";
     cropSelect.dispatchEvent({ type: "change", target: cropSelect });
+    api.__graph.setSelectionCell(state.beds[0]); // CHANGE: a proposal now requires an explicit bed selection.
     await waitUntil(() => !!state.draft);
 
     const controlLayer = api.__graphContainer.querySelector(".trellis-graph-control-layer");
@@ -430,7 +432,7 @@ test("Allocate open renders a progress state before sow-week scheduling complete
     assert.ok(controlLayer, "expected Allocate to create the shared graph control layer"); // CHANGE
     assert.equal(allocateLayer.parentNode, controlLayer); // CHANGE: Allocate badges should be graph-local controls, not body-fixed nodes.
     assert.equal(badge.parentNode, allocateLayer); // CHANGE
-    assert.match(badge.textContent, /Cilantro/); // CHANGE
+    assert.equal(badge.textContent, "Good fit"); assert.match(badge.title, /Cilantro/); // CHANGE: details move to the accessible tooltip. // CHANGE
     assert.match(badge.style.cssText, /position:absolute/); // CHANGE
     assert.equal(badge.style.left, "6px"); // CHANGE: bed badge position follows the rendered bed state, not scroll math.
     assert.equal(badge.style.top, "6px"); // CHANGE
@@ -1028,9 +1030,376 @@ test("Allocate plugin owns launch, draft review, and one-transaction create cont
     assert.match(SOURCE, /vegHeightCm: d\.geometry\.vegHeightCm \|\| null/);
 });
 
+test('coverage preview uses simulated fulfilled demand, including storage and expiry', () => { // CHANGE
+    const { createYearPlannerHarness, makePlanCrop } = require('./helpers/year-planner-harness.cjs');
+    const { api: planning } = createYearPlannerHarness();
+    const allocate = loadAllocatePlugin();
+    for (const shelfLifeDays of [0, 14]) {
+        const plan = planning.PlanSchema.createEmptyPlan(2026);
+        plan.crops.push(makePlanCrop({ shelfLifeDays }));
+        plan.demands.push({ id: 'sales', channelId: 'farm_store', cropId: 'crop_1', qty: 5, unit: 'kg', frequency: 'week', everyN: 1, from: '2026-06-08', to: '2026-06-14', priority: 'target' });
+        const original = JSON.stringify(plan);
+        const simulation = planning.PlanningCore.simulateCandidatePlanting({ plan, year: 2026, candidate: { cropId: 'crop_1', plantCount: 10, kgPerPlant: 1, harvestStart: '2026-06-01', harvestEnd: '2026-06-07' } });
+        const preview = allocate.buildCoveragePreview(simulation, 'crop_1');
+        assert.equal(preview.rows.reduce((sum, row) => sum + row.demandKg, 0), 5);
+        assert.equal(preview.rows.reduce((sum, row) => sum + row.beforeKg, 0), 0);
+        assert.equal(preview.rows.reduce((sum, row) => sum + row.afterKg, 0), shelfLifeDays ? 5 : 0);
+        assert.equal(preview.rows.reduce((sum, row) => sum + row.addedKg, 0), simulation.demandServedKg);
+        assert.equal(JSON.stringify(plan), original);
+    }
+});
+
+test('coverage preview rejects missing series instead of reporting zero coverage', () => { // CHANGE
+    const api = loadAllocatePlugin();
+    assert.equal(api.buildCoveragePreview({ demandServedKg: 1 }, 'crop'), null);
+    const series = { target: [2], usableSupply: [1], short: [1] };
+    const coverage = { weekStarts: [{ iso: '2026-01-05' }], weekly: { perCrop: new Map([['crop', series]]) } };
+    assert.equal(api.buildCoveragePreview({ base: coverage, coverage }, 'missing'), null);
+    series.usableSupply = [NaN];
+    assert.equal(api.buildCoveragePreview({ base: coverage, coverage }, 'crop'), null);
+});
+
+test('coverage preview includes household, CSA, and sales demand and caps fulfillment at demand', () => { // CHANGE
+    const { createYearPlannerHarness, makePlanCrop } = require('./helpers/year-planner-harness.cjs');
+    const { api: planning } = createYearPlannerHarness();
+    const allocate = loadAllocatePlugin();
+    const plan = planning.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(makePlanCrop());
+    const demand = { cropId: 'crop_1', unit: 'kg', frequency: 'week', everyN: 1, from: '2026-06-01', to: '2026-06-07' };
+    plan.selfSufficiency.lines.push({ ...demand, id: 'household', qty: 2 });
+    plan.demands.push({ ...demand, id: 'sales', channelId: 'farm_store', qty: 4, priority: 'target' });
+    Object.assign(plan.csa, { enabled: true, boxesPerWeek: 1, start: demand.from, end: demand.to, components: [{ cropId: 'crop_1', qty: 3, unit: 'kg', everyNWeeks: 1 }] });
+    for (const plantCount of [4, 20]) {
+        const simulation = planning.PlanningCore.simulateCandidatePlanting({ plan, year: 2026, candidate: { cropId: 'crop_1', plantCount, kgPerPlant: 1, harvestStart: demand.from, harvestEnd: demand.to } });
+        const rows = allocate.buildCoveragePreview(simulation, 'crop_1').rows;
+        assert.equal(rows.reduce((sum, row) => sum + row.demandKg, 0), 9);
+        assert.equal(rows.reduce((sum, row) => sum + row.afterKg, 0), Math.min(plantCount, 9));
+        assert.equal(rows.reduce((sum, row) => sum + row.shortKg, 0), Math.max(0, 9 - plantCount));
+    }
+});
+
+test('allocation invalidates timing and geometry edits but ignores presentation-only changes', () => { // CHANGE
+    const api = loadAllocatePlugin();
+    assert.equal(api.allocationEditAffectsPlanning({ attribute: 'harvest_end' }), true);
+    assert.equal(api.allocationEditAffectsPlanning({ geometry: {} }), true);
+    assert.equal(api.allocationEditAffectsPlanning({ style: 'rotation=90', previous: 'rotation=0' }), true);
+    assert.equal(api.allocationEditAffectsPlanning({ style: 'opacity=50;rotation=0', previous: 'opacity=100;rotation=0' }), false);
+    const parent = {};
+    assert.equal(api.allocationEditAffectsPlanning({ parent, previous: parent }), false);
+});
+
+/** Opens a real Allocate controller with deterministic scheduling and navigator spies. */ // CHANGE
+async function previewSession({ selectBed = true } = {}) { // CHANGE
+    const api = loadAllocatePlugin();
+    const bed = { id: 'bed-preview', getAttribute: () => 'Bed', getGeometry: () => ({ x: 0, y: 0, width: 100, height: 40 }) };
+    const crop = { id: 'crop', cropId: 'crop', plantId: '1', plant: 'Lettuce', label: 'Lettuce', method: 'direct_sow.field', kgPerPlant: 1 };
+    const coverage = { totals: { targetKg: 4, shortKg: 4 }, cropSummaries: [{ cropId: 'crop', targetKg: 4, shortKg: 4 }], weekStarts: [{ iso: '2027-01-04' }, { iso: '2027-01-11' }], weekSummaries: [{ weekIndex: 0, start: '2027-01-04', targetKg: 0, shortKg: 0, cropShortages: [] }, { weekIndex: 1, start: '2027-01-11', targetKg: 4, shortKg: 4, cropShortages: [{ cropId: 'crop', shortKg: 4 }] }] };
+    const lifecycle = { ok: true, status: 'compatible', startISO: '2027-01-04', primaryDateISO: '2027-01-04', attributePatch: { harvest_start: '2027-01-11', harvest_end: '2027-01-17' }, taskPreview: [], warnings: [] };
+    const previews = [];
+    const cleared = [];
+    let creates = 0;
+    api.__graph.__trellisBedSuccessionNavigator = { showAllocationPreview(input) { previews.push(input); }, clearAllocationPreview(ownerId) { cleared.push(ownerId); } };
+    api.__window.USL.scheduler = {
+        async resolveCityForModule() { return { ok: true, city: {} }; },
+        async resolvePlantForPlanCrop() { return { ok: true, plant: { plant_name: 'Lettuce', spacing_cm: 10, yield_per_plant_kg: 1 } }; },
+        async proposeLifecycleForDemandWindow() { return lifecycle; },
+        async resolveAllocationDefaultStatus() { return { complete: false, missing: ['tasks'] }; }
+    };
+    const weekly = (usable, short) => ({ perCrop: new Map([['crop', { target: [0, 4], usableSupply: [0, usable], short: [0, short] }]]) });
+    api.__window.USL.planningCore = {
+        loadPlanForYear() { return { crops: [crop] }; }, computeYearCoverage() { return coverage; },
+        recommendPlantCount() { return { plantCount: 4, reachableShortKg: 4 }; },
+        simulateCandidatePlanting() { return { demandServedKg: 4, base: { ...coverage, weekly: weekly(0, 4) }, coverage: { ...coverage, weekly: weekly(4, 0) } }; }
+    };
+    api.__window.USL.tiler = { listGardenBeds: () => [bed], listPlantingFootprints: () => [], readBedProfile: () => ({}), proposePlantingGeometry: () => ({ ok: true, geometry: { x: 0, y: 0, width: 40, height: 20 }, slots: [] }), createPlantingFromProposal() { creates++; return { id: 'new' }; } };
+    api.__window.USL.tasks = { applySchedulerTaskReplacement() {} };
+    const state = await api.__window.USL.allocate.open({ id: 'module-preview' }, 2027);
+    await waitUntil(() => state.scheduleProgress.phase === 'complete');
+    state.hudRefs.cropSelect.value = 'crop';
+    state.hudRefs.cropSelect.dispatchEvent({ type: 'change' });
+    if (selectBed) api.__graph.setSelectionCell(bed); // CHANGE
+    await waitUntil(() => selectBed ? !!state.draft : !!api.__graphContainer.querySelector('[data-bed-id="bed-preview"]')); // CHANGE
+    if (selectBed) assert.ok(state.draft); // CHANGE
+    return { api, state, bed, crop, lifecycle, previews, cleared, getCreates: () => creates }; // CHANGE
+} // CHANGE
+
+test('saving an edited schedule updates both previews without creating the planting', async () => { // CHANGE
+    const harness = await previewSession();
+    const { api, state, lifecycle, previews } = harness;
+    api.__window.USL.scheduler.openAllocationScheduleDialog = async (ui, draft, options) => {
+        assert.equal(options.previewOnly, true);
+        return { action: 'preview', draft: { ...draft, actionStartISO: '2027-01-05', lifecycle: { ...lifecycle, startISO: '2027-01-05', primaryDateISO: '2027-01-05' } } };
+    };
+    state.hudRefs.create.click();
+    await waitUntil(() => state.draft.actionStartISO === '2027-01-05' && !state.reviewing);
+    assert.equal(state.draft.actionStartISO, '2027-01-05');
+    assert.equal(previews.at(-1).entryISO, '2027-01-05');
+    assert.equal(previews.at(-1).coveragePreview.rows[1].afterKg, 4);
+    assert.equal(harness.getCreates(), 0);
+    api.__window.USL.allocate.close();
+    assert.equal(harness.cleared.at(-1), state.ownerId);
+});
+
+test('crop selection requires a canvas bed or the explicit Find best bed action', async () => { // CHANGE
+    const { api, state, bed } = await previewSession({ selectBed: false });
+    assert.equal(state.draft, null);
+    assert.match(collectText(state.hudRefs.draftBox).join(' '), /Select a bed/);
+    state.hudRefs.findBest.click();
+    await waitUntil(() => !!state.draft);
+    assert.equal(state.draft.bed, bed);
+    assert.equal(api.__graph.getSelectionCell(), bed);
+    api.__graph.setSelectionCell(state.moduleCell);
+    assert.equal(state.draft, null);
+    assert.equal(state.ghost, null);
+    assert.equal(state.selectedCropId, 'crop');
+    await waitUntil(() => !!api.__graphContainer.querySelector('[data-bed-id="bed-preview"]'));
+    assert.equal(state.draft, null);
+    api.__window.USL.allocate.close();
+});
+
+test('canvas groups resolve their bed, same-bed selections preserve edits, and bed switches reset schedules', async () => { // CHANGE
+    const { api, state, bed, lifecycle } = await previewSession();
+    const second = { id: 'second', getAttribute: key => key === 'label' ? 'Second' : null, getGeometry: () => ({ x: 200, y: 0, width: 100, height: 40 }) };
+    state.beds.push(second);
+    const reviewed = { ...state.draft, actionStartISO: '2027-01-05' };
+    state.draft = reviewed;
+    const group = { id: 'group', parent: state.moduleCell, getAttribute: key => key === 'tiler_group' ? '1' : null, getGeometry: () => ({ x: 5, y: 5, width: 10, height: 10 }) };
+    const child = { id: 'child', parent: group, getAttribute: () => null };
+    api.__graph.setSelectionCell(child);
+    assert.equal(state.draft, reviewed);
+    assert.equal(state.targetBedId, bed.id);
+    api.__graph.setSelectionCell(second);
+    assert.equal(state.draft, null);
+    await waitUntil(() => !!state.draft);
+    assert.equal(state.draft.bed, second);
+    assert.equal(state.draft.actionStartISO, lifecycle.startISO);
+    assert.equal(state.selectedCropId, 'crop');
+    api.__window.USL.allocate.close();
+});
+
+test('unrelated, multi-selected, and foreign-module cells clear allocation targets', async () => { // CHANGE
+    const { api, state, bed } = await previewSession();
+    const foreign = { id: 'foreign', parent: { id: 'other-module' }, getAttribute: key => key === 'tiler_group' ? '1' : null, getGeometry: () => ({ x: 0, y: 0, width: 10, height: 10 }) };
+    for (const cells of [[foreign], [bed, state.moduleCell], [], [{ id: 'other', getAttribute: () => null }]]) {
+        api.__graph.setSelectionCells(cells);
+        assert.equal(state.draft, null);
+        assert.equal(state.targetBedId, '');
+        assert.equal(state.ghost, null);
+        assert.equal(state.hudRefs.create.disabled, true);
+        api.__graph.setSelectionCell(bed);
+        await waitUntil(() => !!state.draft);
+    }
+    api.__window.USL.allocate.close();
+});
+
+test('an unavailable selected bed explains its failure without substituting a suitable bed', async () => { // CHANGE
+    const { api, state, bed } = await previewSession();
+    const blocked = { id: 'blocked', getAttribute: () => null, getGeometry: () => ({ x: 200, y: 0, width: 100, height: 40 }) };
+    state.beds.push(blocked);
+    api.__window.USL.tiler.proposePlantingGeometry = input => input.bedCell === blocked ? { ok: false, capacity: 0 } : { ok: true, geometry: bed.getGeometry(), slots: [] };
+    api.__graph.setSelectionCell(blocked);
+    await waitUntil(() => !!state.targetFailure);
+    assert.equal(state.draft, null);
+    assert.match(state.targetFailure, /capacity/);
+    assert.equal(api.__graph.getSelectionCell(), blocked);
+    assert.equal(state.hudRefs.create.disabled, true);
+    api.__window.USL.allocate.close();
+});
+
+test('Find best bed reports no fit and a crop or week change reevaluates the selected bed', async () => { // CHANGE
+    const { api, state, bed } = await previewSession();
+    const original = state.draft;
+    state.hudRefs.cropSelect.dispatchEvent({ type: 'change' });
+    await waitUntil(() => !!state.draft);
+    assert.notEqual(state.draft, original);
+    assert.equal(state.draft.bed, bed);
+    const prior = state.draft;
+    state.hudRefs.weekSelect.value = '0';
+    state.hudRefs.weekSelect.dispatchEvent({ type: 'change' });
+    await waitUntil(() => !!state.draft);
+    assert.notEqual(state.draft, prior);
+    assert.equal(state.draft.bed, bed);
+    api.__graph.setSelectionCell(state.moduleCell);
+    state.bedResultCache.clear();
+    api.__window.USL.tiler.proposePlantingGeometry = () => ({ ok: false, capacity: 0 });
+    state.hudRefs.findBest.click();
+    await waitUntil(() => !state.findingBed);
+    assert.match(state.noticeMessage, /No suitable bed/);
+    assert.equal(state.draft, null);
+    assert.equal(api.__graph.getSelectionCell(), state.moduleCell);
+    api.__window.USL.allocate.close();
+});
+
+test('pending bed evaluations and editor results cannot restore a cleared module selection', async () => { // CHANGE
+    const { api, state, bed, lifecycle } = await previewSession();
+    let resolveEdit;
+    api.__window.USL.scheduler.openAllocationScheduleDialog = () => new Promise(resolve => { resolveEdit = resolve; });
+    state.hudRefs.create.click();
+    await waitUntil(() => !!resolveEdit);
+    const draft = state.draft;
+    api.__graph.setSelectionCell(state.moduleCell);
+    resolveEdit({ action: 'preview', draft });
+    await waitUntil(() => !state.reviewing);
+    assert.equal(state.draft, null);
+    state.lifecycleCache.clear(); state.bedResultCache.clear();
+    let release;
+    api.__window.USL.scheduler.proposeLifecycleForDemandWindow = () => new Promise(resolve => { release = resolve; });
+    api.__graph.setSelectionCell(bed);
+    await waitUntil(() => !!release);
+    api.__graph.setSelectionCell(state.moduleCell);
+    release(lifecycle);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(state.draft, null);
+    assert.equal(state.ghost, null);
+    api.__window.USL.allocate.close();
+});
+
+test('Edit delegates to the scheduler and creation commits the exact reviewed tasks before deferred defaults', async () => { // CHANGE
+    const harness = await previewSession();
+    const { api, state } = harness;
+    const tasks = [{ title: 'Reviewed sow task', startISO: '2027-01-04', endISO: '2027-01-04' }];
+    let persisted = 0;
+    let committedTasks;
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete: true, missing: [] });
+    api.__window.USL.scheduler.openAllocationScheduleDialog = async (ui, draft) => ({ action: 'preview', draft: { ...draft, taskPreview: tasks,
+        lifecycle: { ...draft.lifecycle, taskPreview: tasks }, commitAllocationDefaults: async () => { assert.equal(harness.getCreates(), 1); assert.equal(committedTasks, tasks); persisted++; } } });
+    api.__window.USL.tasks.applySchedulerTaskReplacement = input => { committedTasks = input.tasks; };
+    state.hudRefs.create.click();
+    await waitUntil(() => !!api.__document.lastDialog);
+    assert.match(collectText(api.__document.lastDialog).join(' '), /without tasks/);
+    api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Edit').click();
+    await waitUntil(() => !state.reviewing);
+    assert.equal(persisted, 0);
+    assert.equal(state.draft.taskPreview, tasks);
+    assert.match(state.noticeMessage, /Schedule updated/); // CHANGE
+    state.hudRefs.create.click();
+    await waitUntil(() => !!api.__document.lastDialog);
+    assert.match(collectText(api.__document.lastDialog).join(' '), /Reviewed sow task/);
+    api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Create').click();
+    await waitUntil(() => !state.reviewing);
+    assert.equal(persisted, 1);
+    assert.equal(state.noticeMessage, ''); // CHANGE: creation clears the prior editor notice.
+    api.__window.USL.allocate.close();
+});
+
+test('scheduler cancellation and invalid edits retain the accepted proposal', async () => { // CHANGE
+    const harness = await previewSession();
+    const { api, state } = harness;
+    const original = state.draft;
+    api.__window.USL.scheduler.openAllocationScheduleDialog = async () => ({ action: 'cancel' });
+    state.hudRefs.create.click();
+    await waitUntil(() => !state.reviewing);
+    assert.equal(state.draft, original);
+    api.__window.USL.scheduler.openAllocationScheduleDialog = async () => ({ action: 'preview', draft: { lifecycle: { ok: false, reason: 'Invalid edited timing' } } });
+    state.hudRefs.create.click();
+    await waitUntil(() => !state.reviewing);
+    assert.equal(state.draft, original);
+    assert.match(state.noticeMessage, /Invalid edited timing/);
+    assert.equal(harness.getCreates(), 0);
+    api.__window.USL.allocate.close();
+});
+
+test('an accepted preview creates a planting and its tasks only after explicit review confirmation', async () => { // CHANGE
+    const harness = await previewSession();
+    const { api, state } = harness;
+    let taskCreations = 0;
+    let historyRuns = 0;
+    const createPlanting = api.__window.USL.tiler.createPlantingFromProposal; // CHANGE
+    state.draft.kgPerPlant = 0.7; state.draft.crop.kgPerPlantMode = 'manual'; // CHANGE
+    state.draft.lifecycle.attributePatch.plant_yield = '1'; // CHANGE: the scheduler default must not override the reviewed Year Plan yield.
+    api.__window.USL.tiler.createPlantingFromProposal = input => { assert.equal(input.attributes.plant_yield, '0.7'); return createPlanting(input); }; // CHANGE
+    api.__window.USL.tasks.applySchedulerTaskReplacement = () => { taskCreations++; };
+    api.__window.Trellis.history = { run(metadata, operation) { assert.equal(metadata.action, 'allocateCreate'); historyRuns++; return operation(); } };
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete: true, missing: [] });
+    state.hudRefs.create.click();
+    await waitUntil(() => !!api.__document.lastDialog);
+    assert.equal(harness.getCreates(), 0);
+    const create = api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Create');
+    assert.ok(create);
+    create.click();
+    await waitUntil(() => !state.reviewing);
+    assert.equal(harness.getCreates(), 1);
+    assert.equal(taskCreations, 1);
+    assert.equal(historyRuns, 1);
+    assert.equal(state.draft, null);
+    api.__window.USL.allocate.close();
+});
+
+test('pending scheduler results cannot restore a closed or changed allocation proposal', async () => { // CHANGE
+    const harness = await previewSession();
+    const { api, state } = harness;
+    let resolveEdit;
+    api.__window.USL.scheduler.openAllocationScheduleDialog = () => new Promise(resolve => { resolveEdit = resolve; });
+    state.hudRefs.create.click();
+    await waitUntil(() => !!resolveEdit);
+    const previewCount = harness.previews.length;
+    api.__window.USL.allocate.close();
+    resolveEdit({ action: 'preview', draft: state.draft });
+    await waitUntil(() => !state.reviewing);
+    assert.equal(harness.previews.length, previewCount);
+    assert.equal(harness.getCreates(), 0);
+});
+
+test('view changes preserve previews while meaningful model edits clear them immediately', async () => { // CHANGE
+    const harness = await previewSession();
+    const { api, state } = harness;
+    const draft = state.draft;
+    api.__fireViewEvent('scaleAndTranslate');
+    assert.equal(state.draft, draft);
+    const model = api.__graph.getModel();
+    model.fireEvent('change', { getProperty: () => ({ changes: [{ style: 'opacity=50', previous: 'opacity=100' }] }) });
+    assert.equal(state.draft, draft);
+    model.fireEvent('change', { getProperty: () => ({ changes: [{ attribute: 'harvest_end' }] }) });
+    assert.equal(state.draft, null);
+    assert.equal(harness.cleared.at(-1), state.ownerId);
+    api.__window.USL.allocate.close();
+});
+
+test('partial allocation chart and demand-served summary use one simulation of the fitting plant count', async () => { // CHANGE
+    const harness = await previewSession();
+    const { api, state } = harness;
+    let simulationCalls = 0;
+    api.__window.USL.tiler.proposePlantingGeometry = input => input.plantCount > 2 ? { ok: false, capacity: 2 } : { ok: true, capacity: 2, geometry: { x: 0, y: 0, width: 20, height: 20 }, slots: [] };
+    api.__window.USL.planningCore.simulateCandidatePlanting = input => {
+        simulationCalls++;
+        assert.equal(input.candidate.plantCount, 2);
+        const weekly = usable => ({ perCrop: new Map([['crop', { target: [0, 4], usableSupply: [0, usable], short: [0, 4 - usable] }]]) });
+        return { demandServedKg: 2, base: { weekStarts: state.coverage.weekStarts, weekly: weekly(0) }, coverage: { weekly: weekly(2) } };
+    };
+    const result = await api.computeBedResult(state, { ...state.draft.crop, allocationLifecycle: harness.lifecycle }, state.draft.bed);
+    assert.equal(result.plantCount, 2);
+    assert.equal(result.partialPlanting, true);
+    assert.equal(result.demandServedKg, 2);
+    assert.equal(result.coveragePreview.rows[1].afterKg, 2);
+    assert.equal(simulationCalls, 1);
+    api.__window.USL.allocate.close();
+});
+
 test("Year Planner no longer owns the Allocate launcher", () => {
     const yearPlanner = fs.readFileSync(YEAR_PLANNER_PATH, "utf8");
     assert.doesNotMatch(yearPlanner, /const AllocateModeController/);
     assert.doesNotMatch(yearPlanner, /window\.addEventListener\("usl:allocatePlanRequested"/);
     assert.match(yearPlanner, /loadPlanForYear/);
 });
+
+// CHANGE: same-bed selection and view refresh must not replace an accepted ghost or reopen occupancy.
+test('Allocate keeps accepted badge, ghost and preview while unrelated loading progress updates', async () => {
+    const { api, state, bed, previews, cleared } = await previewSession();
+    const badge = api.__graphContainer.querySelector('[data-bed-id="bed-preview"]');
+    const ghost = api.__graphContainer.querySelector('.trellis-allocate-ghost');
+    const draft = state.draft;
+    const previewCount = previews.length; const clearCount = cleared.length;
+    state.scheduleProgress.phase = 'checking beds'; state.scheduleProgress.processedRows += 1;
+    api.__graph.setSelectionCell(bed);
+    api.renderScheduleProgress(state); // CHANGE: run the real progress path, including overlay evaluation.
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(state.draft, draft);
+    assert.equal(api.__graphContainer.querySelector('[data-bed-id="bed-preview"]'), badge);
+    assert.equal(api.__graphContainer.querySelector('.trellis-allocate-ghost'), ghost);
+    assert.equal(previews.length, previewCount);
+    assert.equal(cleared.length, clearCount);
+    assert.equal(badge.textContent, 'Good fit');
+    assert.match(badge.getAttribute('aria-label'), /Lettuce.*plants fit/s);
+    api.__window.USL.allocate.close();
+}); // CHANGE

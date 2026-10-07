@@ -328,46 +328,159 @@ test('Scheduler exposes Allocate resolver and draft editing contracts', () => {
     assert.match(schedulerSource, /saveVarietyTemplate/);
 });
 
-test('allocation scheduler draft builder initializes method, grown-for, start date, and tasks from draft', async () => {
-    const plant = makeCrop({
-        plant_id: 14,
-        plant_name: 'Lettuce',
-        default_planting_method: 'direct_sow.field',
-        default_planting_method_category: 'direct_sow'
-    });
-    const draft = {
-        allocationYear: 2027,
-        city: makeCity(hooks, 20),
-        crop: { plantId: '14', plant: 'Lettuce', method: 'direct_sow.field', methodCategoryId: 'direct_sow' },
-        plantResolution: { ok: true, plant, plantId: '14', varietyId: '', varietyName: '', label: 'Lettuce' },
-        actionStartISO: '2027-04-01',
-        taskPreview: [{ startISO: '2027-04-01', title: 'Sow Lettuce' }]
-    };
-
-    const result = await hooks.buildAllocationDialogDraft(draft, {
-        method: { value: 'direct_sow.field' },
-        growth: { value: 'mature' },
-        start: { value: '2027-04-01' }
-    });
-
-    assert.equal(result.methodId, 'direct_sow.field');
-    assert.equal(result.methodCategoryId, 'direct_sow');
-    assert.equal(result.growthStageKey, 'mature');
-    assert.equal(result.actionStartISO, '2027-04-01');
-    assert.equal(result.lifecycle.ok, true);
-    assert.ok(Array.isArray(result.taskPreview));
+test('allocation draft target retains dates and rules without becoming a graph cell', () => { // CHANGE
+    const fixture = allocationSchedulerFixture();
+    const template = { version: 2, rules: [{ id: 'prep', startOffsetDays: 3, startOffsetDirection: 'before', repeatMode: 'none' }] };
+    fixture.draft.lifecycle = { attributePatch: { harvest_end: '2026-05-08' }, taskTemplate: template };
+    const target = fixture.api.allocationSchedulerTarget(fixture.draft);
+    assert.equal(target.getId(), null);
+    assert.equal(target.parent, fixture.draft.moduleCell);
+    assert.equal(target.getAttribute('variety_id'), '7');
+    assert.equal(target.getAttribute('sow_date'), '2026-04-01');
+    assert.equal(target.getAttribute('harvest_end'), '2026-05-08');
+    assert.equal(target.getAttribute('task_template_json'), JSON.stringify(template));
 });
 
-test('allocation scheduler task previews can be saved as reusable defaults', () => {
-    const template = hooks.taskTemplateFromPreview([
-        { ruleKey: 'sow', startISO: '2027-04-01', title: 'Sow Lettuce' },
-        { ruleKey: 'water', startISO: '2027-04-02', title: 'Water Lettuce' }
-    ]);
+test('allocation reusable task defaults persist actual rules rather than dated task occurrences', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture();
+    const template = { version: 2, rules: [{ id: 'prep', title: 'Prep {plant}', startAnchorStage: 'SOW', startOffsetDays: 3, startOffsetDirection: 'before', endMode: 'fixed_days', durationDays: 3, repeatMode: 'none' }] };
+    fixture.draft.lifecycle = { taskTemplate: template };
+    fixture.draft.taskPreview = [{ title: 'Different dated occurrence', startISO: '2026-03-29' }];
+    const result = await fixture.api.persistAllocationReusableDefaults(fixture.draft, { defaultStatus: { missing: ['tasks'] } });
+    assert.deepEqual(Array.from(result.saved), ['tasks']);
+    const write = fixture.writes.find(write => /INSERT INTO VarietyTaskTemplates/i.test(write.sql));
+    assert.ok(write);
+    assert.ok(write.params.includes(JSON.stringify(template)));
+});
 
-    assert.equal(template.version, 2);
-    assert.equal(template.rules.length, 2);
-    assert.equal(template.rules[0].id, 'sow');
-    assert.equal(template.rules[0].title, 'Sow Lettuce');
+/** Reference-data bridge exercises real template resolution and the complete scheduler, without Electron or a database write. */ // CHANGE
+function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = null } = {}) { // CHANGE
+    let plant, city;
+    const writes = [];
+    const queries = [];
+    const method = { method_id: 'direct_sow.field', method_category_id: 'direct_sow', method_name: 'Field direct sow', tasks_required_json: '{"sow":true,"prep":true}' };
+    const dbBridge = { resolvePath: async () => ({ dbPath: 'allocation-fixture' }), open: async () => ({ dbId: 'fixture' }), close: async () => ({}),
+        exec: async (id, sql, params) => { writes.push({ sql, params }); return {}; },
+        query: async (id, sql, params = []) => {
+            queries.push({ sql, params });
+            let rows = [];
+            if (/FROM\s+Plants\b/i.test(sql)) rows = [plant];
+            else if (/FROM\s+Cities\b/i.test(sql)) rows = [city];
+            else if (/FROM\s+PlantAllowedMethodCategories\b/i.test(sql)) rows = [{ plant_id: 1, method_category_id: 'direct_sow', method_category_name: 'Direct sow' }];
+            else if (/FROM\s+PlantingMethods\b/i.test(sql)) rows = [method];
+            else if (/FROM\s+PlantVarieties\b/i.test(sql)) rows = [{ plant_id: 1, variety_id: 7, variety_name: 'Test variety', overrides_json: '{}' }];
+            else if (/FROM\s+VarietyTaskTemplates\b/i.test(sql) && varietyTemplate && params[0] === 7) rows = [{ template_json: JSON.stringify(varietyTemplate) }];
+            else if (/FROM\s+PlantTaskTemplates\b/i.test(sql) && plantTemplate) rows = [{ plant_id: 1, method_id: method.method_id, template_json: JSON.stringify(plantTemplate) }];
+            return { rows };
+        }
+    };
+    const api = loadSchedulerHooks({ dbBridge });
+    plant = makePlant(api, { plant_name: 'Lettuce', default_planting_method: method.method_id, default_planting_method_category: method.method_category_id, spacing_cm: 30 });
+    city = makeCity(api); city.city_id = 1;
+    const moduleCell = { id: 'module', getAttribute: () => null };
+    const bed = { id: 'bed', parent: moduleCell, getAttribute: key => key === 'garden_bed' ? '1' : null, getGeometry: () => ({ x: 0, y: 0, width: 200, height: 100 }) };
+    let graphWrites = 0, dialog, onClose;
+    const model = { getParent: cell => cell?.parent || null, getRoot: () => ({ children: [] }), getCell: () => null,
+        getChildCount: cell => cell?.children?.length || 0, getChildAt: (cell, index) => cell.children[index], beginUpdate() { graphWrites++; }, endUpdate() {}, execute() { graphWrites++; } };
+    const graph = { getModel: () => model, getSelectionCell: () => bed, __trellisBedSuccessionNavigator: { getSelectedClusterOccupancy: () => ({ items: [] }) } };
+    const ui = { editor: { graph }, showDialog(node, width, height, modal, closable, close) { dialog = node; onClose = close; api.__testWindow.document.body.appendChild(node); }, hideDialog() { dialog?.remove(); onClose?.(); } };
+    const draft = { allocationYear: 2026, moduleCell, bed, bedProfile: null, city,
+        crop: { plantId: '1', varietyId: '7', label: 'Lettuce - Test variety', method: method.method_id },
+        plantResolution: { ok: true, plant, plantId: '1', varietyId: '7', varietyName: 'Test variety' }, actionStartISO: '2026-04-01' };
+    return { api, plant, city, ui, draft, writes, queries, getDialog: () => dialog, getGraphWrites: () => graphWrites };
+} // CHANGE
+
+async function waitForSchedulerDialog(fixture) { // CHANGE
+    const start = Date.now();
+    while (!fixture.getDialog() && Date.now() - start < 10000) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(fixture.getDialog(), 'the full scheduler should open');
+    return fixture.getDialog();
+} // CHANGE
+
+test('allocation Edit opens the full scheduler with fixed crop identity and returns preview without graph writes', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture();
+    const { api, ui, draft } = fixture;
+    const pending = api.openAllocationScheduleDialog(ui, draft, { previewOnly: true, defaultStatus: { complete: true, missing: [] } });
+    const dialog = await waitForSchedulerDialog(fixture);
+    assert.match(dialog.textContent, /Planting Scheduler/);
+    assert.equal(dialog.querySelector('[data-allocation-crop-identity="fixed"]').textContent, draft.crop.label);
+    for (const row of dialog.querySelectorAll('.usl-scheduler-row--crop-picker,.usl-scheduler-row--crop-variety')) { // CHANGE: responsive CSS cannot expose mutable crop controls.
+        assert.equal(row.style.getPropertyPriority('display'), 'important');
+        assert.equal(Array.from(row.querySelectorAll('button, input, select')).every(control => control.disabled), true);
+    } // CHANGE
+    const grownFor = Array.from(dialog.querySelectorAll('select')).find(select => select.closest('.usl-scheduler-row')?.textContent.includes('Grown for')); // CHANGE
+    assert.ok(grownFor && grownFor.disabled, 'Year Plan growth stage must be visible and fixed'); // CHANGE
+    const buttons = Array.from(dialog.querySelectorAll('button'));
+    assert.ok(buttons.find(node => node.textContent === 'Tasks'));
+    assert.ok(buttons.find(node => node.textContent === 'Schedule'));
+    const date = Array.from(dialog.querySelectorAll('input[type="date"]')).find(node => node.value === '2026-04-01');
+    assert.ok(date);
+    date.value = '2026-04-02'; date.dispatchEvent(new api.__testWindow.document.defaultView.Event('input', { bubbles: true }));
+    buttons.find(node => node.textContent === 'Preview Planting').click();
+    const result = await Promise.race([pending, new Promise((resolve, reject) => setTimeout(() => reject(new Error(dialog.textContent.slice(0, 1400))), 1500))]); // CHANGE: failed submission reports the actual inline validation reason.
+    assert.equal(result.action, 'preview');
+    assert.equal(result.draft.lifecycle.ok, true);
+    assert.equal(result.draft.actionStartISO, '2026-04-02');
+    assert.ok(result.draft.taskPreview.length > 0);
+    assert.equal(result.draft.lifecycle.attributePatch.task_template_json, JSON.stringify(result.draft.lifecycle.taskTemplate));
+    assert.equal(fixture.getGraphWrites(), 0);
+    assert.equal(fixture.writes.some(write => /^(INSERT|UPDATE|DELETE)\b/i.test(write.sql.trim())), false);
+});
+
+test('lifecycle proposals resolve variety, plant, and method task defaults and respect explicit empty rules', async () => { // CHANGE
+    const template = title => ({ version: 2, rules: [{ id: 'sow', title, startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 0, repeatMode: 'none' }] });
+    for (const [options, source, title] of [[{ varietyTemplate: template('Variety task'), plantTemplate: template('Plant task') }, 'variety', 'Variety task'], [{ plantTemplate: template('Plant task') }, 'plant', 'Plant task'], [{}, 'method_builtin', 'Sow']]) {
+        const fixture = allocationSchedulerFixture(options);
+        const proposal = await fixture.api.proposeLifecycle({ plant: fixture.plant, city: fixture.city, varietyId: 7, methodId: 'direct_sow.field', methodCategoryId: 'direct_sow', primaryDateISO: '2026-04-01', seasonStartYear: 2026 }); // CHANGE
+        assert.equal(proposal.ok, true, proposal.reason);
+        assert.equal(proposal.taskTemplateSource, source);
+        assert.ok(proposal.taskPreview.some(task => task.title.includes(title)));
+        const empty = await fixture.api.proposeLifecycle({ plant: fixture.plant, city: fixture.city, methodId: 'direct_sow.field', methodCategoryId: 'direct_sow', primaryDateISO: '2026-04-01', seasonStartYear: 2026, taskTemplate: { version: 2, rules: [] } }); // CHANGE
+        assert.equal(empty.ok, true);
+        assert.equal(empty.taskPreview.length, 0);
+    }
+});
+
+test('full allocation scheduler cancellation and dismissal retain the draft without writes', async () => { // CHANGE
+    for (const dismissal of ['Cancel', 'close']) {
+        const fixture = allocationSchedulerFixture();
+        const original = JSON.stringify(fixture.draft.crop);
+        const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true });
+        const dialog = await waitForSchedulerDialog(fixture);
+        if (dismissal === 'close') fixture.ui.hideDialog();
+        else Array.from(dialog.querySelectorAll('button')).find(node => node.textContent === 'Cancel').click();
+        assert.equal((await pending).action, 'cancel');
+        assert.equal(JSON.stringify(fixture.draft.crop), original);
+        assert.equal(fixture.getGraphWrites(), 0);
+        assert.equal(fixture.writes.some(write => /^(INSERT|UPDATE|DELETE)\b/i.test(write.sql.trim())), false);
+    }
+});
+
+test('full allocation scheduler preserves explicitly empty rules when returning to preview', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture();
+    fixture.draft.lifecycle = { taskTemplate: { version: 2, rules: [] }, taskTemplateSource: 'explicit' };
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, defaultStatus: { complete: true, missing: [] } });
+    const dialog = await waitForSchedulerDialog(fixture);
+    Array.from(dialog.querySelectorAll('button')).find(node => node.textContent === 'Preview Planting').click();
+    const result = await pending;
+    assert.equal(result.draft.taskPreview.length, 0);
+    assert.equal(result.draft.lifecycle.taskTemplate.rules.length, 0);
+    assert.equal(fixture.getGraphWrites(), 0);
+});
+
+test('shared allocation result preserves relative task rules, rejects crop changes, and uses the fixed Year Plan growth-stage geometry', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture();
+    const inputs = new fixture.api.ScheduleInputs({ ...makeInputs(fixture.api, { plant: fixture.api.applyGrowthStageToPlant(fixture.plant, fixture.api.normalizeGrowthStage({ stage_key: 'baby', stage_label: 'Baby', gdd_ratio: 0.25 })), city: fixture.city }), varietyId: 7, varietyName: 'Test variety' }); // CHANGE: scheduler inputs are immutable.
+    const template = { version: 2, rules: [{ id: 'water', title: 'Water {plant}', startAnchorStage: 'SOW', startOffsetDays: 2, startOffsetDirection: 'after', endMode: 'fixed_days', durationDays: 1, repeatMode: 'interval', repeatEveryDays: 2, repeatUntilMode: 'x_times', repeatTimes: 3, repeatUntilAnchorStage: 'HARVEST_END' }] };
+    const result = fixture.api.computeScheduleResult(inputs);
+    const stageDraft = { ...fixture.draft, crop: { ...fixture.draft.crop, growthStageKey: 'baby', growthStageLabel: 'Baby' } }; // CHANGE
+    const reviewed = await fixture.api.buildAllocationSchedulerResult(stageDraft, inputs, result, template); // CHANGE
+    await assert.rejects(() => fixture.api.buildAllocationSchedulerResult(fixture.draft, inputs, result, template), /growth stage cannot change/); // CHANGE
+    assert.equal(reviewed.lifecycle.taskTemplate, template);
+    assert.equal(reviewed.taskPreview.length, 3);
+    assert.equal(reviewed.plantResolution.plant.spacing_cm, 15);
+    assert.equal(reviewed.lifecycle.attributePatch.spacing_cm, '15');
+    await assert.rejects(() => fixture.api.buildAllocationSchedulerResult({ ...fixture.draft, crop: { ...fixture.draft.crop, plantId: '2' } }, inputs, result, template), /cannot change/);
 });
 
 test('companion metadata annotates crop options without changing suitability order', () => {
@@ -1586,3 +1699,87 @@ test('generated task timeline renders adaptive calendar ticks', () => {
     });
     assert.deepEqual(Array.from(container.querySelectorAll('[data-usl-task-timeline-year-label="1"]')).map(label => label.textContent), ['2027']);
 });
+
+// CHANGE: yield defaults are independent of timing and layout and are recorded for reopening.
+test('growth-stage yield ratio scales resolved variety yield without changing the source plant', () => {
+    const plant = makeCrop({ yield_per_plant_kg: 2.5, days_maturity: 100, spacing_cm: 40 });
+    const stage = hooks.normalizeGrowthStage({ stage_key: 'baby', stage_label: 'Baby', gdd_ratio: 0.25, yield_ratio: 0.2 });
+    const effective = hooks.applyGrowthStageToPlant(plant, stage);
+    assert.equal(effective.yield_per_plant_kg, 0.5);
+    assert.equal(plant.yield_per_plant_kg, 2.5);
+    assert.equal(effective.days_maturity, 25);
+    assert.equal(effective.spacing_cm, 20);
+    assert.equal(effective.growth_stage_yield_ratio, 0.2);
+    assert.equal(hooks.normalizeGrowthStage({ stage_key: 'baby' }).yieldRatio, 1);
+    const saved = hooks.readGrowthStageFromCell({ getAttribute: key => ({ growth_stage_key: 'baby', growth_stage_yield_ratio: '0.2' })[key] });
+    assert.equal(saved.yieldRatio, 0.2);
+}); // CHANGE
+
+// CHANGE: run the additive stage migration and round-trip against SQLite rather than matching SQL strings.
+test('existing stage database upgrades yield defaults, saves ratios and blocks inactive custom stages', async t => {
+    const { DatabaseSync } = require('node:sqlite');
+    const db = new DatabaseSync(':memory:'); t.after(() => db.close());
+    db.exec(`CREATE TABLE Plants (plant_id INTEGER PRIMARY KEY); INSERT INTO Plants VALUES (1);
+        CREATE TABLE PlantGrowthStages (stage_id INTEGER PRIMARY KEY, plant_id INTEGER, stage_key TEXT, stage_label TEXT, gdd_ratio REAL, spacing_ratio REAL, plant_diameter_ratio REAL, plant_height_ratio REAL, sort_order INTEGER, active INTEGER, is_default INTEGER, created_at TEXT, updated_at TEXT, UNIQUE(plant_id, stage_key));
+        INSERT INTO PlantGrowthStages VALUES (1, 1, 'baby', 'Baby', 0.25, NULL, NULL, NULL, 0, 1, 0, '', '');`);
+    const bridge = { resolvePath: async () => ({ dbPath: 'stage-test' }), open: async () => ({ dbId: 'stage-test' }), close: async () => {},
+        query: async (id, sql, params = []) => ({ rows: db.prepare(sql).all(...params) }),
+        exec: async (id, sql, params = []) => { if (params.length) return db.prepare(sql).run(...params); db.exec(sql); return {}; } };
+    const api = loadSchedulerHooks({ dbBridge: bridge });
+    const rows = await api.PlantGrowthStageModel.listByPlantId(1);
+    assert.equal(rows[0].yieldRatio, 1);
+    assert.equal(db.prepare('SELECT yield_ratio FROM PlantGrowthStages').get().yield_ratio, 1);
+    let notifications = 0; api.__testWindow.addEventListener('usl:growthStagesSaved', () => notifications++);
+    await api.PlantGrowthStageModel.saveForPlant(1, [{ stage_key: 'baby', stage_label: 'Baby', gdd_ratio: 0.25, yield_ratio: 0.2, active: 1 }]);
+    assert.equal((await api.resolveGrowthStageForPlanCrop(1, 'baby')).stage.yieldRatio, 0.2);
+    assert.equal(notifications, 1);
+    db.exec('UPDATE PlantGrowthStages SET active = 0');
+    assert.equal((await api.resolveGrowthStageForPlanCrop(1, 'baby')).ok, false);
+    assert.equal((await api.resolveGrowthStageForPlanCrop(1, '')).stage.stageKey, 'mature');
+    assert.equal((await api.PlantGrowthStageModel.listByPlantId(1, { includeInactive: true })).length, 1);
+}); // CHANGE
+
+// CHANGE: exercise the Python seeder's actual Apply output through the scheduler's database resolver.
+test('seeded stage yield multiplies the seeded variety override in the scheduler', async t => { // CHANGE
+    const { execFileSync } = require('node:child_process'); // CHANGE
+    const { DatabaseSync } = require('node:sqlite'); // CHANGE
+    const project = path.resolve(__dirname, '..'); // CHANGE
+    const artifactRoot = path.join(project, 'test-results'); // CHANGE
+    fs.mkdirSync(artifactRoot, { recursive: true }); // CHANGE
+    const temporaryDirectory = fs.mkdtempSync(path.join(artifactRoot, 'seed-yield-integration-')); // CHANGE
+    let db = null; // CHANGE
+    t.after(() => { // CHANGE
+        if (db) db.close(); // CHANGE: close SQLite before cleanup, including on assertion failures and Windows.
+        assert.ok(path.resolve(temporaryDirectory).startsWith(path.resolve(artifactRoot) + path.sep)); // CHANGE: check the cleanup target stays inside the test artifact directory.
+        fs.rmSync(temporaryDirectory, { recursive: true, force: true }); // CHANGE
+    }); // CHANGE
+    const databasePath = path.join(temporaryDirectory, 'seeded.sqlite'); // CHANGE
+    const seedScript = `
+import json, shutil, sqlite3, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from trellis_seed.db import apply_run
+from trellis_seed.jsonio import write_json
+shutil.copy2(sys.argv[2], sys.argv[3])
+with sqlite3.connect(sys.argv[3]) as conn:
+    plant_id=conn.execute("SELECT plant_id FROM Plants WHERE plant_name='Lettuce'").fetchone()[0]
+run_dir=Path(sys.argv[4])
+write_json(run_dir/'generated'/'PlantGrowthStages.json', [{'plant_id':plant_id, 'stage_key':'seed_baby', 'stage_label':'Seed Baby', 'gdd_ratio':0.25, 'yield_ratio':0.2}])
+write_json(run_dir/'generated'/'PlantVarieties.json', [{'plant_id':plant_id, 'variety_name':'Seed yield integration', 'overrides':{'yield_per_plant_kg':2.5}}])
+apply_run(run_dir, Path(sys.argv[3]))
+with sqlite3.connect(sys.argv[3]) as conn:
+    variety_id=conn.execute("SELECT variety_id FROM PlantVarieties WHERE plant_id=? AND variety_name='Seed yield integration'", [plant_id]).fetchone()[0]
+print(json.dumps({'plantId':plant_id, 'varietyId':variety_id}))
+`; // CHANGE: only a disposable database copy is seeded; no provider or installed database is involved.
+    const identity = JSON.parse(execFileSync('python', ['-c', seedScript, path.join(project, 'scripts'), path.join(project, 'trellis_database', 'Trellis_database.sqlite'), databasePath, path.join(temporaryDirectory, 'run')], { encoding: 'utf8' })); // CHANGE
+    db = new DatabaseSync(databasePath); // CHANGE
+    const bridge = { resolvePath: async () => ({ dbPath: databasePath }), open: async () => ({ dbId: 'seed-yield-integration' }), close: async () => {}, // CHANGE
+        query: async (id, sql, params = []) => ({ rows: db.prepare(sql).all(...params) }), // CHANGE
+        exec: async (id, sql, params = []) => { if (params.length) return db.prepare(sql).run(...params); db.exec(sql); return {}; } }; // CHANGE
+    const api = loadSchedulerHooks({ dbBridge: bridge }); // CHANGE
+    const resolved = await api.resolvePlantForPlanCrop({ ...identity, growthStageKey: 'seed_baby' }); // CHANGE
+    assert.equal(resolved.ok, true, resolved.reason); // CHANGE
+    assert.equal(resolved.growthStage.yieldRatio, 0.2); // CHANGE
+    assert.equal(resolved.plant.yield_per_plant_kg, 0.5); // CHANGE
+    assert.equal(db.prepare("SELECT yield_ratio FROM PlantGrowthStages WHERE plant_id=? AND stage_key='seed_baby'").get(identity.plantId).yield_ratio, 0.2); // CHANGE
+}); // CHANGE

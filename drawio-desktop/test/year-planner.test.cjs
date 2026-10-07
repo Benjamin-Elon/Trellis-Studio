@@ -221,6 +221,8 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
             methodCategoryId: "direct_sow",
             baseKgPerPlant: 1.5,
             kgPerPlantMode: "auto",
+            growthStageKey: "mature", growthStageLabel: "Mature", // CHANGE
+            growthStage: { stageKey: "mature", stageLabel: "Mature", gddRatio: 1, spacingRatio: 1, plantDiameterRatio: 1, plantHeightRatio: 1, yieldRatio: 1 }, // CHANGE
             harvestWindowSource: "manual",
             useActualHarvest: false
         }],
@@ -647,7 +649,7 @@ test("DiagramPlanReader returns normalized garden crop candidates and ignores gr
     addCell(moduleCell, new Cell("not-a-group", { plant_id: "99", plant_name: "Ignored" }));
 
     assert.deepEqual(JSON.parse(JSON.stringify(api.DiagramPlanReader.readGardenCropCandidates(moduleCell))), [{
-        plantId: "12",
+        plantId: "12", growthStageKey: "mature", // CHANGE
         plantName: "Tomato",
         varietyId: "34",
         varietyName: "Roma"
@@ -1360,6 +1362,7 @@ test("YearPlanDashboard classifies weekly timing and avoids inventory snapshot s
     assert.equal(dashboard.cropMetricsById.get("surplus").status, "Surplus");
     assert.equal(dashboard.cropMetricsById.get("surplus").surplusKg, 3);
     assert.equal(dashboard.cropMetricsById.get("ok").status, "OK");
+    assert.deepEqual(crops.map(crop => dashboard.cropMetricsById.get(crop.id).indicatorState), ["error", "no-demand", "error", "warning", "surplus", "ok"]); // CHANGE
     assert.ok(dashboard.badges.includes("Expired / timing issue"));
 });
 
@@ -1398,6 +1401,99 @@ test("YearPlanDashboard promotes a missing harvest window to missing data when d
     assert.equal(dashboard.cropMetricsById.get("window").status, "Missing data");
     assert.ok(codes(dashboard.validationErrors).includes("crop.missing_harvest_window"));
 });
+
+test("crop dots attribute linked validation to exact rows and keep shared setup global", () => { // CHANGE
+    const { api } = createHarness(); // CHANGE
+    const plan = api.PlanSchema.createEmptyPlan(2026); // CHANGE
+    plan.crops.push(emptyCrop({ id: "mature" }), emptyCrop({ id: "baby", growthStageKey: "baby", growthStageLabel: "Baby" })); // CHANGE
+    addDemand(plan, { cropId: "baby", qty: 0 }); // CHANGE
+    addDemand(plan, { cropId: "baby", qty: 0 }); // CHANGE
+    addDemand(plan, { cropId: "deleted", qty: 0 }); // CHANGE
+    plan.demandChannels[0].label = ""; // CHANGE
+    plan.selfSufficiency.adults = -1; // CHANGE
+    plan.selfSufficiency.lines = [{ id: "self_1", cropId: "baby", qty: 0, unit: "kg", frequency: "week", everyN: 1, from: "2026-06-01", to: "2026-06-07" }]; // CHANGE
+    Object.assign(plan.csa, { enabled: true, boxesPerWeek: 0, components: [{ cropId: "baby", qty: 1, unit: "crate" }] }); // CHANGE
+    const dashboard = api.YearPlanDashboard.compute(plan, { warnings: [] }); // CHANGE
+    const mature = dashboard.cropMetricsById.get("mature"); // CHANGE
+    const baby = dashboard.cropMetricsById.get("baby"); // CHANGE
+    assert.equal(mature.indicatorState, "no-demand"); // CHANGE
+    assert.equal(mature.issues.length, 0); // CHANGE
+    assert.equal(baby.status, "No demand"); // CHANGE
+    assert.equal(baby.indicatorState, "error"); // CHANGE
+    assert.equal(baby.issues.filter(issue => issue.code === "demand.line_invalid_quantity").length, 2); // CHANGE
+    assert.ok(baby.issues.some(issue => issue.code === "self.line_invalid_quantity")); // CHANGE
+    assert.ok(baby.issues.some(issue => issue.code === "csa.component_unresolved_unit")); // CHANGE
+    assert.ok(dashboard.validationErrors.some(error => error.code === "demand.channel_missing_label")); // CHANGE
+    assert.ok(dashboard.validationErrors.some(error => error.code === "self.invalid_adults")); // CHANGE
+    assert.ok(dashboard.validationErrors.some(error => error.code === "csa.invalid_boxes_per_week")); // CHANGE
+    assert.ok(baby.issues.every(issue => !["demand.channel_missing_label", "self.invalid_adults", "csa.invalid_boxes_per_week", "demand.line_missing_crop"].includes(issue.code))); // CHANGE
+}); // CHANGE
+
+test("crop dot issues deduplicate validations but retain distinct repair destinations", () => { // CHANGE
+    const { api } = createHarness(); // CHANGE
+    const plan = api.PlanSchema.createEmptyPlan(2026); // CHANGE
+    plan.crops.push(emptyCrop({ kgPerPlant: 0, __growthStageUnavailable: "Stage is inactive", packages: [{ unit: "kg", baseType: "kg", baseQty: 0 }, { unit: "bunch", baseType: "kg", baseQty: 0 }] })); // CHANGE
+    const duplicate = api.PlanSchema.validateCrop(plan.crops[0])[0]; // CHANGE
+    const dashboard = api.YearPlanDashboard.compute(plan, { warnings: [] }, { extraValidationErrors: [duplicate, duplicate] }); // CHANGE
+    const metric = dashboard.cropMetrics[0]; // CHANGE
+    assert.equal(metric.issues.filter(issue => issue.code === "crop.invalid_kg_per_plant").length, 1); // CHANGE
+    assert.equal(metric.issues.filter(issue => issue.code === "crop.package_invalid_base_qty").length, 2); // CHANGE
+    assert.equal(metric.indicatorState, "error"); // CHANGE
+    assert.ok(metric.issues.some(issue => issue.tone === "warning")); // CHANGE
+}); // CHANGE
+
+test("crop dots collect active price and nutrition warnings by identity without persisting them", () => { // CHANGE
+    const { api } = createHarness(); // CHANGE
+    const plan = api.PlanSchema.createEmptyPlan(2026); // CHANGE
+    plan.crops.push(emptyCrop({ id: "priced", harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: null }, { unit: "bunch", baseType: "kg", baseQty: 0.1, price: null }] }), emptyCrop({ id: "other", varietyId: "2", variety: "Other" })); // CHANGE
+    addDemand(plan, { cropId: "priced" }); // CHANGE
+    addDemand(plan, { cropId: "priced", unit: "bunch" }); // CHANGE
+    plan.selfSufficiency.lines = [{ id: "self_1", cropId: "priced", qty: 1, unit: "kg", frequency: "week", everyN: 1, from: "2026-06-01", to: "2026-06-07" }]; // CHANGE
+    Object.assign(plan.csa, { enabled: true, boxesPerWeek: 1, start: "2026-06-01", end: "2026-06-07", components: [{ cropId: "priced", qty: 1, unit: "kg", everyNWeeks: 1 }] }); // CHANGE
+    const warnings = []; // CHANGE
+    const weekly = api.PlanMath.computePlanWeekly(plan, warnings); // CHANGE
+    assert.equal(weekly.cropWarnings.length, 4); // CHANGE
+    const dashboard = api.YearPlanDashboard.compute(plan, { weekly, warnings }, { nutritionData: { available: true, mappings: [], values: [] } }); // CHANGE
+    const issues = dashboard.cropMetricsById.get("priced").issues; // CHANGE
+    assert.equal(issues.filter(issue => issue.code === "package.missing_price").length, 2); // CHANGE
+    assert.ok(issues.some(issue => issue.code === "nutrition.missing_mapping")); // CHANGE
+    assert.equal(dashboard.cropMetricsById.get("other").issues.length, 0); // CHANGE
+    assert.equal(dashboard.cropMetricsById.get("priced").indicatorState, "error"); // CHANGE: a shortage outranks price and nutrition warnings.
+    const persisted = JSON.stringify(api.PlanSchema.serializeForPersistence(plan)); // CHANGE
+    assert.doesNotMatch(persisted, /cropWarnings|missingCropIds|indicatorState|issues/); // CHANGE
+}); // CHANGE
+
+test("disabled demand sections contribute no linked validation or price warnings to crop dots", () => { // CHANGE
+    const { api } = createHarness(); // CHANGE
+    const plan = api.PlanSchema.createEmptyPlan(2026); // CHANGE
+    plan.crops.push(emptyCrop()); // CHANGE
+    plan.demandChannels[0].enabled = false; // CHANGE
+    addDemand(plan, { qty: 0, unit: "crate" }); // CHANGE
+    plan.selfSufficiency.enabled = false; // CHANGE
+    plan.selfSufficiency.lines = [{ id: "disabled", cropId: "crop_1", qty: 0, unit: "crate" }]; // CHANGE
+    Object.assign(plan.csa, { enabled: false, boxesPerWeek: 0, components: [{ cropId: "crop_1", qty: 0, unit: "crate" }] }); // CHANGE
+    const weekly = api.PlanMath.computePlanWeekly(plan, []); // CHANGE
+    const metric = api.YearPlanDashboard.compute(plan, { weekly }).cropMetrics[0]; // CHANGE
+    assert.equal(metric.issues.length, 0); // CHANGE
+    assert.equal(metric.indicatorState, "no-demand"); // CHANGE
+    assert.equal(weekly.cropWarnings.length, 0); // CHANGE
+}); // CHANGE
+
+test("crop stage and package warnings override no demand and disappear when repaired", () => { // CHANGE
+    const { api } = createHarness(); // CHANGE
+    const plan = api.PlanSchema.createEmptyPlan(2026); // CHANGE
+    const crop = emptyCrop({ packages: [], __growthStageUnavailable: "Stage is inactive" }); // CHANGE
+    plan.crops.push(crop); // CHANGE
+    let metric = api.YearPlanDashboard.compute(plan, {}).cropMetrics[0]; // CHANGE
+    assert.equal(metric.status, "No demand"); // CHANGE
+    assert.equal(metric.indicatorState, "warning"); // CHANGE
+    assert.deepEqual(Array.from(metric.issues, issue => issue.code), ["crop.needs_packages", "crop.unavailable_stage"]); // CHANGE
+    delete crop.__growthStageUnavailable; // CHANGE
+    crop.packages = [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }]; // CHANGE
+    metric = api.YearPlanDashboard.compute(plan, {}).cropMetrics[0]; // CHANGE
+    assert.equal(metric.indicatorState, "no-demand"); // CHANGE
+    assert.equal(metric.issues.length, 0); // CHANGE
+}); // CHANGE
 
 test("YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines", () => {
     const { api } = createHarness();
@@ -1627,3 +1723,32 @@ test("YearPlanDashboard opens Self Sufficiency strip on first self-use validatio
     assert.equal(state.selfSufficiencyExpanded, true);
     assert.equal(repeated.selfSufficiencyChanged, false);
 });
+
+// CHANGE: growth stage is a demand identity, including legacy variety-name matching.
+test("growth stages allow the same variety while rejecting duplicate stage identities", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops = [emptyCrop({ id: "mature", varietyId: 7 }), emptyCrop({ id: "baby", varietyId: 7, growthStageKey: "baby_leaf", growthStageLabel: "Baby leaf" })];
+    api.PlanSchema.normalizeForRuntime(plan, 2026);
+    assert.equal(api.PlanSchema.findDuplicateCrop(plan, "1", 7, "", "baby_leaf").id, "baby");
+    assert.equal(api.PlanSchema.findDuplicateCrop(plan, "1", 7, "baby", "baby_leaf"), null);
+    assert.notEqual(api.PlanSchema.getCropIdentityKey(plan.crops[0]), api.PlanSchema.getCropIdentityKey(plan.crops[1]));
+    const saved = api.PlanSchema.serializeForPersistence(plan);
+    assert.equal(saved.crops[0].growthStageKey, "mature");
+    assert.equal(saved.crops[1].growthStageKey, "baby_leaf");
+}); // CHANGE
+
+test("stage-specific diagram supply cannot cover another stage's demand", () => {
+    const { api, root, addCell, TestCell: Cell } = createHarness();
+    const moduleCell = addCell(root, new Cell("module"));
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops = [emptyCrop({ id: "mature", varietyId: 7, variety: "Roma", harvestWindowSource: "actual_harvest" }), emptyCrop({ id: "baby", varietyId: 7, variety: "Roma", growthStageKey: "baby", growthStageLabel: "Baby", kgPerPlant: 0.2, harvestWindowSource: "actual_harvest" })];
+    for (const [id, stage, count] of [["legacy", "", 4], ["baby", "baby", 10]]) addCell(moduleCell, new Cell(id, { tiler_group: "1", plant_id: "1", variety_name: "Roma", growth_stage_key: stage, plant_count: count, season_start_year: "2026", harvest_start: "2026-06-01", harvest_end: "2026-06-07" }));
+    addDemand(plan, { cropId: "mature", qty: 5 }); addDemand(plan, { cropId: "baby", qty: 3 });
+    const runtime = api.PlanRuntimeService.recalculate(moduleCell, 2026, plan);
+    assert.equal(runtime.derivedByCropId.get("mature").actualPlants, 4);
+    assert.equal(runtime.derivedByCropId.get("baby").actualPlants, 10);
+    const coverage = api.PlanningCore.computeYearCoverage({ moduleCell, year: 2026, plan });
+    assert.equal(coverage.cropSummaries.find(crop => crop.cropId === "mature").shortKg, 1);
+    assert.ok(Math.abs(coverage.cropSummaries.find(crop => crop.cropId === "baby").shortKg - 1) < 1e-8);
+}); // CHANGE

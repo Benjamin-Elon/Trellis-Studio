@@ -270,11 +270,12 @@ Draw.loadPlugin(function (ui) {
             const source = value && typeof value === "object" ? value : {};
             const normalized = {};
             for (const key of Object.keys(source)) {
+                if (key === "add-crop") continue; // CHANGE: ignore legacy crop-tree expansion on load and omit it on subsequent saves.
                 const ids = normalizeIdList(source[key]);
                 if (ids.length) normalized[String(key)] = ids;
             }
             return normalized;
-        } // CHANGE: picker expansion state is persisted with the existing per-user planner UI preferences.
+        } // CHANGE: other picker expansion state remains in the existing per-user planner UI preferences.
 
         function normalize(record) {
             const source = record && typeof record === "object" ? record : {};
@@ -927,6 +928,13 @@ Draw.loadPlugin(function (ui) {
             const expiredTotal = Array(n).fill(0);
             const endingInventoryTotal = Array(n).fill(0);
             const perCrop = new Map();
+            const cropWarnings = []; // CHANGE: retain crop attribution alongside legacy warning strings, only in weekly runtime data.
+
+            /** Records an attributable warning without changing the existing global diagnostics. */ // CHANGE
+            function warnForCrop(crop, code, message, target, unit) { // CHANGE
+                pushWarn(warns, message); // CHANGE
+                cropWarnings.push({ cropId: String(crop.id), code, message, target, unit }); // CHANGE
+            } // CHANGE
 
             function ensureCropArrays(cropId) {
                 if (!perCrop.has(cropId)) {
@@ -985,7 +993,7 @@ Draw.loadPlugin(function (ui) {
                 const unitPrice = resolvePackagePriceForUnit(crop, line.unit);
                 const target = Array(n).fill(0);
                 if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue;
-                if (!Number.isFinite(unitPrice)) pushWarn(warns, `Self Sufficiency value for ${crop.plant || crop.id} ${line.unit || "unit"} counted as $0 because no matching package price is set.`); // NEW
+                if (!Number.isFinite(unitPrice)) warnForCrop(crop, "package.missing_price", `Self Sufficiency value for ${crop.plant || crop.id} ${line.unit || "unit"} counted as $0 because no matching package price is set.`, { area: "self-sufficiency", selfLineId: String(line.id || ""), selfLineIndex: lineIndex, field: "unit" }, line.unit); // CHANGE
                 const result = {
                     line,
                     cropId: String(crop.id),
@@ -1026,7 +1034,7 @@ Draw.loadPlugin(function (ui) {
                 const unitPrice = resolvePackagePriceForUnit(crop, line.unit);
                 const target = Array(n).fill(0);
                 if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue;
-                if (!Number.isFinite(unitPrice)) pushWarn(warns, `Demand revenue for ${crop.plant || crop.id} ${line.unit || "unit"} counted as $0 because no matching package price is set.`); // NEW
+                if (!Number.isFinite(unitPrice)) warnForCrop(crop, "package.missing_price", `Demand revenue for ${crop.plant || crop.id} ${line.unit || "unit"} counted as $0 because no matching package price is set.`, { area: "demand", lineId: String(line.id || ""), lineIndex, field: "unit" }, line.unit); // CHANGE
                 const result = {
                     line,
                     cropId: String(crop.id),
@@ -1068,7 +1076,7 @@ Draw.loadPlugin(function (ui) {
 
                         const qty = Number(comp.qty);
                         if (!Number.isFinite(qty) || qty <= 0) {
-                            pushWarn(warns, `CSA component skipped (qty missing) for ${crop.plant || crop.id}`);
+                            warnForCrop(crop, "csa.component_invalid_quantity", `CSA component skipped (qty missing) for ${crop.plant || crop.id}`, { area: "csa", componentIndex, field: "qty" }); // CHANGE
                             continue;
                         }
 
@@ -1081,7 +1089,7 @@ Draw.loadPlugin(function (ui) {
                         const unitPrice = resolvePackagePriceForUnit(crop, comp.unit);
                         const componentValue = Number.isFinite(unitPrice) ? qty * unitPrice : 0;
                         if (Number.isFinite(unitPrice)) componentValuePerBox += componentValue;
-                        else pushWarn(warns, `CSA component value for ${crop.plant || crop.id} ${comp.unit || "unit"} counted as $0 because no matching package price is set.`);
+                        else warnForCrop(crop, "package.missing_price", `CSA component value for ${crop.plant || crop.id} ${comp.unit || "unit"} counted as $0 because no matching package price is set.`, { area: "csa", componentIndex, field: "unit" }, comp.unit); // CHANGE
 
                         const everyN = Math.max(1, Number(comp.everyNWeeks) || 1);
                         const from = comp.start || csa.start;
@@ -1392,7 +1400,8 @@ Draw.loadPlugin(function (ui) {
                 selfSufficiency: selfWeekly,
                 sales: salesWeekly,
                 csa: csaWeekly,
-                csaComponentRequests // CHANGE
+                csaComponentRequests, // CHANGE
+                cropWarnings // CHANGE: structured warnings are not serialized into the saved plan.
             };
         }
 
@@ -1560,7 +1569,7 @@ Draw.loadPlugin(function (ui) {
             const warnings = [];
             if (!normalized.available) warnings.push("Nutrition data is not available in this database.");
             for (const name of missingCropNames) warnings.push(`No nutrition mapping for ${name}; excluded from nutrition totals.`);
-            return { available: normalized.available, rows, warnings, missingCropNames };
+            return { available: normalized.available, rows, warnings, missingCropNames, missingCropIds: Array.from(missingCropIds) }; // CHANGE: crop diagnostics use IDs rather than matching nutrition warning text.
         }
 
         return { FOCUSED_NUTRIENTS, compute };
@@ -1712,6 +1721,9 @@ Draw.loadPlugin(function (ui) {
             normalized.csa.components = Array.isArray(normalized.csa.components) ? normalized.csa.components : [];
 
             for (const crop of normalized.crops) {
+                crop.growthStageKey = normalizeGrowthStageKey(crop.growthStageKey); // CHANGE
+                crop.growthStageLabel = String(crop.growthStageLabel || (crop.growthStageKey === "mature" ? "Mature" : crop.growthStageKey)); // CHANGE
+                crop.growthStage = growthStageSnapshot(crop.growthStage, crop.growthStageKey, crop.growthStageLabel); // CHANGE
                 normalizeCropMethodFieldsForRuntime(crop);
                 normalizeYieldFieldsForRuntime(crop);
                 normalizeHarvestWindowSourceForRuntime(crop);
@@ -1738,6 +1750,7 @@ Draw.loadPlugin(function (ui) {
                 delete crop.__sync_lastHarvestStart;
                 delete crop.__sync_lastHarvestEnd;
                 delete crop.__sync_lastAvailEnd;
+                delete crop.__growthStageUnavailable; delete crop.__harvestRequestVersion; // CHANGE: asynchronous state is not persisted.
                 delete crop.__kgpp_lastAuto;
                 delete crop.__baseKgPerPlant;
                 delete crop.__harvestWindowSourceMissing;
@@ -1774,18 +1787,37 @@ Draw.loadPlugin(function (ui) {
             return String(varietyId).trim();
         }
 
-        function makeCropIdentityKey(plantId, varietyId) {
+        /** Missing stage metadata is the legacy Mature identity; custom stages are distinct demand products. */ // CHANGE
+        function normalizeGrowthStageKey(value) { // CHANGE
+            return String(value || "mature").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "mature"; // CHANGE
+        } // CHANGE
+        function growthStageIdentitySuffix(value) { // CHANGE
+            const key = normalizeGrowthStageKey(value); // CHANGE
+            return key === "mature" ? "" : `|stage:${key}`; // CHANGE: retain legacy Mature keys for compatibility.
+        } // CHANGE
+        /** Persist only settings that affect projections, rather than database row bookkeeping. */ // CHANGE
+        function growthStageSnapshot(stage, key, label) { // CHANGE
+            const source = stage || {}; // CHANGE
+            const ratio = field => Number.isFinite(Number(source[field])) && Number(source[field]) > 0 ? Number(source[field]) : 1; // CHANGE
+            return { stageKey: normalizeGrowthStageKey(key || source.stageKey), stageLabel: label || source.stageLabel || "Mature", gddRatio: ratio("gddRatio"), spacingRatio: ratio("spacingRatio"), plantDiameterRatio: ratio("plantDiameterRatio"), plantHeightRatio: ratio("plantHeightRatio"), yieldRatio: ratio("yieldRatio") }; // CHANGE
+        } // CHANGE
+        function cropDisplayLabel(crop) { // CHANGE
+            const name = [crop && crop.plant, crop && crop.variety].filter(Boolean).join(" - ") || String(crop && crop.id || "Crop"); // CHANGE
+            const stage = crop && crop.growthStageLabel || (normalizeGrowthStageKey(crop && crop.growthStageKey) === "mature" ? "Mature" : crop.growthStageKey); // CHANGE
+            return name + " - " + stage; // CHANGE
+        } // CHANGE
+        function makeCropIdentityKey(plantId, varietyId, growthStageKey) { // CHANGE
             const normalizedPlantId = String(plantId ?? "").trim();
             if (!normalizedPlantId) return "";
-            return `pid:${normalizedPlantId}|vid:${normalizeVarietyIdForIdentity(varietyId)}`;
+            return `pid:${normalizedPlantId}|vid:${normalizeVarietyIdForIdentity(varietyId)}${growthStageIdentitySuffix(growthStageKey)}`; // CHANGE
         }
 
         function getCropIdentityKey(crop) {
-            return makeCropIdentityKey(crop && crop.plantId, crop && crop.varietyId);
+            return makeCropIdentityKey(crop && crop.plantId, crop && crop.varietyId, crop && crop.growthStageKey); // CHANGE
         }
 
-        function findDuplicateCrop(plan, plantId, varietyId, exceptCropId) {
-            const key = makeCropIdentityKey(plantId, varietyId);
+        function findDuplicateCrop(plan, plantId, varietyId, exceptCropId, growthStageKey) { // CHANGE
+            const key = makeCropIdentityKey(plantId, varietyId, growthStageKey); // CHANGE
             if (!key || !plan || !Array.isArray(plan.crops)) return null;
             const except = String(exceptCropId || "");
 
@@ -1975,7 +2007,7 @@ Draw.loadPlugin(function (ui) {
             for (const crop of crops) errors.push(...validateCrop(crop));
 
             const duplicate = findFirstDuplicateCrop(plan);
-            if (duplicate) errors.push(makeValidation("crop", "crop.duplicate_identity", "Each plant/variety can appear only once in a year plan.", { cropId: String(duplicate.second && duplicate.second.id || ""), field: "varietyId", target: cropTarget(duplicate.second, "basics", "varietyId") }));
+            if (duplicate) errors.push(makeValidation("crop", "crop.duplicate_identity", "Each plant/variety/growth stage can appear only once in a year plan.", { cropId: String(duplicate.second && duplicate.second.id || ""), field: "varietyId", target: cropTarget(duplicate.second, "basics", "varietyId") }));
             errors.push(...validateSelfSufficiency(plan)); // NEW
             errors.push(...validateDemand(plan));
             errors.push(...validateCsa(plan));
@@ -1994,6 +2026,7 @@ Draw.loadPlugin(function (ui) {
             stripRuntimeFields,
             serializeForPersistence,
             clearUnavailableQuantityUnits, // CHANGE
+            normalizeGrowthStageKey, growthStageIdentitySuffix, growthStageSnapshot, cropDisplayLabel, // CHANGE
             makeCropIdentityKey,
             getCropIdentityKey,
             findDuplicateCrop,
@@ -2325,20 +2358,20 @@ Draw.loadPlugin(function (ui) {
         function getCropKeyFromPlanCrop(c) {
             const plantId = String(c && c.plantId || "").trim();
             const varietyId = (c && c.varietyId != null && c.varietyId !== "") ? String(c.varietyId).trim() : "";
-            if (plantId) return `pid:${plantId}|vid:${varietyId}`;
+            if (plantId) return PlanSchema.makeCropIdentityKey(plantId, varietyId, c && c.growthStageKey); // CHANGE
             const plant = String(c && c.plant || "").trim();
             const variety = String(c && c.variety || "").trim();
-            return `name:${plant}|var:${variety}`;
+            return `name:${plant}|var:${variety}${PlanSchema.growthStageIdentitySuffix(c && c.growthStageKey)}`; // CHANGE
         }
 
         function getCropKeyFromTilerGroup(tg) {
             const plantId = String(DiagramStore.getCellAttr(tg, "plant_id", "") || "").trim();
             const varietyId = String(DiagramStore.getCellAttr(tg, "variety_id", "") || "").trim();
-            if (plantId) return `pid:${plantId}|vid:${varietyId}`;
+            if (plantId) return PlanSchema.makeCropIdentityKey(plantId, varietyId, DiagramStore.getCellAttr(tg, "growth_stage_key", "")); // CHANGE
 
             const plant = String(DiagramStore.getCellAttr(tg, "plant_name", "") || "").trim();
             const variety = String(DiagramStore.getCellAttr(tg, "variety_name", "") || "").trim();
-            return `name:${plant}|var:${variety}`;
+            return `name:${plant}|var:${variety}${PlanSchema.growthStageIdentitySuffix(DiagramStore.getCellAttr(tg, "growth_stage_key", ""))}`; // CHANGE
         }
 
         function getAllDescendants(model, root) {
@@ -2465,6 +2498,7 @@ Draw.loadPlugin(function (ui) {
                 if (!plantId) continue;
                 candidates.push({
                     plantId,
+                    growthStageKey: PlanSchema.normalizeGrowthStageKey(DiagramStore.getCellAttr(tilerGroup, "growth_stage_key", "")), // CHANGE
                     plantName: String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || "").trim(),
                     varietyId: String(DiagramStore.getCellAttr(tilerGroup, "variety_id", "") || "").trim() || null,
                     varietyName: String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim()
@@ -2604,7 +2638,7 @@ Draw.loadPlugin(function (ui) {
                 const varietyId = String((crop && crop.varietyId) ?? "").trim();
                 const varietyName = normalizeIdentityName(crop && crop.variety);
                 if (!plantId || !varietyId || !varietyName) continue;
-                const lookupKey = `${plantId}|${varietyName}`;
+                const lookupKey = `${plantId}|${varietyName}|${PlanSchema.normalizeGrowthStageKey(crop.growthStageKey)}`; // CHANGE
                 const matches = plannedByPlantAndVarietyName.get(lookupKey) || [];
                 matches.push(getCropKeyFromPlanCrop(crop));
                 plannedByPlantAndVarietyName.set(lookupKey, matches);
@@ -2618,7 +2652,7 @@ Draw.loadPlugin(function (ui) {
                 const varietyName = String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim();
                 if (!varietyName) return getCropKeyFromTilerGroup(tilerGroup);
 
-                const matches = plannedByPlantAndVarietyName.get(`${plantId}|${normalizeIdentityName(varietyName)}`) || [];
+                const matches = plannedByPlantAndVarietyName.get(`${plantId}|${normalizeIdentityName(varietyName)}|${PlanSchema.normalizeGrowthStageKey(DiagramStore.getCellAttr(tilerGroup, "growth_stage_key", ""))}`) || [];
                 const plantName = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || plantId).trim();
                 const label = `${plantName} - ${varietyName}`;
                 if (matches.length === 1) return matches[0];
@@ -3031,6 +3065,7 @@ Draw.loadPlugin(function (ui) {
             autoFillAndClampCsa(plan);
 
             const warnings = Array.from(diagramFacts.diagnostics || []);
+            for (const crop of plan.crops) if (crop.__growthStageUnavailable) warnings.push(PlanSchema.cropDisplayLabel(crop) + ": " + crop.__growthStageUnavailable); // CHANGE: unavailable stage rows retain demand and surface a plan warning.
             if (plan.__carryoverCrops.length) warnings.push(`${plan.__carryoverCrops.length} prior-year harvest window${plan.__carryoverCrops.length === 1 ? '' : 's'} included as carryover supply.`);
             const weekly = PlanMath.computePlanWeekly(plan, warnings);
             if (plan.csa && weekly && weekly.csa) {
@@ -3111,7 +3146,7 @@ Draw.loadPlugin(function (ui) {
                     cropId: String(crop.id || ""),
                     plantId: String(crop.plantId || ""),
                     varietyId: String(crop.varietyId || ""),
-                    label: [crop.plant, crop.variety].filter(Boolean).join(" - ") || String(crop.id || ""),
+                    label: PlanSchema.cropDisplayLabel(crop),
                     targetKg,
                     harvestKg: sumSeries(arrays && arrays.supply),
                     usableSupplyKg: sumSeries(arrays && arrays.usableSupply),
@@ -3129,7 +3164,7 @@ Draw.loadPlugin(function (ui) {
                 for (const crop of ((plan && plan.crops) || [])) {
                     const arrays = weekly.perCrop && weekly.perCrop.get(String(crop.id));
                     const shortKg = Math.max(0, Number(arrays && arrays.short && arrays.short[weekIndex]) || 0);
-                    if (shortKg > EPS) cropShortages.push({ cropId: String(crop.id || ""), label: [crop.plant, crop.variety].filter(Boolean).join(" - ") || String(crop.id || ""), shortKg });
+                    if (shortKg > EPS) cropShortages.push({ cropId: String(crop.id || ""), label: PlanSchema.cropDisplayLabel(crop), shortKg });
                 }
                 return {
                     weekIndex,
@@ -3288,6 +3323,85 @@ Draw.loadPlugin(function (ui) {
             }
             return out;
         }
+
+        /** Resolves validation ownership from exact IDs or source row references; shared setup has no owner. */ // CHANGE
+        function validationCropId(plan, result) { // CHANGE
+            const target = result && result.target || {}; // CHANGE
+            if (result && result.cropId) return String(result.cropId); // CHANGE
+            if (target.cropId) return String(target.cropId); // CHANGE
+            const scope = String(result && result.scope || target.area || ""); // CHANGE
+            let rows = []; // CHANGE
+            let index; // CHANGE
+            let rowId; // CHANGE
+            if (scope === "demand") { // CHANGE
+                rows = plan.demands || []; // CHANGE
+                index = target.lineIndex; // CHANGE
+                rowId = target.lineId; // CHANGE
+            } else if (scope === "self-sufficiency") { // CHANGE
+                rows = plan.selfSufficiency && plan.selfSufficiency.lines || []; // CHANGE
+                index = target.selfLineIndex; // CHANGE
+                rowId = target.selfLineId; // CHANGE
+            } else if (scope === "csa") { // CHANGE
+                rows = plan.csa && plan.csa.components || []; // CHANGE
+                index = result.componentIndex ?? target.componentIndex; // CHANGE
+            } // CHANGE
+            const matches = rowId ? rows.filter(row => String(row && row.id || "") === String(rowId)) : []; // CHANGE
+            const row = Number.isInteger(index) && index >= 0 ? rows[index] : (matches.length === 1 ? matches[0] : null); // CHANGE
+            return String(row && row.cropId || ""); // CHANGE
+        } // CHANGE
+
+        /** Collects only issues attributable to this crop identity, retaining existing repair destinations. */ // CHANGE
+        function collectCropIssues(plan, metric, validationErrors, weekly, nutrition) { // CHANGE
+            const crop = metric.crop; // CHANGE
+            const cropId = String(crop.id || ""); // CHANGE
+            const label = PlanSchema.cropDisplayLabel(crop); // CHANGE
+            const issues = []; // CHANGE
+            const seen = new Set(); // CHANGE
+            const add = issue => { // CHANGE
+                const key = `${issue.code || issue.message}|${JSON.stringify(issue.target || {})}`; // CHANGE
+                if (seen.has(key)) return; // CHANGE
+                seen.add(key); // CHANGE
+                issues.push(issue); // CHANGE
+            }; // CHANGE
+            for (const result of validationErrors) { // CHANGE
+                if (validationCropId(plan, result) !== cropId) continue; // CHANGE
+                const type = result.scope === "crop" ? (result.target && result.target.tab === "packages" ? "crop-packages" : "crop-setup") : result.scope; // CHANGE
+                add({ code: result.code, type, tone: "danger", message: validationMessage(result), target: result.target, result }); // CHANGE
+            } // CHANGE
+            if (!PlanMath.packageUnitOptions(crop).length) { // CHANGE
+                add({ code: "crop.needs_packages", type: "crop-packages", tone: "warning", message: `${label} needs a package unit.`, target: { area: "crop", cropId, tab: "packages", field: "addPackage" } }); // CHANGE
+            } // CHANGE
+            if (metric.shortKg > EPS) { // CHANGE
+                const timing = metric.supplyKg + EPS >= metric.targetKg; // CHANGE
+                add({ code: timing ? "crop.timing" : "crop.shortage", type: "crop-status", tone: timing ? "warning" : "danger", message: timing ? `${label} has timing issues: ${formatKg(metric.shortKg)} expired or unavailable.` : `${label} is short ${formatKg(metric.shortKg)}.`, target: { area: "plan-check", cropId } }); // CHANGE
+            } // CHANGE
+            for (const warning of weekly && weekly.cropWarnings || []) { // CHANGE
+                if (String(warning.cropId || "") !== cropId) continue; // CHANGE
+                let target = warning.target; // CHANGE
+                const price = warning.code === "package.missing_price"; // CHANGE
+                if (price) { // CHANGE
+                    const unitKey = String(warning.unit || "").trim().toLowerCase(); // CHANGE
+                    const packageIndex = (crop.packages || []).findIndex(pkg => String(pkg.unit || "").trim().toLowerCase() === unitKey); // CHANGE
+                    if (packageIndex >= 0) target = { area: "crop", cropId, tab: "packages", field: "price", packageIndex }; // CHANGE
+                } // CHANGE
+                add({ code: warning.code, type: price ? "package-prices" : warning.target && warning.target.area || "crop-status", tone: "warning", message: warning.message, target }); // CHANGE
+            } // CHANGE
+            if (crop.__growthStageUnavailable) { // CHANGE
+                add({ code: "crop.unavailable_stage", type: "crop-setup", tone: "warning", message: `${label}: ${crop.__growthStageUnavailable}`, target: { area: "crop", cropId, tab: "basics", field: "growthStageKey" } }); // CHANGE
+            } // CHANGE
+            if ((nutrition && nutrition.missingCropIds || []).includes(cropId)) { // CHANGE
+                add({ code: "nutrition.missing_mapping", type: "nutrition", tone: "warning", message: `No nutrition mapping for ${label}; excluded from nutrition totals.`, target: { area: "self-sufficiency", section: "nutrition" } }); // CHANGE
+            } // CHANGE
+            return issues; // CHANGE
+        } // CHANGE
+
+        /** Chooses the dot state without altering the existing supply/demand status calculations. */ // CHANGE
+        function cropIndicatorState(metric, issues) { // CHANGE
+            if (issues.some(issue => issue.tone === "danger") || metric.status === "Missing data") return "error"; // CHANGE
+            if (issues.some(issue => issue.tone === "warning")) return "warning"; // CHANGE
+            if (metric.status === "No demand") return "no-demand"; // CHANGE
+            return metric.status === "Surplus" ? "surplus" : "ok"; // CHANGE
+        } // CHANGE
 
         function persistenceSnapshot(plan) {
             const persistedPlan = PlanSchema.serializeForPersistence(plan || {});
@@ -3576,6 +3690,10 @@ Draw.loadPlugin(function (ui) {
             const csaMetric = summarizeCsaWeekly(weekly && weekly.csa);
             const selfSufficiencyMetric = summarizeSelfSufficiencyWeekly(weekly && weekly.selfSufficiency);
             const selfSufficiencyNutrition = NutritionPlanner.compute(plan, weekly, settings.nutritionData || plan.__nutritionData || {});
+            for (const metric of cropMetrics) { // CHANGE
+                metric.issues = collectCropIssues(plan, metric, validationErrors, weekly, selfSufficiencyNutrition); // CHANGE
+                metric.indicatorState = cropIndicatorState(metric, metric.issues); // CHANGE
+            } // CHANGE
             const totalPotentialRevenue = potentialRevenue + csaMetric.potentialRevenue;
             const totalFulfilledRevenue = fulfilledRevenue + csaMetric.fulfilledRevenue;
             const shortageWeeks = [];
@@ -4181,6 +4299,8 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Dashboard modal controller --------------------
     /** Owns dashboard DOM construction, event orchestration, persistence, and session-scoped UI state. */
     const YearPlanModalController = (() => {
+        const addCropTreeExpandedByGardenYear = new Map(); // CHANGE: survives dialog closes in this window; reload/restart clears it, with unseen garden/year trees collapsed.
+
         function parseStoredDate(value) {
             const date = value ? new Date(value) : null;
             return date && Number.isFinite(date.getTime()) ? date : null;
@@ -4214,6 +4334,9 @@ Draw.loadPlugin(function (ui) {
             state.lastDraftSavedAt = parseStoredDate(initialWorkingYear.draftUpdatedAt); // CHANGE
             const session = SessionController.start(moduleCell, currentYear, plan);
             const varietyCache = new Map();
+            const growthStageCache = new Map(); // CHANGE: one active-stage query per plant and refresh.
+            let growthStageCacheVersion = 0; // CHANGE: a late query cannot repopulate defaults invalidated by a save or reload.
+            let harvestRequestVersion = 0; // CHANGE: stage changes invalidate asynchronous window suggestions.
             const methodCache = new Map();
             let addCropPickerNodes = []; // CHANGE
             let addCropOptionsLoadVersion = 0;
@@ -4434,7 +4557,20 @@ Draw.loadPlugin(function (ui) {
                 .yp-crop-card[data-selected="true"]{background:var(--yp-primary-bg);box-shadow:inset 3px 0 0 var(--yp-primary)}
                 .yp-crop-card-name{min-width:0;font-weight:700;font-size:13px;color:var(--yp-neutral-900);overflow:hidden;text-overflow:ellipsis;white-space:nowrap} /* CHANGE */
                 .yp-crop-card .yp-diagnostics-wrap{min-width:0;justify-content:flex-end;flex-wrap:nowrap} /* CHANGE */
-                .yp-crop-card .yp-chip{max-width:160px;overflow:hidden;text-overflow:ellipsis} /* CHANGE */
+                .yp-crop-status-dot{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;flex:0 0 24px;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:transparent;cursor:pointer} /* CHANGE */
+                .yp-crop-status-dot::before{content:"";box-sizing:border-box;width:10px;height:10px;border:1px solid var(--yp-neutral-500);border-radius:50%;background:transparent} /* CHANGE */
+                .yp-crop-status-dot[data-status="error"]::before{border-color:var(--yp-danger);background:var(--yp-danger)} /* CHANGE */
+                .yp-crop-status-dot[data-status="warning"]::before{border-color:var(--yp-warning);background:var(--yp-warning)} /* CHANGE */
+                .yp-crop-status-dot[data-status="ok"]::before{border-color:${YP_COLORS.successSoft};background:${YP_COLORS.successSoft}} /* CHANGE */
+                .yp-crop-status-dot[data-status="surplus"]::before{border-color:var(--yp-success);background:var(--yp-success)} /* CHANGE */
+                .yp-crop-status-dot:hover{background:var(--yp-neutral-100)} /* CHANGE */
+                .yp-crop-status-dot:focus-visible{outline:2px solid var(--yp-primary);outline-offset:1px} /* CHANGE */
+                .yp-crop-status-popover{max-height:240px;overflow:auto} /* CHANGE */
+                .yp-crop-status-popover[data-tone="neutral"]{border-color:var(--yp-neutral-500)} /* CHANGE */
+                .yp-crop-status-popover[data-tone="success"]{border-color:var(--yp-success)} /* CHANGE */
+                .yp-crop-status-popover[data-tone="neutral"] .yp-diagnostics-title{color:var(--yp-neutral-900)} /* CHANGE */
+                .yp-crop-status-popover[data-tone="success"] .yp-diagnostics-title{color:var(--yp-success)} /* CHANGE */
+                .yp-crop-status-summary{margin:5px 0 8px;color:var(--yp-neutral-700);font-size:12px;line-height:1.5;white-space:pre-line} /* CHANGE */
                 .yp-crop-card-metrics{margin-top:7px;color:var(--yp-neutral-700);font-size:11px;line-height:1.5}
                 .yp-chart-legend{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:0 0 6px}
                 .yp-chart-legend-item{display:inline-flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid #aaa;border-radius:999px;background:#fff;color:var(--yp-neutral-900);cursor:pointer;font:12px Arial,sans-serif}
@@ -4724,6 +4860,10 @@ Draw.loadPlugin(function (ui) {
 
             function pickerExpandedSet(key) {
                 const storageKey = String(key || "");
+                if (storageKey === "add-crop") { // CHANGE
+                    const sessionKey = YearPlanCollapsePreferences.storageKey(moduleCell, currentYear); // CHANGE
+                    return new Set(addCropTreeExpandedByGardenYear.get(sessionKey) || []); // CHANGE: copy session state so rendering/search cannot mutate remembered expansion.
+                } // CHANGE
                 state.pickerTreeExpanded = state.pickerTreeExpanded && typeof state.pickerTreeExpanded === "object" ? state.pickerTreeExpanded : {};
                 if (!Array.isArray(state.pickerTreeExpanded[storageKey])) state.pickerTreeExpanded[storageKey] = [];
                 return new Set(state.pickerTreeExpanded[storageKey].map(String).filter(Boolean));
@@ -4731,6 +4871,11 @@ Draw.loadPlugin(function (ui) {
 
             function savePickerExpandedSet(key, expanded) {
                 const storageKey = String(key || "");
+                if (storageKey === "add-crop") { // CHANGE
+                    const sessionKey = YearPlanCollapsePreferences.storageKey(moduleCell, currentYear); // CHANGE
+                    addCropTreeExpandedByGardenYear.set(sessionKey, Array.from(expanded || []).map(String).filter(Boolean)); // CHANGE
+                    return; // CHANGE: crop-tree navigation never writes persistent planner preferences.
+                } // CHANGE
                 state.pickerTreeExpanded = state.pickerTreeExpanded && typeof state.pickerTreeExpanded === "object" ? state.pickerTreeExpanded : {};
                 state.pickerTreeExpanded[storageKey] = Array.from(expanded || []).map(String).filter(Boolean);
                 saveCollapsePreferences();
@@ -5064,11 +5209,9 @@ Draw.loadPlugin(function (ui) {
                 return shell;
             }
 
-            function cropLabel(crop) {
-                const plantName = String(crop && crop.plant || "").trim();
-                const varietyName = String(crop && crop.variety || "").trim();
-                return plantName && varietyName ? `${plantName} - ${varietyName}` : (plantName || varietyName || String(crop && crop.id || "Crop"));
-            }
+            function cropLabel(crop) { // CHANGE
+                return PlanSchema.cropDisplayLabel(crop); // CHANGE
+            } // CHANGE
 
             function cropPackageUnitCount(crop) {
                 return PlanMath.packageUnitOptions(crop).length;
@@ -5139,8 +5282,7 @@ Draw.loadPlugin(function (ui) {
 
             function cropFieldDisplayText(cropId, fallback) {
                 const crop = PlanMath.findCrop(plan, cropId);
-                const plant = String(crop && crop.plant || "").trim();
-                return plant || String(fallback || cropLabel(crop) || cropId || "");
+                return crop ? cropLabel(crop) : String(fallback || cropId || ""); // CHANGE: stage and variety disambiguate demand row choices.
             } // CHANGE
 
             function wrapDestinationCropSelect(select) {
@@ -5193,6 +5335,7 @@ Draw.loadPlugin(function (ui) {
 
             function warningTypeLabel(type) {
                 const key = String(type || "");
+                if (key === "crop-setup") return "Crop setup"; // CHANGE
                 if (key === "crop-status") return "Crop status";
                 if (key === "crop-packages") return "Crop packages";
                 if (key === "demand") return "Demand setup";
@@ -5335,6 +5478,8 @@ Draw.loadPlugin(function (ui) {
                     if (popover.__ypDiagnosticsOwner && !popover.__ypDiagnosticsOwner.isConnected) { popover.remove(); continue; } // CHANGE
                     if (popover !== except) {
                         popover.hidden = true;
+                        const ownerTrigger = popover.__ypDiagnosticsOwner && popover.__ypDiagnosticsOwner.querySelector(".yp-crop-status-dot"); // CHANGE
+                        if (ownerTrigger) ownerTrigger.setAttribute("aria-expanded", "false"); // CHANGE
                         if (popover.__ypDiagnosticsOwner) popover.__ypDiagnosticsOwner.dataset.pinned = "false"; // CHANGE
                     }
                 }
@@ -5351,13 +5496,18 @@ Draw.loadPlugin(function (ui) {
                 };
                 const show = pinned => {
                     clearHideTimer();
+                    if (!trigger.isConnected) return; // CHANGE: detached crop controls must not reopen stale popovers.
                     closeDiagnosticsPopovers(popover);
                     positionDiagnosticsPopover(trigger, popover);
+                    if (settings.trackExpanded) trigger.setAttribute("aria-expanded", "true"); // CHANGE
                     if (pinned) wrapControl.dataset.pinned = "true";
                 };
                 const hide = () => {
                     clearHideTimer();
-                    if (wrapControl.dataset.pinned !== "true") popover.hidden = true;
+                    if (wrapControl.dataset.pinned !== "true") { // CHANGE
+                        popover.hidden = true; // CHANGE
+                        if (settings.trackExpanded) trigger.setAttribute("aria-expanded", "false"); // CHANGE
+                    } // CHANGE
                 };
                 const scheduleHide = event => {
                     const related = event && event.relatedTarget;
@@ -5380,7 +5530,10 @@ Draw.loadPlugin(function (ui) {
                         const nextPinned = wrapControl.dataset.pinned !== "true";
                         wrapControl.dataset.pinned = nextPinned ? "true" : "false";
                         if (nextPinned) show(true);
-                        else popover.hidden = true;
+                        else { // CHANGE
+                            popover.hidden = true; // CHANGE
+                            if (settings.trackExpanded) trigger.setAttribute("aria-expanded", "false"); // CHANGE
+                        } // CHANGE
                     });
                 }
                 return { show, hide };
@@ -6802,7 +6955,8 @@ Draw.loadPlugin(function (ui) {
                 const overrides = row ? Env.safeJsonStringParse(row.overrides_json, null) : null;
                 const overrideYield = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg));
                 if (Number.isFinite(overrideYield) && overrideYield > 0) nextYield = overrideYield;
-                return Number.isFinite(nextYield) && nextYield > 0 ? nextYield : null;
+                const ratio = Number(crop && crop.growthStage && crop.growthStage.yieldRatio) || 1; // CHANGE
+                return Number.isFinite(nextYield) && nextYield > 0 ? nextYield * ratio : null; // CHANGE
             }
 
             function updateYieldHint(crop, hint, resetYield) {
@@ -7042,6 +7196,7 @@ Draw.loadPlugin(function (ui) {
 
             function renderCropList() {
                 cropList.innerHTML = "";
+                closeDiagnosticsPopovers(null); // CHANGE: filter/selection rerenders remove popovers whose dot owners were detached.
                 if (!dashboard.cropMetrics.length) {
                     const empty = document.createElement("div");
                     empty.style.cssText = "padding:16px;color:#666;";
@@ -7066,20 +7221,12 @@ Draw.loadPlugin(function (ui) {
                     cardEl.className = "yp-crop-card";
                     cardEl.dataset.selected = selected ? "true" : "false";
                     cardEl.dataset.cropId = String(metric.crop.id || "");
-                    const detail = cropMenuBadgeLabel(metric); // CHANGE
                     const name = document.createElement("div");
                     name.className = "yp-crop-card-name";
                     name.textContent = cropLabel(metric.crop);
                     name.title = cropLabel(metric.crop); // CHANGE
-                    const statusHost = document.createElement("span");
-                    statusHost.className = "yp-diagnostics-wrap";
-                    statusHost.title = detail; // CHANGE
-                    const badgeAction = cropMenuBadgeAction(metric); // CHANGE
-                    const cropResults = cropValidationResults(metric.crop.id); // CHANGE
-                    const badgeItems = cropResults.length ? cropResults.map(result => ({ message: validationMessage(result), target: result && result.target, result })) : []; // CHANGE
-                    statusHost.appendChild(badgeItems.length ? createActionablePopoverChip(detail, "", statusTone(metric.status), badgeItems, badgeAction, { popoverTitle: `${cropLabel(metric.crop)} diagnostics` }) : createChip(detail, "", statusTone(metric.status), badgeAction)); // CHANGE
                     cardEl.appendChild(name); // CHANGE
-                    cardEl.appendChild(statusHost); // CHANGE
+                    cardEl.appendChild(createCropStatusDot(metric)); // CHANGE
                     cardEl.addEventListener("click", () => {
                         if (!setSelectedCropEverywhere(metric.crop.id)) return;
                         renderCropList();
@@ -7088,7 +7235,7 @@ Draw.loadPlugin(function (ui) {
                         renderCropPlan(false);
                         renderPlanCheck();
                     });
-                    cardEl.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); cardEl.click(); } });
+                    cardEl.addEventListener("keydown", event => { if (event.target === cardEl && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); cardEl.click(); } }); // CHANGE: nested dot controls retain their own keyboard action.
                     cropList.appendChild(cardEl);
                 }
             }
@@ -7102,15 +7249,58 @@ Draw.loadPlugin(function (ui) {
                 return cropLabel(metric && metric.crop).toLowerCase().includes(searchText); // CHANGE
             } // CHANGE
 
-            function cropMenuBadgeAction(metric) { // CHANGE
-                if (!metric || !metric.crop) return null; // CHANGE
-                if (metric.status === "Short" || metric.status === "Expired / timing issue") return () => selectCropFromAttention(metric.crop.id, { highlightPlanCheckRow: true }); // CHANGE
-                if (metric.status === "Missing data") return event => { // CHANGE
-                    const first = cropValidationResults(metric.crop.id)[0]; // CHANGE
-                    if (first) navigateToValidation(first, event && event.currentTarget); // CHANGE
-                    else selectCropFromAttention(metric.crop.id); // CHANGE
-                }; // CHANGE
-                return null; // CHANGE
+            /** Renders a compact status button; every state previews and pins the same grouped diagnostics UI. */ // CHANGE
+            function createCropStatusDot(metric) { // CHANGE
+                const issues = metric.issues || []; // CHANGE
+                const indicatorState = metric.indicatorState; // CHANGE
+                const tone = indicatorState === "error" ? "danger" : (indicatorState === "warning" ? "warning" : (indicatorState === "no-demand" ? "neutral" : "success")); // CHANGE
+                const label = cropLabel(metric.crop); // CHANGE
+                const issueCount = `${issues.length} issue${issues.length === 1 ? "" : "s"}`; // CHANGE
+                const aggregateStatus = indicatorState === "error" ? "Errors" : (indicatorState === "warning" ? "Warnings" : metric.status); // CHANGE
+                const statusDescription = aggregateStatus === metric.status ? cropMenuBadgeLabel(metric) : `${aggregateStatus}; ${cropMenuBadgeLabel(metric)}`; // CHANGE
+                const description = `${label}: ${statusDescription}; ${issueCount}`; // CHANGE
+                const wrapControl = document.createElement("span"); // CHANGE
+                wrapControl.className = "yp-diagnostics-wrap"; // CHANGE
+                const trigger = document.createElement("button"); // CHANGE
+                trigger.type = "button"; // CHANGE
+                trigger.className = "yp-crop-status-dot"; // CHANGE
+                trigger.dataset.status = indicatorState; // CHANGE
+                trigger.dataset.tone = tone; // CHANGE
+                trigger.title = description; // CHANGE
+                trigger.setAttribute("aria-label", description); // CHANGE
+                trigger.setAttribute("aria-expanded", "false"); // CHANGE
+                const popover = document.createElement("div"); // CHANGE
+                popover.id = Env.uid("yp-crop-status"); // CHANGE
+                popover.className = "yp-diagnostics-popover yp-crop-status-popover"; // CHANGE
+                popover.dataset.tone = tone; // CHANGE
+                popover.dataset.cropId = String(metric.crop.id); // CHANGE
+                popover.hidden = true; // CHANGE
+                popover.__ypDiagnosticsOwner = wrapControl; // CHANGE
+                trigger.setAttribute("aria-controls", popover.id); // CHANGE
+                const title = document.createElement("div"); // CHANGE
+                title.className = "yp-diagnostics-title"; // CHANGE
+                title.textContent = `${label} diagnostics`; // CHANGE
+                popover.appendChild(title); // CHANGE
+                const summary = document.createElement("div"); // CHANGE
+                summary.className = "yp-crop-status-summary"; // CHANGE
+                summary.textContent = `${aggregateStatus} · ${issueCount}\nStatus: ${cropMenuBadgeLabel(metric)}\nDemand: ${formatKg(metric.targetKg)} · Harvest: ${formatKg(metric.supplyKg)}\nShort: ${formatKg(metric.shortKg)} · Surplus: ${formatKg(metric.surplusKg)} · Expired: ${formatKg(metric.expiredKg)}`; // CHANGE
+                popover.appendChild(summary); // CHANGE
+                const groups = new Map(); // CHANGE
+                for (const issue of issues) { // CHANGE
+                    if (!groups.has(issue.type)) groups.set(issue.type, []); // CHANGE
+                    groups.get(issue.type).push(issue); // CHANGE
+                } // CHANGE
+                for (const [type, items] of groups) appendDiagnosticsSection(popover, `crop:${metric.crop.id}`, type, warningTypeLabel(type), items, trigger); // CHANGE
+                trigger.addEventListener("keydown", event => { // CHANGE
+                    if (event.key !== "Enter" && event.key !== " ") return; // CHANGE
+                    event.preventDefault(); // CHANGE
+                    event.stopPropagation(); // CHANGE
+                    if (!event.repeat) trigger.click(); // CHANGE
+                }); // CHANGE
+                bindDiagnosticsPopover(wrapControl, trigger, popover, { toggleOnClick: true, trackExpanded: true }); // CHANGE
+                wrapControl.appendChild(trigger); // CHANGE
+                diagnosticsLayer.appendChild(popover); // CHANGE
+                return wrapControl; // CHANGE
             } // CHANGE
 
             function cropMenuBadgeLabel(metric) { // CHANGE
@@ -7741,6 +7931,41 @@ Draw.loadPlugin(function (ui) {
                 }
             }
 
+            /** Loads current active defaults; only Mature is synthesized for legacy plans. */ // CHANGE
+            async function getGrowthStages(plantId) { // CHANGE
+                const key = String(plantId || ""); // CHANGE
+                if (!growthStageCache.has(key)) { // CHANGE
+                    const cacheVersion = growthStageCacheVersion; // CHANGE
+                    const scheduler = window.USL && window.USL.scheduler; // CHANGE
+                    const stages = scheduler && scheduler.listGrowthStagesForPlanCrop ? await scheduler.listGrowthStagesForPlanCrop(key) : [{ stageKey: "mature", stageLabel: "Mature", gddRatio: 1, spacingRatio: 1, plantDiameterRatio: 1, plantHeightRatio: 1, yieldRatio: 1 }]; // CHANGE
+                    if (cacheVersion !== growthStageCacheVersion) return getGrowthStages(key); // CHANGE: use the current generation rather than caching a stale response.
+                    growthStageCache.set(key, stages); // CHANGE
+                } // CHANGE
+                return growthStageCache.get(key); // CHANGE
+            } // CHANGE
+            function applyGrowthStageDefaults(crop, stages) { // CHANGE
+                const stage = stages.find(item => item.stageKey === PlanSchema.normalizeGrowthStageKey(crop.growthStageKey)); // CHANGE
+                const previousAvailability = crop.__growthStageUnavailable || ""; // CHANGE
+                crop.__growthStageUnavailable = stage ? "" : "Growth stage is deleted or inactive: " + crop.growthStageLabel; // CHANGE
+                if (!stage) return previousAvailability !== crop.__growthStageUnavailable; // CHANGE: retain saved demand and settings without substituting a stage.
+                const before = JSON.stringify([crop.growthStage, crop.kgPerPlant]); // CHANGE
+                crop.growthStage = PlanSchema.growthStageSnapshot(stage); crop.growthStageKey = stage.stageKey; crop.growthStageLabel = stage.stageLabel; // CHANGE
+                if (crop.kgPerPlantMode !== "manual") crop.kgPerPlant = resolveDefaultKgPerPlant(crop); // CHANGE
+                return previousAvailability !== crop.__growthStageUnavailable || before !== JSON.stringify([crop.growthStage, crop.kgPerPlant]); // CHANGE
+            } // CHANGE
+            async function loadGrowthStageControl(crop, select, note) { // CHANGE
+                select.disabled = true; // CHANGE
+                try { // CHANGE
+                    const stages = await getGrowthStages(crop.plantId); // CHANGE
+                    if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.growthStage !== select) return; // CHANGE
+                    select.innerHTML = ""; // CHANGE
+                    stages.forEach(stage => select.appendChild(new Option(stage.stageLabel, stage.stageKey))); // CHANGE
+                    if (!stages.some(stage => stage.stageKey === crop.growthStageKey)) select.appendChild(new Option(crop.growthStageLabel + " (unavailable)", crop.growthStageKey)); // CHANGE
+                    select.value = crop.growthStageKey; note.textContent = crop.__growthStageUnavailable || ""; // CHANGE
+                } catch (error) { note.textContent = "Growth stages could not be loaded; allocation is unavailable until defaults can be checked."; } // CHANGE
+                finally { if (SessionController.isActive(session) && editorRefs.growthStage === select) select.disabled = false; } // CHANGE
+            } // CHANGE
+
             function renderBasics(crop, content) {
                 const grid = document.createElement("div");
                 grid.className = "yp-field-grid";
@@ -7813,6 +8038,11 @@ Draw.loadPlugin(function (ui) {
                     : (crop.estimatedHarvestUnavailableReason ? `Sowing window unavailable: ${crop.estimatedHarvestUnavailableReason}` : "Sowing window unavailable");
                 addField(grid, "Plant", plant);
                 addField(grid, "Variety", varietyRow);
+                const growthStage = document.createElement("select"); // CHANGE
+                setYearPlanField(growthStage, "growthStageKey", { cropId: crop.id }); // CHANGE: stage warnings navigate to the actual stage selector.
+                growthStage.appendChild(new Option(crop.growthStageLabel || "Mature", crop.growthStageKey || "mature")); // CHANGE
+                const growthStageNote = document.createElement("div"); growthStageNote.style.cssText = "grid-column:1/-1;color:#b45309;font-size:11px"; // CHANGE
+                addField(grid, "Grown for", growthStage); grid.appendChild(growthStageNote); // CHANGE
                 addField(grid, "Planting method", methodHost);
                 addField(grid, "kg/plant", kgHost);
                 addField(grid, "Germination rate", germ, "Value from 0.01 through 1.00");
@@ -7856,7 +8086,16 @@ Draw.loadPlugin(function (ui) {
                 timelineHead.appendChild(timelineTitle); timelineHead.appendChild(timelineLegend);
                 timelineSection.appendChild(timelineHead); timelineSection.appendChild(timeline);
                 content.appendChild(timelineSection);
-                editorRefs = { ...editorRefs, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, harvestSource, estimateMessage, yieldHint, resetYield, harvestTimeline: timeline }; // CHANGE: editor refs track the single harvest-source selector.
+                editorRefs = { ...editorRefs, growthStage, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, harvestSource, estimateMessage, yieldHint, resetYield, harvestTimeline: timeline }; // CHANGE: editor refs track the single harvest-source selector.
+                loadGrowthStageControl(crop, growthStage, growthStageNote); // CHANGE
+                growthStage.addEventListener("change", () => { // CHANGE
+                    const key = PlanSchema.normalizeGrowthStageKey(growthStage.value); // CHANGE
+                    if (PlanSchema.findDuplicateCrop(plan, crop.plantId, crop.varietyId, crop.id, key)) { growthStage.value = crop.growthStageKey; state.extraDiagnostics = ["That plant/variety/growth stage already exists in this year plan."]; state.planCheckExpanded = true; refreshDerived(); return; } // CHANGE
+                    crop.growthStageKey = key; state.extraDiagnostics = []; // CHANGE
+                    applyGrowthStageDefaults(crop, growthStageCache.get(String(crop.plantId)) || []); // CHANGE
+                    fillCropFilter(); renderSelectedEditor(); refreshDerived(null, { rebuildSelfSufficiency: true, rebuildCsa: true, rebuildDemand: true }); // CHANGE
+                    emitHarvestWindowsNeeded(crop); loadAddCropOptions(false); // CHANGE
+                }); // CHANGE
                 syncVarietyActionButton(); // CHANGE
                 loadVarieties(crop, variety);
                 loadMethods(crop, method, methodDiagnostic);
@@ -7869,10 +8108,10 @@ Draw.loadPlugin(function (ui) {
                         requestVarietyEditor(crop.plantId, null, crop.id); // CHANGE
                         return; // CHANGE
                     } // CHANGE
-                    const duplicate = PlanSchema.findDuplicateCrop(plan, crop.plantId, next, crop.id);
+                    const duplicate = PlanSchema.findDuplicateCrop(plan, crop.plantId, next, crop.id, crop.growthStageKey);
                     if (duplicate) {
                         variety.value = crop.varietyId == null ? "" : String(crop.varietyId);
-                        state.extraDiagnostics = ["That plant/variety already exists in this year plan."];
+                        state.extraDiagnostics = ["That plant/variety/growth stage already exists in this year plan."];
                         state.planCheckExpanded = true;
                         refreshDerived();
                         return;
@@ -7885,7 +8124,7 @@ Draw.loadPlugin(function (ui) {
                     const overrides = row ? Env.safeJsonStringParse(row.overrides_json, null) : null;
                     const overrideYield = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg));
                     crop.kgPerPlantMode = "auto";
-                    const autoYield = Number.isFinite(overrideYield) && overrideYield > 0 ? overrideYield : Number(crop.baseKgPerPlant);
+                    const autoYield = resolveDefaultKgPerPlant(crop); // CHANGE: stage ratio follows variety resolution.
                     if (Number.isFinite(autoYield) && autoYield > 0) crop.kgPerPlant = autoYield;
                     renderSelectedEditor();
                     refreshDerived();
@@ -8891,7 +9130,7 @@ Draw.loadPlugin(function (ui) {
             closePrompt.appendChild(promptSave); closePrompt.appendChild(promptDiscard); closePrompt.appendChild(promptCancel);
 
             function addCropOptionId(option) {
-                return `addcrop:${String(option && option.plantId || "")}:${option && option.varietyId != null ? String(option.varietyId) : "base"}`;
+                return `addcrop:${String(option && option.plantId || "")}:${option && option.varietyId != null ? String(option.varietyId) : "base"}${option && option.growthStageKey !== "mature" ? ":" + option.growthStageKey : ""}`; // CHANGE
             } // CHANGE
 
             function makeAddCropLeaf(option, disabled, meta) {
@@ -8954,21 +9193,29 @@ Draw.loadPlugin(function (ui) {
                 if (children.length) nodes.push({ id: `addcrop:category:${label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-")}`, label, children }); // CHANGE
             } // CHANGE
 
-            function addOptionToPlantGroup(map, option, disabled, meta) {
-                const plantId = String(option && option.plantId || "");
+            function addOptionToPlantGroup(map, option, disabled, meta) { // CHANGE
+                const plantId = String(option.plantId || ""); // CHANGE
                 if (!map.has(plantId)) map.set(plantId, { plantId, plantName: option.plantName, baseLeaf: null, baseLeafId: "", defaultLeaves: [], userLeaves: [], addVarietyNode: makeAddVarietyActionNode(plantId), varietyCount: 0 }); // CHANGE
-                const group = map.get(plantId);
-                const leaf = makeAddCropLeaf(option, disabled, meta);
-                if (option.varietyId == null) {
-                    group.baseLeaf = leaf; // CHANGE
-                    if (!disabled) group.baseLeafId = leaf.id;
-                } else {
+                const group = map.get(plantId); // CHANGE
+                const stages = option.growthStages || [option.growthStage || { stageKey: "mature", stageLabel: "Mature", yieldRatio: 1 }]; // CHANGE
+                const leaves = stages.filter(stage => !option.excludedStageKeys || !option.excludedStageKeys.has(PlanSchema.makeCropIdentityKey(option.plantId, option.varietyId, stage.stageKey))).map(stage => { // CHANGE // CHANGE
+                    const value = Object.assign({}, option, { growthStage: stage, growthStageKey: stage.stageKey, growthStageLabel: stage.stageLabel, label: option.label + " - " + stage.stageLabel }); // CHANGE
+                    const identity = PlanSchema.makeCropIdentityKey(value.plantId, value.varietyId, value.growthStageKey); // CHANGE
+                    const included = (plan.crops || []).some(crop => PlanSchema.getCropIdentityKey(crop) === identity); // CHANGE
+                    const leaf = makeAddCropLeaf(value, included, included ? "Already in plan" : meta); // CHANGE
+                    if (stages.length > 1) leaf.label = stage.stageLabel; // CHANGE
+                    return leaf; // CHANGE
+                }); // CHANGE
+                if (!leaves.length) return; // CHANGE
+                const branch = leaves.length === 1 ? leaves[0] : { id: `addcrop:stages:${plantId}:${option.varietyId || "base"}`, label: option.varietyName || "Base plant", children: leaves }; // CHANGE
+                if (option.varietyId == null) { // CHANGE
+                    group.baseLeaf = branch; group.baseLeafId = leaves.find(leaf => !leaf.disabled && leaf.value.growthStageKey === "mature")?.id || ""; // CHANGE
+                } else { // CHANGE
                     group.varietyCount += 1; // CHANGE
-                    if (isTrellisDefaultVariety(option.varietyRow)) group.defaultLeaves.push(leaf); // CHANGE
-                    else group.userLeaves.push(leaf); // CHANGE
-                    group.defaultLeaves.sort((a, b) => compareDefaultVarietyRows(a.value && a.value.varietyRow, b.value && b.value.varietyRow)); // CHANGE
-                    group.userLeaves.sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), undefined, { sensitivity: "base" })); // CHANGE
-                }
+                    if (isTrellisDefaultVariety(option.varietyRow)) group.defaultLeaves.push(branch); else group.userLeaves.push(branch); // CHANGE
+                    group.defaultLeaves.sort((a, b) => compareDefaultVarietyRows((a.value || a.children?.[0]?.value)?.varietyRow, (b.value || b.children?.[0]?.value)?.varietyRow)); // CHANGE
+                    group.userLeaves.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" })); // CHANGE
+                } // CHANGE
             } // CHANGE
 
             function getPlantLifecycle(row) {
@@ -9017,6 +9264,8 @@ Draw.loadPlugin(function (ui) {
                     varietyId: varietyId || null,
                     varietyName,
                     varietyRow,
+                    growthStageKey: PlanSchema.normalizeGrowthStageKey(candidate.growthStageKey), // CHANGE
+                    growthStage: (await getGrowthStages(plantId)).find(stage => stage.stageKey === PlanSchema.normalizeGrowthStageKey(candidate.growthStageKey)), // CHANGE
                     row,
                     lifecycle: getPlantLifecycle(row),
                     label: varietyName ? `${plantName} - ${varietyName}` : plantName
@@ -9032,7 +9281,7 @@ Draw.loadPlugin(function (ui) {
                 try {
                     if (force) {
                         DbClient.invalidatePlantsBasicCache();
-                        varietyCache.clear();
+                        varietyCache.clear(); growthStageCache.clear(); growthStageCacheVersion += 1; // CHANGE
                     }
                     const plants = await DbClient.getPlantsBasicCached();
                     const plantRowsById = new Map(plants.map(row => [String(row.plant_id), row]));
@@ -9043,8 +9292,8 @@ Draw.loadPlugin(function (ui) {
 
                     for (const candidate of DiagramPlanReader.readGardenCropCandidates(moduleCell)) {
                         const option = await resolveGardenCropOption(candidate, plantRowsById);
-                        if (!option) { skippedGardenCount += 1; continue; }
-                        const key = PlanSchema.makeCropIdentityKey(option.plantId, option.varietyId || "");
+                        if (!option || !option.growthStage) { skippedGardenCount += 1; continue; }
+                        const key = PlanSchema.makeCropIdentityKey(option.plantId, option.varietyId || "", option.growthStageKey); // CHANGE
                         if (!key || gardenKeys.has(key)) continue; // CHANGE
                         gardenKeys.add(key);
                         addOptionToPlantGroup(gardenOptionsByPlant, option, plannedKeys.has(key), plannedKeys.has(key) ? "Already in plan" : ""); // CHANGE
@@ -9057,7 +9306,10 @@ Draw.loadPlugin(function (ui) {
                         const plantName = String(row.plant_name || "").trim();
                         const lifecycle = getPlantLifecycle(row);
                         const targetGroup = byLifecycle[lifecycle] || byLifecycle.uncategorized; // CHANGE
+                        const growthStages = await getGrowthStages(plantId); // CHANGE
+                        if (!SessionController.isActive(session) || loadVersion !== addCropOptionsLoadVersion) return; // CHANGE
                         const baseOption = {
+                            growthStages, excludedStageKeys: gardenKeys, // CHANGE
                             source: "database",
                             plantId,
                             plantName,
@@ -9077,6 +9329,7 @@ Draw.loadPlugin(function (ui) {
                             const varietyKey = PlanSchema.makeCropIdentityKey(plantId, varietyId);
                             addOptionToPlantGroup(targetGroup, {
                                 source: "database",
+                                growthStages, excludedStageKeys: gardenKeys, // CHANGE
                                 plantId,
                                 plantName,
                                 varietyId,
@@ -9096,6 +9349,16 @@ Draw.loadPlugin(function (ui) {
                     appendAddCropCategory(nodes, "Perennial crops", byLifecycle.perennial); // CHANGE
                     appendAddCropCategory(nodes, "Uncategorized crops", byLifecycle.uncategorized); // CHANGE
                     addCropPickerNodes = nodes; // CHANGE
+                    const changedCrops = []; // CHANGE
+                    for (const crop of plan.crops || []) { // CHANGE
+                        const stages = await getGrowthStages(crop.plantId); // CHANGE
+                        if (!SessionController.isActive(session) || loadVersion !== addCropOptionsLoadVersion) return; // CHANGE
+                        const previousBaseYield = crop.baseKgPerPlant; // CHANGE
+                        const currentBaseYield = Number(plantRowsById.get(String(crop.plantId))?.yield_per_plant_kg); // CHANGE
+                        if (Number(previousBaseYield) > 0 && Number.isFinite(currentBaseYield) && currentBaseYield > 0) crop.baseKgPerPlant = currentBaseYield; // CHANGE: refresh configured defaults without repairing intentionally missing yield inputs.
+                        if (applyGrowthStageDefaults(crop, stages) || previousBaseYield !== crop.baseKgPerPlant) changedCrops.push(crop); // CHANGE
+                    } // CHANGE
+                    if (changedCrops.length) { fillCropFilter(); renderSelectedEditor(); refreshDerived(null, { rebuildSelfSufficiency: true, rebuildCsa: true, rebuildDemand: true }); emitHarvestWindowsNeeded(changedCrops); } // CHANGE
                     const skippedMessage = skippedGardenCount ? `Skipped ${skippedGardenCount} unavailable garden crop${skippedGardenCount === 1 ? "" : "s"}.` : "";
                     plantMessage.textContent = pendingAddCropMessage || skippedMessage; // CHANGE: preserve auto-add confirmation after the picker refreshes.
                     pendingAddCropMessage = "";
@@ -9114,7 +9377,7 @@ Draw.loadPlugin(function (ui) {
 
             function createCropFromAddOption(selectedOption) {
                 if (!selectedOption) return null;
-                if (PlanSchema.findDuplicateCrop(plan, selectedOption.plantId, selectedOption.varietyId || "", "")) {
+                if (PlanSchema.findDuplicateCrop(plan, selectedOption.plantId, selectedOption.varietyId || "", "", selectedOption.growthStageKey)) {
                     state.extraDiagnostics = [`Crop already exists for ${selectedOption.label}.`];
                     state.planCheckExpanded = true;
                     return null;
@@ -9131,7 +9394,8 @@ Draw.loadPlugin(function (ui) {
                     id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow.field",
                     methodCategoryId: String(item.default_planting_method_category || PlanSchema.inferMethodCategoryFromMethodId(item.default_planting_method) || "direct_sow").trim(),
                     varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", harvestWindowSource: "sowing_window_estimate", useActualHarvest: false, syncharvest: true, // CHANGE: new crops default to synced demand while sowing-window dates are requested.
-                    shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield,
+                    growthStageKey: selectedOption.growthStageKey || "mature", growthStageLabel: selectedOption.growthStageLabel || selectedOption.growthStage?.stageLabel || "Mature", growthStage: selectedOption.growthStage, // CHANGE
+                    shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield * (Number(selectedOption.growthStage?.yieldRatio) || 1), // CHANGE
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
                     packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [] // CHANGE: demand units are user-defined packages only.
                 };
@@ -9155,7 +9419,7 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
 
             function addCropOptionIdentityKey(option) { // CHANGE
-                return PlanSchema.makeCropIdentityKey(option && option.plantId, option && option.varietyId || ""); // CHANGE
+                return PlanSchema.makeCropIdentityKey(option && option.plantId, option && option.varietyId || "", option && option.growthStageKey); // CHANGE
             } // CHANGE
 
             function collectAddCropLeaves(nodes) { // CHANGE
@@ -9683,11 +9947,14 @@ Draw.loadPlugin(function (ui) {
             function emitHarvestWindowsNeeded(crops) {
                 const requestedCrops = (Array.isArray(crops) ? crops : [crops]).filter(Boolean);
                 if (!requestedCrops.length) return;
+                const requestVersion = ++harvestRequestVersion; // CHANGE
+                requestedCrops.forEach(crop => { crop.__harvestRequestVersion = requestVersion; }); // CHANGE
                 window.dispatchEvent(new CustomEvent("usl:harvestWindowsNeeded", { detail: {
                     moduleCellId: moduleCell.getId ? moduleCell.getId() : moduleCell.id,
                     year: currentYear,
                     crops: requestedCrops.map(crop => ({
                         cropId: crop.id,
+                        requestVersion, growthStageKey: crop.growthStageKey || "mature", // CHANGE
                         plantId: crop.plantId,
                         varietyId: crop.varietyId ?? null,
                         methodId: crop.method ?? null,
@@ -9706,6 +9973,7 @@ Draw.loadPlugin(function (ui) {
                 for (const result of (detail.results || [])) {
                     const crop = byId.get(String(result.cropId));
                     if (!crop) continue;
+                    if (result.requestVersion != null && result.requestVersion !== crop.__harvestRequestVersion || result.growthStageKey != null && PlanSchema.normalizeGrowthStageKey(result.growthStageKey) !== crop.growthStageKey) continue; // CHANGE
                     if (PlanMath.hasYmd(result.harvestStart) && PlanMath.hasYmd(result.harvestEnd) && result.harvestStart <= result.harvestEnd) {
                         crop.estimatedHarvestStart = result.harvestStart;
                         crop.estimatedHarvestEnd = result.harvestEnd;
@@ -9733,7 +10001,7 @@ Draw.loadPlugin(function (ui) {
                 const action = String(detail && detail.action || ""); // CHANGE
                 const varietyId = detail && (detail.varietyId ?? detail.variety_id); // CHANGE
                 if (crop && action !== "cancel" && action !== "error" && varietyId !== null && varietyId !== undefined && varietyId !== "") { // CHANGE
-                    if (!PlanSchema.findDuplicateCrop(plan, crop.plantId, varietyId, crop.id)) { // CHANGE
+                    if (!PlanSchema.findDuplicateCrop(plan, crop.plantId, varietyId, crop.id, crop.growthStageKey)) { // CHANGE
                         const numericVarietyId = Number(varietyId); // CHANGE
                         crop.varietyId = Number.isFinite(numericVarietyId) ? numericVarietyId : varietyId; crop.variety = String(detail.varietyName || detail.variety_name || ""); // CHANGE
                     } // CHANGE
@@ -9757,6 +10025,10 @@ Draw.loadPlugin(function (ui) {
                 applyVarietyEditorResult(event && event.detail || {}); // CHANGE
             }); // CHANGE
 
+            SessionController.addWindowListener(session, "usl:growthStagesSaved", event => { // CHANGE
+                growthStageCache.delete(String(event.detail && event.detail.plantId || "")); growthStageCacheVersion += 1; loadAddCropOptions(false); // CHANGE
+            }); // CHANGE
+            SessionController.addWindowListener(session, "trellis:database-restored", () => { growthStageCache.clear(); varietyCache.clear(); loadAddCropOptions(true); }); // CHANGE
             renderChartLegend();
             renderAll();
             YearPlanDashboard.markBaseline(state, plan, null);

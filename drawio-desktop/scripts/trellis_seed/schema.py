@@ -46,7 +46,7 @@ CITY_CLIMATE_BANDS = {"hot", "temperate", "cold"}
 VARIETY_MATURITY_CLASSES = {"very_early", "early", "mid", "late", "very_late"}
 PLANT_VARIETY_COLUMNS = {"variety_id", "plant_id", "plant_name", "variety_name", "maturity_class", "overrides", "overrides_json"}
 PLANT_GROWTH_STAGE_COLUMNS = {
-    "stage_id", "plant_id", "plant_name", "stage_key", "stage_label", "gdd_ratio",
+    "stage_id", "plant_id", "plant_name", "stage_key", "stage_label", "gdd_ratio", "yield_ratio",  # CHANGE
     "spacing_ratio", "plant_diameter_ratio", "plant_height_ratio", "sort_order",
     "active", "is_default", "created_at", "updated_at",
 }
@@ -177,6 +177,7 @@ OPENAI_PLANT_SCHEMA = {
                     "stage_key": {"type": "string", "minLength": 1},
                     "stage_label": {"type": "string", "minLength": 1},
                     "gdd_ratio": {"type": "number"},
+                    "yield_ratio": {"type": "number"},  # CHANGE: required in new model responses; legacy artifacts may omit it.
                     "spacing_ratio": {"type": ["number", "null"]},
                     "plant_diameter_ratio": {"type": ["number", "null"]},
                     "plant_height_ratio": {"type": ["number", "null"]},
@@ -185,7 +186,7 @@ OPENAI_PLANT_SCHEMA = {
                     "is_default": {"type": "integer", "enum": [0, 1]},
                 },
                 "required": [
-                    "stage_key", "stage_label", "gdd_ratio", "spacing_ratio",
+                    "stage_key", "stage_label", "gdd_ratio", "yield_ratio", "spacing_ratio",  # CHANGE
                     "plant_diameter_ratio", "plant_height_ratio", "sort_order",
                     "active", "is_default",
                 ],

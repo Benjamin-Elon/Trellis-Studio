@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math  # CHANGE: reject nonfinite stage-yield ratios before database writes.
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -309,6 +310,13 @@ def validate_row(
             value = _coerce_number(row.get(key))
             if value is None or value <= 0:
                 errors.append(f"{prefix}.{key} must be a positive number.")
+        if "yield_ratio" in row:  # CHANGE: omission is supported for old artifacts; explicit null is invalid.
+            try:  # CHANGE
+                value = _coerce_number(row["yield_ratio"])  # CHANGE
+            except OverflowError:  # CHANGE: integers too large for SQLite REAL are invalid rather than crashing validation.
+                value = None  # CHANGE
+            if value is None or not math.isfinite(value) or value <= 0:  # CHANGE: yield can exceed Mature, unlike bounded timing ratios.
+                errors.append(f"{prefix}.yield_ratio must be a finite positive number.")  # CHANGE
         for key in ("sort_order", "active", "is_default"):
             if row.get(key) in (None, ""):
                 continue

@@ -211,7 +211,8 @@ def _source_bundle_for_plant(
             system=(
                 "You verify one existing Trellis crop row using live web sources. "
                 "Return conservative, source-backed replacement values only where the supplied finding is suspicious. "
-                "Use expert_estimate only when a source-backed value is unavailable, and mark it lower confidence."
+                "Use expert_estimate only when a source-backed value is unavailable, and mark it lower confidence. "  # CHANGE
+                "Growth-stage yield_ratio is total stage kg per plant divided by mature kg per plant, applied after variety overrides; Mature is 1. Ratios must be finite and positive and may exceed 1. Do not infer yield from timing or spacing ratios."  # CHANGE
             ),
             user=json.dumps({
                 "plant": plant,
@@ -322,6 +323,7 @@ def _propose_growth_stage(
     row = {"plant_name": plant["plant_name"], **stage}
     if validate_row("PlantGrowthStages", row)["errors"]:
         return
+    row["yield_ratio"] = 1.0  # CHANGE: valid Mature proposals use the canonical baseline; explicit invalid source yields cannot be hidden by normalization.
     generated.setdefault("PlantGrowthStages", []).append(row)
     proposed["PlantGrowthStages"] = proposed.get("PlantGrowthStages", 0) + 1
     findings.append(_finding("PlantGrowthStages", "missing_mature_stage", "medium", "Proposed Mature growth stage.", confidence="medium"))
@@ -635,6 +637,7 @@ def _verify_bundle_schema() -> dict[str, Any]:
                         "stage_key": {"type": "string"},
                         "stage_label": {"type": "string"},
                         "gdd_ratio": {"type": "number"},
+                        "yield_ratio": {"type": "number"},  # CHANGE
                         "spacing_ratio": {"type": ["number", "null"]},
                         "plant_diameter_ratio": {"type": ["number", "null"]},
                         "plant_height_ratio": {"type": ["number", "null"]},
@@ -642,7 +645,7 @@ def _verify_bundle_schema() -> dict[str, Any]:
                         "active": {"type": "integer"},
                         "is_default": {"type": "integer"},
                     },
-                    "required": ["stage_key", "stage_label", "gdd_ratio", "spacing_ratio", "plant_diameter_ratio", "plant_height_ratio", "sort_order", "active", "is_default"],
+                    "required": ["stage_key", "stage_label", "gdd_ratio", "yield_ratio", "spacing_ratio", "plant_diameter_ratio", "plant_height_ratio", "sort_order", "active", "is_default"],  # CHANGE
                 },
             },
         },

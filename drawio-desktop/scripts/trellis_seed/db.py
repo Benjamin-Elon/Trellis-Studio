@@ -416,9 +416,10 @@ def _normalize_stage_key(value: Any) -> str:
 
 
 def _upsert_growth_stages(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
+    """Apply validated stages; omitted yield preserves updates and defaults inserts."""  # CHANGE
     now = datetime.now(timezone.utc).isoformat()
     writable = [column for column in (
-        "plant_id", "stage_key", "stage_label", "gdd_ratio", "spacing_ratio",
+        "plant_id", "stage_key", "stage_label", "gdd_ratio", "yield_ratio", "spacing_ratio",  # CHANGE
         "plant_diameter_ratio", "plant_height_ratio", "sort_order", "active", "is_default",
         "created_at", "updated_at",
     ) if column in PLANT_GROWTH_STAGE_COLUMNS]
@@ -441,8 +442,10 @@ def _upsert_growth_stages(conn: sqlite3.Connection, rows: list[dict[str, Any]]) 
             "is_default": raw.get("is_default") if raw.get("is_default") is not None else 0,
             "updated_at": now,
         }
+        if "yield_ratio" in raw:  # CHANGE: absence preserves a stored ratio and lets new rows use the SQL default.
+            payload["yield_ratio"] = float(raw["yield_ratio"])  # CHANGE: validation precedes apply; normalize numeric strings for preview/write agreement.
         if existing:
-            assignments = [column for column in writable if column not in {"created_at"}]
+            assignments = [column for column in writable if column != "created_at" and (column != "yield_ratio" or column in payload)]  # CHANGE
             conn.execute(
                 "UPDATE PlantGrowthStages SET " + ", ".join(f"{column}=?" for column in assignments) + " WHERE stage_id=?",
                 [payload.get(column) for column in assignments] + [existing["stage_id"]],
@@ -667,10 +670,18 @@ def _replace_weather(conn: sqlite3.Connection, table: str, rows: list[dict[str, 
 def _diff_row(conn: sqlite3.Connection, table: str, row: dict[str, Any], generated_index: dict[str, Any]) -> dict[str, Any]:
     existing = _existing_row(conn, table, row)
     identity = _identity_label(conn, table, row, generated_index)
+    if table == "PlantGrowthStages" and "yield_ratio" in row:  # CHANGE: inserts and updates display the same SQLite REAL value that Apply writes.
+        row = {**row, "yield_ratio": float(row["yield_ratio"])}  # CHANGE: copy only for display; an absent field remains absent in the seed artifact.
     if existing is None:
         return {"action": "insert", "identity": identity, "changes": {k: {"old": None, "new": v} for k, v in row.items()}}
     changes = {}
     for key, value in row.items():
+        if table == "PlantGrowthStages" and key == "yield_ratio":  # CHANGE: preview the effective post-migration value without changing the database.
+            old_value = existing[key] if key in existing.keys() else 1.0  # CHANGE
+            new_value = value  # CHANGE: the same normalized value is persisted by _upsert_growth_stages.
+            if old_value != new_value:  # CHANGE
+                changes[key] = {"old": old_value, "new": new_value}  # CHANGE
+            continue  # CHANGE: omitted ratios never enter this loop and therefore remain untouched.
         if key in existing.keys() and existing[key] != value:
             changes[key] = {"old": existing[key], "new": value}
     return {"action": "update" if changes else "unchanged", "identity": identity, "changes": changes}

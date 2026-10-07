@@ -63,7 +63,7 @@ from trellis_seed.menu import _preflight_provider_labels, _should_prompt_templat
 from trellis_seed.migrations import apply_migrations, pending_migrations  # noqa: E402
 from trellis_seed.nutrition import CachedFdcClient, _candidate_aliases, best_fdc_candidate, nutrient_values_from_fdc, synthesize_nutrition_for_plant  # noqa: E402
 from trellis_seed.planner import effective_tables_from_input, selected_tables_warning  # noqa: E402
-from trellis_seed.providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderTrace  # noqa: E402
+from trellis_seed.providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderError, ProviderTrace  # noqa: E402  # CHANGE
 from trellis_seed.schema import OPENAI_CITY_LABEL_SCHEMA, OPENAI_PLANT_SCHEMA, OPENAI_SOWING_WINDOW_SCHEMA, OPENAI_TEMPLATE_SCHEMA, PLANT_INTEGER_FIELDS, PLANT_REAL_FIELDS, PLANT_TEXT_FIELDS  # noqa: E402
 from trellis_seed.sowing_windows import compare_window_references, load_planting_window_references, select_cities_for_crop  # noqa: E402
 from trellis_seed.suggestions import (  # noqa: E402
@@ -76,7 +76,7 @@ from trellis_seed.suggestions import (  # noqa: E402
     write_suggestion_artifacts,
 )
 from trellis_seed.validator import normalize_key, validate_input, validate_row, validate_run  # noqa: E402
-from trellis_seed.verify import VerifyOptions, advance_verify_state, select_verify_batch, verify_database_sweep  # noqa: E402
+from trellis_seed.verify import VerifyOptions, _propose_growth_stage, _verify_bundle_schema, advance_verify_state, select_verify_batch, verify_database_sweep  # noqa: E402  # CHANGE
 from trellis_seed.weather import summarize_city_monthly_weather  # noqa: E402
 
 
@@ -201,6 +201,7 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("maturity_class", variety_cols)
             growth_stage_cols = [row[1] for row in conn.execute("PRAGMA table_info(PlantGrowthStages);")]
             self.assertIn("gdd_ratio", growth_stage_cols)
+            self.assertIn("yield_ratio", growth_stage_cols)  # CHANGE
             self.assertIn("plant_height_ratio", growth_stage_cols)
             companion_cols = [row[1] for row in conn.execute("PRAGMA table_info(Companions);")]
             self.assertIn("source_plant_id", companion_cols)
@@ -660,6 +661,120 @@ class TrellisSeederTests(unittest.TestCase):
         })
         self.assertTrue(any("stage_key" in error for error in invalid["errors"]))
         self.assertTrue(any("gdd_ratio" in error for error in invalid["errors"]))
+
+    def test_growth_stage_yield_validation_distinguishes_omission_from_invalid_values(self) -> None:  # CHANGE
+        row = {"plant_name": "Lettuce", "stage_key": "baby", "stage_label": "Baby", "gdd_ratio": 0.3}  # CHANGE
+        self.assertEqual(validate_row("PlantGrowthStages", row)["errors"], [])  # CHANGE
+        for value in (None, 0, -0.2, "", "invalid", float("nan"), float("inf"), -float("inf"), True, 10**1000):  # CHANGE
+            with self.subTest(value=value):  # CHANGE
+                report = validate_row("PlantGrowthStages", {**row, "yield_ratio": value})  # CHANGE
+                self.assertTrue(any("yield_ratio" in error for error in report["errors"]), report)  # CHANGE
+        for value in (0.2, 1, 2.5, "0.4"):  # CHANGE
+            with self.subTest(value=value):  # CHANGE
+                self.assertEqual(validate_row("PlantGrowthStages", {**row, "yield_ratio": value})["errors"], [])  # CHANGE
+
+    def test_growth_stage_yield_migration_is_additive_and_idempotent(self) -> None:  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            conn.execute("ALTER TABLE PlantGrowthStages DROP COLUMN yield_ratio")  # CHANGE: reproduce the previous packaged schema.
+            old_columns = [row[1] for row in conn.execute("PRAGMA table_info(PlantGrowthStages)")]  # CHANGE
+            before = conn.execute("SELECT * FROM PlantGrowthStages ORDER BY stage_id").fetchall()  # CHANGE
+            self.assertIn("add growth stage yield ratio column", pending_migrations(conn))  # CHANGE
+            with conn:  # CHANGE
+                self.assertIn("added PlantGrowthStages.yield_ratio", apply_migrations(conn))  # CHANGE
+            self.assertEqual(conn.execute("SELECT " + ", ".join(old_columns) + " FROM PlantGrowthStages ORDER BY stage_id").fetchall(), before)  # CHANGE
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantGrowthStages WHERE yield_ratio != 1").fetchone()[0], 0)  # CHANGE
+            conn.execute("UPDATE PlantGrowthStages SET yield_ratio=0.2 WHERE stage_id=?", [before[0][0]])  # CHANGE
+            with conn:  # CHANGE
+                self.assertNotIn("added PlantGrowthStages.yield_ratio", apply_migrations(conn))  # CHANGE: unrelated migrations report existing table ensures on every run.
+            self.assertEqual(conn.execute("SELECT yield_ratio FROM PlantGrowthStages WHERE stage_id=?", [before[0][0]]).fetchone()[0], 0.2)  # CHANGE
+            self.assertEqual(pending_migrations(conn), [])  # CHANGE
+
+    def test_growth_stage_creation_includes_nonnullable_yield_default(self) -> None:  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            conn.execute("DROP TABLE PlantGrowthStages")  # CHANGE
+            with conn:  # CHANGE
+                self.assertIn("created PlantGrowthStages", apply_migrations(conn))  # CHANGE
+            column = next(row for row in conn.execute("PRAGMA table_info(PlantGrowthStages)") if row[1] == "yield_ratio")  # CHANGE
+            self.assertEqual((column[2], column[3], column[4]), ("REAL", 1, "1"))  # CHANGE
+            self.assertEqual(pending_migrations(conn), [])  # CHANGE
+
+    def test_growth_stage_yield_preview_and_apply_preserve_legacy_omissions(self) -> None:  # CHANGE
+        run_dir = self.tmp_path / "yield-compatibility"  # CHANGE
+        artifact = run_dir / "generated" / "PlantGrowthStages.json"  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            plant_id = conn.execute("SELECT plant_id FROM Plants ORDER BY plant_id LIMIT 1").fetchone()[0]  # CHANGE
+        row = {"plant_id": plant_id, "stage_key": "seed_yield_test", "stage_label": "Seed Yield Test", "gdd_ratio": 0.3}  # CHANGE
+        write_json(artifact, [{**row, "yield_ratio": "0.2"}])  # CHANGE
+        self.assertEqual(create_diff_report(run_dir, self.db_path)["tables"]["PlantGrowthStages"][0]["changes"]["yield_ratio"], {"old": None, "new": 0.2})  # CHANGE
+        apply_run(run_dir, self.db_path)  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            identity = conn.execute("SELECT stage_id, created_at FROM PlantGrowthStages WHERE stage_key=?", [row["stage_key"]]).fetchone()  # CHANGE
+        write_json(artifact, [row, {**row, "stage_key": "legacy_new_stage"}])  # CHANGE
+        diffs = create_diff_report(run_dir, self.db_path)["tables"]["PlantGrowthStages"]  # CHANGE
+        self.assertEqual(diffs[0]["action"], "unchanged")  # CHANGE
+        self.assertNotIn("yield_ratio", diffs[0]["changes"])  # CHANGE
+        apply_run(run_dir, self.db_path)  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            ratios = dict(conn.execute("SELECT stage_key, yield_ratio FROM PlantGrowthStages WHERE stage_key IN ('seed_yield_test', 'legacy_new_stage')"))  # CHANGE
+            self.assertEqual(ratios, {"seed_yield_test": 0.2, "legacy_new_stage": 1.0})  # CHANGE
+            self.assertEqual(conn.execute("SELECT stage_id, created_at FROM PlantGrowthStages WHERE stage_key=?", [row["stage_key"]]).fetchone(), identity)  # CHANGE
+        for value in ("2.5", 1):  # CHANGE: numeric strings and an explicit neutral ratio agree with persisted SQLite numbers.
+            write_json(artifact, [{**row, "yield_ratio": value}])  # CHANGE
+            diff = create_diff_report(run_dir, self.db_path)["tables"]["PlantGrowthStages"][0]  # CHANGE
+            self.assertEqual(diff["action"], "update")  # CHANGE
+            self.assertEqual(diff["changes"]["yield_ratio"]["new"], float(value))  # CHANGE
+            apply_run(run_dir, self.db_path)  # CHANGE
+            self.assertEqual(create_diff_report(run_dir, self.db_path)["tables"]["PlantGrowthStages"][0]["action"], "unchanged")  # CHANGE
+            apply_run(run_dir, self.db_path)  # CHANGE
+            self.assertEqual(create_diff_report(run_dir, self.db_path)["tables"]["PlantGrowthStages"][0]["action"], "unchanged")  # CHANGE
+
+    def test_growth_stage_yield_diff_uses_migration_default_without_mutating_old_database(self) -> None:  # CHANGE
+        run_dir = self.tmp_path / "yield-old-schema"  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            conn.row_factory = sqlite3.Row  # CHANGE
+            conn.execute("ALTER TABLE PlantGrowthStages DROP COLUMN yield_ratio")  # CHANGE
+            source = conn.execute("SELECT * FROM PlantGrowthStages ORDER BY stage_id LIMIT 1").fetchone()  # CHANGE
+            row = {key: source[key] for key in ("plant_id", "stage_key", "stage_label", "gdd_ratio")}  # CHANGE
+            conn.commit()  # CHANGE
+        artifact = run_dir / "generated" / "PlantGrowthStages.json"  # CHANGE
+        write_json(artifact, [{**row, "yield_ratio": 1}])  # CHANGE
+        self.assertNotIn("yield_ratio", create_diff_report(run_dir, self.db_path)["tables"]["PlantGrowthStages"][0]["changes"])  # CHANGE
+        write_json(artifact, [{**row, "yield_ratio": 0.2}])  # CHANGE
+        diff = create_diff_report(run_dir, self.db_path)["tables"]["PlantGrowthStages"][0]  # CHANGE
+        self.assertEqual(diff["changes"]["yield_ratio"], {"old": 1.0, "new": 0.2})  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            self.assertNotIn("yield_ratio", [field[1] for field in conn.execute("PRAGMA table_info(PlantGrowthStages)")])  # CHANGE
+        apply_run(run_dir, self.db_path)  # CHANGE
+        self.assertEqual(create_diff_report(run_dir, self.db_path)["tables"]["PlantGrowthStages"][0]["action"], "unchanged")  # CHANGE
+        write_json(artifact, [row])  # CHANGE
+        apply_run(run_dir, self.db_path)  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            self.assertEqual(conn.execute("SELECT yield_ratio FROM PlantGrowthStages WHERE stage_id=?", [source["stage_id"]]).fetchone()[0], 0.2)  # CHANGE
+
+    def test_growth_stage_invalid_yield_prevents_apply(self) -> None:  # CHANGE
+        run_dir = self.tmp_path / "yield-invalid"  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            plant_id = conn.execute("SELECT plant_id FROM Plants ORDER BY plant_id LIMIT 1").fetchone()[0]  # CHANGE
+        write_json(run_dir / "generated" / "PlantGrowthStages.json", [{"plant_id": plant_id, "stage_key": "invalid_yield", "stage_label": "Invalid", "gdd_ratio": 0.2, "yield_ratio": None}])  # CHANGE
+        before = self.db_path.read_bytes()  # CHANGE
+        with self.assertRaisesRegex(RuntimeError, "Run is not valid"):  # CHANGE
+            apply_run(run_dir, self.db_path)  # CHANGE
+        self.assertEqual(self.db_path.read_bytes(), before)  # CHANGE
+
+    def test_growth_stage_preparation_preserves_yield_without_capping_or_defaulting(self) -> None:  # CHANGE
+        raw = {"stage_key": "baby", "stage_label": "Baby", "gdd_ratio": 0.3}  # CHANGE
+        self.assertNotIn("yield_ratio", _prepare_growth_stages([raw], "Lettuce")[1])  # CHANGE
+        stages = _prepare_growth_stages([{**raw, "yield_ratio": 2.5}, {"stage_key": "mature", "yield_ratio": 0.5}], "Lettuce")  # CHANGE
+        self.assertEqual(stages[0]["yield_ratio"], 1.0)  # CHANGE
+        self.assertEqual(stages[1]["yield_ratio"], 2.5)  # CHANGE
+        for key in ("baby", "mature", "flowering"):  # CHANGE: neither Mature normalization nor lifecycle filtering may hide an invalid supplied yield.
+            with self.subTest(key=key), self.assertRaisesRegex(ProviderError, "yield_ratio"):  # CHANGE
+                _prepare_growth_stages([{**raw, "stage_key": key, "yield_ratio": None}], "Lettuce")  # CHANGE
+
+    def test_verification_does_not_hide_invalid_supplied_yield_with_mature_default(self) -> None:  # CHANGE
+        generated = {}  # CHANGE
+        _propose_growth_stage({"plant_name": "Lettuce"}, {"growth_stages": []}, {"growth_stages": [{"stage_key": "mature", "stage_label": "Mature", "gdd_ratio": 1, "yield_ratio": None}]}, generated, {}, [])  # CHANGE
+        self.assertEqual(generated, {})  # CHANGE: the candidate is rejected before the canonical default is applied.
 
     def test_growth_stage_preparation_forces_mature_and_filters_lifecycle_rows(self) -> None:
         stages = _prepare_growth_stages([
@@ -1594,6 +1709,9 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertIn("growth_stages", OPENAI_PLANT_SCHEMA["required"])
         self.assertIn("stage_key", stage_schema["required"])
         self.assertIn("gdd_ratio", stage_schema["required"])
+        self.assertIn("yield_ratio", stage_schema["required"])  # CHANGE
+        verification_stage_schema = _verify_bundle_schema()["properties"]["growth_stages"]["items"]  # CHANGE
+        self.assertIn("yield_ratio", verification_stage_schema["required"])  # CHANGE
         self.assertEqual(stage_schema["properties"]["spacing_ratio"]["type"], ["number", "null"])
 
     def test_openai_client_does_not_mask_responses_api_errors(self) -> None:
@@ -1923,8 +2041,10 @@ class TrellisSeederTests(unittest.TestCase):
         class FakeOpenAI:
             model = "fake"
             reasoning_effort = "low"
+            calls = 0  # CHANGE
 
             def generate_json(self, **_kwargs):
+                self.calls += 1  # CHANGE
                 return {
                     "row": complete_plant_row(),
                     "allowed_method_categories": ["direct_sow"],
@@ -1934,6 +2054,7 @@ class TrellisSeederTests(unittest.TestCase):
                             "stage_key": "baby leaf",
                             "stage_label": "Baby Leaf",
                             "gdd_ratio": 0.45,
+                            "yield_ratio": 0 if self.calls == 1 else 2.5,  # CHANGE: invalid supplied yield must trigger repair rather than dropping the stage.
                             "spacing_ratio": None,
                             "plant_diameter_ratio": 0.6,
                             "plant_height_ratio": 0.55,
@@ -1969,6 +2090,8 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual([row["stage_key"] for row in generated["PlantGrowthStages"]], ["mature", "baby_leaf"])
         self.assertEqual(generated["PlantGrowthStages"][0]["stage_label"], "Mature")
         self.assertEqual(generated["PlantGrowthStages"][0]["is_default"], 1)
+        self.assertEqual(generated["PlantGrowthStages"][0]["yield_ratio"], 1.0)  # CHANGE
+        self.assertEqual(generated["PlantGrowthStages"][1]["yield_ratio"], 2.5)  # CHANGE
         self.assertEqual(generated["PlantGrowthStages"][1]["plant_name"], "Lettuce")
         self.assertEqual(generated["PlantGrowthStages"][1]["plant_diameter_ratio"], 0.6)
 
@@ -2783,7 +2906,7 @@ class TrellisSeederTests(unittest.TestCase):
                     "source_notes": ["Source-backed garlic growing degree day correction."],
                     "plant_row": {key: value for key, value in plant.items() if key in PLANT_TEXT_FIELDS | PLANT_INTEGER_FIELDS | PLANT_REAL_FIELDS},
                     "allowed_method_categories": [],
-                    "growth_stages": [],
+                    "growth_stages": [{"stage_key": "mature", "stage_label": "Mature", "gdd_ratio": 1.0, "yield_ratio": 1.0, "spacing_ratio": 1.0, "plant_diameter_ratio": 1.0, "plant_height_ratio": 1.0, "sort_order": 0, "active": 1, "is_default": 0}],  # CHANGE
                 }, ProviderTrace("openai", {"mode": "verify_web_search"}, {"ok": True})
 
         settings = Settings(self.tmp_path / "config.json", {
@@ -2796,12 +2919,19 @@ class TrellisSeederTests(unittest.TestCase):
             garlic = conn.execute("SELECT plant_id FROM Plants WHERE plant_name='Garlic'").fetchone()
             self.assertIsNotNone(garlic)
             previous = conn.execute("SELECT plant_id FROM Plants WHERE plant_id < ? ORDER BY plant_id DESC LIMIT 1", [garlic[0]]).fetchone()
+            conn.execute("DELETE FROM PlantGrowthStages WHERE plant_id=? AND stage_key='mature'", [garlic[0]])  # CHANGE: verification proposes the missing baseline through its real artifact path.
+            conn.commit()  # CHANGE
         write_json(settings.runs_dir / "verify_state.json", {"last_plant_id": previous[0] if previous else 0, "pass_number": 1})
 
         run_dir = verify_database_sweep(settings, VerifyOptions(batch_size=1, use_fdc=False), openai=FakeOpenAI())
 
         rows = read_json(run_dir / "generated" / "Plants.json", [])
         self.assertEqual(rows[0]["gdd_to_maturity"], 1400.0)
+        stage_rows = read_json(run_dir / "generated" / "PlantGrowthStages.json", [])  # CHANGE
+        self.assertEqual(stage_rows[0]["stage_key"], "mature")  # CHANGE
+        self.assertEqual(stage_rows[0]["yield_ratio"], 1.0)  # CHANGE
+        with closing(sqlite3.connect(self.db_path)) as conn:  # CHANGE
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantGrowthStages WHERE plant_id=? AND stage_key='mature'", [garlic[0]]).fetchone()[0], 0)  # CHANGE: verification never applies its proposal.
         report = read_json(run_dir / "verify_report.json", {})
         self.assertEqual(report["plants"][0]["source_urls"], ["https://example.test/garlic"])
         provenance = read_json(run_dir / "provenance.json", {})

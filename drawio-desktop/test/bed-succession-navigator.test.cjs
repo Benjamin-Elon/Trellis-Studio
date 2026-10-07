@@ -133,7 +133,7 @@ function makeHarness(options = {}) {
         setSelectionCell(cell) { selectedCells = cell ? [cell] : []; fireSelectionChange(); },
         setSelectionCells(cells) { selectedCells = cells.slice(); fireSelectionChange(); },
         getChildVertices(parent) { return (parent.children || []).filter(child => model.isVertex(child)); },
-        getCellStyle() { return { rotation: 0 }; },
+        getCellStyle(cell) { return { rotation: options.rotations && options.rotations[cell.id] || 0 }; }, // CHANGE: exercise rotated virtual-cluster membership.
         getSelectionModel() { return selectionModel; },
         addListener() {},
         refresh() {},
@@ -142,6 +142,7 @@ function makeHarness(options = {}) {
     };
 
     const context = {
+        Date: options.nowISO ? class extends Date { constructor(...args) { super(...(args.length ? args : [options.nowISO])); } } : Date, // CHANGE: deterministic local today marker.
         window: dom.window,
         document,
         console: { debug() {}, log() {}, warn() {}, error() {} },
@@ -204,8 +205,138 @@ function visibleOccupancyNavigatorAxisTicks(document) {
     const rail = visibleOccupancyNavigator(document);
     const axis = rail && rail.querySelector("[data-occupancy-navigator-axis='1']");
     const tickWrap = axis && axis.children[1];
-    return tickWrap ? Array.from(tickWrap.children).map(child => ({ text: String(child.textContent || ""), align: child.style.textAlign })) : []; // CHANGE: axis now includes a planting label column before timeline ticks.
+    return tickWrap ? Array.from(tickWrap.children).filter(child => !child.dataset.timelineMarker).map(child => ({ text: String(child.textContent || ""), align: child.style.textAlign })) : []; // CHANGE: marker elements are not calendar ticks.
 }
+
+/** Canonical Monday weeks, including boundary weeks, shared by preview scenarios. */ // CHANGE
+function allocationInput(harness, overrides = {}) { // CHANGE
+    const year = overrides.year || 2026;
+    const start = new Date(Date.UTC(year, 0, 1));
+    start.setUTCDate(start.getUTCDate() - (start.getUTCDay() + 6) % 7);
+    const weekStarts = [];
+    while (+start < Date.UTC(year + 1, 0, 1)) {
+        weekStarts.push({ iso: start.toISOString().slice(0, 10) });
+        start.setUTCDate(start.getUTCDate() + 7);
+    }
+    const rows = weekStarts.map((week, index) => ({ weekIndex: index, startISO: week.iso, demandKg: index === 18 ? 10 : 0, beforeKg: index === 18 ? 3 : 0, afterKg: index === 18 ? 8 : 0, addedKg: index === 18 ? 5 : 0, shortKg: index === 18 ? 2 : 0 }));
+    return { ownerId: 'allocate:test', moduleCell: harness.layer, bedCell: harness.bed, geometry: { x: 10, y: 10, width: 20, height: 20 }, entryISO: year + '-04-01', harvestEndISO: year + '-07-01', cropLabel: 'Tomato', year, weekStarts, coveragePreview: { rows }, selectedWeekIndex: 13, ...overrides };
+} // CHANGE
+
+test('allocation proposal renders alone on an empty bed without creating graph cells', () => { // CHANGE
+    const harness = makeHarness();
+    harness.layer.children = [harness.bed];
+    const childrenBefore = childOrder(harness.layer);
+    const panel = harness.graph.__trellisBedSuccessionNavigator.showAllocationPreview(allocationInput(harness));
+    assert.equal(panel.querySelectorAll('[data-allocation-occupancy-row]').length, 1);
+    assert.match(panel.querySelector('[data-allocation-occupancy-bar="proposed"]').style.border, /dashed/);
+    assert.match(panel.querySelector('[data-allocation-occupancy-row="proposed"]').title, /Proposed · Tomato/); // CHANGE: the compact label is Proposed; the tooltip keeps full crop identity.
+    assert.deepEqual(childOrder(harness.layer), childrenBefore);
+});
+
+test('virtual cluster includes transitive overlaps and excludes unrelated same-bed groups', () => { // CHANGE
+    const harness = makeHarness({ secondTiler: true, thirdTiler: true, tiler1State: { x: 20, y: 10, width: 20, height: 20 }, tiler2State: { x: 38, y: 10, width: 20, height: 20 }, tiler3State: { x: 70, y: 70, width: 20, height: 20 } });
+    const cluster = harness.graph.__trellisBedSuccessionNavigator.getProposalClusterOccupancy(allocationInput(harness));
+    assert.deepEqual(Array.from(cluster.items, item => item.cellId), ['tiler1', 'tiler2', '']);
+});
+
+test('virtual cluster uses rotated footprints rather than axis-aligned bounds', () => { // CHANGE
+    const harness = makeHarness({ tiler1State: { x: 40, y: 20, width: 60, height: 10 }, rotations: { tiler1: 90 } });
+    const input = allocationInput(harness, { geometry: { x: 65, y: 0, width: 10, height: 10 } });
+    const cluster = harness.graph.__trellisBedSuccessionNavigator.getProposalClusterOccupancy(input);
+    assert.deepEqual(Array.from(cluster.items, item => item.cellId), ['tiler1', '']);
+});
+
+test('coverage and occupancy tracks share widths and selected-week positions', () => { // CHANGE
+    const harness = makeHarness();
+    const panel = harness.graph.__trellisBedSuccessionNavigator.showAllocationPreview(allocationInput(harness));
+    const tracks = Array.from(panel.querySelectorAll('[data-allocation-plot]'));
+    assert.equal(new Set(tracks.map(track => track.parentNode.style.gridTemplateColumns)).size, 1);
+    const markers = Array.from(panel.querySelectorAll('[data-timeline-marker="Selected sow/start week"]'));
+    assert.equal(markers.length, tracks.length);
+    assert.equal(new Set(markers.map(marker => marker.style.left)).size, 1);
+    assert.ok(Math.abs(parseFloat(markers[0].style.left) - 13 / 53 * 100) < 1e-9);
+    assert.equal(panel.querySelectorAll('[data-allocation-week]').length, 53);
+});
+
+test('weekly coverage details show fulfillment without changing graph selection and close with Escape', () => { // CHANGE
+    const harness = makeHarness();
+    const panel = harness.graph.__trellisBedSuccessionNavigator.showAllocationPreview(allocationInput(harness));
+    const week = panel.querySelector('[data-allocation-week="18"]');
+    const selection = harness.getSelected();
+    week.click();
+    const details = panel.querySelector('[role="region"]');
+    assert.equal(details.hidden, false);
+    for (const metric of ['Demand: 10.00 kg', 'Covered before: 3.00 kg', 'With proposed planting: 8.00 kg', 'Added coverage: 5.00 kg', 'Remaining shortfall: 2.00 kg']) assert.ok(details.textContent.includes(metric));
+    assert.deepEqual(harness.getSelected(), selection);
+    week.dispatchEvent(new harness.document.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(details.hidden, true);
+    assert.equal(week.getAttribute('aria-expanded'), 'false');
+});
+
+test('a leap year with 54 canonical weeks renders every week without a fixed-column assumption', () => { // CHANGE
+    const harness = makeHarness();
+    const input = allocationInput(harness, { year: 2012, entryISO: '2012-03-01', harvestEndISO: '2012-07-01' });
+    assert.equal(input.weekStarts.length, 54);
+    const panel = harness.graph.__trellisBedSuccessionNavigator.showAllocationPreview(input);
+    assert.equal(panel.querySelectorAll('[data-allocation-week]').length, 54);
+    const markers = Array.from(panel.querySelectorAll('[data-timeline-marker="Selected sow/start week"]'));
+    assert.ok(markers.every(marker => Math.abs(parseFloat(marker.style.left) - 13 / 54 * 100) < 1e-9));
+});
+
+test('cross-year and perennial occupancy clips to the plan year while full dates and undated members remain', () => { // CHANGE
+    const harness = makeHarness({ secondTiler: true, tiler2State: { x: 12, y: 12, width: 20, height: 20 }, tiler1Attrs: { perennial: '1', lifespan_start: '2025-01-01', lifespan_end: '2030-01-01' } });
+    const input = allocationInput(harness, { year: 2028, entryISO: '2027-12-20', harvestEndISO: '2028-01-05' });
+    const panel = harness.graph.__trellisBedSuccessionNavigator.showAllocationPreview(input);
+    assert.match(panel.querySelector('[data-allocation-occupancy-row="tiler1"]').title, /2025-01-01 to 2030-01-01/);
+    assert.match(panel.querySelector('[data-allocation-occupancy-row="tiler2"]').textContent, /Undated/);
+    const bar = panel.querySelector('[data-allocation-occupancy-bar="proposed"]');
+    const offset = (Date.UTC(2028, 0, 1) - Date.parse(input.weekStarts[0].iso)) / 86400000;
+    assert.ok(Math.abs(parseFloat(bar.style.left) - offset / (input.weekStarts.length * 7) * 100) < 1e-9);
+    assert.ok(Math.abs(parseFloat(bar.style.width) - 5 / (input.weekStarts.length * 7) * 100) < 1e-9);
+});
+
+test('DST dates retain day widths and narrow windows use one horizontal scroll container', () => { // CHANGE
+    const harness = makeHarness();
+    Object.defineProperty(harness.graph.container, 'clientWidth', { value: 320 });
+    const input = allocationInput(harness, { entryISO: '2026-03-08', harvestEndISO: '2026-03-09' });
+    const panel = harness.graph.__trellisBedSuccessionNavigator.showAllocationPreview(input);
+    assert.equal(panel.style.width, '296px');
+    const bar = panel.querySelector('[data-allocation-occupancy-bar="proposed"]');
+    assert.ok(Math.abs(parseFloat(bar.style.width) - 2 / (53 * 7) * 100) < 1e-9);
+    assert.equal(panel.querySelectorAll('[data-allocation-timeline-scroll]').length, 1);
+    assert.equal(panel.querySelector('[data-allocation-timeline-scroll]').style.overflowX, 'auto');
+});
+
+test('allocation suppresses duplicate rails and only its owner can clear the preview', () => { // CHANGE
+    const harness = makeHarness({ secondTiler: true, tiler2State: { x: 12, y: 12, width: 20, height: 20 } });
+    const api = harness.graph.__trellisBedSuccessionNavigator;
+    assert.ok(visibleOccupancyNavigator(harness.document));
+    api.showAllocationPreview(allocationInput(harness));
+    assert.equal(visibleOccupancyNavigator(harness.document), undefined);
+    api.showAllocationPreview(allocationInput(harness, { ownerId: 'allocate:new' }));
+    api.clearAllocationPreview('allocate:test');
+    assert.ok(harness.document.querySelector('[data-allocation-preview="allocate:new"]'));
+    api.clearAllocationPreview('allocate:new');
+    assert.equal(harness.document.querySelector('[data-allocation-preview]'), null);
+    assert.ok(visibleOccupancyNavigator(harness.document));
+});
+
+test('missing coverage shows an explanation while proposal occupancy remains visible', () => { // CHANGE
+    const harness = makeHarness();
+    const panel = harness.graph.__trellisBedSuccessionNavigator.showAllocationPreview(allocationInput(harness, { coveragePreview: null }));
+    assert.match(panel.textContent, /Coverage preview unavailable/);
+    assert.equal(panel.querySelector('[data-coverage-series]'), null);
+    assert.ok(panel.querySelector('[data-allocation-occupancy-bar="proposed"]'));
+});
+
+test('regular occupancy draws today above bars or explains why today is outside the range', () => { // CHANGE
+    for (const [nowISO, inRange] of [['2026-05-15T12:00:00', true], ['2027-05-15T12:00:00', false]]) {
+        const harness = makeHarness({ nowISO, secondTiler: true, tiler2State: { x: 12, y: 12, width: 20, height: 20 }, tiler1Attrs: { sow_date: '2026-04-01', harvest_end: '2026-07-01' } });
+        const rail = visibleOccupancyNavigator(harness.document);
+        assert.equal(rail.querySelectorAll('[data-timeline-marker="Today"]').length, inRange ? 3 : 0);
+        assert.match(rail.textContent, inRange ? /Blue line: Today/ : /Today outside displayed range/);
+    }
+});
 
 test("navigator source no longer contains day-count overlap badge machinery", () => {
     const source = fs.readFileSync(PLUGIN_PATH, "utf8");
@@ -356,7 +487,7 @@ test("selected overlap cluster shows Occupancy navigator instead of numeric badg
     assert.ok(rail, "expected visible Occupancy navigator");
     assert.equal(numericBadge, undefined);
     assert.equal(visibleOccupancyNavigatorBars(document).length, 2);
-    assert.equal(rail.style.top, "-91px"); // CHANGE: navigator stays above the selected cluster without falling below.
+    assert.equal(rail.style.top, "-107px"); // CHANGE: reserve room for the new today caption above the selected cluster.
 });
 
 test("Occupancy navigator bars center crop variety names with a planting label column", () => {
@@ -700,3 +831,27 @@ test("bed-select selects the containing bed when another bed overlaps the cluste
     selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true }));
     assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["bed"]);
 });
+
+// CHANGE: loading progress must not unmount or replace unchanged timeline nodes.
+test('allocation preview retains panel, focused week, inspection and scroll state across updates', () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisBedSuccessionNavigator;
+    const input = allocationInput(harness);
+    const panel = api.showAllocationPreview(input);
+    const week = panel.querySelector('[data-allocation-week="18"]');
+    const scroll = panel.querySelector('[data-allocation-timeline-scroll]');
+    scroll.scrollLeft = 87;
+    week.focus(); week.click();
+    assert.equal(api.showAllocationPreview(allocationInput(harness)), panel);
+    assert.equal(panel.querySelector('[data-allocation-week="18"]'), week);
+    assert.equal(harness.document.activeElement, week);
+    assert.equal(panel.querySelector('[role="region"]').hidden, false);
+    const changed = allocationInput(harness);
+    changed.coveragePreview.rows[18].afterKg = 9;
+    assert.equal(api.showAllocationPreview(changed), panel);
+    assert.equal(panel.querySelector('[data-allocation-timeline-scroll]').scrollLeft, 87);
+    assert.match(panel.querySelector('[role="region"]').textContent, /With proposed planting: 9.00 kg/);
+    assert.equal(harness.document.activeElement.dataset.allocationWeek, '18');
+    panel.dispatchEvent(new harness.document.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(panel.querySelector('[role="region"]').hidden, true);
+}); // CHANGE

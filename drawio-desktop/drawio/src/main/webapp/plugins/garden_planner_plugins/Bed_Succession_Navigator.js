@@ -876,6 +876,7 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Multi-cluster state --------------------
     // key -> { order: mxCell[], currentIdx: number, anchorId: string, btnPrev, btnNext, miniRail, dimmed:Set<mxCell> }
     const clusterStates = new Map();
+    let allocationPreview = null; // CHANGE: one owner-scoped preview exists outside graph and cluster state.
     const bedUnitSelectorState = { btnSelectBed: null, btnSelectPlantings: null, btnSelectBedAssembly: null, unit: null };
 
     function clusterKeyOf(members) {
@@ -1099,7 +1100,9 @@ Draw.loadPlugin(function (ui) {
     }
 
     function seasonStartYearOf(cell) {
-        const year = Math.trunc(Number(cell && cell.getAttribute && cell.getAttribute('season_start_year')));
+        const raw = cell && cell.getAttribute && cell.getAttribute('season_start_year'); // CHANGE: missing years must fall back to occupancy dates, not year zero.
+        if (raw == null || String(raw).trim() === '') return NaN; // CHANGE
+        const year = Math.trunc(Number(raw)); // CHANGE
         return Number.isFinite(year) ? year : NaN;
     }
 
@@ -1860,9 +1863,330 @@ Draw.loadPlugin(function (ui) {
         return bar;
     }
 
+    /** Resolves the virtual proposal's connected component without inserting an mxCell. Geometry is module-parent local. */ // CHANGE
+    function getProposalClusterOccupancy(input = {}) { // CHANGE
+        const geometry = input.geometry || {};
+        const rect = { x: Number(geometry.x), y: Number(geometry.y), w: Number(geometry.width), h: Number(geometry.height) };
+        if (![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite) || rect.w <= 0 || rect.h <= 0) return { items: [], reason: 'Missing proposed geometry.' };
+        const center = rectCenterModel(rect);
+        const angleDeg = Number(geometry.rotation) || 0;
+        const proposedRect = Object.assign({}, rect, { center, angleDeg, angleRad: toRad(angleDeg) });
+        const remaining = getSiblingsInParent(input.moduleCell || model.getParent(input.bedCell)).map(cell => ({ cell, rect: getRotatedRectModel(cell) }));
+        const connected = [];
+        const frontier = [proposedRect];
+        while (frontier.length) {
+            const next = frontier.pop();
+            for (let index = remaining.length - 1; index >= 0; index--) {
+                const item = remaining[index];
+                if (!significantOverlapRotatedRects(next, item.rect)) continue;
+                remaining.splice(index, 1);
+                connected.push(item.cell);
+                frontier.push(item.rect);
+            }
+        }
+        const proposalRange = occupancyRangeFromISO(input.entryISO, input.harvestEndISO);
+        const items = orderComponentByTime(connected).map(cell => miniRailItemForCell(cell, '', proposalRange));
+        items.push({ cellId: '', label: 'Proposed · ' + (input.cropLabel || 'Planting'), proposed: true, selected: true, active: true, trueRange: proposalRange, range: proposalRange });
+        return { scope: 'cluster', items };
+    } // CHANGE
+
+    /** UTC date-only mapping keeps equal week widths and occupancy endpoints aligned across DST. */ // CHANGE
+    function allocationDateAxis(weekStarts, year) { // CHANGE
+        const starts = (weekStarts || []).map(week => dayNumberFromISO(week.iso || week.ymd));
+        if (!starts.length || starts.some((day, index) => day == null || index > 0 && day - starts[index - 1] !== 7)) return null;
+        if (starts.some((day, index) => isoFromDayNumber(day) !== (weekStarts[index].iso || weekStarts[index].ymd))) return null; // CHANGE: invalid date-only values cannot silently roll into another month.
+        const yearSpan = yearRange(year);
+        if (!yearSpan) return null;
+        return { minDay: starts[0], maxDay: starts[starts.length - 1] + 6, totalDays: starts.length * 7, yearSpan, starts };
+    } // CHANGE
+
+    function currentLocalDayNumber() { // CHANGE
+        const now = new Date();
+        return Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / DAY_MS);
+    } // CHANGE
+
+    /** Markers use the plotting track's coordinate system, never the label column. */ // CHANGE
+    function appendTimelineMarker(track, day, span, label) { // CHANGE
+        if (day == null || !span || day < span.minDay || day > span.maxDay) return;
+        const line = document.createElement('div');
+        line.dataset.timelineMarker = label;
+        line.title = label;
+        line.style.cssText = 'position:absolute;top:0;bottom:0;width:1px;background:#2563eb;z-index:5;pointer-events:none;';
+        line.style.left = ((day - span.minDay) / (span.maxDay - span.minDay + 1) * 100) + '%';
+        track.appendChild(line);
+    } // CHANGE
+
+    function allocationTimelineRow(labelText, plotWidth) { // CHANGE
+        const row = document.createElement('div');
+        row.style.cssText = 'display:grid;column-gap:8px;align-items:center;';
+        row.style.gridTemplateColumns = '112px ' + plotWidth + 'px';
+        const label = document.createElement('div');
+        label.textContent = labelText;
+        label.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:10px;';
+        const track = document.createElement('div');
+        track.dataset.allocationPlot = '1';
+        track.style.cssText = 'position:relative;min-width:0;';
+        row.appendChild(label);
+        row.appendChild(track);
+        return { row, label, track };
+    } // CHANGE
+
+    function allocationKg(value) { // CHANGE
+        return Number(value).toFixed(2) + ' kg';
+    } // CHANGE
+
+    /** Inspection is independent of Allocate's sow/start navigation and proposal selection. */ // CHANGE
+    function showAllocationWeekDetails(preview, row, button) { // CHANGE
+        const details = preview.details;
+        preview.detailsWeekIndex = row.weekIndex; // CHANGE: retain inspection across genuine data updates.
+        details.innerHTML = '';
+        details.hidden = false;
+        preview.panel.querySelectorAll('[data-allocation-week]').forEach(node => node.setAttribute('aria-expanded', String(node === button)));
+        const heading = document.createElement('strong');
+        heading.textContent = 'Week of ' + row.startISO;
+        details.appendChild(heading);
+        for (const [label, value] of [['Demand', row.demandKg], ['Covered before', row.beforeKg], ['With proposed planting', row.afterKg], ['Added coverage', row.addedKg], ['Remaining shortfall', row.shortKg]]) {
+            const metric = document.createElement('div');
+            metric.textContent = label + ': ' + allocationKg(value);
+            details.appendChild(metric);
+        }
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Close details';
+        close.addEventListener('click', () => closeAllocationWeekDetails(preview, button));
+        details.appendChild(close);
+        positionAllocationPreview(preview);
+    } // CHANGE
+
+    function closeAllocationWeekDetails(preview, button) { // CHANGE
+        preview.details.hidden = true; preview.detailsWeekIndex = null; // CHANGE
+        preview.panel.querySelectorAll('[data-allocation-week]').forEach(node => node.setAttribute('aria-expanded', 'false'));
+        if (button) button.focus();
+        positionAllocationPreview(preview);
+    } // CHANGE
+
+    function renderAllocationCoverage(preview, content, plotWidth) { // CHANGE
+        const coverage = preview.input.coveragePreview;
+        const rows = coverage && coverage.rows;
+        const lineDay = preview.axis.starts[preview.input.selectedWeekIndex];
+        const chart = allocationTimelineRow('Coverage (kg)', plotWidth);
+        chart.track.style.height = '80px';
+        content.appendChild(chart.row);
+        if (!Array.isArray(rows) || rows.length !== preview.axis.starts.length) {
+            chart.track.textContent = 'Coverage preview unavailable. Review crop yield and schedule data.';
+            appendTimelineMarker(chart.track, lineDay, preview.axis, 'Selected sow/start week');
+            return;
+        }
+        const maxKg = Math.max(1, ...rows.flatMap(row => [row.demandKg, row.beforeKg, row.afterKg]));
+        chart.label.textContent = 'Coverage (kg)\n' + allocationKg(maxKg) + ' to 0';
+        chart.label.style.whiteSpace = 'pre-line';
+        chart.track.style.display = 'grid';
+        chart.track.style.gridTemplateColumns = 'repeat(' + rows.length + ',minmax(0,1fr))';
+        for (const row of rows) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.allocationWeek = String(row.weekIndex);
+            button.style.cssText = 'position:relative;height:80px;min-width:0;padding:0;border:0;border-left:1px solid #eef0f2;border-bottom:1px solid #9aa0a6;background:transparent;cursor:pointer;';
+            button.title = 'Week of ' + row.startISO + '\nDemand: ' + allocationKg(row.demandKg) + '\nCovered before: ' + allocationKg(row.beforeKg) + '\nWith proposed planting: ' + allocationKg(row.afterKg);
+            button.setAttribute('aria-label', button.title + '\nShow weekly coverage details');
+            button.setAttribute('aria-expanded', 'false');
+            button.setAttribute('aria-controls', preview.details.id);
+            for (const [series, kg, css] of [
+                ['demand', row.demandKg, 'left:0;width:100%;background:#ffd95a;'],
+                ['before', row.beforeKg, 'left:15%;width:70%;background:#62a96b;'],
+                ['after', row.afterKg, 'left:0;width:100%;border:2px dashed #346843;background:transparent;'] // CHANGE: keep the selected-week blue line distinct from projected coverage.
+            ]) {
+                if (kg <= 0) continue;
+                const bar = document.createElement('span');
+                bar.dataset.coverageSeries = series;
+                bar.dataset.valueKg = String(kg);
+                bar.style.cssText = 'position:absolute;bottom:0;box-sizing:border-box;pointer-events:none;' + css;
+                bar.style.height = (kg / maxKg * 100) + '%';
+                button.appendChild(bar);
+            }
+            button.addEventListener('click', event => { consumeEvt(event); showAllocationWeekDetails(preview, row, button); });
+            button.addEventListener('keydown', event => {
+                if (event.key === 'Escape') { consumeEvt(event); closeAllocationWeekDetails(preview); }
+            });
+            chart.track.appendChild(button);
+        }
+        appendTimelineMarker(chart.track, lineDay, preview.axis, 'Selected sow/start week');
+    } // CHANGE
+
+    function renderAllocationAxis(preview, content, plotWidth) { // CHANGE
+        const axis = allocationTimelineRow('Planting occupancy', plotWidth);
+        axis.track.style.height = '24px';
+        const firstDate = new Date(preview.axis.yearSpan.startDay * DAY_MS);
+        for (let month = 0; month < 12; month++) {
+            const date = new Date(Date.UTC(firstDate.getUTCFullYear(), month, 1));
+            const tick = document.createElement('span');
+            tick.textContent = miniRailMonthLabel(date, false);
+            tick.style.cssText = 'position:absolute;font-size:9px;top:5px;';
+            tick.style.left = ((+date / DAY_MS - preview.axis.minDay) / preview.axis.totalDays * 100) + '%';
+            axis.track.appendChild(tick);
+        }
+        appendTimelineMarker(axis.track, preview.axis.starts[preview.input.selectedWeekIndex], preview.axis, 'Selected sow/start week');
+        content.appendChild(axis.row);
+    } // CHANGE
+
+    function renderAllocationOccupancy(preview, content, plotWidth) { // CHANGE
+        const list = document.createElement('div');
+        list.dataset.allocationOccupancy = '1';
+        list.style.cssText = 'max-height:240px;overflow-y:auto;overflow-x:hidden;';
+        list.dataset.allocationOccupancyScroll = '1'; // CHANGE
+        const items = preview.occupancy.items.filter(item => item.proposed).concat(preview.occupancy.items.filter(item => !item.proposed)); // CHANGE: keep the proposal visible above the scrolling saved plantings.
+        let hasUndatedHeading = false; // CHANGE
+        for (const item of items) { // CHANGE
+            if (!item.proposed && !item.trueRange && !hasUndatedHeading) { // CHANGE: undated members have a separate section instead of implying occupancy dates.
+                const heading = document.createElement('div');
+                heading.textContent = 'Undated plantings';
+                heading.style.cssText = 'font-size:10px;font-weight:700;color:#5f6368;padding:5px 0;';
+                list.appendChild(heading);
+                hasUndatedHeading = true;
+            } // CHANGE
+            const row = allocationTimelineRow(item.label, plotWidth);
+            if (item.proposed) row.label.textContent = 'Proposed'; // CHANGE: full crop identity is already in the panel heading and date tooltip.
+            row.row.dataset.allocationOccupancyRow = item.proposed ? 'proposed' : item.cellId;
+            row.row.style.minHeight = '24px';
+            row.track.style.cssText += 'height:24px;border-top:1px solid #e8eaed;';
+            row.row.title = item.trueRange ? item.label + ' · ' + item.trueRange.startISO + ' to ' + item.trueRange.endISO : item.label + ' · Undated';
+            const clipped = item.trueRange && clampRangeToSpan(item.trueRange, { minDay: preview.axis.yearSpan.startDay, maxDay: preview.axis.yearSpan.endDay });
+            if (clipped) {
+                const bar = document.createElement('div');
+                bar.dataset.allocationOccupancyBar = item.proposed ? 'proposed' : item.cellId;
+                bar.style.cssText = 'position:absolute;top:3px;height:17px;box-sizing:border-box;border-radius:3px;';
+                bar.style.left = ((clipped.startDay - preview.axis.minDay) / preview.axis.totalDays * 100) + '%';
+                bar.style.width = ((clipped.endDay - clipped.startDay + 1) / preview.axis.totalDays * 100) + '%';
+                bar.style.background = item.proposed ? '#e8f0fe' : item.active ? '#188038' : '#eef0f2';
+                bar.style.border = item.proposed ? '2px dashed #2563eb' : '1px solid #9aa0a6';
+                row.track.appendChild(bar);
+            } else {
+                row.track.textContent = item.trueRange ? 'Outside plan year' : 'Undated';
+                row.track.style.color = '#5f6368';
+            }
+            if (!item.proposed) {
+                const select = document.createElement('button');
+                select.type = 'button';
+                select.textContent = item.label;
+                select.style.cssText = 'border:0;background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer;text-align:left;max-width:100%;';
+                select.addEventListener('click', event => { consumeEvt(event); bringToFrontAndSelect(item.cell); });
+                row.label.textContent = '';
+                row.label.appendChild(select);
+            }
+            appendTimelineMarker(row.track, preview.axis.starts[preview.input.selectedWeekIndex], preview.axis, 'Selected sow/start week');
+            if (item.proposed) content.appendChild(row.row); // CHANGE
+            else list.appendChild(row.row); // CHANGE
+        }
+        content.appendChild(list);
+    } // CHANGE
+
+    /** Repositioning reads only the bed's rendered bounds; it never reruns coverage or clustering. */ // CHANGE
+    function positionAllocationPreview(preview = allocationPreview) { // CHANGE
+        if (!preview) return;
+        const bedState = getState(preview.input.bedCell);
+        if (!bedState) { preview.panel.style.display = 'none'; return; }
+        const host = getHost();
+        if (preview.panel.parentNode !== host) host.appendChild(preview.panel);
+        const width = preview.width;
+        preview.panel.style.display = '';
+        const minLeft = (graph.container.scrollLeft || 0) + 8; // CHANGE
+        const maxLeft = minLeft + Math.max(0, (graph.container.clientWidth || window.innerWidth || MINI_RAIL_MAX_W) - width - 16); // CHANGE
+        preview.panel.style.left = Math.round(clampNumber(bedState.x + bedState.width / 2 - width / 2, minLeft, maxLeft)) + 'px'; // CHANGE: keep the panel reachable near either canvas edge.
+        const height = preview.panel.offsetHeight || 170 + Math.min(240, preview.occupancy.items.length * 24) + (preview.details.hidden ? 0 : 125);
+        preview.panel.style.top = Math.round(bedState.y - height - MINI_RAIL_GAP) + 'px';
+    } // CHANGE
+
+    /** Owner-scoped presentation contract. Coverage and occupancy share one scroll container and fixed track width. */ // CHANGE
+    function showAllocationPreview(input) { // CHANGE
+        if (!input || !input.ownerId || !input.bedCell) return null;
+        const previous = allocationPreview && allocationPreview.input.ownerId === input.ownerId ? allocationPreview : null; // CHANGE
+        if (allocationPreview && !previous) allocationPreview.panel.remove(); // CHANGE
+        const panel = previous ? previous.panel : document.createElement('div'); // CHANGE: keep the owner panel mounted while updating timelines.
+        panel.dataset.allocationPreview = input.ownerId;
+        styleMiniRail(panel);
+        panel.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL_TOP);
+        const viewportWidth = graph.container.clientWidth || window.innerWidth || MINI_RAIL_MAX_W;
+        const width = Math.max(160, Math.min(MINI_RAIL_MAX_W, viewportWidth - 24));
+        panel.style.width = width + 'px';
+        const occupancy = getProposalClusterOccupancy(input); // CHANGE
+        const signature = JSON.stringify({ width, year: input.year, crop: input.cropLabel, weeks: input.weekStarts, selected: input.selectedWeekIndex, coverage: input.coveragePreview, occupancy: occupancy.items.map(item => ({ cellId: item.cellId, label: item.label, proposed: item.proposed, active: item.active, trueRange: item.trueRange })) }); // CHANGE: render data contains no graph cells.
+        if (previous && previous.signature === signature) { previous.input = input; positionAllocationPreview(previous); return panel; } // CHANGE
+        const oldScroll = previous && panel.querySelector('[data-allocation-timeline-scroll]'); // CHANGE
+        const scrollLeft = oldScroll ? oldScroll.scrollLeft : 0; // CHANGE
+        const oldRows = previous && panel.querySelector('[data-allocation-occupancy-scroll]'); // CHANGE
+        const scrollTop = oldRows ? oldRows.scrollTop : 0; // CHANGE
+        const active = document.activeElement; // CHANGE
+        const focusedWeek = previous && active && active.dataset ? active.dataset.allocationWeek : null; // CHANGE
+        const inspectedWeek = previous && !previous.details.hidden ? previous.detailsWeekIndex : null; // CHANGE
+        panel.innerHTML = ''; // CHANGE: replace only changed content, without exposing regular occupancy between renders.
+        const details = document.createElement('div');
+        details.id = 'allocation-week-details-' + input.ownerId;
+        details.hidden = true;
+        details.setAttribute('role', 'region');
+        details.setAttribute('aria-live', 'polite');
+        details.style.cssText = 'padding-top:8px;line-height:17px;';
+        const preview = { input, panel, details, width, axis: allocationDateAxis(input.weekStarts, input.year), occupancy, signature }; // CHANGE
+        allocationPreview = preview;
+        const title = document.createElement('strong');
+        title.textContent = (input.cropLabel || 'Crop') + ' · Coverage and occupancy · ' + input.year;
+        panel.appendChild(title);
+        const legend = document.createElement('div');
+        legend.textContent = 'Demand (yellow) · Covered before (green) · With proposed planting (dashed outline)';
+        legend.style.cssText = 'font-size:10px;margin:5px 0;';
+        panel.appendChild(legend);
+        const markerLabel = document.createElement('div');
+        markerLabel.textContent = 'Blue line: selected sow/start week';
+        markerLabel.style.cssText = 'color:#174ea6;font-size:10px;margin-bottom:4px;';
+        panel.appendChild(markerLabel);
+        if (preview.axis) {
+            const scroll = document.createElement('div');
+            scroll.dataset.allocationTimelineScroll = '1';
+            scroll.style.cssText = 'overflow-x:auto;';
+            const content = document.createElement('div');
+            const plotWidth = Math.max(input.weekStarts.length * 9, width - 154); // CHANGE: fit desktop widths without a redundant scrollbar; narrow views scroll both timelines together.
+            content.style.width = (120 + plotWidth + 16) + 'px'; // CHANGE: reserve scrollbar room without shrinking occupancy tracks.
+            renderAllocationCoverage(preview, content, plotWidth);
+            renderAllocationAxis(preview, content, plotWidth);
+            renderAllocationOccupancy(preview, content, plotWidth);
+            scroll.appendChild(content);
+            panel.appendChild(scroll);
+        } else {
+            const message = document.createElement('div');
+            message.textContent = 'Timeline unavailable: plan week dates are missing or invalid.';
+            panel.appendChild(message);
+        }
+        panel.appendChild(details);
+        if (!previous) panel.addEventListener('pointerdown', event => event.stopPropagation()); // CHANGE
+        if (!previous) panel.addEventListener('mousedown', event => event.stopPropagation()); // CHANGE
+        if (!previous) panel.addEventListener('keydown', event => { // CHANGE
+            if (event.key === 'Escape' && allocationPreview) { consumeEvt(event); closeAllocationWeekDetails(allocationPreview); } // CHANGE
+        });
+        if (!previous) getHost().appendChild(panel); // CHANGE
+        const nextScroll = panel.querySelector('[data-allocation-timeline-scroll]'); if (nextScroll) nextScroll.scrollLeft = scrollLeft; // CHANGE
+        const nextRows = panel.querySelector('[data-allocation-occupancy-scroll]'); if (nextRows) nextRows.scrollTop = scrollTop; // CHANGE
+        if (inspectedWeek != null) { // CHANGE
+            const row = input.coveragePreview && input.coveragePreview.rows && input.coveragePreview.rows.find(item => item.weekIndex === inspectedWeek); // CHANGE
+            const button = panel.querySelector('[data-allocation-week="' + inspectedWeek + '"]'); // CHANGE
+            if (row && button) showAllocationWeekDetails(preview, row, button); // CHANGE
+        } // CHANGE
+        if (focusedWeek != null) { const button = panel.querySelector('[data-allocation-week="' + focusedWeek + '"]'); if (button) button.focus(); } // CHANGE
+        for (const st of clusterStates.values()) if (st.miniRail) st.miniRail.style.display = 'none';
+        positionAllocationPreview(preview);
+        return panel;
+    } // CHANGE
+
+    /** A stale allocation session cannot clear a newer owner's preview. */ // CHANGE
+    function clearAllocationPreview(ownerId) { // CHANGE
+        if (!allocationPreview || allocationPreview.input.ownerId !== ownerId) return;
+        allocationPreview.panel.remove();
+        allocationPreview = null;
+        rafDebounce(refreshAllForSelectionOrAnchor);
+    } // CHANGE
+
     function renderMiniRailFor(key) {
         const host = getHost();
         const st = clusterStates.get(key); if (!st) return;
+        if (allocationPreview) { hideMiniRailFor(key); return; } // CHANGE: the allocation panel replaces duplicate regular occupancy rails.
         if (!st.miniRail) {
             const rail = document.createElement('div');
             rail.dataset.occupancyNavigator = '1'; // CHANGE: Occupancy now lives above the cluster instead of inside the selected overlay.
@@ -1875,6 +2199,7 @@ Draw.loadPlugin(function (ui) {
         const rail = st.miniRail;
         const items = miniRailItemsForState(st);
         const span = miniRailSpan(items);
+        const today = currentLocalDayNumber(); // CHANGE
         const axisModel = miniRailAxisModel(items);
         rail.innerHTML = '';
         const title = document.createElement('div');
@@ -1896,6 +2221,7 @@ Draw.loadPlugin(function (ui) {
         axisLabel.style.color = '#5f6368';
         axis.appendChild(axisLabel);
         const ticks = document.createElement('div');
+        ticks.style.position = 'relative'; // CHANGE
         ticks.style.display = 'grid';
         ticks.style.gridTemplateColumns = axisModel.mode === 'monthly' ? 'repeat(' + axisModel.labels.length + ', 1fr)' : (axisModel.mode === 'endpoints' ? '1fr 1fr' : '1fr');
         axisModel.labels.forEach((label, index) => {
@@ -1905,6 +2231,7 @@ Draw.loadPlugin(function (ui) {
             ticks.appendChild(tick);
         });
         axis.appendChild(ticks);
+        appendTimelineMarker(ticks, today, span, 'Today'); // CHANGE
         rail.appendChild(axis);
         items.forEach(item => {
             const row = document.createElement('div');
@@ -1939,10 +2266,15 @@ Draw.loadPlugin(function (ui) {
             track.style.height = '20px';
             track.style.borderTop = '1px solid rgba(218,220,224,0.7)';
             track.appendChild(makeMiniRailBar(key, item, span));
+            appendTimelineMarker(track, today, span, 'Today'); // CHANGE: draw above bars so today's marker stays visible.
             row.appendChild(track);
             rail.appendChild(row);
         });
-        st.miniRailHeight = 33 + items.length * 24 + 12; // CHANGE: estimate full occupancy panel height for stable above-cluster placement.
+        const todayNote = document.createElement('div'); // CHANGE
+        todayNote.textContent = span && today >= span.minDay && today <= span.maxDay ? 'Blue line: Today' : 'Today outside displayed range'; // CHANGE
+        todayNote.style.cssText = 'color:#174ea6;font-size:10px;margin-top:3px;'; // CHANGE
+        rail.appendChild(todayNote); // CHANGE
+        st.miniRailHeight = 49 + items.length * 24 + 12; // CHANGE: reserve room for the today marker caption.
         rail.style.display = '';
     }
 
@@ -2375,6 +2707,7 @@ Draw.loadPlugin(function (ui) {
 
 
     function repositionAllUI() {
+        positionAllocationPreview(); // CHANGE
         for (const [key, st] of clusterStates.entries()) {
             // Only reposition visible UI (selected cluster only)                      
             const hasVisibleUI =
@@ -2445,11 +2778,17 @@ Draw.loadPlugin(function (ui) {
     });
 
     graph.__trellisBedSuccessionNavigator = Object.assign({}, graph.__trellisBedSuccessionNavigator, {
+        getProposalClusterOccupancy, // CHANGE
+        showAllocationPreview, // CHANGE
+        clearAllocationPreview, // CHANGE
         getSelectedClusterOccupancy: selectedClusterOccupancyFor,
         getSelectedBedOccupancy: selectedBedOccupancyFor, // CHANGE: bed/layout/capacity callers need center-in-bed occupancy separate from spatial cluster context.
         getSelectedClusterLayoutContext: selectedClusterLayoutContextFor, // CHANGE: selected overlays need cluster bounds and active rows without measuring Occupancy DOM.
         resolveOccupiedBedMoveUnit: resolveOccupiedBedMoveUnit
     });
+
+    graph.container.addEventListener('scroll', () => positionAllocationPreview()); // CHANGE: scrolling only repositions the in-memory panel.
+    window.addEventListener('resize', () => { if (allocationPreview) showAllocationPreview(allocationPreview.input); }); // CHANGE: resize retains calculations while resizing shared plotting tracks.
 
     // Init
     setTimeout(refreshAllForSelectionOrAnchor, 0);

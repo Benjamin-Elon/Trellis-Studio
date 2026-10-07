@@ -22,7 +22,7 @@ const SCHEDULER_CORE_PATHS = [
     'Garden_Scheduler_Perennial_Core.js'
 ].map(fileName => path.join(PLUGIN_DIR, fileName));
 
-function loadSchedulerHooks() {
+function loadSchedulerHooks(options = {}) { // CHANGE: full-dialog integration can supply reference-data fixtures.
     const dom = new JSDOM('<!doctype html><html><body></body></html>');
     const context = vm.createContext({
         console,
@@ -32,9 +32,15 @@ function loadSchedulerHooks() {
         setTimeout,
         clearTimeout,
         document: dom.window.document,
+        Event: dom.window.Event, CustomEvent: dom.window.CustomEvent, // CHANGE
+        mxUtils: { button(label, callback) { const button = dom.window.document.createElement('button'); button.textContent = label; button.addEventListener('click', callback); return button; } }, // CHANGE: exercise the actual scheduler UI.
         window: {
             __TRELLIS_PLANTING_SCHEDULER_TEST__: true,
-            document: dom.window.document
+            document: dom.window.document,
+            dispatchEvent: dom.window.dispatchEvent.bind(dom.window), // CHANGE: reusable stage saves notify active planners.
+            addEventListener: dom.window.addEventListener.bind(dom.window), removeEventListener: dom.window.removeEventListener.bind(dom.window), // CHANGE
+            getComputedStyle: dom.window.getComputedStyle.bind(dom.window), localStorage: { getItem: () => null, setItem() {} }, // CHANGE
+            dbBridge: options.dbBridge || { resolvePath: async () => ({ dbPath: 'scheduler-test' }), open: async () => ({ dbId: 'scheduler-test' }), query: async () => ({ rows: [] }), exec: async () => ({}), close: async () => ({}) } // CHANGE: default tests have no stored templates.
         },
         Draw: {
             loadPlugin(register) {

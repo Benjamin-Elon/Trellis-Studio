@@ -47,6 +47,8 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
         pending.append("add variety maturity class column")
     if "PlantGrowthStages" not in tables:
         pending.append("create PlantGrowthStages")
+    elif "yield_ratio" not in table_columns(conn, "PlantGrowthStages"):  # CHANGE
+        pending.append("add growth stage yield ratio column")  # CHANGE
     if city_has_unique_name_constraint(conn):
         pending.append("replace city name unique constraint with geography identity")
     if "CityWeatherMonthly" not in tables:
@@ -127,6 +129,7 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
                 stage_key TEXT NOT NULL,
                 stage_label TEXT NOT NULL,
                 gdd_ratio REAL NOT NULL,
+                yield_ratio REAL NOT NULL DEFAULT 1, -- CHANGE: match the scheduler's additive stage-yield contract.
                 spacing_ratio REAL,
                 plant_diameter_ratio REAL,
                 plant_height_ratio REAL,
@@ -141,6 +144,9 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
             """
         )
         applied.append("created PlantGrowthStages")
+    elif "yield_ratio" not in table_columns(conn, "PlantGrowthStages"):  # CHANGE
+        conn.execute("ALTER TABLE PlantGrowthStages ADD COLUMN yield_ratio REAL NOT NULL DEFAULT 1;")  # CHANGE
+        applied.append("added PlantGrowthStages.yield_ratio")  # CHANGE
     if "Companions" in tables:
         companion_columns = set(table_columns(conn, "Companions"))
         for column, column_type in (("source_plant_id", "INTEGER"), ("companion_plant_id", "INTEGER"), ("start_offset_days", "INTEGER"), ("layout_template", "TEXT"), ("layout_spacing_x_cm", "REAL"), ("layout_spacing_y_cm", "REAL"), ("layout_offset_x_cm", "REAL"), ("layout_offset_y_cm", "REAL")):
