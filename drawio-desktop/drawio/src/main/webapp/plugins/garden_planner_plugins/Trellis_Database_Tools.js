@@ -144,7 +144,9 @@
         const cancel = createButton("Cancel", function () { closeDialog(ui); }, "neutral");
         const restore = createButton("Restore built-in database", function () {
             restore.disabled = true;
+            restore.title = "The built-in database is being restored."; // CHANGE
             cancel.disabled = true;
+            cancel.title = "Wait for the database restore to finish."; // CHANGE
             restore.textContent = "Restoring...";
             if (!window.trellisApp || typeof window.trellisApp.restoreBuiltInDatabase !== "function") {
                 renderError(root, new Error("Trellis database restore bridge is not available."));
@@ -158,6 +160,7 @@
             });
         }, "danger");
         actions.appendChild(cancel);
+        restore.title = "Replace the local Trellis database with the built-in database after backing up the current database."; // CHANGE
         actions.appendChild(restore);
         root.appendChild(actions);
         return root;

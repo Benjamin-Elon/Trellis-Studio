@@ -1431,7 +1431,7 @@ Draw.loadPlugin(function (ui) {
 
         if (!st.btnPrev) {
             st.btnPrev = document.createElement('img');
-            st.btnPrev.src = ICON_PREV; styleBtn(st.btnPrev); st.btnPrev.title = 'Previous';
+            st.btnPrev.src = ICON_PREV; styleBtn(st.btnPrev); st.btnPrev.title = 'Select the previous planting in this succession.'; st.btnPrev.alt = 'Previous planting'; // CHANGE
             st.btnPrev.draggable = false;
 
             st.btnPrev.addEventListener('pointerdown', consumeEvt, { passive: false });
@@ -1448,7 +1448,7 @@ Draw.loadPlugin(function (ui) {
 
         if (!st.btnNext) {
             st.btnNext = document.createElement('img');
-            st.btnNext.src = ICON_NEXT; styleBtn(st.btnNext); st.btnNext.title = 'Next';
+            st.btnNext.src = ICON_NEXT; styleBtn(st.btnNext); st.btnNext.title = 'Select the next planting in this succession.'; st.btnNext.alt = 'Next planting'; // CHANGE
             st.btnNext.draggable = false;
 
             st.btnNext.addEventListener('pointerdown', consumeEvt, { passive: false });
@@ -2068,6 +2068,7 @@ Draw.loadPlugin(function (ui) {
                 const select = document.createElement('button');
                 select.type = 'button';
                 select.textContent = item.label;
+                select.title = 'Select this existing planting on the canvas: ' + item.label; // CHANGE
                 select.style.cssText = 'border:0;background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer;text-align:left;max-width:100%;';
                 select.addEventListener('click', event => { consumeEvt(event); bringToFrontAndSelect(item.cell); });
                 row.label.textContent = '';

@@ -3413,6 +3413,7 @@ Draw.loadPlugin(function (ui) {
             const hasParts = currentParts.length > 0; // NEW
             label.textContent = selected ? (selected.name || selected.id) : (hasParts ? (config.placeholder || "Choose part") : (config.emptyText || "No compatible parts")); // NEW
             trigger.disabled = !!select.disabled || !hasParts; // NEW
+            trigger.title = !hasParts ? "No compatible parts are available for this choice." : select.disabled ? (select.title || "This part choice is currently unavailable.") : "Choose a compatible irrigation part."; // CHANGE
             root.classList.toggle("trellis-irrigation-part-picker-disabled", trigger.disabled); // NEW
             trigger.style.opacity = trigger.disabled ? "0.6" : "1"; // NEW
             trigger.style.cursor = trigger.disabled ? "default" : "pointer"; // NEW
@@ -3467,6 +3468,7 @@ Draw.loadPlugin(function (ui) {
         } // NEW
         function renderClearPartOption(groupNode) { // NEW
             const option = document.createElement("button"); // NEW
+            option.title = "Clear the current part choice."; // CHANGE: explicit action tooltip.
             option.type = "button"; // NEW
             option.className = "trellis-irrigation-part-picker-option trellis-irrigation-connection-combobox-option"; // NEW
             option.setAttribute("role", "option"); // NEW
@@ -3491,6 +3493,7 @@ Draw.loadPlugin(function (ui) {
         function renderPartOption(groupNode, part, indentPx) { // NEW
             state.renderedPartsForList += 1; // NEW
             const option = document.createElement("button"); // NEW
+            option.title = "Select part: " + (part.name || part.id); // CHANGE: explicit action tooltip.
             option.type = "button"; // NEW
             option.className = "trellis-irrigation-part-picker-option trellis-irrigation-connection-combobox-option"; // NEW
             option.setAttribute("role", "option"); // NEW
@@ -3611,6 +3614,7 @@ Draw.loadPlugin(function (ui) {
 
     function partPickerGroupButton(className, key, collapsed, label, count, paddingLeft, background, color) { // NEW
         const buttonNode = document.createElement("button"); // NEW
+        buttonNode.title = (collapsed ? "Expand " : "Collapse ") + label + " parts."; // CHANGE: explicit action tooltip.
         buttonNode.type = "button"; // NEW
         buttonNode.className = className; // NEW
         buttonNode.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;padding:5px 7px 5px " + paddingLeft + ";border:0;border-top:1px solid #e5e7eb;background:" + background + ";color:" + color + ";font-weight:700;text-align:left;box-sizing:border-box;cursor:pointer;"; // NEW
@@ -5607,7 +5611,7 @@ Draw.loadPlugin(function (ui) {
             const label = document.createElement("span");
             label.textContent = "Showing BOM for " + selectedScopePartIds.length + " selected catalog part" + (selectedScopePartIds.length === 1 ? "" : "s") + ".";
             selectedScopeNotice.appendChild(label);
-            selectedScopeNotice.appendChild(button("Show All", function () { state.selectedScopeActive = false; state.selectedPartIds = []; renderBomDialog(container, moduleCell, state); }));
+            selectedScopeNotice.appendChild(button("Show All", function () { state.selectedScopeActive = false; state.selectedPartIds = []; renderBomDialog(container, moduleCell, state); }, null, "Show the bill of materials for the whole garden instead of the selected items.")); // CHANGE: explicit action tooltip.
             container.appendChild(selectedScopeNotice);
         }
 
@@ -5672,7 +5676,7 @@ Draw.loadPlugin(function (ui) {
         const controls = document.createElement("div");
         controls.className = "trellis-irrigation-bom-controls"; // CHANGE: anchor in-place result replacement ahead of footer controls
         controls.style.cssText = "display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;justify-content:flex-end;";
-        controls.appendChild(button("Export CSV", function () { downloadBomCsv(moduleCell, buildBomDialogViewData(moduleCell, state).visibleRows, state); })); // CHANGE: export current in-place search results
+        controls.appendChild(button("Export CSV", function () { downloadBomCsv(moduleCell, buildBomDialogViewData(moduleCell, state).visibleRows, state); }, null, "Export the currently filtered bill of materials as CSV.")); // CHANGE: export current in-place search results
         controls.appendChild(button("Close", function () { closeBomDialog(state); }));
         container.appendChild(controls);
     }
@@ -5771,8 +5775,8 @@ Draw.loadPlugin(function (ui) {
         tr.className = "trellis-irrigation-bom-row";
         const onHand = bomCellInput(draft.stockQuantity);
         const unitCost = bomCellInput(draft.unitCost);
-        const save = button("Save", function () { saveBomRowDraft(container, moduleCell, state, row, onHand.value, unitCost.value); });
-        const undo = button("Undo", function () { delete state.rowDrafts[row.partId]; renderBomDialog(container, moduleCell, state); });
+        const save = button("Save", function () { saveBomRowDraft(container, moduleCell, state, row, onHand.value, unitCost.value); }, null, "Save this part's stock quantity and unit cost."); // CHANGE: explicit action tooltip.
+        const undo = button("Undo", function () { delete state.rowDrafts[row.partId]; renderBomDialog(container, moduleCell, state); }, null, "Discard unsaved stock and unit-cost edits for this part."); // CHANGE: explicit action tooltip.
         const dirty = !!state.rowDrafts[row.partId];
         save.style.display = dirty ? "" : "none";
         undo.style.display = dirty ? "" : "none";
@@ -6280,7 +6284,7 @@ Draw.loadPlugin(function (ui) {
             const label = document.createElement("span");
             label.textContent = "Showing " + selectedScopePartIds.length + " selected catalogue part" + (selectedScopePartIds.length === 1 ? "" : "s") + ".";
             selectedScopeNotice.appendChild(label);
-            const showAllBtn = button("Show All", function () { state.selectedScopeActive = false; state.selectedPartIds = []; renderCatalogManager(container, moduleCell, state); });
+            const showAllBtn = button("Show All", function () { state.selectedScopeActive = false; state.selectedPartIds = []; renderCatalogManager(container, moduleCell, state); }, null, "Show the whole irrigation catalog instead of only selected parts."); // CHANGE: explicit action tooltip.
             showAllBtn.className = "trellis-irrigation-catalog-show-all";
             selectedScopeNotice.appendChild(showAllBtn);
             container.appendChild(selectedScopeNotice);
@@ -6392,7 +6396,7 @@ Draw.loadPlugin(function (ui) {
             state.selectedPartIds = [];
             state.selectedId = next.id;
             renderCatalogManager(container, moduleCell, state);
-        });
+        }, null, "Create a new part in this garden's irrigation catalog."); // CHANGE: explicit action tooltip.
         addBtn.className = "trellis-irrigation-add-part";
         tableWrap.appendChild(addBtn);
         layout.appendChild(tableWrap);
@@ -6426,13 +6430,13 @@ Draw.loadPlugin(function (ui) {
             delete state.partDrafts[next.id];
             state.selectedId = next.id;
             renderCatalogManager(container, moduleCell, state);
-        }));
+        }, null, "Save this part definition to the garden's irrigation catalog.")); // CHANGE: explicit action tooltip.
         controls.appendChild(button("Delete Part", function () {
             deleteCatalogPart(moduleCell, selected.id);
             delete state.partDrafts[selected.id];
             state.selectedId = "";
             renderCatalogManager(container, moduleCell, state);
-        }));
+        }, null, "Delete this part definition from the garden's irrigation catalog.")); // CHANGE: explicit action tooltip.
         controls.appendChild(button("Close", hideDialog));
         form.node.appendChild(controls);
         return form.node; // NEW
@@ -7951,10 +7955,10 @@ Draw.loadPlugin(function (ui) {
         appendIrrigationHudHeader(hud, session, creationHudTitle(session), { bomPartIds: [], syncBeforeBom: true }); // CHANGE
         appendHudStatus(hud, session);
         const actions = hudActions();
-        const createSource = button("Create Source", function () { activateCreationMode(session, "source"); }); // CHANGE
+        const createSource = button("Create Source", function () { activateCreationMode(session, "source"); }, null, "Choose a canvas location, then configure and commit a new water source."); // CHANGE
         styleCreationModeButton(createSource, session.creationMode === "source"); // NEW
         actions.appendChild(createSource); // CHANGE
-        const addPart = button("Add Part", function () { activateCreationMode(session, "part"); }); // CHANGE
+        const addPart = button("Add Part", function () { activateCreationMode(session, "part"); }, null, "Choose a canvas location or connection, then add a catalog part."); // CHANGE
         styleCreationModeButton(addPart, session.creationMode === "part"); // NEW
         actions.appendChild(addPart); // CHANGE
         appendHudActionSection(hud, "Connections", actions);
@@ -8065,6 +8069,7 @@ Draw.loadPlugin(function (ui) {
             row.className += " trellis-irrigation-analysis-issue"; // NEW
             row.style.cssText += "justify-content:flex-start;text-align:left;width:100%;border-color:" + analysisIssueColor(issue) + ";color:" + analysisIssueColor(issue) + ";background:#fff;"; // NEW
             row.disabled = !issue.cellId; // NEW
+            row.title = row.disabled ? "This issue has no linked canvas item to select." : "Select the irrigation item associated with this issue."; // CHANGE
             section.appendChild(row); // NEW
         }); // NEW
         if (issues.length > 8) section.appendChild(hudText((issues.length - 8) + " more issues on this zone.")); // NEW
@@ -8164,7 +8169,7 @@ Draw.loadPlugin(function (ui) {
             const created = runIrrigationEdit("createBedAssembly", function () { const result = createBedAssembly(session.moduleCell, bedCell, defaultAssemblyAnchor(session)); scheduleHudGraphStateSync(session.moduleCell); return result; });
             selectCell(created.assembly, false);
             renderIrrigationMode(session);
-        }));
+        }, null, "Create the irrigation assembly for the selected garden bed.")); // CHANGE: explicit action tooltip.
         appendHudActionSection(hud, "Connections", actions);
     }
 
@@ -8181,10 +8186,10 @@ Draw.loadPlugin(function (ui) {
         appendPipeEdgeStyleControls(session, hud, context);
         appendPipeEdgeTakeoffControls(session, hud, context); // NEW
         const connectionActions = hudActions();
-        connectionActions.appendChild(button("Select Upstream", function () { selectConnectionEndpoint(session, context.sourceCell); }));
-        connectionActions.appendChild(button("Select Downstream", function () { selectConnectionEndpoint(session, context.targetCell); }));
+        connectionActions.appendChild(button("Select Upstream", function () { selectConnectionEndpoint(session, context.sourceCell); }, null, "Select the upstream endpoint of this irrigation connection.")); // CHANGE: explicit action tooltip.
+        connectionActions.appendChild(button("Select Downstream", function () { selectConnectionEndpoint(session, context.targetCell); }, null, "Select the downstream endpoint of this irrigation connection.")); // CHANGE: explicit action tooltip.
         appendHudActionSection(hud, "Connections", connectionActions);
-        appendHudDangerAction(hud, "Disconnect", function () { disconnectSelectedConnections(session, [context.boundary]); });
+        appendHudDangerAction(hud, "Disconnect", function () { disconnectSelectedConnections(session, [context.boundary]); }, "Disconnect the selected irrigation connection."); // CHANGE
     }
 
     function resolveSelectedFreePortOnlyContext(session) {
@@ -8348,7 +8353,7 @@ Draw.loadPlugin(function (ui) {
             const styleButton = button(label, function () {
                 runIrrigationEdit("pipeEdgeStyle", function () { setPipeEdgeStyleMode(context.edge, session.moduleCell, mode); });
                 renderIrrigationMode(session);
-            });
+            }, null, 'Set the selected pipe connection to ' + label.toLowerCase() + '.'); // CHANGE: explicit action tooltip.
             stylePipeEdgeStyleButton(styleButton, activeMode === mode);
             styleButton.setAttribute("aria-pressed", activeMode === mode ? "true" : "false");
             actions.appendChild(styleButton);
@@ -8365,7 +8370,7 @@ Draw.loadPlugin(function (ui) {
             if (result && result.cell) { scheduleHudGraphStateSync(session.moduleCell); selectCell(result.cell, false); } // NEW
             session.message = result && result.message || ""; // NEW
             renderIrrigationMode(session); // NEW
-        })); // NEW
+        }, null, "Add a 1/4-inch barb takeoff to the selected pipe connection.")); // NEW // CHANGE: explicit action tooltip.
         appendHudActionSection(hud, "Takeoff", actions); // NEW
     } // NEW
 
@@ -8472,7 +8477,7 @@ Draw.loadPlugin(function (ui) {
         const connectionDanger = renderSelectedConnectionActions(session, hud);
         const selectedParts = selectedAssemblyPartCells(selected);
         const selectedAssemblies = selected.filter(isAssembly);
-        if (!appendLocalDeleteAction(session, hud, selected, selectedParts, selectedAssemblies) && connectionDanger) appendHudDangerAction(hud, connectionDanger.label, connectionDanger.fn);
+        if (!appendLocalDeleteAction(session, hud, selected, selectedParts, selectedAssemblies) && connectionDanger) appendHudDangerAction(hud, connectionDanger.label, connectionDanger.fn, "Disconnect the selected irrigation connections."); // CHANGE
     }
 
     function renderSourceForm(session, hud) {
@@ -8502,7 +8507,7 @@ Draw.loadPlugin(function (ui) {
             clearCreationMode(session); // CHANGE
             selectCell(created.assembly, false);
             renderIrrigationMode(session);
-        });
+        }, null, "Create the configured water source at the chosen canvas location."); // CHANGE: explicit action tooltip.
         commit.className = "trellis-irrigation-commit-source";
         form.appendChild(commit);
         hud.appendChild(form);
@@ -8529,7 +8534,7 @@ Draw.loadPlugin(function (ui) {
             selectCell(created.assembly, false);
             if (result && result.message) session.message = result.message;
             renderIrrigationMode(session);
-        }));
+        }, null, "Add the chosen catalog part at the selected location or connection.")); // CHANGE: explicit action tooltip.
         hud.appendChild(form);
     }
 
@@ -8567,7 +8572,7 @@ Draw.loadPlugin(function (ui) {
             const ordered = orderedConnectionPorts(free);
             if (ordered) {
                 const bridge = ConnectorRules.bridgeSuggestionEligibility(session.moduleCell, ordered.source, ordered.target);
-                if (bridge.ok) actions.appendChild(button("Suggest Connection", function () { session.bridgePorts = ordered; renderIrrigationMode(session); }));
+                if (bridge.ok) actions.appendChild(button("Suggest Connection", function () { session.bridgePorts = ordered; renderIrrigationMode(session); }, null, "Find compatible parts to connect the two selected ports.")); // CHANGE: explicit action tooltip.
             }
         }
         appendHudActionSection(hud, "Connections", actions);
@@ -8655,6 +8660,7 @@ Draw.loadPlugin(function (ui) {
         trigger.setAttribute("aria-haspopup", "listbox");
         trigger.setAttribute("aria-expanded", "false");
         trigger.disabled = !hasParts;
+        trigger.title = hasParts ? "Choose a compatible part for this irrigation connection." : "No compatible parts are available for this connection."; // CHANGE
         const chevron = document.createElement("span");
         chevron.textContent = "v";
         chevron.setAttribute("aria-hidden", "true");
@@ -8717,6 +8723,7 @@ Draw.loadPlugin(function (ui) {
         function renderPartOption(groupNode, part, indentPx) { // NEW
             state.renderedPartsForList = (state.renderedPartsForList || 0) + 1; // CHANGE
             const option = document.createElement("button"); // NEW
+            option.title = "Select part: " + (part.name || part.id); // CHANGE: explicit action tooltip.
             option.type = "button"; // NEW
             option.className = "trellis-irrigation-connection-combobox-option"; // NEW
             option.setAttribute("role", "option"); // NEW
@@ -8736,6 +8743,7 @@ Draw.loadPlugin(function (ui) {
             const subgroupKey = connectionComboboxCategoryKey(groupId, "fitting:" + subgroup.id); // NEW
             const subgroupCollapsed = query ? false : connectionComboboxCategoryCollapsed(subgroupKey, subgroupIndex !== 0); // NEW
             const subgroupButton = document.createElement("button"); // NEW
+            subgroupButton.title = (subgroupCollapsed ? "Expand " : "Collapse ") + subgroup.label + " parts."; // CHANGE: explicit action tooltip.
             subgroupButton.type = "button"; // NEW
             subgroupButton.className = "trellis-irrigation-connection-combobox-fitting-subgroup"; // NEW
             subgroupButton.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;padding:4px 7px 4px 18px;border:0;border-top:1px solid #eef2f7;background:#fff;color:#4b5563;font-weight:700;text-align:left;box-sizing:border-box;cursor:pointer;"; // NEW
@@ -8762,6 +8770,7 @@ Draw.loadPlugin(function (ui) {
             const childKey = connectionComboboxCategoryKey(groupId, "fitting:" + subgroup.id + ":" + childGroup.id); // NEW
             const childCollapsed = query ? false : connectionComboboxCategoryCollapsed(childKey, childIndex !== 0); // NEW
             const childButton = document.createElement("button"); // NEW
+            childButton.title = (childCollapsed ? "Expand " : "Collapse ") + childGroup.label + " parts."; // CHANGE: explicit action tooltip.
             childButton.type = "button"; // NEW
             childButton.className = "trellis-irrigation-connection-combobox-fitting-size-pair"; // NEW
             childButton.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;padding:4px 7px 4px 30px;border:0;border-top:1px solid #f3f4f6;background:#fff;color:#6b7280;font-weight:700;text-align:left;box-sizing:border-box;cursor:pointer;"; // NEW
@@ -8799,6 +8808,7 @@ Draw.loadPlugin(function (ui) {
                     const categoryKey = connectionComboboxCategoryKey(group.id, category.category);
                     const collapsed = query ? false : connectionComboboxCategoryCollapsed(categoryKey, categoryIndex !== 0);
                     const categoryButton = document.createElement("button");
+                    categoryButton.title = (collapsed ? "Expand " : "Collapse ") + catalogCategoryLabel(category.category) + " parts."; // CHANGE: explicit action tooltip.
                     categoryButton.type = "button";
                     categoryButton.className = "trellis-irrigation-connection-combobox-category";
                     categoryButton.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;padding:5px 7px;border:0;border-top:1px solid #e5e7eb;background:#f9fafb;color:#374151;font-weight:700;text-align:left;box-sizing:border-box;cursor:pointer;";
@@ -9765,7 +9775,7 @@ Draw.loadPlugin(function (ui) {
         wrap.appendChild(header);
         suggestions.forEach(function (suggestion, index) {
             const label = suggestion.labels.join(" -> ") + " (" + formatMoney(suggestion.purchaseNeededCost) + ")";
-            wrap.appendChild(button((index + 1) + ". " + label, function () { applyBridgeSuggestion(session, orderedPorts.source, orderedPorts.target, suggestion); }));
+            wrap.appendChild(button((index + 1) + ". " + label, function () { applyBridgeSuggestion(session, orderedPorts.source, orderedPorts.target, suggestion); }, null, "Apply this suggested chain of parts between the selected ports.")); // CHANGE: explicit action tooltip.
         });
     }
 
@@ -10220,7 +10230,7 @@ Draw.loadPlugin(function (ui) {
             scheduleHudGraphStateSync(session.moduleCell);
             });
             renderIrrigationMode(session);
-        });
+        }, null, "Save the selected water source's label, connector, flow, and pressure."); // CHANGE: explicit action tooltip.
         styleHudOutlineButton(save, HUD_OUTLINE_GREEN);
         form.appendChild(save);
         hud.appendChild(form);
@@ -11041,14 +11051,14 @@ Draw.loadPlugin(function (ui) {
         });
         wrap.appendChild(select);
         const actions = hudActions();
-        const editZones = button("Edit Zones", function () { openZoneManager(session.moduleCell, session); });
+        const editZones = button("Edit Zones", function () { openZoneManager(session.moduleCell, session); }, null, "Edit zone names and overrides for this garden's irrigation system."); // CHANGE: explicit action tooltip.
         editZones.style.border = "1px solid #2563eb"; editZones.style.background = "#eff6ff"; editZones.style.color = "#1e3a8a";
         actions.appendChild(editZones);
         const resetZone = button("Reset Zone", function () {
             runIrrigationEdit("resetZone", function () { ZoneModel.resetBedOverrides(session.moduleCell, bedIds); HudController.syncGraphState(session.moduleCell); });
             session.message = "Zone overrides reset.";
             renderIrrigationMode(session);
-        });
+        }, null, "Clear zone overrides from the selected bed assemblies."); // CHANGE: explicit action tooltip.
         actions.appendChild(styleHudOutlineButton(resetZone, HUD_OUTLINE_RED));
         wrap.appendChild(actions);
         hud.appendChild(wrap);
@@ -11096,10 +11106,10 @@ Draw.loadPlugin(function (ui) {
             statusTd.style.color = detail.warnings.length ? "#8a4b00" : "#116611";
             const actionsTd = document.createElement("td");
             actionsTd.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;";
-            actionsTd.appendChild(button("Save", function () { runIrrigationEdit("saveZoneAlias", function () { ZoneModel.updateAlias(moduleCell, zone.id, alias.value); HudController.syncGraphState(moduleCell); }); renderZoneManager(container, moduleCell, state, session); if (session) renderIrrigationMode(session); }, "add"));
-            actionsTd.appendChild(button("Reset", function () { runIrrigationEdit("resetZoneOverrides", function () { ZoneModel.resetZoneOverrides(moduleCell, zone.id); HudController.syncGraphState(moduleCell); }); renderZoneManager(container, moduleCell, state, session); if (session) renderIrrigationMode(session); }, "danger"));
+            actionsTd.appendChild(button("Save", function () { runIrrigationEdit("saveZoneAlias", function () { ZoneModel.updateAlias(moduleCell, zone.id, alias.value); HudController.syncGraphState(moduleCell); }); renderZoneManager(container, moduleCell, state, session); if (session) renderIrrigationMode(session); }, "add", "Save this irrigation zone's name.")); // CHANGE: explicit action tooltip.
+            actionsTd.appendChild(button("Reset", function () { runIrrigationEdit("resetZoneOverrides", function () { ZoneModel.resetZoneOverrides(moduleCell, zone.id); HudController.syncGraphState(moduleCell); }); renderZoneManager(container, moduleCell, state, session); if (session) renderIrrigationMode(session); }, "danger", "Clear this zone's overrides and return to default settings.")); // CHANGE: explicit action tooltip.
             detail.memberBedIds.forEach(function (bedId) {
-                actionsTd.appendChild(button("Reset " + bedAssemblyLabel(moduleCell, findCellById(moduleCell, bedId)), function () { runIrrigationEdit("resetBedZoneOverride", function () { ZoneModel.resetBedOverrides(moduleCell, [bedId]); HudController.syncGraphState(moduleCell); }); renderZoneManager(container, moduleCell, state, session); if (session) renderIrrigationMode(session); }, "danger"));
+                actionsTd.appendChild(button("Reset " + bedAssemblyLabel(moduleCell, findCellById(moduleCell, bedId)), function () { runIrrigationEdit("resetBedZoneOverride", function () { ZoneModel.resetBedOverrides(moduleCell, [bedId]); HudController.syncGraphState(moduleCell); }); renderZoneManager(container, moduleCell, state, session); if (session) renderIrrigationMode(session); }, "danger", "Clear zone overrides for this bed assembly.")); // CHANGE: explicit action tooltip.
             });
             [nameTd, originTd, bedsTd, demandTd, statusTd, actionsTd].forEach(function (td) { td.style.border = "1px solid #ccc"; td.style.padding = "4px"; td.style.verticalAlign = "top"; tr.appendChild(td); });
             tbody.appendChild(tr);
@@ -11160,10 +11170,12 @@ Draw.loadPlugin(function (ui) {
                 if (opts.syncBeforeBom) runIrrigationEdit("bomSync", function () { syncHudGraphState(session.moduleCell); });
                 openBomDialog(session.moduleCell, { selectedPartIds: opts.bomPartIds });
             });
+            bom.title = "Open the bill of materials for these irrigation parts."; // CHANGE: explicit action tooltip.
             styleHudOutlineButton(bom, HUD_OUTLINE_BLUE);
             actions.appendChild(bom);
         }
         const catalog = compactHudButton("Catalog", function () { openCatalogManager(session.moduleCell); });
+        catalog.title = "Edit this garden\'s irrigation part catalog."; // CHANGE: explicit action tooltip.
         styleHudOutlineButton(catalog, HUD_OUTLINE_BLUE);
         actions.appendChild(catalog);
         const exit = exitIrrigationButton();
@@ -11189,6 +11201,7 @@ Draw.loadPlugin(function (ui) {
                 if (mode === ANALYSIS_MODE_BUILD) session.analysisZoneId = ""; // NEW
                 renderIrrigationMode(session); // NEW
             }); // NEW
+            btn.title = mode === ANALYSIS_MODE_BUILD ? "Build and connect irrigation assemblies." : "Inspect flow, pressure, coverage, and issues for an irrigation zone."; // CHANGE: explicit action tooltip.
             styleAnalysisModeSegment(btn, session.analysisMode === mode); // NEW
             btn.setAttribute("aria-pressed", session.analysisMode === mode ? "true" : "false"); // NEW
             group.appendChild(btn); // NEW
@@ -11241,7 +11254,9 @@ Draw.loadPlugin(function (ui) {
         group.className = "trellis-irrigation-lifecycle-toggle";
         group.style.cssText = "display:inline-flex;align-items:center;gap:0;border:1px solid #c7c7cc;border-radius:4px;overflow:hidden;box-sizing:border-box;";
         const planned = compactHudButton("Planned", function () { markIrrigationSelectionState(session, selected, PART_STATE_PLANNED); });
+        planned.title = "Mark the selected irrigation items as planned."; // CHANGE: explicit action tooltip.
         const completed = compactHudButton("Completed", function () { markIrrigationSelectionState(session, selected, PART_STATE_COMPLETED); });
+        completed.title = "Mark the selected irrigation items as completed."; // CHANGE: explicit action tooltip.
         styleLifecycleSegment(planned, plannedOnly);
         styleLifecycleSegment(completed, completedOnly);
         planned.setAttribute("aria-pressed", plannedOnly ? "true" : "false");
@@ -11303,11 +11318,11 @@ Draw.loadPlugin(function (ui) {
         return div;
     }
 
-    function appendHudDangerAction(hud, label, fn) {
+    function appendHudDangerAction(hud, label, fn, tooltip) { // CHANGE: destructive help distinguishes removal from disconnection.
         const wrap = document.createElement("div");
         wrap.className = "trellis-irrigation-danger-actions";
         wrap.style.cssText = "display:flex;justify-content:flex-end;gap:6px;border-top:1px solid #f1d5d5;padding-top:6px;margin-top:6px;min-width:0;max-width:100%;box-sizing:border-box;";
-        const danger = button(label, fn, "danger"); // CHANGE
+        const danger = button(label, fn, "danger", tooltip); // CHANGE
         danger.className = (danger.className || "") + " trellis-irrigation-danger-button";
         danger.style.padding = "4px 7px";
         danger.style.border = "1px solid #b91c1c";
@@ -11328,7 +11343,7 @@ Draw.loadPlugin(function (ui) {
         const mixed = parts.length > 0 && assemblies.length > 0;
         const label = mixed || parts.length + assemblies.length > 1 ? "Delete Selection" : (parts.length ? "Delete Part" : "Delete Assembly");
         const targets = mixed ? selected : (parts.length ? parts : assemblies);
-        appendHudDangerAction(hud, label, function () { deleteAssemblySelection(session, targets); });
+        appendHudDangerAction(hud, label, function () { deleteAssemblySelection(session, targets); }, "Delete the selected irrigation parts or assemblies and their connections."); // CHANGE
         return true;
     }
 
@@ -11770,7 +11785,9 @@ Draw.loadPlugin(function (ui) {
             nav.type = "button";
             nav.className = "trellis-irrigation-nav-" + spec[0];
             nav.textContent = spec[4];
-            nav.title = spec[0];
+            const navigationLabel = spec[0] === "parent" ? "Select upstream irrigation item" : spec[0] === "child" ? "Select downstream irrigation item" : spec[0] === "prev" ? "Select previous irrigation item" : "Select next irrigation item"; // CHANGE
+            nav.title = navigationLabel + ": " + irrigationCellLabel(spec[1]); // CHANGE
+            nav.setAttribute("aria-label", navigationLabel); // CHANGE
             nav.style.cssText = "position:absolute;z-index:1004;width:22px;height:22px;padding:0;border:1px solid #777;border-radius:4px;background:#fff;cursor:pointer;font:12px Arial,sans-serif;";
             positionNavigatorButton(nav, activeCell, spec[2], spec[3]);
             nav.addEventListener("click", function () { selectCell(spec[1], true); renderIrrigationMode(session); });
@@ -12612,7 +12629,7 @@ Draw.loadPlugin(function (ui) {
         const btn = button("Enter Irrigation Design Mode", function (evt) {
             if (evt && evt.stopPropagation) evt.stopPropagation();
             openIrrigationMode(moduleCell, { selectCell: selected, preserveViewport: true });
-        });
+        }, null, "Open irrigation design controls for the selected garden module."); // CHANGE: explicit action tooltip.
         btn.className = "trellis-irrigation-enter-mode";
         btn.style.cssText = "position:absolute;z-index:1005;padding:5px 8px;border:1px solid #2563eb;border-radius:4px;background:#eff6ff;color:#1e3a8a;box-shadow:0 2px 8px rgba(0,0,0,.18);font:bold 12px Arial,sans-serif;cursor:pointer;white-space:nowrap;";
         if (typeof mxEvent !== "undefined" && mxEvent.addListener) mxEvent.addListener(btn, "mousedown", function (evt) { mxEvent.consume(evt); });
@@ -12951,9 +12968,10 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
-    function button(label, fn, variant) {
+    function button(label, fn, variant, tooltip) { // CHANGE: action owners supply native help.
         const b = typeof mxUtils !== "undefined" && mxUtils.button ? mxUtils.button(label, fn) : document.createElement("button");
         if (!b.textContent) b.textContent = label;
+        if (tooltip) b.title = tooltip; // CHANGE
         if (!(typeof mxUtils !== "undefined" && mxUtils.button)) b.addEventListener("click", fn);
         applyIrrigationButtonStyle(b, variant || (/^Save\b/.test(String(label || "")) ? "add" : "neutral"));
         b.style.maxWidth = "100%";
@@ -12964,7 +12982,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function exitIrrigationButton() {
-        const b = button("Exit", closeIrrigationMode);
+        const b = button("Exit", closeIrrigationMode, null, "Exit irrigation design mode and return to the garden workspace."); // CHANGE: explicit action tooltip.
         const earlyClose = function (ev) {
             if (ev && ev.stopPropagation) ev.stopPropagation();
             closeIrrigationMode();

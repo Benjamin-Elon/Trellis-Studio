@@ -37,7 +37,9 @@ Draw.loadPlugin(function (ui) {
     }
 
     function tilerButton(label, onClick, variant, options) {
-        return applyTilerButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options);
+        const button = applyTilerButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options); // CHANGE
+        if (options && options.title) button.title = options.title; // CHANGE
+        return button; // CHANGE
     }
 
     const GROUP_LABEL_FONT_PX = 12;
@@ -577,7 +579,7 @@ Draw.loadPlugin(function (ui) {
         root.appendChild(panel);
 
         function selectedCity() { return cityRows.find(city => String(city.city_id) === currentValue) || null; }
-        function updateButton() { button.textContent = selectedCity() ? fullCityLabel(selectedCity()) : "Select a city..."; }
+        function updateButton() { button.textContent = selectedCity() ? fullCityLabel(selectedCity()) : "Select a city..."; button.title = "Choose the city used for this garden\'s climate and scheduling."; } // CHANGE
         function closePicker() { isOpen = false; panel.style.display = "none"; }
         function renderHeader(text, level) {
             const header = document.createElement("div");
@@ -2132,7 +2134,7 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 showError(e && e.message ? e.message : String(e));
             }
-        }, "add");
+        }, "add", { title: "Save this city's location and climate data to the local database." }); // CHANGE: explicit action tooltip.
         setTooltip(saveBtn, "Save the city climate record to the Trellis database.");
         btnRow.appendChild(closeBtn);
         btnRow.appendChild(saveBtn);
@@ -2242,7 +2244,7 @@ Draw.loadPlugin(function (ui) {
                 cities = await loadCities();
                 refreshCityOptions(saved.city_id, saved.city_name);
             });
-        }, "open");
+        }, "open", { title: "Open the city editor to add or update location and climate data." }); // CHANGE: explicit action tooltip.
         setTooltip(citySel, "Select the garden city. City climate data is managed with the adjacent button.");
         setTooltip(manageCityBtn, "Add or edit city latitude, longitude, timezone, frost dates, and monthly normals.");
         cityControl.appendChild(manageCityBtn);
@@ -2561,7 +2563,7 @@ Draw.loadPlugin(function (ui) {
             }
             graph.refresh(moduleCell);
 
-        }, "add");
+        }, "add", { title: "Save these settings to the selected garden module." }); // CHANGE: explicit action tooltip.
 
         btnRow.appendChild(cancelBtn);
         btnRow.appendChild(okBtn);
@@ -3054,6 +3056,7 @@ Draw.loadPlugin(function (ui) {
             allocateModeBtn.style.display = bedMode ? "" : "none"; // NEW
             irrigationModeBtn.style.display = ""; // CHANGE
             settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings";
+            settingsBtn.title = "Edit this garden module\'s location, dimensions, default bed sizes, and growing settings."; // CHANGE
             addBedBtn.disabled = !hasSettings;
             addBedBtn.title = hasSettings ? "Add the default-sized garden bed at the selected location" : "Set garden settings before adding beds";
             addBedBtn.style.opacity = hasSettings ? "1" : "0.55";
@@ -4956,7 +4959,7 @@ Draw.loadPlugin(function (ui) {
             }
             ui.hideDialog();
             onOk(x, y);
-        }, "neutral");
+        }, "neutral", { title: "Apply this horizontal and vertical spacing to the planting." }); // CHANGE: explicit action tooltip.
         const cancelBtn = tilerButton("Cancel", function () {
             ui.hideDialog();
         }, "neutral");

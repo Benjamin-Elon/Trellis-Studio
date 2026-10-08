@@ -436,6 +436,7 @@ Draw.loadPlugin(function (ui) {
         const save = document.createElement("button");
         save.type = "button";
         save.textContent = "OK";
+        save.title = "Save the selected module\'s internal and external margins."; // CHANGE
         applyTrellisButtonStyle(save, "add", { compact: true });
         mxEvent.addListener(save, "click", function () {
             const internalMargin = nonNegativeDisplayToGraphUnits(internalInput.value, units); // CHANGE
@@ -3011,7 +3012,7 @@ Draw.loadPlugin(function (ui) {
             return !!overlay && overlay.style.display !== "none";
         }
 
-        function makeOverlayButton(label, type) {
+        function makeOverlayButton(label, type, tooltip) { // CHANGE: creation actions explain the resulting module.
             const btn = document.createElement("button");
             btn.type = "button";
             btn.textContent = label;
@@ -3024,6 +3025,7 @@ Draw.loadPlugin(function (ui) {
             btn.style.padding = "5px 8px";
             btn.style.textAlign = "left";
             btn.style.whiteSpace = "nowrap";
+            btn.title = tooltip; // CHANGE
             applyTrellisButtonStyle(btn, "add", { compact: true });
             mxEvent.addListener(btn, "click", function (evt) {
                 mxEvent.consume(evt);
@@ -3052,11 +3054,11 @@ Draw.loadPlugin(function (ui) {
             overlay.style.pointerEvents = "auto";
             mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); });
             mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); });
-            overlay.appendChild(makeOverlayButton("Add Module", "regular"));
-            overlay.appendChild(makeOverlayButton("Add Garden Module", "garden"));
-            overlay.appendChild(makeOverlayButton("Add Team Module", "team"));
-            overlay.appendChild(makeOverlayButton("Add Task Module", "task"));
-            overlay.appendChild(makeOverlayButton("Add Roadmap Module", "roadmap")); // NEW
+            overlay.appendChild(makeOverlayButton("Add Module", "regular", "Create a module at the selected canvas location.")); // CHANGE: explicit action tooltip.
+            overlay.appendChild(makeOverlayButton("Add Garden Module", "garden", "Create a garden module for beds, plantings, and garden plans.")); // CHANGE: explicit action tooltip.
+            overlay.appendChild(makeOverlayButton("Add Team Module", "team", "Create a team module for teams, role cards, and permissions.")); // CHANGE: explicit action tooltip.
+            overlay.appendChild(makeOverlayButton("Add Task Module", "task", "Create a task module for task boards and schedules.")); // CHANGE: explicit action tooltip.
+            overlay.appendChild(makeOverlayButton("Add Roadmap Module", "roadmap", "Create a roadmap module for project timelines.")); // NEW
             const host = ensureOverlayHost();
             if (host) host.appendChild(overlay);
             return overlay;
@@ -3372,7 +3374,7 @@ Draw.loadPlugin(function (ui) {
             promptSetModuleMargins(moduleCell); // CHANGE
         }
 
-        function makeOverlayButton(label, onClick, variant) {
+        function makeOverlayButton(label, onClick, variant, tooltip) { // CHANGE: explicit context help for team controls.
             const btn = document.createElement("button");
             btn.type = "button";
             btn.textContent = label;
@@ -3384,6 +3386,7 @@ Draw.loadPlugin(function (ui) {
             btn.style.font = "12px Arial, sans-serif";
             btn.style.padding = "5px 8px";
             btn.style.whiteSpace = "nowrap";
+            btn.title = tooltip; // CHANGE
             applyTrellisButtonStyle(btn, variant || "neutral", { compact: true });
             mxEvent.addListener(btn, "click", onClick);
             return btn;
@@ -3456,10 +3459,10 @@ Draw.loadPlugin(function (ui) {
             labelControls.style.padding = "2px 2px 4px";
             labelControls.style.borderBottom = "1px solid #e5e7eb";
             overlay.appendChild(labelControls);
-            addTeamButton = makeOverlayButton("Add Team", addTeamFromOverlay, "add"); // NEW
-            addRoleButton = makeOverlayButton("Add New Role", addRoleCardFromOverlay, "add"); // NEW
-            permissionsButton = makeOverlayButton("Set Permissions", openPermissionsFromOverlay, "open"); // CHANGE
-            marginsButton = makeOverlayButton("Set Module Margins", promptModuleMarginsFromOverlay, "open"); // NEW
+            addTeamButton = makeOverlayButton("Add Team", addTeamFromOverlay, "add", "Add a team to the selected team module."); // NEW
+            addRoleButton = makeOverlayButton("Add New Role", addRoleCardFromOverlay, "add", "Add a role card to the selected team."); // NEW
+            permissionsButton = makeOverlayButton("Set Permissions", openPermissionsFromOverlay, "open", "Edit permissions for the selected team module, team, or role."); // CHANGE
+            marginsButton = makeOverlayButton("Set Module Margins", promptModuleMarginsFromOverlay, "open", "Edit the selected module's internal and external margins."); // NEW
             overlay.appendChild(addTeamButton); // NEW
             overlay.appendChild(addRoleButton); // NEW
             overlay.appendChild(permissionsButton); // NEW

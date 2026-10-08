@@ -470,8 +470,8 @@ test("two selected tilers with five-percent overlap hide duplicate cluster selec
     assert.equal(selectPlantings.style.left, "26px");
     assert.equal(selectBeds.style.top, "-28px");
     assert.equal(selectPlantings.style.top, "-28px");
-    assert.ok(visibleImageByTitle(document, "Previous"), "expected visible previous button");
-    assert.ok(visibleImageByTitle(document, "Next"), "expected visible next button");
+    assert.ok(visibleImageByAlt(document, "Previous planting"), "expected visible previous button"); // CHANGE: action names identify arrows independently of descriptive tooltip copy.
+    assert.ok(visibleImageByAlt(document, "Next planting"), "expected visible next button"); // CHANGE
 });
 
 test("selected overlap cluster shows Occupancy navigator instead of numeric badge", () => {
@@ -565,7 +565,7 @@ test("Prev and Next cycle through all cluster members and recompute active overl
         tiler2Attrs: { plant_name: "Basil", sow_date: "2026-05-01", harvest_end: "2026-06-01" },
         tiler3Attrs: { plant_name: "Lettuce", sow_date: "2026-02-01", harvest_end: "2026-03-01" }
     });
-    const next = visibleImageByTitle(document, "Next");
+    const next = visibleImageByAlt(document, "Next planting"); // CHANGE
 
     next.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true }));
 

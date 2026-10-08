@@ -2461,8 +2461,8 @@ test("task manager renders retained Trellis pager controls and repairs hidden-ca
     assert.equal(selector.options[0].textContent, "1");
     assert.equal(previous.disabled, true);
     assert.equal(next.disabled, false);
-    assert.equal(previous.hasAttribute("title"), false);
-    assert.equal(next.hasAttribute("title"), false);
+    assert.equal(previous.title, "Already on the first page of this task lane."); // CHANGE: boundary help replaces the prior tooltip-free contract.
+    assert.equal(next.title, "Next page"); // CHANGE
     assert.equal(previous.getAttribute("aria-label"), "Previous page");
     assert.equal(next.getAttribute("aria-label"), "Next page");
     assert.match(h.document.getElementById("trellis-task-lane-pager-styles").textContent, /#2563EB/);

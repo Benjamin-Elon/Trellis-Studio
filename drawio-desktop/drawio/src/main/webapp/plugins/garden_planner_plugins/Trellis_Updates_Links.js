@@ -321,7 +321,7 @@
     function updateCheckButton(button, appInfo) {
         const reason = getUpdateUnavailableReason(appInfo);
         button.disabled = !!reason;
-        button.title = reason;
+        button.title = reason || "Check whether a Trellis update is available."; // CHANGE
     }
 
     function renderReleaseList(container, releases, appInfo, ui) {
@@ -355,7 +355,7 @@
             item.appendChild(createEl("div", "trellis-release-meta", [release.tag, formatDate(release.publishedAt)].filter(Boolean).join(" - ")));
             item.appendChild(createEl("div", "trellis-release-summary", release.summary || "No summary available."));
             if (release.url) {
-                item.appendChild(createButton("Full notes", function () { openLink(ui, release.url); }, "open"));
+                item.appendChild(createButton("Full notes", function () { openLink(ui, release.url); }, "open", { title: "Open the full release notes for this version." })); // CHANGE: explicit action tooltip.
             }
             list.appendChild(item);
         });
@@ -407,7 +407,7 @@
                 content.appendChild(createEl("div", "trellis-link-title", entry[0]));
                 content.appendChild(createEl("div", "trellis-link-value", entry[1]));
                 row.appendChild(content);
-                row.appendChild(createButton("Open", function () { openLink(ui, entry[1]); }, "open"));
+                row.appendChild(createButton("Open", function () { openLink(ui, entry[1]); }, "open", { title: "Open this resource link in your browser." })); // CHANGE: explicit action tooltip.
                 groupEl.appendChild(row);
             });
             container.appendChild(groupEl);
@@ -434,7 +434,7 @@
         const updateButton = createButton("Check for updates", function () { checkForUpdates(state.appInfo); }, "open", { disabled: true, title: getUpdateUnavailableReason(state.appInfo) });
         updatesPane.appendChild(createEl("div", "trellis-updates-pane-title", "Updates"));
         actions.appendChild(updateButton);
-        actions.appendChild(createButton("Open GitHub releases", function () { openLink(ui, state.appInfo.releasesUrl); }, "open"));
+        actions.appendChild(createButton("Open GitHub releases", function () { openLink(ui, state.appInfo.releasesUrl); }, "open", { title: "Open Trellis releases on GitHub." })); // CHANGE: explicit action tooltip.
         updatesPane.appendChild(installed);
         updatesPane.appendChild(actions);
         updatesPane.appendChild(createEl("div", "trellis-updates-section-title", "GitHub releases"));
@@ -472,8 +472,8 @@
         }).catch(function () {
             clearNode(container);
             const fallback = createEl("div", "trellis-updates-status", "Live GitHub releases are unavailable right now.");
-            fallback.appendChild(createButton("Open GitHub releases", function () { openLink(ui, appInfo.releasesUrl); }, "open"));
-            fallback.appendChild(createButton("Retry", function () { loadLiveReleases(container, appInfo, ui); }, "neutral"));
+            fallback.appendChild(createButton("Open GitHub releases", function () { openLink(ui, appInfo.releasesUrl); }, "open", { title: "Open Trellis releases on GitHub." })); // CHANGE: explicit action tooltip.
+            fallback.appendChild(createButton("Retry", function () { loadLiveReleases(container, appInfo, ui); }, "neutral", { title: "Retry loading Trellis update information." })); // CHANGE: explicit action tooltip.
             container.appendChild(fallback);
         });
     }

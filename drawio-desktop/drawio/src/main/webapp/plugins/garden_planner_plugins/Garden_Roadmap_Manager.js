@@ -1031,6 +1031,7 @@ Draw.loadPlugin(function (ui) {
         if (opts.active) { node.setAttribute('aria-pressed', 'true'); node.style.fontWeight = '700'; node.style.borderColor = '#2563eb'; node.style.background = '#eff6ff'; node.style.color = '#1e3a8a'; } // NEW
         else if (opts.pressed === false) node.setAttribute('aria-pressed', 'false'); // NEW
         if (opts.title) node.title = opts.title; // NEW
+        if (opts.ariaLabel) node.setAttribute('aria-label', opts.ariaLabel); // CHANGE: symbolic progress controls have concise accessible names.
         node.addEventListener('mousedown', event => mxEvent.consume(event)); // NEW
         node.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); action(); });
         if (host) host.appendChild(node); return node;
@@ -1061,7 +1062,7 @@ Draw.loadPlugin(function (ui) {
     function closeDialog() { dialogError = null; if (ui.hideDialog) ui.hideDialog(); }
     function dialogActions(body, save, saveLabel) {
         const actions = element('div'); actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:14px;';
-        button('Cancel', closeDialog, actions); button(saveLabel || 'Save', save, actions); body.appendChild(actions);
+        button('Cancel', closeDialog, actions); button(saveLabel || 'Save', save, actions, null, { title: "Save the changes in this roadmap dialog." }); body.appendChild(actions); // CHANGE: explicit action tooltip.
     }
 
     function showEditDialog(cell) {
@@ -1105,7 +1106,7 @@ Draw.loadPlugin(function (ui) {
         ['Planned', 'Doing', 'Blocked', 'Done'].filter(value => objects.some(cell => (attr(cell, 'roadmap_status') || 'Planned') !== value) && !statusTransitionIssue(objects, value)).forEach(value => { // CHANGE: show only applicable status actions.
             const issue = statusTransitionIssue(objects, value); // NEW
             const denied = objects.some(cell => !allowed(cell)); // NEW
-            applyStatusButtonColor(button(value, () => setObjectStatuses(objects, value), row, denied || !!issue, { active: active === value, pressed: active !== value, variant: active === value ? 'open' : 'neutral', title: issue }), value); // CHANGE
+            applyStatusButtonColor(button(value, () => setObjectStatuses(objects, value), row, denied || !!issue, { active: active === value, pressed: active !== value, variant: active === value ? 'open' : 'neutral', title: denied ? 'You do not have permission to change the selected objects.' : (issue || 'Set the selected roadmap objects to ' + value + '.') }), value); // CHANGE
         }); // NEW
         host.appendChild(row); return row; // NEW
     } // NEW
@@ -1116,9 +1117,9 @@ Draw.loadPlugin(function (ui) {
         row.style.cssText = 'display:flex;gap:4px;align-items:center;'; // NEW
         const value = element('span', progress + '%'); // NEW
         value.setAttribute('aria-label', 'Doing percentage'); // NEW
-        button('-10', () => editObject(cell, { progress: clampProgress(progress - 10) }), row, !allowed(cell) || progress <= 0); // NEW
+        button('-10', () => editObject(cell, { progress: clampProgress(progress - 10) }), row, !allowed(cell) || progress <= 0, { title: !allowed(cell) ? 'You do not have permission to change this object.' : progress <= 0 ? 'Progress is already at 0%.' : 'Decrease object progress by 10 percentage points.', ariaLabel: 'Decrease progress' }); // NEW // CHANGE: explicit action tooltip.
         row.appendChild(value); // NEW
-        button('+10', () => editObject(cell, { progress: clampProgress(progress + 10) }), row, !allowed(cell) || progress >= 100); // NEW
+        button('+10', () => editObject(cell, { progress: clampProgress(progress + 10) }), row, !allowed(cell) || progress >= 100, { title: !allowed(cell) ? 'You do not have permission to change this object.' : progress >= 100 ? 'Progress is already at 100%.' : 'Increase object progress by 10 percentage points.', ariaLabel: 'Increase progress' }); // NEW // CHANGE: explicit action tooltip.
         host.appendChild(row); return row; // NEW
     } // NEW
     function showNoteDialog(cell) { // NEW
@@ -1146,8 +1147,8 @@ Draw.loadPlugin(function (ui) {
         mode.addEventListener('change', () => { const title = mode.value === 'per_day' ? 'Daily rate' : 'Fixed cost'; amount.parentNode.firstChild.textContent = title; amount.setAttribute('aria-label', title); updatePreview(); }); // CHANGE
         amount.addEventListener('input', updatePreview); updatePreview(); // NEW
         const actions = element('div'); actions.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:8px;flex-wrap:wrap;'; picker.appendChild(actions); // CHANGE
-        if (hasCost(cell)) button('Remove Cost', () => { if (removeObjectCost(cell)) closeCostPicker(); }, actions, !allowed(cell), { variant: 'danger' }); // NEW
-        button('Cancel', closeCostPicker, actions); button('Apply', () => { if (setObjectCost(cell, { mode: mode.value, amount: Number(amount.value) })) closeCostPicker(); }, actions, !allowed(cell)); // NEW
+        if (hasCost(cell)) button('Remove Cost', () => { if (removeObjectCost(cell)) closeCostPicker(); }, actions, !allowed(cell), { variant: 'danger', title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Remove the saved cost from this roadmap object." }); // NEW // CHANGE: explicit action tooltip.
+        button('Cancel', closeCostPicker, actions); button('Apply', () => { if (setObjectCost(cell, { mode: mode.value, amount: Number(amount.value) })) closeCostPicker(); }, actions, !allowed(cell), { title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Save this roadmap object's cost settings." }); // NEW // CHANGE: explicit action tooltip.
         const state = graph.view.getState(cell), bounds = shared ? shared.getCellVisualBounds(cell, host) : state; // NEW
         if (bounds) { picker.style.left = Math.max(0, bounds.x + 20) + 'px'; picker.style.top = Math.max(0, bounds.y + bounds.height + 9) + 'px'; } // NEW
         amount.focus(); if (amount.select) amount.select(); // CHANGE
@@ -1179,7 +1180,7 @@ Draw.loadPlugin(function (ui) {
             if (signature !== selectionSignature(cells) || rosterSignature !== roleRoster(board).map(role => role.id).sort().join(',')) { error.textContent = 'Assignments or membership changed. Close and reopen the picker.'; return; } // NEW
             const result = command(() => { cells.forEach((cell, index) => { const next = new Set(initial[index]); checks.filter(item => item.changed).forEach(item => { if (item.check.checked) next.add(item.id); else next.delete(item.id); }); setAssignments(cell, Array.from(next)); }); return cells; }); // NEW
             if (result) { closeAssignmentPicker(); refresh(); } // NEW
-        }, actions, cells.some(cell => !allowed(cell))); // NEW
+        }, actions, cells.some(cell => !allowed(cell)), { title: cells.some(cell => !allowed(cell)) ? 'You do not have permission to change this roadmap.' : "Apply role assignments to the selected roadmap objects." }); // NEW // CHANGE: explicit action tooltip.
         const state = graph.view.getState(cells[0]), bounds = shared ? shared.getCellVisualBounds(cells[0], host) : state; // NEW
         if (bounds) { picker.style.left = Math.max(0, bounds.x + 20) + 'px'; picker.style.top = Math.max(0, bounds.y + bounds.height + 9) + 'px'; } // NEW
     } // NEW
@@ -1231,13 +1232,13 @@ Draw.loadPlugin(function (ui) {
     function showTaskSuccess(task) {
         if (!graph.container) return;
         const toast = element('div', 'Task created. ', 'trellis-roadmap-control'); toast.style.cssText = 'position:absolute;left:16px;top:16px;z-index:10030;background:#ecfdf5;padding:10px;border:1px solid #15803d;pointer-events:auto;';
-        button('Open Task', () => { toast.remove(); openTask(task); }, toast); button('Dismiss', () => toast.remove(), toast); graph.container.appendChild(toast);
+        button('Open Task', () => { toast.remove(); openTask(task); }, toast, null, { title: "Open the task linked to this roadmap object." }); button('Dismiss', () => toast.remove(), toast); graph.container.appendChild(toast); // CHANGE: explicit action tooltip.
         window.setTimeout(() => toast.remove(), 10000);
     }
     function openTask(task) { const api = graph.__trellisTaskManager; if (api && api.openTaskCard) return api.openTaskCard(task); graph.setSelectionCell(task); if (graph.scrollCellToVisible) graph.scrollCellToVisible(task); return task; }
     function showTasks(cell) {
         const tasks = linkedTasks(cell); if (tasks.length === 1) return openTask(tasks[0]);
-        dialog('Linked Tasks', body => { tasks.forEach(task => button(attr(task, 'title') || label(task), () => { closeDialog(); openTask(task); }, body)); button('Close', closeDialog, body); }, 320);
+        dialog('Linked Tasks', body => { tasks.forEach(task => button(attr(task, 'title') || label(task), () => { closeDialog(); openTask(task); }, body, null, { title: 'Open linked task: ' + (attr(task, 'title') || label(task)) })); button('Close', closeDialog, body); }, 320); // CHANGE: explicit action tooltip.
     }
     function showDeletionDialog(cells, tasks) {
         dialog('Delete Roadmap Content', body => {
@@ -1342,18 +1343,18 @@ Draw.loadPlugin(function (ui) {
         row.style.cssText = 'display:flex;gap:4px;align-items:center;white-space:nowrap;'; host.appendChild(row); // CHANGE
         checkboxField(row, 'Show Cost', state.pricingEnabled, checked => setViewState(board, { pricingEnabled: checked })); // CHANGE
         checkboxField(row, 'Show Goal Markers', state.goalMarkersEnabled !== false, checked => setViewState(board, { goalMarkersEnabled: checked })); // NEW
-        button('Today', () => setViewState(board, { perspective: 'today' }), row, false, { active: mode === 'today', pressed: mode === 'today', variant: mode === 'today' ? 'open' : 'neutral' }); button('Inception', () => setViewState(board, { perspective: 'inception' }), row, false, { active: mode === 'inception', pressed: mode === 'inception', variant: mode === 'inception' ? 'open' : 'neutral' }); // CHANGE
-        button('Columns', () => { columnPanels.set(board, !columnPanels.get(board)); renderControls(); }, row, false, { active: columnsOpen, pressed: columnsOpen, variant: columnsOpen ? 'open' : 'neutral' }); // CHANGE
-        button('Add Process', () => addProcess(board), row, !allowed(board, 'canAddCell')); button('Add Project', () => openBoard(createSecondaryRoadmapInRoadmapModule(parent(board))), row, !allowed(parent(board), 'canAddCell')); // NEW
+        button('Today', () => setViewState(board, { perspective: 'today' }), row, false, { active: mode === 'today', pressed: mode === 'today', variant: mode === 'today' ? 'open' : 'neutral', title: 'View the roadmap relative to today.' }); button('Inception', () => setViewState(board, { perspective: 'inception' }), row, false, { active: mode === 'inception', pressed: mode === 'inception', variant: mode === 'inception' ? 'open' : 'neutral', title: 'View the roadmap relative to its inception date.' }); // CHANGE
+        button('Columns', () => { columnPanels.set(board, !columnPanels.get(board)); renderControls(); }, row, false, { active: columnsOpen, pressed: columnsOpen, variant: columnsOpen ? 'open' : 'neutral', title: columnsOpen ? 'Hide the roadmap column controls.' : 'Show controls for roadmap column visibility and scale.' }); // CHANGE
+        button('Add Process', () => addProcess(board), row, !allowed(board, 'canAddCell'), { title: !allowed(board, 'canAddCell') ? 'You do not have permission to change this roadmap.' : "Add a process to this roadmap board." }); button('Add Project', () => openBoard(createSecondaryRoadmapInRoadmapModule(parent(board))), row, !allowed(parent(board), 'canAddCell'), { title: !allowed(parent(board), 'canAddCell') ? 'You do not have permission to change this roadmap.' : "Create and open a secondary roadmap in this module." }); // NEW // CHANGE: explicit action tooltip.
         if (state.pricingEnabled) { const symbol = inputField(host, 'Currency', costSymbol(board)); symbol.maxLength = 6; symbol.style.width = '76px'; symbol.disabled = !allowed(board); ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup'].forEach(type => symbol.addEventListener(type, stopDomPropagation)); symbol.addEventListener('change', () => setCostSymbol(board, symbol.value)); } // NEW
         if (!columnsOpen) return; // CHANGE
         const columns = element('div', null, 'trellis-roadmap-columns-panel'); columns.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;align-items:flex-end;padding-top:5px;margin-top:2px;border-top:1px solid #d1d5db;white-space:nowrap;'; host.appendChild(columns); // CHANGE
         function changeView(changes) { setViewState(board, { [mode]: Object.assign({}, settings, changes) }); } // NEW
-        button('Hide past', () => changeView({ leftHidden: settings.leftHidden + 1 }), columns, settings.leftHidden >= 3); button('Show past', () => changeView({ leftHidden: settings.leftHidden - 1 }), columns, !settings.leftHidden); // NEW
-        button('Hide future', () => changeView({ rightHidden: settings.rightHidden + 1 }), columns, settings.rightHidden >= 4); button('Show future', () => changeView({ rightHidden: settings.rightHidden - 1 }), columns, !settings.rightHidden); // NEW
+        button('Hide past', () => changeView({ leftHidden: settings.leftHidden + 1 }), columns, settings.leftHidden >= 3, { title: settings.leftHidden >= 3 ? 'All past columns are already hidden.' : 'Hide one more past column.' }); button('Show past', () => changeView({ leftHidden: settings.leftHidden - 1 }), columns, !settings.leftHidden, { title: !settings.leftHidden ? 'All past columns are already visible.' : 'Show one more past column.' }); // NEW // CHANGE: explicit action tooltip.
+        button('Hide future', () => changeView({ rightHidden: settings.rightHidden + 1 }), columns, settings.rightHidden >= 4, { title: settings.rightHidden >= 4 ? 'All future columns are already hidden.' : 'Hide one more future column.' }); button('Show future', () => changeView({ rightHidden: settings.rightHidden - 1 }), columns, !settings.rightHidden, { title: !settings.rightHidden ? 'All future columns are already visible.' : 'Show one more future column.' }); // NEW // CHANGE: explicit action tooltip.
         const scale = inputField(columns, 'Scale %', Math.round(settings.multiplier * 100), 'number'); scale.min = '1'; scale.max = '10000'; scale.style.width = '64px'; // NEW
         scale.addEventListener('change', () => { const multiplier = Number(scale.value) / 100; if (multiplier > 0 && multiplier <= 100) changeView({ multiplier }); }); // NEW
-        button('Reset scale', () => changeView({ scales: core.normalizeView()[mode].scales, multiplier: 1 }), columns); // CHANGE
+        button('Reset scale', () => changeView({ scales: core.normalizeView()[mode].scales, multiplier: 1 }), columns, null, { title: "Restore the default column scales for this roadmap view." }); // CHANGE
     } // NEW
 
     function ensureDateHud() { // NEW
@@ -1551,10 +1552,10 @@ Draw.loadPlugin(function (ui) {
                     host.appendChild(element('span', selected.length + ' objects selected')); // NEW
                     if (canManageDependencies) { // NEW
                         const pairs = dependencyPairs(selected), hasMissing = pairs.some(pair => !dependencyPairLinked(pair[0], pair[1])), hasExisting = pairs.some(pair => dependencyPairLinked(pair[0], pair[1])), denied = dependencyObjects.some(item => !allowed(item)); // NEW
-                        if (hasMissing) button('Link Objects', () => linkRoadmapObjects(selected), host, denied); // NEW
-                        if (hasExisting) button('Unlink Objects', () => unlinkRoadmapObjects(selected), host, denied); // NEW
+                        if (hasMissing) button('Link Objects', () => linkRoadmapObjects(selected), host, denied, { title: denied ? 'You do not have permission to change this roadmap.' : "Link the selected roadmap objects." }); // NEW // CHANGE: explicit action tooltip.
+                        if (hasExisting) button('Unlink Objects', () => unlinkRoadmapObjects(selected), host, denied, { title: denied ? 'You do not have permission to change this roadmap.' : "Remove links between the selected roadmap objects." }); // NEW // CHANGE: explicit action tooltip.
                     } // NEW
-                    if (sameBoardObjects) { renderStatusButtons(selected, host); button('Assign', () => showAssignmentDialog(selected), host, selected.some(item => !allowed(item))); } // CHANGE
+                    if (sameBoardObjects) { renderStatusButtons(selected, host); button('Assign', () => showAssignmentDialog(selected), host, selected.some(item => !allowed(item)), { title: selected.some(item => !allowed(item)) ? 'You do not have permission to change this roadmap.' : "Choose roles assigned to the selected roadmap objects." }); } // CHANGE
                 } // NEW
             } // NEW
             positionControls(); return; // NEW
@@ -1562,11 +1563,11 @@ Draw.loadPlugin(function (ui) {
         if (type === 'module') {
             const host = panel(cell, -76); if (!host) return;
             nameControl(host, cell);
-            button('Margins', () => { const api = graph.__trellisModules; if (api && api.promptSetModuleMargins) api.promptSetModuleMargins(cell); }, host, !allowed(cell));
+            button('Margins', () => { const api = graph.__trellisModules; if (api && api.promptSetModuleMargins) api.promptSetModuleMargins(cell); }, host, !allowed(cell), { title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Edit this roadmap module's internal and external margins." }); // CHANGE: explicit action tooltip.
             const main = typedChildren(cell, 'board').find(item => attr(item, 'roadmap_role') === 'main');
-            button(main ? 'Open Main Roadmap' : 'Add Main Roadmap', () => openBoard(main || ensureMainRoadmapInRoadmapModule(cell)), host, !main && !allowed(cell, 'canAddCell'));
-            button('Add Secondary Roadmap', () => openBoard(createSecondaryRoadmapInRoadmapModule(cell)), host, !allowed(cell, 'canAddCell'));
-            typedChildren(cell, 'board').filter(item => item !== main).forEach(item => button(label(item), () => openBoard(item), host));
+            button(main ? 'Open Main Roadmap' : 'Add Main Roadmap', () => openBoard(main || ensureMainRoadmapInRoadmapModule(cell)), host, !main && !allowed(cell, 'canAddCell'), { title: !main && !allowed(cell, 'canAddCell') ? 'You do not have permission to create a roadmap here.' : main ? 'Open this module\'s main roadmap.' : 'Create and open this module\'s main roadmap.' }); // CHANGE: explicit action tooltip.
+            button('Add Secondary Roadmap', () => openBoard(createSecondaryRoadmapInRoadmapModule(cell)), host, !allowed(cell, 'canAddCell'), { title: !allowed(cell, 'canAddCell') ? 'You do not have permission to change this roadmap.' : "Create and open a secondary roadmap in this module." }); // CHANGE: explicit action tooltip.
+            typedChildren(cell, 'board').filter(item => item !== main).forEach(item => button(label(item), () => openBoard(item), host, null, { title: 'Open roadmap: ' + label(item) })); // CHANGE: explicit action tooltip.
         } else if (type === 'process' || type === 'object' || type === 'goal_marker') {
             const state = graph.view.getState(cell), host = state && panel(cell, state.height + 8); if (!host) return;
             nameControl(host, cell); // CHANGE
@@ -1577,8 +1578,8 @@ Draw.loadPlugin(function (ui) {
                 ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup'].forEach(type => color.addEventListener(type, stopDomPropagation)); // NEW
                 color.addEventListener('change', () => setProcessColor(cell, color.value)); // NEW
                 const objectBadges = checkboxField(host, 'Show Dates & Duration', processObjectBadgesEnabled(cell), checked => setProcessObjectBadges(cell, checked)); objectBadges.disabled = !allowed(cell); // NEW
-                button('Add Roadmap Object', () => addObject(cell), host, !allowed(cell, 'canAddCell'));
-                button('Add Goal Marker', () => addGoalMarker(cell), host, !allowed(cell, 'canAddCell')); // NEW
+                button('Add Roadmap Object', () => addObject(cell), host, !allowed(cell, 'canAddCell'), { title: !allowed(cell, 'canAddCell') ? 'You do not have permission to change this roadmap.' : "Add an object to the selected process." }); // CHANGE: explicit action tooltip.
+                button('Add Goal Marker', () => addGoalMarker(cell), host, !allowed(cell, 'canAddCell'), { title: !allowed(cell, 'canAddCell') ? 'You do not have permission to change this roadmap.' : "Add a dated goal marker to the selected process." }); // NEW // CHANGE: explicit action tooltip.
             } else if (type === 'goal_marker') { // NEW
                 const date = inputField(host, 'Goal date', core.formatDay(goalMarkerDate(cell)), 'date'), percent = inputField(host, 'Goal percentage', goalMarkerPercent(cell), 'number'); // NEW
                 const bounds = range(parent(cell)); date.min = core.formatDay(bounds.start); date.max = core.formatDay(bounds.end); percent.min = '0'; percent.max = '100'; percent.step = '1'; // NEW
@@ -1589,12 +1590,12 @@ Draw.loadPlugin(function (ui) {
             } else {
                 renderStatusButtons([cell], host); // NEW
                 renderDoingProgress(cell, host); // NEW
-                button(attr(cell, 'roadmap_notes') ? 'Edit Note' : 'Add Note', () => showNoteDialog(cell), host, !allowed(cell)); // NEW
-                button('Assign', () => showAssignmentDialog(cell), host, !allowed(cell));
-                button(hasCost(cell) ? 'Edit Cost' : 'Add Cost', () => showCostEditor(cell), host, !allowed(cell)); // CHANGE
-                button('Create Task', () => showTaskCreationDialog(cell), host, !allowed(cell) || !['Planned', 'Doing'].includes(attr(cell, 'roadmap_status')));
+                button(attr(cell, 'roadmap_notes') ? 'Edit Note' : 'Add Note', () => showNoteDialog(cell), host, !allowed(cell), { title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Edit the note attached to this roadmap object." }); // NEW // CHANGE: explicit action tooltip.
+                button('Assign', () => showAssignmentDialog(cell), host, !allowed(cell), { title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Choose roles assigned to this roadmap object." }); // CHANGE: explicit action tooltip.
+                button(hasCost(cell) ? 'Edit Cost' : 'Add Cost', () => showCostEditor(cell), host, !allowed(cell), { title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Edit the cost attached to this roadmap object." }); // CHANGE
+                button('Create Task', () => showTaskCreationDialog(cell), host, !allowed(cell) || !['Planned', 'Doing'].includes(attr(cell, 'roadmap_status')), { title: !allowed(cell) ? 'You do not have permission to create a linked task.' : !['Planned', 'Doing'].includes(attr(cell, 'roadmap_status')) ? 'Set the object to Planned or Doing before creating a task.' : 'Create a task linked to this roadmap object.' }); // CHANGE: explicit action tooltip.
             }
-            button(deleteLabel, () => graph.removeCells([cell]), host, !allowed(cell, 'canDeleteCell')); // CHANGE: keep the destructive process/object action at the bottom of the overlay.
+            button(deleteLabel, () => graph.removeCells([cell]), host, !allowed(cell, 'canDeleteCell'), { title: !allowed(cell, 'canDeleteCell') ? 'You do not have permission to delete this item.' : 'Delete the selected ' + (type === 'process' ? 'process and its contents.' : type === 'goal_marker' ? 'goal marker.' : 'roadmap object.') }); // CHANGE: keep the destructive process/object action at the bottom of the overlay.
         }
         positionControls(); // NEW
     }
@@ -1680,8 +1681,8 @@ Draw.loadPlugin(function (ui) {
             body.appendChild(element('p', 'These assignees are missing from the destination: ' + plan.missing.map(roleId => label(model.getCell(roleId))).join(', '))); // NEW
             body.appendChild(element('p', 'Moving without them removes their assignments from the moved objects. Existing tasks keep their assignments.')); // NEW
             const submit = linkMissingAssignees => { if (performNativeMove(cells, target, Object.assign({}, options, { linkMissingAssignees, expectedSignature: plan.signature }))) closeDialog(); }; // NEW
-            button('Link and move', () => submit(true), body, !allowed(plan.destinationBoard, 'canManageAccess')); // NEW
-            button('Move without missing assignments', () => submit(false), body); button('Cancel', closeDialog, body); // NEW
+            button('Link and move', () => submit(true), body, !allowed(plan.destinationBoard, 'canManageAccess'), { title: !allowed(plan.destinationBoard, 'canManageAccess') ? 'You do not have permission to link assignments on the destination board.' : 'Link missing assignments to the destination board and move the selected objects.' }); // NEW // CHANGE: explicit action tooltip.
+            button('Move without missing assignments', () => submit(false), body, null, { title: "Move the selected objects and drop assignments missing from the destination board." }); button('Cancel', closeDialog, body); // NEW // CHANGE: explicit action tooltip.
         }, 260); return []; // NEW
     } // NEW
 

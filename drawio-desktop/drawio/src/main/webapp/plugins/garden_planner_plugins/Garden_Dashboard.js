@@ -1446,6 +1446,7 @@ Draw.loadPlugin(function (ui) {
                 row.type = "button";
                 row.className = "trellis-garden-dashboard-picker-row";
                 row.textContent = gardenLabel(garden);
+                row.title = "Select garden: " + gardenLabel(garden); // CHANGE
                 row.setAttribute("data-garden-cell-id", cellId(garden));
                 row.style.cssText = "display:block;width:100%;text-align:left;border:0;background:#fff;border-radius:4px;padding:6px 7px;cursor:pointer;font:12px Arial,sans-serif;color:#111827;";
                 row.addEventListener("mouseenter", function () { row.style.background = "#eff6ff"; });
@@ -1492,6 +1493,7 @@ Draw.loadPlugin(function (ui) {
 
     function createYearButton(label, title) {
         const btn = createToolbarButton(label, title);
+        btn.setAttribute("aria-label", title); // CHANGE: year arrows have explicit accessible names.
         btn.style.width = BTN_SIZE + "px";
         btn.style.padding = "0";
         return btn;

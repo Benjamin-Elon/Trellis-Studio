@@ -39,7 +39,9 @@ Draw.loadPlugin(function (ui) {
     }
 
     function bedButton(label, onClick, variant, options) {
-        return applyBedButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options);
+        const button = applyBedButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options); // CHANGE
+        if (options && options.title) button.title = options.title; // CHANGE: explicit help describes the affected beds or module.
+        return button; // CHANGE
     }
 
     const ATTRS = {
@@ -693,6 +695,7 @@ Draw.loadPlugin(function (ui) {
             }
             refresh();
         });
+        saveDefaultsButton.title = "Save these season-extension effects as defaults for this garden module."; // CHANGE
         defaultsRow.appendChild(saveDefaultsButton);
         section.appendChild(defaultsRow);
         controls.seasonExtensionAirOffsetC = airInput;
@@ -857,7 +860,7 @@ Draw.loadPlugin(function (ui) {
         secondaryButtons.style.display = "flex";
         secondaryButtons.style.gap = "8px";
         actionRow.appendChild(document.createElement("span"));
-        secondaryButtons.appendChild(bedButton("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); }, "neutral"));
+        secondaryButtons.appendChild(bedButton("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); }, "neutral", { title: "Copy the current bed conditions for use on other beds." })); // CHANGE
         secondaryButtons.appendChild(bedButton("Paste", function () {
             if (!copiedProfile) { ui.alert("No copied bed conditions are available."); return; }
             const targets = collectSelectedBeds(targetCell);
@@ -865,14 +868,14 @@ Draw.loadPlugin(function (ui) {
             try { targets.forEach(function (target) { writeBedConditions(target, copiedProfile, { writeIdentityLabel: true }); }); }
             finally { model.endUpdate(); }
             ui.hideDialog();
-        }, "add"));
+        }, "add", { title: "Apply previously copied bed conditions to the selected beds and close this dialog." })); // CHANGE
         secondaryButtons.appendChild(bedButton("Clear", function () {
             const targets = collectSelectedBeds(targetCell);
             model.beginUpdate();
             try { targets.forEach(clearBedConditions); }
             finally { model.endUpdate(); }
             ui.hideDialog();
-        }, "danger"));
+        }, "danger", { title: "Clear saved conditions from the selected beds and close this dialog." })); // CHANGE
 
         actionRow.appendChild(secondaryButtons);
         footer.appendChild(actionRow);
@@ -892,7 +895,7 @@ Draw.loadPlugin(function (ui) {
                 model.endUpdate();
             }
             ui.hideDialog();
-        }, "add"));
+        }, "add", { title: "Save the current conditions to this garden bed." })); // CHANGE
         footer.appendChild(buttonRow);
         div.appendChild(footer);
         ui.showDialog(div, 520, dialogHeight, true, true);
@@ -1052,7 +1055,7 @@ Draw.loadPlugin(function (ui) {
         const layout = estimateSelectedBedOverlayLayout(rows);
         entry.div.style.width = layout.width + "px";
         entry.div.appendChild(createBedNameInput(entry));
-        const button = bedButton("Set Bed Conditions", function () { showConditionEditorDialog(entry.cell); }, "open");
+        const button = bedButton("Set Bed Conditions", function () { showConditionEditorDialog(entry.cell); }, "open", { title: "Edit the selected bed's growing conditions and season-extension effects." }); // CHANGE
         button.style.display = "block";
         button.style.width = "100%";
         button.style.marginBottom = "6px";

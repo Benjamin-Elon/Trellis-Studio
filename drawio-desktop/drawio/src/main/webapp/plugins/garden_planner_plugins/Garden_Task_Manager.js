@@ -5269,6 +5269,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
             ui.hideDialog();
         });
+        saveButton.title = "Save the edits to this task card."; // CHANGE: explicit action tooltip.
 
         applyTaskButtonStyle(saveButton, 'add');
         buttons.appendChild(cancelButton);
@@ -5541,6 +5542,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             taskCommands.saveBoardWeekWorkHours(board, weekStart, weeks, nextDefaults, nextWeek);
             ui.hideDialog();
         });
+        save.title = "Save this task board's weekly work hours."; // CHANGE: explicit action tooltip.
         applyTaskButtonStyle(cancel, 'neutral');
         applyTaskButtonStyle(save, 'add');
         buttons.appendChild(cancel);
@@ -5604,6 +5606,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             taskCommands.saveSelectedWeekDayWorkHours(board, dayIndex, normalizeWorkHourWindow({ closed: closed.checked, startMinute, endMinute }));
             ui.hideDialog();
         });
+        save.title = "Save work hours for the selected day."; // CHANGE: explicit action tooltip.
         applyTaskButtonStyle(cancel, 'neutral');
         applyTaskButtonStyle(save, 'add');
         buttons.appendChild(cancel);
@@ -6388,7 +6391,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         previous.type = 'button';
         previous.className = 'trellis-task-lane-pager__button trellis-task-lane-pager__previous';
         applyTaskButtonStyle(previous, 'neutral', { compact: true });
-        previous.setAttribute('aria-label', 'Previous page'); // CHANGE: accessible name remains without a browser title tooltip
+        previous.setAttribute('aria-label', 'Previous page'); // CHANGE: keep the accessible name separate from state-specific hover help.
         previous.appendChild(createLanePagerChevron(-1));
         const selector = document.createElement('select');
         selector.className = 'trellis-task-lane-pager__select';
@@ -6396,7 +6399,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         next.type = 'button';
         next.className = 'trellis-task-lane-pager__button trellis-task-lane-pager__next';
         applyTaskButtonStyle(next, 'neutral', { compact: true });
-        next.setAttribute('aria-label', 'Next page'); // CHANGE: accessible name remains without a browser title tooltip
+        next.setAttribute('aria-label', 'Next page'); // CHANGE: keep the accessible name separate from state-specific hover help.
         next.appendChild(createLanePagerChevron(1));
         [previous, selector, next].forEach(control => {
             control.addEventListener('mousedown', stopDomPropagation);
@@ -6428,6 +6431,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         node.selector.setAttribute('aria-label', `${getAttr(state.lane, 'status') || 'Lane'} page, ${state.pageIndex + 1} of ${state.plan.pages.length}`);
         node.previous.disabled = state.pageIndex <= 0;
         node.next.disabled = state.pageIndex >= state.plan.pages.length - 1;
+        node.previous.title = node.previous.disabled ? 'Already on the first page of this task lane.' : 'Previous page'; // CHANGE
+        node.next.title = node.next.disabled ? 'Already on the last page of this task lane.' : 'Next page'; // CHANGE
     }
 
     function positionLanePager(node, state, host) {
@@ -6720,6 +6725,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         function appendAssigneeCollapsePill(stack, requestRefresh) {
             const collapse = document.createElement('button');
+            collapse.title = "Collapse the list of assigned people."; // CHANGE: explicit action tooltip.
             collapse.type = 'button';
             collapse.className = 'trellis-task-assignee-collapse';
             collapse.textContent = '-';
@@ -6750,6 +6756,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (expanded) appendAssigneeCollapsePill(stack, requestRefresh);
             if (!expanded && profiles.length > 3) {
                 const more = document.createElement('button');
+                more.title = 'Show all ' + profiles.length + ' assigned people'; // CHANGE: explicit action tooltip.
                 more.type = 'button';
                 more.className = 'trellis-task-assignee-overflow';
                 more.textContent = '+' + (profiles.length - 3);
@@ -6942,12 +6949,20 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const modeToggle = button('Switch to Week view', toggleBoardPlanningView);
         const columnsToggle = button('Hide/Show columns', () => { columnsExpanded = !columnsExpanded; });
         const prev = button('<', () => { const b = selectedBoard(); if (!b) return; const mode = getBoardViewMode(b); if (mode === 'WEEK') taskCommands.setBoardPlanningView(b, null, { [TASK_SELECTED_WEEK_START_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), -7), [TASK_SELECTED_DAY_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), -7) }); });
+        prev.title = 'Show the previous week on this task board.'; // CHANGE: explicit action tooltip.
+        prev.setAttribute('aria-label', 'Previous week'); // CHANGE: explicit action tooltip.
         const next = button('>', () => { const b = selectedBoard(); if (!b) return; const mode = getBoardViewMode(b); if (mode === 'WEEK') taskCommands.setBoardPlanningView(b, null, { [TASK_SELECTED_WEEK_START_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), 7), [TASK_SELECTED_DAY_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), 7) }); });
+        next.title = 'Show the next week on this task board.'; // CHANGE
+        next.setAttribute('aria-label', 'Next week'); // CHANGE
         const todayBtn = button('Today', () => { const b = selectedBoard(); if (!b) return; const today = todayISO(); taskCommands.setBoardPlanningView(b, null, { [TASK_SELECTED_WEEK_START_ATTR]: getTaskWeekStartISO(today), [TASK_SELECTED_DAY_ATTR]: today }); });
         const endDayBtn = button('End Day', () => { const b = selectedBoard(); if (b) taskCommands.endDay(b); });
+        endDayBtn.title = "Mark unfinished tasks assigned to the selected day as incomplete."; // CHANGE: explicit action tooltip.
         const endWeekBtn = button('End Week', () => { const b = selectedBoard(); if (b) taskCommands.endWeek(b); });
+        endWeekBtn.title = "Mark unfinished tasks assigned to the selected week as incomplete."; // CHANGE: explicit action tooltip.
         const editHoursBtn = button('Edit Hours', () => { const b = selectedBoard(); if (b) taskDialogs.showEditHoursDialog(b); }, 'open');
+        editHoursBtn.title = "Edit the selected day's work hours on this task board."; // CHANGE: explicit action tooltip.
         const addBreakBtn = button('Add Break', () => { const b = selectedBoard(); if (b) taskCommands.addBreakToSelectedDay(b); }, 'add');
+        addBreakBtn.title = "Add a break to the selected day's schedule."; // CHANGE: explicit action tooltip.
         dateInput.addEventListener('mousedown', evt => evt.stopPropagation());
         dateInput.addEventListener('click', evt => evt.stopPropagation());
         mxEvent.addListener(dateInput, 'change', function (evt) {
@@ -6986,12 +7001,15 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             dateInput.value = mode === 'FULL' ? '' : getSelectedDay(board);
             modeLabel.textContent = mode === 'WEEK' ? 'Mode: Week' : 'Mode: Full';
             modeToggle.textContent = mode === 'WEEK' ? 'Switch to Full view' : 'Switch to Week view';
+            modeToggle.title = mode === 'WEEK' ? 'Show the full task board.' : 'Show the weekly task schedule.'; // CHANGE
             modeToggle.setAttribute('aria-pressed', mode === 'WEEK' ? 'true' : 'false');
+            columnsToggle.title = columnsExpanded ? 'Hide the task column visibility controls.' : 'Show controls for choosing visible task columns.'; // CHANGE
             columnsToggle.setAttribute('aria-expanded', columnsExpanded ? 'true' : 'false');
             columnsPanel.style.display = columnsExpanded ? 'block' : 'none';
             prev.style.display = mode === 'WEEK' ? '' : 'none';
             next.style.display = mode === 'WEEK' ? '' : 'none';
             todayBtn.textContent = mode === 'WEEK' ? 'This Week' : 'Today';
+            todayBtn.title = 'Show the week containing today and select today\'s schedule.'; // CHANGE
             todayBtn.style.display = mode === 'WEEK' ? '' : 'none';
             renderLaneVisibilityControls(board, mode);
             endDayBtn.textContent = 'End Day (' + countEndDayCards(board) + ')';
@@ -7207,6 +7225,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             }
             ui.hideDialog();
         });
+        saveButton.title = "Apply the enabled edits to all selected task cards."; // CHANGE: explicit action tooltip.
         applyTaskButtonStyle(cancelButton, 'neutral');
         applyTaskButtonStyle(saveButton, 'add');
         buttons.appendChild(cancelButton);
@@ -7290,9 +7309,13 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         }
 
         const changeHoursBtn = add('Change Hours', ctx => taskDialogs.showEditDayHoursDialog(ctx.board, ctx.laneKey), 'open');
+        changeHoursBtn.title = "Edit work hours for the selected day."; // CHANGE: explicit action tooltip.
         const addBreakBtn = add('Add Break', ctx => taskCommands.addBreakToSelectedDay(ctx.board), 'add');
+        addBreakBtn.title = "Add a break to the selected day's schedule."; // CHANGE: explicit action tooltip.
         const openDayBtn = add('Open Day', ctx => taskCommands.openSelectedWeekDayFromDefaults(ctx.board, ctx.laneKey), 'open');
+        openDayBtn.title = "Reopen the selected day using the board's default work hours."; // CHANGE: explicit action tooltip.
         const closeDayBtn = add('Close Day', ctx => taskCommands.closeSelectedWeekDay(ctx.board, ctx.lane), 'danger');
+        closeDayBtn.title = "Close the selected empty day to scheduled work."; // CHANGE: explicit action tooltip.
 
         function refresh() {
             if (isTeamPermissionModeActiveForTaskOverlay()) { overlay.style.display = 'none'; return; } // NEW
@@ -7334,11 +7357,13 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         labelControls.style.cssText = 'display:flex;flex-direction:column;gap:4px;padding:2px 2px 4px;border-bottom:1px solid #e5e7eb;';
         overlay.appendChild(labelControls);
         const addBoardBtn = document.createElement('button');
+        addBoardBtn.title = "Create the main task board in the selected task module."; // CHANGE: explicit action tooltip.
         addBoardBtn.type = 'button';
         addBoardBtn.textContent = 'Add Main Task Board'; // CHANGE
         addBoardBtn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;';
         applyTaskButtonStyle(addBoardBtn, 'add', { compact: true });
         const marginsBtn = document.createElement('button'); // NEW
+        marginsBtn.title = "Edit the selected task module's internal and external margins."; // CHANGE: explicit action tooltip.
         marginsBtn.type = 'button'; // NEW
         marginsBtn.textContent = 'Set Module Margins'; // NEW
         marginsBtn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;'; // NEW
@@ -7768,6 +7793,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             footer.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:6px;padding-top:5px;border-top:1px solid #D1D5DB;';
             const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; applyTaskButtonStyle(cancel, 'neutral', { compact: true });
             const apply = document.createElement('button'); apply.type = 'button'; apply.textContent = 'Apply'; applyTaskButtonStyle(apply, 'neutral', { compact: true });
+            apply.title = "Apply the chosen role assignments to the selected task cards."; // CHANGE: explicit action tooltip.
             cancel.addEventListener('click', function (evt) { consumeDomEvent(evt); closeAssignmentPicker(); });
             apply.addEventListener('click', function (evt) {
                 consumeDomEvent(evt);
@@ -7799,15 +7825,22 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         }
 
         const editBtn = add('Edit', cards => cards.length === 1 ? taskDialogs.showEditCardDialog(cards[0]) : taskDialogs.showBulkEditCardsDialog(cards), 'open');
+        editBtn.title = "Edit the selected task cards."; // CHANGE: explicit action tooltip.
         const assignBtn = add('Assign to', openAssignmentPicker, 'open');
         assignBtn.setAttribute('aria-haspopup', 'dialog');
         assignBtn.setAttribute('aria-expanded', 'false');
         const todoBtn = add('TODO', cards => taskCommands.applyCardWorkflowActions(cards, 'TODO'));
+        todoBtn.title = "Set the selected task cards to TODO."; // CHANGE: explicit action tooltip.
         const doingBtn = add('DOING', cards => taskCommands.applyCardWorkflowActions(cards, 'DOING'));
+        doingBtn.title = "Set the selected task cards to DOING."; // CHANGE: explicit action tooltip.
         const doneBtn = add('DONE', cards => taskCommands.applyCardWorkflowActions(cards, 'DONE'));
+        doneBtn.title = "Mark the selected task cards as DONE."; // CHANGE: explicit action tooltip.
         const allocateBtn = add('Allocate to Start Dates', cards => taskCommands.applyStagedStartDateAllocation(cards), 'add');
+        allocateBtn.title = "Schedule the selected staged tasks on their start dates."; // CHANGE: explicit action tooltip.
         const resetBtn = add('Reset Dates', cards => cards.length === 1 ? taskCommands.resetCardDates(cards[0]) : taskCommands.resetCardDatesForCards(cards), 'danger');
+        resetBtn.title = "Remove date overrides from the selected task cards."; // CHANGE: explicit action tooltip.
         const clearBtn = add('Clear Note', cards => cards.length === 1 ? taskCommands.clearCardNote(cards[0]) : taskCommands.applyBulkCardEdit(cards, { replaceNote: true, note: '' }), 'danger');
+        clearBtn.title = "Remove notes from the selected task cards."; // CHANGE: explicit action tooltip.
 
         function refresh() {
             if (isTeamPermissionModeActiveForTaskOverlay()) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; } // NEW

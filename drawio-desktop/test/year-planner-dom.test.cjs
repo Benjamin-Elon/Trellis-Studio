@@ -2927,6 +2927,336 @@ test("Add crops transfer stages additions and removals before applying", async t
     assert.equal(session.plan.csa.components.length, 0); // CHANGE
 }); // CHANGE
 
+test("Crop change labels distinguish pending actions and remember the latest applied action", async t => { // CHANGE
+    const harness = createYearPlannerHarness({ plants: [ // CHANGE
+        { plant_id: 1, plant_name: "Tomato", yield_per_plant_kg: 1, annual: 1 }, // CHANGE
+        { plant_id: 2, plant_name: "Lettuce", yield_per_plant_kg: 1, annual: 1 }, // CHANGE
+        { plant_id: 3, plant_name: "Carrot", yield_per_plant_kg: 1, annual: 1 } // CHANGE
+    ] }); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    savePlan(harness, 2026); // CHANGE
+    const session = await harness.openModal(2026); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Lettuce"); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add all visible"); // CHANGE
+    let row = transferRowByLabel(harness.document, "Included", "Lettuce - Mature"); // CHANGE
+    assert.equal(row.querySelector(".yp-package-transfer-meta").textContent, "Will add"); // CHANGE
+    assert.equal(row.dataset.pending, "true"); // CHANGE
+    setPickerSearch(harness, "Tomato"); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove all visible"); // CHANGE
+    row = transferRowByLabel(harness.document, "Available", "Tomato - Mature"); // CHANGE
+    assert.equal(row.querySelector(".yp-package-transfer-meta").textContent, "Will remove"); // CHANGE
+    assert.equal(session.plan.crops.length, 1); // CHANGE: staging must not mutate the working plan.
+    harness.findButton("Apply changes").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    assert.equal(session.plan.crops.length, 1); // CHANGE
+    assert.equal(findCropFilterSelect(harness.document).value, session.plan.crops[0].id); // CHANGE
+    assert.equal(session.plan.crops[0].plant, "Lettuce"); // CHANGE
+
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "aDdEd"); // CHANGE
+    row = transferRowByLabel(harness.document, "Included", "Lettuce - Mature"); // CHANGE
+    assert.equal(row.querySelector(".yp-package-transfer-meta").textContent, "Added"); // CHANGE
+    assert.equal(row.dataset.pending, "false"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 1); // CHANGE
+    assert.equal(harness.findButton("Apply changes").disabled, true); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove all visible"); // CHANGE
+    setPickerSearch(harness, "Will remove"); // CHANGE
+    row = transferRowByLabel(harness.document, "Available", "Lettuce - Mature"); // CHANGE
+    assert.equal(row.querySelector(".yp-package-transfer-meta").textContent, "Will remove"); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add"); // CHANGE: undoing a staged removal restores the applied label.
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRowByLabel(harness.document, "Included", "Lettuce - Mature").querySelector(".yp-package-transfer-meta").textContent, "Added"); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove all visible"); // CHANGE
+    harness.findButton("Apply changes").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "ReMoVeD"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Base plant").querySelector(".yp-package-transfer-meta").textContent, "Removed"); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Lettuce (0)")); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Carrot (0)"), null); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add all visible"); // CHANGE
+    setPickerSearch(harness, "Will add"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 2); // CHANGE
+    assert.equal(transferRowByLabel(harness.document, "Included", "Tomato - Mature").querySelector(".yp-package-transfer-meta").textContent, "Will add"); // CHANGE
+    harness.findButton("Apply changes").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    assert.deepEqual(Array.from(session.plan.crops, crop => crop.plant).sort(), ["Lettuce", "Tomato"]); // CHANGE: filtered bulk Add excludes unmarked Carrot.
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRows(harness.document).length, 0); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 2); // CHANGE
+    assert.ok(transferRows(harness.document, "Included").every(item => item.querySelector(".yp-package-transfer-meta").textContent === "Added")); // CHANGE
+}); // CHANGE
+
+test("Crop change history ignores canceled staging and declined deletion confirmations", async t => { // CHANGE
+    const settings = { varieties: [{ variety_id: 10, plant_id: 1, variety_name: "Roma" }] }; // CHANGE
+    const harness = createYearPlannerHarness(settings); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    const session = await harness.openModal(2026); // CHANGE
+    await addCropFromPicker(harness, "Tomato (1)"); // CHANGE
+    addDemand(session.plan, { cropId: session.plan.crops[0].id }); // CHANGE: linked rows activate the existing removal confirmation.
+    settings.confirmResult = false; // CHANGE
+    harness.findButton("Remove crop").click(); // CHANGE
+    assert.equal(session.plan.crops.length, 1); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove"); // CHANGE
+    harness.findButton("Apply changes").click(); // CHANGE
+    assert.match(findPicker(harness.document).textContent, /Changes not applied/); // CHANGE
+    assert.equal(session.plan.crops.length, 1); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRowByLabel(harness.document, "Included", "Tomato - Mature").querySelector(".yp-package-transfer-meta").textContent, "Added"); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRows(harness.document).length, 0); // CHANGE
+    setPickerSearch(harness, "Roma"); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add"); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 1); // CHANGE
+    assert.equal(session.plan.crops.length, 1); // CHANGE
+}); // CHANGE
+
+test("Added follows identity edits and individual deletion records the updated Removed identity", async t => { // CHANGE
+    const harness = createYearPlannerHarness({ varieties: [{ variety_id: 10, plant_id: 1, variety_name: "Roma" }] }); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    let stages = [{ stageKey: "mature", stageLabel: "Mature", yieldRatio: 1 }, { stageKey: "baby", stageLabel: "Baby", yieldRatio: 0.25 }]; // CHANGE
+    harness.window.USL = { ...harness.window.USL, scheduler: { listGrowthStagesForPlanCrop: async () => stages } }; // CHANGE
+    const session = await harness.openModal(2026); // CHANGE
+    await addCropFromPicker(harness, "Tomato (1)"); // CHANGE
+    const cropId = session.plan.crops[0].id; // CHANGE
+    harness.setControlValue(findYearPlanField(harness.document, "varietyId", { cropId }), 10, "change"); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.setControlValue(findYearPlanField(harness.document, "growthStageKey", { cropId }), "baby", "change"); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRowByLabel(harness.document, "Included", "Tomato - Roma - Baby").querySelector(".yp-package-transfer-meta").textContent, "Added"); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRows(harness.document).length, 0); // CHANGE: identity edits do not mark the old option Removed.
+    closeOpenPicker(harness); // CHANGE
+    harness.findButton("Remove crop").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    assert.equal(session.plan.crops.length, 0); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Baby").querySelector(".yp-package-transfer-meta").textContent, "Removed"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Mature"), null); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Base plant"), null); // CHANGE
+    assert.equal(Array.from(pickerRowByLabel(harness.document, "Tomato (1)").querySelectorAll("button")).some(button => button.textContent === "Add"), false); // CHANGE: matching a removed variety must not expose an unrelated base Add shortcut.
+    closeOpenPicker(harness); // CHANGE
+    stages = [stages[0]]; // CHANGE
+    harness.window.dispatchEvent(new harness.window.CustomEvent("usl:growthStagesSaved", { detail: { plantId: "1" } })); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRows(harness.document).length, 0); // CHANGE: an unavailable catalog option cannot display its removal history.
+}); // CHANGE
+
+test("Unmarked crop edits and automatic metadata refreshes do not create change labels", async t => { // CHANGE
+    const harness = createYearPlannerHarness({ varieties: [{ variety_id: 10, plant_id: 1, variety_name: "Roma" }] }); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    savePlan(harness, 2026); // CHANGE
+    await harness.openModal(2026); // CHANGE
+    harness.setControlValue(findYearPlanField(harness.document, "varietyId", { cropId: "crop_1" }), 10, "change"); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.window.dispatchEvent(new harness.window.CustomEvent("usl:varietyEditorSaved", { detail: { cropId: "crop_1", plantId: "1", varietyId: 10, varietyName: "Roma", action: "save" } })); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Reload crops").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assert.equal(transferRowByLabel(harness.document, "Included", "Tomato - Roma - Mature").querySelector(".yp-package-transfer-meta"), null); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 0); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRows(harness.document).length, 0); // CHANGE
+}); // CHANGE
+
+test("Crop labels survive Save and planner reopening but never enter persistence or a fresh window", async t => { // CHANGE
+    const harness = createYearPlannerHarness(); // CHANGE
+    const freshWindow = createYearPlannerHarness(); // CHANGE
+    t.after(() => { harness.dom.window.close(); freshWindow.dom.window.close(); }); // CHANGE
+    let session = await harness.openModal(2026); // CHANGE
+    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    Object.assign(session.plan.crops[0], makePlanCrop({ id: session.plan.crops[0].id, harvestWindowSource: "manual" })); // CHANGE: supply a valid save fixture without changing its tracked row ID.
+    (harness.findButton("Save") || harness.findButton("Save draft")).click(); // CHANGE
+    const committed = harness.api.PlanRepository.loadPlanForYear(harness.moduleCell, 2026); // CHANGE
+    assert.ok(committed); // CHANGE
+    const expectedPlan = JSON.stringify(harness.api.PlanSchema.serializeForPersistence(session.plan)); // CHANGE
+    const storedPlans = JSON.parse(harness.api.DiagramStore.getCellAttr(harness.moduleCell, harness.api.Env.ATTRS.PLAN_YEARS_ATTR, "{}")); // CHANGE
+    assert.equal(JSON.stringify(storedPlans["2026"]), expectedPlan); // CHANGE: inspect the stored payload before runtime normalization adds transient flags.
+    const runtimeBeforePicker = JSON.stringify(session.plan); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 1); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    assert.equal(JSON.stringify(session.plan), runtimeBeforePicker); // CHANGE: displaying/searching history must not mutate any runtime crop data.
+
+    harness.setControlValue(harness.document.querySelector('input[placeholder="Template name"]'), "History-free template"); // CHANGE
+    harness.findButton("Save template").click(); // CHANGE
+    const template = harness.api.PlanRepository.loadTemplateByName("History-free template"); // CHANGE
+    const expectedTemplate = harness.api.PlanSchema.serializeForPersistence(session.plan, { forTemplate: true }); // CHANGE
+    expectedTemplate.templateBaseYear = 2026; expectedTemplate.year = null; // CHANGE
+    assert.equal(JSON.stringify(template), JSON.stringify(expectedTemplate)); // CHANGE
+    let exportedBlob; // CHANGE
+    harness.window.URL.createObjectURL = blob => { exportedBlob = blob; return "blob:test"; }; // CHANGE
+    harness.window.HTMLAnchorElement.prototype.click = function () {}; // CHANGE: capture export without jsdom attempting navigation.
+    harness.findButton("Export").click(); // CHANGE
+    const exportedText = await new Promise((resolve, reject) => { // CHANGE
+        const reader = new harness.window.FileReader(); // CHANGE
+        reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error); // CHANGE
+        reader.readAsText(exportedBlob); // CHANGE
+    }); // CHANGE
+    assert.equal(JSON.stringify(JSON.parse(exportedText)), expectedPlan); // CHANGE
+    harness.findButton("Close").click(); // CHANGE
+    session = await harness.openModal(2026); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRowByLabel(harness.document, "Included", "Tomato - Mature").querySelector(".yp-package-transfer-meta").textContent, "Added"); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    harness.findButton("Remove crop").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Close").click(); // CHANGE
+    const draft = harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2026); // CHANGE
+    assert.ok(draft); // CHANGE
+    const storedDrafts = JSON.parse(harness.api.DiagramStore.getCellAttr(harness.moduleCell, harness.api.Env.ATTRS.PLAN_DRAFTS_ATTR, "{}")); // CHANGE
+    assert.equal(JSON.stringify(storedDrafts["2026"].plan), JSON.stringify(harness.api.PlanSchema.serializeForPersistence(session.plan))); // CHANGE
+    session = await harness.openModal(2026); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE
+
+    freshWindow.api.PlanRepository.savePlanForYear(freshWindow.moduleCell, 2026, committed); // CHANGE
+    freshWindow.api.PlanRepository.saveDraftForYear(freshWindow.moduleCell, 2026, draft.plan); // CHANGE
+    for (let index = 0; index < harness.window.localStorage.length; index++) { // CHANGE
+        const key = harness.window.localStorage.key(index); // CHANGE
+        freshWindow.window.localStorage.setItem(key, harness.window.localStorage.getItem(key)); // CHANGE
+    } // CHANGE
+    await freshWindow.openModal(2026); // CHANGE
+    freshWindow.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(freshWindow, "Removed"); // CHANGE
+    assert.equal(pickerRows(freshWindow.document).length, 0); // CHANGE: identical persisted data carries no window history.
+    freshWindow.api.SessionController.close(); // CHANGE
+    freshWindow.api.PlanRepository.deleteDraftForYear(freshWindow.moduleCell, 2026); // CHANGE
+    await freshWindow.openModal(2026); // CHANGE
+    freshWindow.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(freshWindow, "Added"); // CHANGE
+    assert.equal(transferRows(freshWindow.document, "Included").length, 0); // CHANGE
+    setPickerSearch(freshWindow, ""); // CHANGE
+    assert.ok(transferRowByLabel(freshWindow.document, "Included", "Tomato - Mature")); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE: another window cannot clear the original window's history.
+}); // CHANGE
+
+test("Crop change history is isolated by year and garden object even when cell IDs match", async t => { // CHANGE
+    const harness = createYearPlannerHarness(); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    await harness.openModal(2026); // CHANGE
+    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    const yearInput = Array.from(harness.document.querySelectorAll('input[type="number"]')).find(input => input.value === "2026"); // CHANGE
+    harness.setControlValue(yearInput, 2027, "change"); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 0); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    harness.setControlValue(yearInput, 2026, "change"); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 1); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    harness.api.SessionController.close(); // CHANGE
+
+    const otherGarden = harness.addCell(harness.root, new harness.TestCell(harness.moduleCell.id, { label: "Other diagram garden" })); // CHANGE
+    harness.api.YearPlanModalController.open(otherGarden, 2026); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRows(harness.document).length, 0); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 0); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    harness.findButton("Remove crop").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    harness.findButton("Clear").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRows(harness.document).length, 0); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    harness.api.SessionController.close(); // CHANGE
+    await harness.openModal(2026); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 1); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    const restoredYearInput = Array.from(harness.document.querySelectorAll('input[type="number"]')).find(input => input.value === "2026"); // CHANGE
+    harness.setControlValue(restoredYearInput, 2027, "change"); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 1); // CHANGE
+}); // CHANGE
+
+test("Template replacement and draft reset clear only the affected crop history", async t => { // CHANGE
+    const settings = {}; // CHANGE
+    const harness = createYearPlannerHarness(settings); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    savePlan(harness, 2026); // CHANGE
+    const template = harness.api.PlanSchema.serializeForPersistence(harness.api.PlanSchema.createEmptyPlan(2026), { forTemplate: true }); // CHANGE
+    template.templateBaseYear = 2026; template.year = null; // CHANGE
+    harness.api.PlanRepository.saveTemplateByName("Empty layout", template); // CHANGE
+    await harness.openModal(2027); // CHANGE
+    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    const yearInput = Array.from(harness.document.querySelectorAll('input[type="number"]')).find(input => input.value === "2027"); // CHANGE
+    harness.setControlValue(yearInput, 2026, "change"); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Remove crop").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    (harness.findButton("Save") || harness.findButton("Save draft")).click(); // CHANGE
+    settings.confirmResult = false; // CHANGE
+    harness.findButton("Discard draft").click(); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE: declining reset must keep history.
+    closeOpenPicker(harness); // CHANGE
+    settings.confirmResult = true; // CHANGE
+    harness.findButton("Discard draft").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assert.equal(transferRowByLabel(harness.document, "Included", "Tomato - Mature").querySelector(".yp-package-transfer-meta"), null); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    harness.findButton("Remove crop").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    const templateSelect = Array.from(harness.document.querySelectorAll("select")).find(select => Array.from(select.options).some(option => option.textContent === "Empty layout")); // CHANGE
+    templateSelect.value = "Empty layout"; // CHANGE
+    harness.findButton("Apply template").click(); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Removed"); // CHANGE
+    assert.equal(pickerRows(harness.document).length, 0); // CHANGE
+    closeOpenPicker(harness); // CHANGE
+    harness.setControlValue(yearInput, 2027, "change"); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Added"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 1); // CHANGE: replacing/resetting 2026 must retain 2027's history.
+}); // CHANGE
+
 test("Add crops transfer add and remove actions reset both pane scroll positions", async t => { // CHANGE
     const harness = createYearPlannerHarness({ // CHANGE
         plants: [ // CHANGE

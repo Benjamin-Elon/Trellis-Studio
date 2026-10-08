@@ -1839,12 +1839,14 @@ Draw.loadPlugin(function (ui) {
     const historyActions = makeEl('div', { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' });
     returnLatestBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });
     returnLatestBtn.textContent = 'Return latest';
+    returnLatestBtn.title = 'Return from the revision preview to the latest diagram.'; // CHANGE
     compareBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });
     compareBtn.textContent = 'Compare';
     restoreBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });
     restoreBtn.textContent = 'Restore';
     checkpointBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });
     checkpointBtn.textContent = 'Checkpoint';
+    checkpointBtn.title = 'Save a named checkpoint of the current diagram in history.'; // CHANGE
     historyActions.appendChild(returnLatestBtn);
     historyActions.appendChild(compareBtn);
     historyActions.appendChild(restoreBtn);
@@ -2014,6 +2016,8 @@ Draw.loadPlugin(function (ui) {
 
     prevBtn.disabled = (n === 0 || idx <= 0);
     nextBtn.disabled = (n === 0 || idx >= n - 1);
+    prevBtn.title = n === 0 ? 'No matching changes in the current window.' : prevBtn.disabled ? 'Already at the first matching change.' : 'Select the previous matching change.'; // CHANGE
+    nextBtn.title = n === 0 ? 'No matching changes in the current window.' : nextBtn.disabled ? 'Already at the last matching change.' : 'Select the next matching change.'; // CHANGE
 
     // Build clickable list
     listWrap.innerHTML = '';
@@ -2126,6 +2130,8 @@ Draw.loadPlugin(function (ui) {
 
   function updateHistoryPreview() {
     const rev = selectedHistoryRevision();
+    compareBtn.title = rev ? 'Compare the selected revision with the current diagram.' : 'Select a history revision before comparing it.'; // CHANGE
+    restoreBtn.title = rev ? 'Restore the diagram to the selected revision.' : 'Select a history revision before restoring it.'; // CHANGE
     if (!rev) {
       historyPreview.textContent = 'Select a revision to preview affected cells, compare, or restore.';
       compareBtn.disabled = true;

@@ -2828,10 +2828,11 @@ Draw.loadPlugin(function (ui) {
         stampAcceptedActorMetadata(edit, changes);
     }
 
-    function makeButton(label, onClick, variant) {
+    function makeButton(label, onClick, variant, tooltip) { // CHANGE: explicit help describes permission and account consequences.
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = label;
+        if (tooltip) button.title = tooltip; // CHANGE
         button.style.cssText = "padding:4px 8px;border:1px solid #9CA3AF;border-radius:4px;background:#fff;cursor:pointer;font:12px Arial,sans-serif;";
         applyUsersButtonStyle(button, variant || "neutral", { compact: true });
         button.addEventListener("click", function (evt) { if (evt) evt.stopPropagation(); onClick(evt); });
@@ -3030,7 +3031,7 @@ Draw.loadPlugin(function (ui) {
         if (action) {
             const actions = document.createElement("div");
             actions.style.cssText = "display:flex;justify-content:flex-end;margin-top:8px;";
-            const button = makeButton(action.label, function () { closeRejectedEditPopover(); action.run(); }, "open");
+            const button = makeButton(action.label, function () { closeRejectedEditPopover(); action.run(); }, "open", 'Resolve the rejected edit: ' + action.label); // CHANGE: explicit action tooltip.
             button.className = (button.className || "") + (action.label === "Request Access" ? " trellis-users-rejected-edit-request-access-button" : " trellis-users-rejected-edit-login-button");
             actions.appendChild(button);
             root.appendChild(actions);
@@ -3147,7 +3148,7 @@ Draw.loadPlugin(function (ui) {
             pin.value = "";
             if (!result.ok) { showAuthStatus(result.reason); return; }
             finishAuthSuccess(keep.checkbox.checked);
-        }, canBootstrapAdmin() ? "add" : "open");
+        }, canBootstrapAdmin() ? "add" : "open", canBootstrapAdmin() ? 'Create the first administrator for this diagram.' : 'Log in to this diagram with the entered name and PIN.'); // CHANGE: explicit action tooltip.
         parent.appendChild(action);
     }
 
@@ -3170,7 +3171,7 @@ Draw.loadPlugin(function (ui) {
             pin.value = "";
             if (!result.ok) { showAuthStatus(result.reason); return; }
             finishAuthSuccess(keep.checkbox.checked);
-        }, "add"));
+        }, "add", "Enable diagram users and permissions by creating the first administrator.")); // CHANGE: explicit action tooltip.
     }
 
     function appendAuthInviteForm(parent) {
@@ -3198,7 +3199,7 @@ Draw.loadPlugin(function (ui) {
             pin.value = "";
             if (!result.ok) { showAuthStatus(result.reason); return; }
             finishAuthSuccess(keep.checkbox.checked);
-        }, "add"));
+        }, "add", "Accept the invitation and join this diagram with the invited access.")); // CHANGE: explicit action tooltip.
         parent.appendChild(box);
     }
 
@@ -3230,7 +3231,7 @@ Draw.loadPlugin(function (ui) {
         header.appendChild(makeButton(blocking ? "Close Diagram" : "Cancel", function () {
             if (blocking) closeCurrentDiagramFromAuth();
             else closeAuthOverlay(true);
-        }, "add"));
+        }, "add", blocking ? 'Close this diagram without logging in.' : 'Close the login prompt.')); // CHANGE: explicit action tooltip.
         card.appendChild(header);
         authStatusNode = document.createElement("div");
         authStatusNode.style.cssText = "min-height:16px;color:#4B5563;margin-bottom:8px;";
@@ -3291,8 +3292,8 @@ Draw.loadPlugin(function (ui) {
         accountMenu.appendChild(label);
         const actions = document.createElement("div");
         actions.style.cssText = "display:grid;grid-template-columns:1fr;gap:6px;";
-        actions.appendChild(makeButton("People & Access", function () { closeAccountMenu(); togglePanel(); }, "open"));
-        actions.appendChild(makeButton("Logout", function () { logout(); }, "neutral"));
+        actions.appendChild(makeButton("People & Access", function () { closeAccountMenu(); togglePanel(); }, "open", "Open the People & Access panel for this diagram.")); // CHANGE: explicit action tooltip.
+        actions.appendChild(makeButton("Logout", function () { logout(); }, "neutral", "End your login session for this diagram.")); // CHANGE: explicit action tooltip.
         accountMenu.appendChild(actions);
         host.appendChild(accountMenu);
         accountMenuOutsideHandler = function (evt) {
@@ -3466,7 +3467,7 @@ Draw.loadPlugin(function (ui) {
             const result = login(loginNameInput.value, loginPinInput.value);
             if (!result.ok) showStatus(result.reason);
             loginPinInput.value = "";
-        }, canBootstrapAdmin() ? "add" : "open"));
+        }, canBootstrapAdmin() ? "add" : "open", canBootstrapAdmin() ? 'Create the first administrator for this diagram.' : 'Log in to this diagram with the entered name and PIN.')); // CHANGE: explicit action tooltip.
         parent.appendChild(row);
     }
 
@@ -3494,7 +3495,7 @@ Draw.loadPlugin(function (ui) {
             const result = acceptInvite({ email: email.value, code: code.value, name: name.value, pin: pin.value });
             if (!result.ok) showStatus(result.reason);
             pin.value = "";
-        }, "add"));
+        }, "add", "Accept the invitation and join this diagram with the invited access.")); // CHANGE: explicit action tooltip.
         box.appendChild(actions);
         parent.appendChild(box);
     }
@@ -3512,7 +3513,7 @@ Draw.loadPlugin(function (ui) {
             const result = enableUsers(loginNameInput.value, loginPinInput.value);
             if (!result.ok) showStatus(result.reason);
             loginPinInput.value = "";
-        }, "add"));
+        }, "add", "Enable users and permissions for this diagram.")); // CHANGE: explicit action tooltip.
         parent.appendChild(row);
     }
 
@@ -3537,11 +3538,11 @@ Draw.loadPlugin(function (ui) {
                 const result = resendInvite(invite.id, {});
                 if (!result.ok) { showStatus(result.reason); return; }
                 openEmailDraft(result.emailDraft);
-            }, "open"));
+            }, "open", 'Renew this invitation and open an email draft for ' + invite.email + '.')); // CHANGE: explicit action tooltip.
             row.appendChild(makeButton("Revoke", function () {
                 const result = revokeInvite(invite.id);
                 if (!result.ok) showStatus(result.reason);
-            }, "danger"));
+            }, "danger", 'Revoke the pending invitation for ' + invite.email + '.')); // CHANGE: explicit action tooltip.
             box.appendChild(row);
         });
         parent.appendChild(box);
@@ -3554,7 +3555,7 @@ Draw.loadPlugin(function (ui) {
         const text = document.createElement("div");
         text.textContent = user ? user.name + " (" + (user.admin ? "admin" : "regular") + ")" : "Not logged in";
         row.appendChild(text);
-        row.appendChild(makeButton("Logout", logout, "neutral"));
+        row.appendChild(makeButton("Logout", logout, "neutral", "End your login session for this diagram.")); // CHANGE: explicit action tooltip.
         parent.appendChild(row);
     }
 
@@ -3570,7 +3571,7 @@ Draw.loadPlugin(function (ui) {
             resetPinUserId = "";
             showStatus("PIN reset for " + user.name + ".");
             refreshPanel();
-        }, "add"));
+        }, "add", 'Save a new PIN for ' + user.name + '.')); // CHANGE: explicit action tooltip.
         resetRow.appendChild(makeButton("Cancel", function () {
             resetPinUserId = "";
             refreshPanel();
@@ -3586,15 +3587,15 @@ Draw.loadPlugin(function (ui) {
         const adminToggle = makeButton(user.admin ? "Regular" : "Admin", function () {
             const result = setUserAdmin(user.id, !user.admin);
             if (!result.ok) showStatus(result.reason);
-        }, "neutral");
+        }, "neutral", (user.admin ? 'Remove administrator privileges from ' : 'Grant administrator privileges to ') + user.name + '.'); // CHANGE: explicit action tooltip.
         const disableToggle = makeButton(user.disabled ? "Reactivate" : "Disable", function () {
             const result = setUserDisabled(user.id, !user.disabled);
             if (!result.ok) showStatus(result.reason);
-        }, user.disabled ? "neutral" : "danger");
+        }, user.disabled ? "neutral" : "danger", (user.disabled ? 'Reactivate ' : 'Disable login for ') + user.name + '.'); // CHANGE: explicit action tooltip.
         const resetPin = makeButton("PIN", function () {
             resetPinUserId = resetPinUserId === user.id ? "" : user.id;
             refreshPanel();
-        }, "open");
+        }, "open", (resetPinUserId === user.id ? 'Close PIN reset for ' : 'Set a new PIN for ') + user.name + '.'); // CHANGE: explicit action tooltip.
         row.appendChild(adminToggle);
         row.appendChild(disableToggle);
         row.appendChild(resetPin);
@@ -3664,7 +3665,7 @@ Draw.loadPlugin(function (ui) {
         const button = makeButton("Garden access (" + activeCount + ")", function () {
             openGardenAccessUserId = isOpen ? "" : user.id;
             refreshPanel();
-        }, "open");
+        }, "open", 'Review or change garden access for ' + user.name + '.'); // CHANGE: explicit action tooltip.
         button.className = (button.className || "") + " trellis-users-garden-access-button";
         button.setAttribute("aria-haspopup", "dialog");
         button.setAttribute("aria-expanded", isOpen ? "true" : "false");
@@ -3759,7 +3760,7 @@ Draw.loadPlugin(function (ui) {
             if (!result.ok) showStatus(result.reason);
             name.value = "";
             pin.value = "";
-        }, "add"));
+        }, "add", "Create a local user for this diagram.")); // CHANGE: explicit action tooltip.
         parent.appendChild(addRow);
     }
 
@@ -3977,7 +3978,7 @@ Draw.loadPlugin(function (ui) {
             const result = requestAccess(cell, { requestedPreset: preset.value, note: note.value });
             if (!result.ok) { status.textContent = result.reason; return; }
             closeAccessDialog(shell.overlay);
-        }, "add"));
+        }, "add", "Submit the chosen access request and note for this scope.")); // CHANGE: explicit action tooltip.
         shell.box.appendChild(scopeText);
         shell.box.appendChild(preset);
         shell.box.appendChild(note);
@@ -4074,12 +4075,12 @@ Draw.loadPlugin(function (ui) {
                         const result = approveAccessRequest(request.id, { preset: preset.value, decisionNote: decisionNote.value });
                         if (!result.ok) { status.textContent = result.reason; return; }
                         render();
-                    }, "add"));
+                    }, "add", "Approve this access request with the selected permission preset.")); // CHANGE: explicit action tooltip.
                     actions.appendChild(makeButton("Deny", function () {
                         const result = denyAccessRequest(request.id, decisionNote.value);
                         if (!result.ok) { status.textContent = result.reason; return; }
                         render();
-                    }, "danger"));
+                    }, "danger", "Deny this access request and record the response note.")); // CHANGE: explicit action tooltip.
                     row.appendChild(head);
                     row.appendChild(scope);
                     row.appendChild(note);
@@ -4119,13 +4120,13 @@ Draw.loadPlugin(function (ui) {
                             const result = markAccessMessageRead(message.id);
                             if (!result.ok) { showStatus(result.reason); return; }
                             render();
-                        }, "neutral"));
+                        }, "neutral", "Mark this access response as read.")); // CHANGE: explicit action tooltip.
                     }
                     actions.appendChild(makeButton("Dismiss", function () {
                         const result = dismissAccessMessage(message.id);
                         if (!result.ok) { showStatus(result.reason); return; }
                         render();
-                    }, "neutral"));
+                    }, "neutral", "Dismiss this access response from the message list.")); // CHANGE: explicit action tooltip.
                     row.appendChild(head);
                     row.appendChild(scope);
                     row.appendChild(reviewer);
@@ -4191,7 +4192,7 @@ Draw.loadPlugin(function (ui) {
             box.appendChild(denied);
             if (!summary.canEdit) {
                 appendRequesterAccessRequestStatus(box, cell, decisionStatusVisible);
-                const requestButton = makeButton(hasEffectiveAccessForSummary(summary) ? "Request More Access" : "Request Access", function () { openAccessRequestDialog(cell); }, "open");
+                const requestButton = makeButton(hasEffectiveAccessForSummary(summary) ? "Request More Access" : "Request Access", function () { openAccessRequestDialog(cell); }, "open", "Request additional permissions for this scope."); // CHANGE: explicit action tooltip.
                 requestButton.className = (requestButton.className || "") + " trellis-users-request-access-button";
                 box.appendChild(requestButton);
             }
@@ -4318,6 +4319,7 @@ Draw.loadPlugin(function (ui) {
                 else if (directlyGranted && derivedGrantForUser(getAccessSummary(cell), user.id)) showStatus("Removed individual access. Team-derived access still applies."); // NEW
             }, directlyGranted ? "danger" : "neutral"); // CHANGE
             actionButton.disabled = teamDerived; // NEW
+            actionButton.title = teamDerived ? "Team-derived access is edited from team permission mode." : directlyGranted ? "Remove this user\'s individual access grant; inherited access may still apply." : "Apply this user\'s selected access preset to this scope."; // CHANGE
             head.appendChild(actionButton); // CHANGE
             row.appendChild(head);
             box.appendChild(row);
@@ -4609,7 +4611,7 @@ Draw.loadPlugin(function (ui) {
         const trigger = makeButton("Access scopes", function () { // NEW
             const popover = parent.querySelector(".trellis-team-permission-tree-popover"); // NEW
             if (popover) popover.style.display = popover.style.display === "none" ? "block" : "none"; // NEW
-        }, "open"); // NEW
+        }, "open", "Show or hide the tree of scopes whose permissions can be edited."); // NEW // CHANGE: explicit action tooltip.
         trigger.className = (trigger.className || "") + " trellis-team-permission-combobox"; // NEW
         parent.appendChild(trigger); // NEW
         const popover = document.createElement("div"); // NEW
@@ -4634,6 +4636,7 @@ Draw.loadPlugin(function (ui) {
                 header.type = "button"; // NEW
                 header.textContent = (teamPermissionCollapsed.has(key) ? "> " : "v ") + cellDisplayLabel(group.moduleCell, "Module") + " (" + visibleScopes.length + ")"; // NEW
                 header.setAttribute("aria-expanded", teamPermissionCollapsed.has(key) ? "false" : "true"); // NEW
+                header.title = (teamPermissionCollapsed.has(key) ? "Expand permission scopes for " : "Collapse permission scopes for ") + cellDisplayLabel(group.moduleCell, "Module"); // CHANGE
                 header.style.cssText = "display:block;width:100%;text-align:left;border:0;background:#F8FAFC;color:#111827;font-weight:700;padding:4px 6px;margin-top:4px;"; // NEW
                 header.addEventListener("click", function () { if (teamPermissionCollapsed.has(key)) teamPermissionCollapsed.delete(key); else teamPermissionCollapsed.add(key); draw(); }); // NEW
                 list.appendChild(header); // NEW

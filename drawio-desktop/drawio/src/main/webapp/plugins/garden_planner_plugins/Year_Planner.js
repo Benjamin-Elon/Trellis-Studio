@@ -4300,6 +4300,19 @@ Draw.loadPlugin(function (ui) {
     /** Owns dashboard DOM construction, event orchestration, persistence, and session-scoped UI state. */
     const YearPlanModalController = (() => {
         const addCropTreeExpandedByGardenYear = new Map(); // CHANGE: survives dialog closes in this window; reload/restart clears it, with unseen garden/year trees collapsed.
+        const cropChangeHistoryByGarden = new WeakMap(); // CHANGE: garden object identity isolates diagrams; history expires with this window.
+
+        /** Returns UI-only applied actions for a garden/year; never attach history to persisted plan data. */ // CHANGE
+        function getCropChangeHistory(moduleCell, year) { // CHANGE
+            let byYear = cropChangeHistoryByGarden.get(moduleCell); // CHANGE
+            if (!byYear) { // CHANGE
+                byYear = new Map(); // CHANGE
+                cropChangeHistoryByGarden.set(moduleCell, byYear); // CHANGE
+            } // CHANGE
+            const yearKey = Number(year); // CHANGE
+            if (!byYear.has(yearKey)) byYear.set(yearKey, { addedCropIds: new Set(), removedIdentityKeys: new Set() }); // CHANGE
+            return byYear.get(yearKey); // CHANGE
+        } // CHANGE
 
         function parseStoredDate(value) {
             const date = value ? new Date(value) : null;
@@ -4782,10 +4795,11 @@ Draw.loadPlugin(function (ui) {
             wrap.addEventListener("wheel", routeModalWheel, { passive: false, capture: true });
             wrap.addEventListener("mousewheel", routeModalWheel, { passive: false, capture: true });
 
-            function mkBtn(label, variant) {
+            function mkBtn(label, variant, tooltip) { // CHANGE: descriptions are explicitly supplied by action owners.
                 const button = document.createElement("button");
                 button.type = "button";
                 button.textContent = label;
+                if (tooltip) button.title = tooltip; // CHANGE
                 const semanticVariant = variant === "primary" ? "add" : (variant === "secondary" ? "open" : (variant || "neutral"));
                 if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
                     window.Trellis.ui.applyButtonStyle(button, semanticVariant);
@@ -5022,6 +5036,7 @@ Draw.loadPlugin(function (ui) {
                         toggle.type = "button";
                         toggle.textContent = isExpanded ? "-" : "+";
                         toggle.setAttribute("aria-label", isExpanded ? "Collapse" : "Expand");
+                        toggle.title = (isExpanded ? "Collapse " : "Expand ") + node.label; // CHANGE
                         toggle.addEventListener("click", event => { event.stopPropagation(); toggleExpanded(node); });
                     }
                     const check = document.createElement("input");
@@ -5083,6 +5098,7 @@ Draw.loadPlugin(function (ui) {
                     status.textContent = `${selectedLabels.length} selected`;
                     warning.textContent = "";
                     add.disabled = !selectedLabels.length;
+                    add.title = add.disabled ? "Select at least one item before adding." : "Add the selected items to the year plan."; // CHANGE
                 }
 
                 function closePicker(force) {
@@ -5197,6 +5213,7 @@ Draw.loadPlugin(function (ui) {
                 else shell.summary.textContent = String(settings.summaryText || "");
                 shell.toggle.textContent = settings.expanded ? "Collapse" : "Expand";
                 shell.header.setAttribute("aria-expanded", settings.expanded ? "true" : "false");
+                shell.header.title = (settings.expanded ? "Collapse " : "Expand ") + settings.title; // CHANGE
                 shell.details.style.display = settings.expanded ? "block" : "none";
                 const shouldBuild = !!settings.rebuildDetails || (!shell.detailsBuilt && (settings.expanded || settings.mountWhenCollapsed));
                 if (shouldBuild && settings.renderDetails) {
@@ -5272,11 +5289,21 @@ Draw.loadPlugin(function (ui) {
             function applyDisabledAreaState(container, disabled) {
                 if (!container) return;
                 container.classList.toggle("yp-disabled-area", !!disabled);
-                if (!disabled) return; // CHANGE: enabled sections keep each control's own business-rule disabled state.
+                if (!disabled) { // CHANGE: restore tooltip text without changing business-rule disabled states.
+                    for (const button of container.querySelectorAll("button[data-year-plan-enabled-title]")) { // CHANGE
+                        button.title = button.getAttribute("data-year-plan-enabled-title"); // CHANGE
+                        button.removeAttribute("data-year-plan-enabled-title"); // CHANGE
+                    } // CHANGE
+                    return; // CHANGE
+                } // CHANGE
                 for (const control of Array.from(container.querySelectorAll("input,select,textarea,button"))) {
                     if (control.dataset && control.dataset.keepEnabledWhenSectionDisabled === "true") continue;
                     if (control.tagName === "BUTTON" && /^(Expand|Collapse)$/.test(String(control.textContent || "").trim())) continue;
                     control.disabled = !!disabled;
+                    if (control.tagName === "BUTTON") { // CHANGE
+                        if (!control.hasAttribute("data-year-plan-enabled-title")) control.setAttribute("data-year-plan-enabled-title", control.title); // CHANGE
+                        control.title = "Enable this section before using this action."; // CHANGE
+                    } // CHANGE
                 }
             } // CHANGE
 
@@ -5434,6 +5461,7 @@ Draw.loadPlugin(function (ui) {
                 const panelId = Env.uid("yp-diagnostics-section");
                 button.setAttribute("aria-controls", panelId);
                 button.setAttribute("aria-expanded", collapsed ? "false" : "true");
+                button.title = (collapsed ? "Expand " : "Collapse ") + (titleText || "Diagnostics"); // CHANGE
                 const title = document.createElement("span");
                 title.className = "yp-diagnostics-section-title";
                 title.textContent = titleText || "Diagnostics";
@@ -5456,6 +5484,7 @@ Draw.loadPlugin(function (ui) {
                     const nextCollapsed = button.getAttribute("aria-expanded") === "true";
                     setDiagnosticsSectionCollapsed(key, nextCollapsed);
                     button.setAttribute("aria-expanded", nextCollapsed ? "false" : "true");
+                    button.title = (nextCollapsed ? "Expand " : "Collapse ") + (titleText || "Diagnostics"); // CHANGE
                     cue.textContent = nextCollapsed ? "Expand" : "Collapse";
                     panel.hidden = nextCollapsed;
                 }); // NEW
@@ -5875,6 +5904,7 @@ Draw.loadPlugin(function (ui) {
                 trigger.className = "yp-diagnostics-trigger";
                 trigger.textContent = "?";
                 trigger.setAttribute("aria-label", label);
+                trigger.title = "Show details: " + label; // CHANGE
                 if (settings.tone) trigger.dataset.tone = String(settings.tone); // CHANGE
                 const popover = document.createElement("div");
                 popover.className = "yp-diagnostics-popover";
@@ -6048,10 +6078,10 @@ Draw.loadPlugin(function (ui) {
                     const cropDiagnostics = cropValidationResults(metric.crop.id);
                     if (metric.status === "Missing data") add(createValidationAttentionChip(`${cropLabel(metric.crop)} missing data`, "danger", cropDiagnostics, false, () => selectCropFromAttention(metric.crop.id)));
                     else if (cropDiagnostics.length) add(createValidationAttentionChip(`${cropLabel(metric.crop)} diagnostics`, "danger", cropDiagnostics, false, () => selectCropFromAttention(metric.crop.id)));
-                    else if (metric.status === "Short") add(createChip(`${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`, "", "danger", () => selectCropFromAttention(metric.crop.id, { highlightPlanCheckRow: true }))); // CHANGE
-                    else if (metric.status === "Expired / timing issue") add(createChip(`${cropLabel(metric.crop)} timing ${formatKg(metric.shortKg)}`, "", "warning", () => selectCropFromAttention(metric.crop.id, { highlightPlanCheckRow: true }))); // CHANGE
+                    else if (metric.status === "Short") add(createChip(`${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`, "", "danger", () => selectCropFromAttention(metric.crop.id, { highlightPlanCheckRow: true }), { title: 'Select this crop and show its shortage in Plan Check.' })); // CHANGE
+                    else if (metric.status === "Expired / timing issue") add(createChip(`${cropLabel(metric.crop)} timing ${formatKg(metric.shortKg)}`, "", "warning", () => selectCropFromAttention(metric.crop.id, { highlightPlanCheckRow: true }), { title: 'Select this crop and inspect its harvest timing in Plan Check.' })); // CHANGE
                 }
-                if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", null, { primaryTarget: { area: "plan-check", chipKind: "expired" }, chipKind: "attention-expired" })); // CHANGE
+                if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", null, { title: 'Inspect expired inventory in Plan Check.', primaryTarget: { area: 'plan-check', chipKind: 'expired' }, chipKind: 'attention-expired' })); // CHANGE
                 const demandErrors = PlanSchema.validateDemand(plan); // NEW
                 if (demandErrors.length) add(createValidationAttentionChip("Demand dates invalid", "danger", demandErrors, true, () => { state.demandExpanded = true; renderDemandStrip(true); })); // CHANGE
                 const selfErrors = PlanSchema.validateSelfSufficiency(plan); // NEW
@@ -6611,6 +6641,7 @@ Draw.loadPlugin(function (ui) {
                     const all = mkBtn(actionLabel, side === "available" ? "add" : "danger");
                     const groups = groupEntries(entries);
                     all.disabled = !groups.some(group => group.entries.length);
+                    all.title = all.disabled ? "No visible packages to change." : side === "available" ? "Stage all visible packages for addition; Apply changes to update the plan." : "Stage all visible packages for removal; Apply changes to update the plan."; // CHANGE
                     all.addEventListener("click", () => {
                         for (const group of groups) for (const entry of group.entries) setRowAction(entry, side);
                     });
@@ -6653,7 +6684,7 @@ Draw.loadPlugin(function (ui) {
                                 meta.textContent = entry.pendingAdd ? "Will add" : (entry.pendingRemove ? "Undo remove" : "Duplicate row");
                                 controls.appendChild(meta);
                             }
-                            const action = mkBtn(side === "available" ? "Add" : "Remove", side === "available" ? "add" : "danger");
+                            const action = mkBtn(side === "available" ? "Add" : "Remove", side === "available" ? "add" : "danger", side === 'available' ? 'Stage this package for addition; Apply changes to update the plan.' : 'Stage this package for removal; Apply changes to update the plan.'); // CHANGE: explicit action tooltip.
                             action.addEventListener("click", () => setRowAction(entry, side));
                             controls.appendChild(action);
                             row.appendChild(labelEl);
@@ -6696,7 +6727,7 @@ Draw.loadPlugin(function (ui) {
                         const meta = document.createElement("span");
                         meta.className = "yp-package-transfer-meta";
                         meta.textContent = "0 packages";
-                        const edit = mkBtn("Edit packages", "neutral");
+                        const edit = mkBtn("Edit packages", "neutral", "Open this crop's package definitions."); // CHANGE: explicit action tooltip.
                         edit.addEventListener("click", () => {
                             if (hasPendingChanges()) {
                                 editBlocked = true;
@@ -6734,6 +6765,7 @@ Draw.loadPlugin(function (ui) {
                     status.textContent = hasPendingChanges() ? `Add ${addCount}, remove ${removeCount}` : "No pending changes";
                     if (!editBlocked) warning.textContent = "";
                     apply.disabled = !hasPendingChanges();
+                    apply.title = apply.disabled ? "Stage a package addition or removal before applying." : "Apply the staged package additions and removals to the plan."; // CHANGE
                 }
 
                 function closePicker(force) {
@@ -6777,6 +6809,7 @@ Draw.loadPlugin(function (ui) {
                 const cropId = String(crop && crop.id || ""); // CHANGE
                 if (!cropId) return -1; // CHANGE
                 const index = (plan.crops || []).indexOf(crop); // CHANGE
+                if (index < 0) return -1; // CHANGE: only actual deletions record an applied action or remove linked rows.
                 const removedDemandLineIds = (plan.demands || []).filter(line => String(line && line.cropId || "") === cropId).map(line => String(line && line.id || "")); // CHANGE
                 const removedSelfLineIds = ((plan.selfSufficiency && plan.selfSufficiency.lines) || []).filter(line => String(line && line.cropId || "") === cropId).map(line => String(line && line.id || "")); // CHANGE
                 plan.crops = (plan.crops || []).filter(item => item !== crop); // CHANGE
@@ -6785,6 +6818,9 @@ Draw.loadPlugin(function (ui) {
                 for (const lineId of removedDemandLineIds) state.collapsedDemandLineIds.delete(lineId); // CHANGE
                 for (const lineId of removedSelfLineIds) state.collapsedSelfSufficiencyLineIds.delete(lineId); // CHANGE
                 if (plan.csa && Array.isArray(plan.csa.components)) plan.csa.components = plan.csa.components.filter(component => String(component && component.cropId || "") !== cropId); // CHANGE
+                const history = getCropChangeHistory(moduleCell, currentYear); // CHANGE
+                history.addedCropIds.delete(cropId); // CHANGE: the latest action replaces Added, including individual deletion.
+                history.removedIdentityKeys.add(PlanSchema.getCropIdentityKey(crop)); // CHANGE: the deleted row is represented by its Available catalog identity.
                 return index; // CHANGE
             } // CHANGE
 
@@ -7083,6 +7119,15 @@ Draw.loadPlugin(function (ui) {
                 });
             } // NEW: DB reads stay asynchronous and only rerender when the self-use crop set changes.
 
+            /** Keeps template action help aligned with the selected template and entered name. */ // CHANGE
+            function refreshTemplateButtonTooltips() { // CHANGE
+                const selectedName = String(templateSel.value || ""); // CHANGE
+                const enteredName = String(templateNameInput.value || "").trim(); // CHANGE
+                applyTemplate.title = selectedName ? "Replace the current year plan with the selected saved template." : "Select a saved template before applying it."; // CHANGE
+                saveTemplate.title = enteredName ? "Save the current plan as a reusable template; replace any template with this name." : "Enter a template name before saving."; // CHANGE
+                deleteTemplate.title = selectedName ? "Delete the selected saved template." : "Select a saved template before deleting it."; // CHANGE
+            } // CHANGE
+
             function fillTemplateDropdown() {
                 templateSel.innerHTML = "";
                 templateSel.appendChild(new Option("-- Select template --", ""));
@@ -7166,7 +7211,7 @@ Draw.loadPlugin(function (ui) {
                 titleGroup.appendChild(sub);
                 const statusRow = document.createElement("div");
                 statusRow.className = "yp-chip-row";
-                statusRow.appendChild(createChip("Status", statusText, statusToneName, null, statusToneName === "warning" || statusToneName === "danger" ? { primaryTarget: { area: "plan-check", section: (dashboard && dashboard.diagnostics || []).length ? "diagnostics" : "summary" } } : null)); // CHANGE
+                statusRow.appendChild(createChip("Status", statusText, statusToneName, null, statusToneName === 'warning' || statusToneName === 'danger' ? { title: 'Inspect the plan status and related diagnostics in Plan Check.', primaryTarget: { area: 'plan-check', section: (dashboard && dashboard.diagnostics || []).length ? 'diagnostics' : 'summary' } } : null)); // CHANGE
                 if (loadedDraftForCurrentYear) statusRow.appendChild(createChip("Draft", "", "primary")); // CHANGE
                 if (dirty) statusRow.appendChild(createChip("Unsaved", "", "primary"));
                 head.appendChild(titleGroup);
@@ -7218,6 +7263,7 @@ Draw.loadPlugin(function (ui) {
                     const cardEl = document.createElement("div");
                     cardEl.tabIndex = 0;
                     cardEl.setAttribute("role", "button");
+                    cardEl.title = "Select crop and open its plan details: " + cropLabel(metric.crop); // CHANGE
                     cardEl.className = "yp-crop-card";
                     cardEl.dataset.selected = selected ? "true" : "false";
                     cardEl.dataset.cropId = String(metric.crop.id || "");
@@ -7472,7 +7518,10 @@ Draw.loadPlugin(function (ui) {
                 const metric = dashboard.csaMetric || {};
                 csaRefs.componentValue.value = (Math.max(0, Number(metric.componentValuePerBox) || 0)).toFixed(2);
                 if (document.activeElement !== csaRefs.salePrice) csaRefs.salePrice.value = (Math.max(0, Number(plan.csa && plan.csa.salePricePerBox) || 0)).toFixed(2);
-                if (csaRefs.resetSale) csaRefs.resetSale.disabled = (plan.csa && plan.csa.enabled === false) || (plan.csa && plan.csa.salePriceMode !== "manual"); // CHANGE
+                if (csaRefs.resetSale) { // CHANGE: synchronize disabled help with the sale-price state.
+                    csaRefs.resetSale.disabled = (plan.csa && plan.csa.enabled === false) || (plan.csa && plan.csa.salePriceMode !== "manual"); // CHANGE
+                    csaRefs.resetSale.title = plan.csa && plan.csa.enabled === false ? "Enable CSA before resetting its sale price." : csaRefs.resetSale.disabled ? "The sale price already uses the derived component value." : "Reset sale value to the derived component value."; // CHANGE
+                } // CHANGE
             }
 
             function updateChartLegendState() {
@@ -7603,7 +7652,7 @@ Draw.loadPlugin(function (ui) {
                     createChip("Target", formatKg(chartSummary.targetKg), "primary"),
                     createChip("Harvested", formatKg(chartSummary.harvestKg), chartSummary.harvestKg > EPS ? "success" : "neutral"),
                     createChip("Usable", formatKg(chartSummary.usableSupplyKg), chartSummary.usableSupplyKg > EPS ? "success" : "neutral"),
-                    createChip("Expired", formatKg(chartSummary.expiredKg), chartSummary.expiredKg > EPS ? "warning" : "neutral", null, chartSummary.expiredKg > EPS ? { primaryTarget: { area: "plan-check", chipKind: "expired" }, chipKind: "expired" } : null), // CHANGE
+                    createChip("Expired", formatKg(chartSummary.expiredKg), chartSummary.expiredKg > EPS ? "warning" : "neutral", null, chartSummary.expiredKg > EPS ? { title: 'Inspect expired inventory in Plan Check.', primaryTarget: { area: 'plan-check', chipKind: 'expired' }, chipKind: 'expired' } : null), // CHANGE
                     createChip("Total potential", formatMoney(scopedRevenue.potentialRevenue), "neutral"),
                     createChip("Total fulfilled", formatMoney(scopedRevenue.fulfilledRevenue), scopedRevenue.fulfilledRevenue > EPS ? "success" : "neutral")
                 ]);
@@ -7665,6 +7714,11 @@ Draw.loadPlugin(function (ui) {
                 promptSave.textContent = commitReady ? "Save and Close" : "Save draft and close"; // CHANGE
                 exportButton.textContent = loadedDraftForCurrentYear || !commitReady ? "Export draft" : "Export"; // CHANGE
                 reset.textContent = loadedDraftForCurrentYear ? "Discard draft" : (loadedExistingForCurrentYear ? "Reset" : "Clear"); // CHANGE
+                save.title = commitReady ? "Save this garden\'s year plan." : "Save unfinished work as a draft for this garden and year."; // CHANGE
+                saveClose.title = save.title + " Close the year planner after saving."; // CHANGE
+                promptSave.title = saveClose.title; // CHANGE
+                exportButton.title = loadedDraftForCurrentYear || !commitReady ? "Export the current draft as JSON." : "Export this year plan as JSON."; // CHANGE
+                reset.title = loadedDraftForCurrentYear ? "Delete the saved draft and reload the committed plan, if any." : loadedExistingForCurrentYear ? "Delete the saved plan for this year and start an empty plan." : "Clear the current plan for this year."; // CHANGE
                 if (state.validationState === "invalid" && state.lastDraftSavedAt) footerStatus.textContent = `Draft saved ${state.lastDraftSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}; validation failed`; // CHANGE
                 else if (state.validationState === "invalid") footerStatus.textContent = "Validation failed";
                 else if (dirty) footerStatus.textContent = "Unsaved changes";
@@ -7995,7 +8049,7 @@ Draw.loadPlugin(function (ui) {
                 const yieldMeta = document.createElement("div");
                 yieldMeta.className = "yp-yield-hint";
                 const yieldHint = document.createElement("span");
-                const resetYield = mkBtn("Reset", "danger");
+                const resetYield = mkBtn("Reset", "danger", "Restore this crop's yield from its plant or variety defaults."); // CHANGE: explicit action tooltip.
                 yieldMeta.appendChild(yieldHint); yieldMeta.appendChild(resetYield);
                 kgHost.appendChild(kg); kgHost.appendChild(yieldMeta);
                 const germ = mkInput("number", crop.germRate ?? 1);
@@ -8191,7 +8245,7 @@ Draw.loadPlugin(function (ui) {
                 return [
                     createChip("Demand", formatKg(metric.targetKg), "neutral"),
                     createChip("Usable", formatKg(metric.usableSupplyKg), metric.usableSupplyKg > EPS ? "success" : "neutral"),
-                    createChip(metric.shortKg > EPS ? "Short" : "Status", metric.shortKg > EPS ? formatKg(metric.shortKg) : "OK", metric.shortKg > EPS ? "danger" : "success", null, metric.shortKg > EPS ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" } } : null), // CHANGE
+                    createChip(metric.shortKg > EPS ? "Short" : "Status", metric.shortKg > EPS ? formatKg(metric.shortKg) : "OK", metric.shortKg > EPS ? "danger" : "success", null, metric.shortKg > EPS ? { title: 'Inspect shortage weeks in Plan Check.', primaryTarget: { area: 'plan-check', rowKind: 'shortage-weeks' } } : null), // CHANGE
                     createChip("Lines", String(metric.lineCount), "neutral"),
                     createChip("Committed", formatKg(metric.priorityKg.committed), "neutral"),
                     createChip("Target", formatKg(metric.priorityKg.target), "neutral"),
@@ -8235,13 +8289,13 @@ Draw.loadPlugin(function (ui) {
                 const datesInvalid = from === "?" || to === "?" || (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to); // CHANGE
                 const priceTarget = missingPackagePriceTargetForLine(line); // CHANGE
                 return [
-                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning", null, crop ? null : { primaryTarget: demandLineTarget(line, "cropId") }), // CHANGE
+                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning", null, crop ? null : { title: 'Choose the missing crop for this demand line.', primaryTarget: demandLineTarget(line, 'cropId') }), // CHANGE
                     createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "No unit"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"), // CHANGE
-                    createChip("Dates", `${from}-${to}`, datesInvalid ? "warning" : "neutral", null, datesInvalid ? { targets: [demandLineTarget(line, "from"), demandLineTarget(line, "to")] } : null), // CHANGE
+                    createChip("Dates", `${from}-${to}`, datesInvalid ? "warning" : "neutral", null, datesInvalid ? { title: 'Review this demand line\'s start and end dates.', targets: [demandLineTarget(line, 'from'), demandLineTarget(line, 'to')] } : null), // CHANGE
                     createChip("Priority", priorityLabel, "neutral"),
                     createChip("Demand", formatKg(demandKg), "neutral"),
-                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning"), null, shortKg > EPS || !result ? { primaryTarget: { area: "demand", lineId: String(line && line.id || ""), channelId: String(line && line.channelId || "") } } : null), // CHANGE
-                    createChip("Potential", formatMoney(potentialRevenue), result && !Number.isFinite(result.unitPrice) ? "warning" : "neutral", null, result && !Number.isFinite(result.unitPrice) ? { primaryTarget: priceTarget || demandLineTarget(line, "unit") } : null), // CHANGE: blank package prices still calculate demand but flag understated revenue.
+                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning"), null, shortKg > EPS || !result ? { title: 'Inspect this demand line and its unmet demand.', primaryTarget: { area: 'demand', lineId: String(line && line.id || ''), channelId: String(line && line.channelId || '') } } : null), // CHANGE
+                    createChip("Potential", formatMoney(potentialRevenue), result && !Number.isFinite(result.unitPrice) ? "warning" : "neutral", null, result && !Number.isFinite(result.unitPrice) ? { title: 'Set the missing package price for this demand line.', primaryTarget: priceTarget || demandLineTarget(line, 'unit') } : null), // CHANGE: blank package prices still calculate demand but flag understated revenue.
                     createChip("Fulfilled", formatMoney(fulfilledRevenue), fulfilledRevenue > EPS ? "success" : "neutral")
                 ];
             }
@@ -8312,7 +8366,7 @@ Draw.loadPlugin(function (ui) {
                 notes.value = String(line.notes || "");
                 notes.rows = 2;
                 notes.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;width:100%;resize:vertical;";
-                const remove = mkBtn("Remove", "danger");
+                const remove = mkBtn("Remove", "danger", "Remove this demand line from the year plan."); // CHANGE: explicit action tooltip.
                 setYearPlanField(cropSelect, "cropId", { lineId });
                 setYearPlanField(qty, "qty", { lineId });
                 setYearPlanField(unit, "unit", { lineId });
@@ -8400,9 +8454,9 @@ Draw.loadPlugin(function (ui) {
                 const lines = (plan.demands || []).filter(line => String(line.channelId) === channelId);
                 const removeChannel = mkBtn("Remove channel", "danger");
                 removeChannel.disabled = lines.length > 0;
-                removeChannel.title = lines.length ? "Remove or move all demand lines before removing this channel." : "";
+                removeChannel.title = lines.length ? "Remove or move all demand lines before removing this channel." : "Remove this empty demand channel."; // CHANGE
                 const collapsed = state.collapsedDemandChannelIds.has(channelId);
-                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral");
+                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral", collapsed ? 'Expand this demand channel.' : 'Collapse this demand channel.'); // CHANGE: explicit action tooltip.
                 toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
                 header.appendChild(enabledToggle); header.appendChild(label); header.appendChild(type); header.appendChild(summary); header.appendChild(removeChannel); header.appendChild(toggle); // CHANGE
                 const details = document.createElement("div");
@@ -8449,7 +8503,7 @@ Draw.loadPlugin(function (ui) {
                 const toolbar = document.createElement("div");
                 toolbar.className = "yp-row";
                 toolbar.style.marginBottom = "9px";
-                const addChannel = mkBtn("Add channel", "add");
+                const addChannel = mkBtn("Add channel", "add", "Add a demand channel to this year plan."); // CHANGE: explicit action tooltip.
                 toolbar.appendChild(addChannel); // CHANGE: demand rows are added from each channel's own bulk picker.
                 const channelsHost = document.createElement("div");
                 channelsHost.style.cssText = "display:flex;flex-direction:column;gap:9px;";
@@ -8530,12 +8584,12 @@ Draw.loadPlugin(function (ui) {
                 const datesInvalid = from === "?" || to === "?" || (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to); // CHANGE
                 const priceTarget = missingPackagePriceTargetForLine(line); // CHANGE
                 return [
-                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning", null, crop ? null : { primaryTarget: selfLineTarget(line, "cropId", lineIndex) }), // CHANGE
+                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning", null, crop ? null : { title: 'Choose the missing crop for this self-use demand line.', primaryTarget: selfLineTarget(line, 'cropId', lineIndex) }), // CHANGE
                     createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "No unit"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"), // CHANGE
-                    createChip("Dates", `${from}-${to}`, datesInvalid ? "warning" : "neutral", null, datesInvalid ? { targets: [selfLineTarget(line, "from", lineIndex), selfLineTarget(line, "to", lineIndex)] } : null), // CHANGE
+                    createChip("Dates", `${from}-${to}`, datesInvalid ? "warning" : "neutral", null, datesInvalid ? { title: 'Review this self-use demand line\'s start and end dates.', targets: [selfLineTarget(line, 'from', lineIndex), selfLineTarget(line, 'to', lineIndex)] } : null), // CHANGE
                     createChip("Demand", formatKg(demandKg), "neutral"),
-                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning"), null, shortKg > EPS || !result ? { primaryTarget: { area: "self-sufficiency", selfLineId: String(line && line.id || ""), selfLineIndex: lineIndex } } : null), // CHANGE
-                    createChip("Grocery value", formatMoney(groceryValue), result && !Number.isFinite(result.unitPrice) ? "warning" : "neutral", null, result && !Number.isFinite(result.unitPrice) ? { primaryTarget: priceTarget || selfLineTarget(line, "unit", lineIndex) } : null), // CHANGE: blank package prices still calculate demand but flag understated grocery value.
+                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning"), null, shortKg > EPS || !result ? { title: 'Inspect this self-use demand line and its unmet demand.', primaryTarget: { area: 'self-sufficiency', selfLineId: String(line && line.id || ''), selfLineIndex: lineIndex } } : null), // CHANGE
+                    createChip("Grocery value", formatMoney(groceryValue), result && !Number.isFinite(result.unitPrice) ? "warning" : "neutral", null, result && !Number.isFinite(result.unitPrice) ? { title: 'Set the missing package price used for grocery value.', primaryTarget: priceTarget || selfLineTarget(line, 'unit', lineIndex) } : null), // CHANGE: blank package prices still calculate demand but flag understated grocery value.
                     createChip("Fulfilled", formatMoney(fulfilledGroceryValue), fulfilledGroceryValue > EPS ? "success" : "neutral")
                 ];
             } // NEW
@@ -8589,7 +8643,7 @@ Draw.loadPlugin(function (ui) {
                 const collapsed = state.collapsedSelfSufficiencyLineIds.has(lineId); // NEW
                 const header = document.createElement("div"); // NEW
                 header.className = "yp-demand-line-header yp-self-line-header"; // NEW
-                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral"); // NEW
+                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral", collapsed ? 'Expand this self-use demand line.' : 'Collapse this self-use demand line.'); // NEW // CHANGE: explicit action tooltip.
                 toggle.setAttribute("aria-expanded", collapsed ? "false" : "true"); // NEW
                 const summary = document.createElement("div"); // NEW
                 summary.className = "yp-demand-line-summary yp-self-line-summary"; // NEW
@@ -8607,7 +8661,7 @@ Draw.loadPlugin(function (ui) {
                 every.min = "1"; every.step = "1";
                 const from = mkInput("date", line.from || "");
                 const to = mkInput("date", line.to || "");
-                const remove = mkBtn("Remove", "danger");
+                const remove = mkBtn("Remove", "danger", "Remove this self-use demand line from the year plan."); // CHANGE: explicit action tooltip.
                 const editPackages = mkBtn("Edit packages", "neutral");
                 editPackages.disabled = !crop;
                 editPackages.title = crop ? "Open this crop's Packages tab." : "Choose a crop before editing packages.";
@@ -8800,7 +8854,7 @@ Draw.loadPlugin(function (ui) {
                 const rowsHost = document.createElement("div");
                 rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;";
                 content.appendChild(rowsHost);
-                const add = mkBtn("Add package", "add");
+                const add = mkBtn("Add package", "add", "Add a package unit and price for this crop."); // CHANGE: explicit action tooltip.
                 add.style.marginTop = "8px";
                 content.appendChild(add);
                 saveDefault.addEventListener("change", () => { crop.savePackagesAsDefault = saveDefault.checked; renderFooter(); });
@@ -8824,7 +8878,7 @@ Draw.loadPlugin(function (ui) {
                         setYearPlanField(baseQty, "baseQty", { cropId: crop.id, packageIndex });
                         setYearPlanField(baseType, "baseType", { cropId: crop.id, packageIndex });
                         setYearPlanField(price, "price", { cropId: crop.id, packageIndex });
-                        const remove = mkBtn("Remove", "danger");
+                        const remove = mkBtn("Remove", "danger", "Remove this package definition from the crop."); // CHANGE: explicit action tooltip.
                         addPackageField(row, "Unit", unit);
                         addPackageField(row, "Quantity", baseQty);
                         addPackageField(row, "Base", baseType);
@@ -8861,7 +8915,7 @@ Draw.loadPlugin(function (ui) {
                 const title = document.createElement("div");
                 title.style.cssText = "font-size:14px;font-weight:700;";
                 title.textContent = cropLabel(crop);
-                const remove = mkBtn("Remove crop", "danger");
+                const remove = mkBtn("Remove crop", "danger", "Remove this crop and its linked demand, self-use, and CSA rows from the year plan."); // CHANGE: explicit action tooltip.
                 head.appendChild(title); head.appendChild(remove);
                 const tabs = document.createElement("div");
                 tabs.style.cssText = "display:flex;gap:4px;padding:8px 10px 0;flex-wrap:wrap;";
@@ -8978,7 +9032,7 @@ Draw.loadPlugin(function (ui) {
                         setYearPlanField(every, "everyNWeeks", { componentIndex });
                         setYearPlanField(from, "start", { componentIndex });
                         setYearPlanField(to, "end", { componentIndex });
-                        const remove = mkBtn("Remove", "danger");
+                        const remove = mkBtn("Remove", "danger", "Remove this component from the CSA box."); // CHANGE: explicit action tooltip.
                         row.appendChild(wrapDestinationCropSelect(cropSelect)); row.appendChild(qty); row.appendChild(unit); row.appendChild(document.createTextNode("Every")); row.appendChild(every); row.appendChild(document.createTextNode("weeks")); row.appendChild(from); row.appendChild(to); row.appendChild(remove); // CHANGE
                         rowsHost.appendChild(row);
                         cropSelect.addEventListener("change", () => { const nextCrop = handleCropSelectPackageNavigation(cropSelect, component.cropId); if (!nextCrop) return; component.cropId = cropSelect.value; component.unit = firstUnusedPackageUnit(nextCrop, "csa", "csa", component); renderRows(); refreshDerived(); }); // CHANGE
@@ -9107,10 +9161,10 @@ Draw.loadPlugin(function (ui) {
             const save = mkBtn("Save", "add");
             const saveClose = mkBtn("Save & Close", "add");
             const close = mkBtn("Close", "close"); // CHANGE
-            const exportButton = mkBtn("Export", "neutral");
+            const exportButton = mkBtn("Export", "neutral", "Export this year plan as JSON."); // CHANGE: explicit action tooltip.
             const reset = mkBtn(loadedExistingForCurrentYear ? "Reset" : "Clear", "danger");
             const promptSave = mkBtn("Save and Close", "add");
-            const promptDiscard = mkBtn("Discard", "danger");
+            const promptDiscard = mkBtn("Discard", "danger", "Discard unsaved plan changes and close the year planner."); // CHANGE: explicit action tooltip.
             const promptCancel = mkBtn("Cancel", "neutral");
             titleEl.textContent = `Plan Year ${currentYear}`;
             headerControls.appendChild(headerStatus);
@@ -9119,9 +9173,10 @@ Draw.loadPlugin(function (ui) {
             secondaryToolbar.appendChild(document.createTextNode("Year")); secondaryToolbar.appendChild(yearInput); secondaryToolbar.appendChild(document.createTextNode("Template")); secondaryToolbar.appendChild(templateSel); secondaryToolbar.appendChild(templateNameInput); secondaryToolbar.appendChild(applyTemplate); secondaryToolbar.appendChild(saveTemplate); secondaryToolbar.appendChild(deleteTemplate);
             fillTemplateDropdown();
             saveTemplate.disabled = true;
+            refreshTemplateButtonTooltips(); // CHANGE
 
-            const addCropsButton = mkBtn("Add/Remove crops", "add"); // CHANGE
-            const reloadPlants = mkBtn("Reload crops", "neutral");
+            const addCropsButton = mkBtn("Add/Remove crops", "add", "Choose crops to add to or remove from this year plan."); // CHANGE
+            const reloadPlants = mkBtn("Reload crops", "neutral", "Reload the crop catalog from the local database."); // CHANGE: explicit action tooltip.
             const plantMessage = document.createElement("span");
             plantMessage.style.color = "#666";
             addRow.appendChild(addCropsButton); addRow.appendChild(reloadPlants); addRow.appendChild(plantMessage); // CHANGE
@@ -9276,6 +9331,8 @@ Draw.loadPlugin(function (ui) {
                 const loadVersion = ++addCropOptionsLoadVersion;
                 addCropsButton.disabled = true; // CHANGE
                 reloadPlants.disabled = true;
+                addCropsButton.title = "Wait for the crop catalog to finish loading."; // CHANGE
+                reloadPlants.title = "The crop catalog is being loaded."; // CHANGE
                 addCropPickerNodes = []; // CHANGE
                 plantMessage.textContent = "Loading crops...";
                 try {
@@ -9371,6 +9428,8 @@ Draw.loadPlugin(function (ui) {
                     if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) {
                         addCropsButton.disabled = !addCropPickerNodes.length; // CHANGE
                         reloadPlants.disabled = false;
+                        addCropsButton.title = addCropsButton.disabled ? "No crop choices are available; reload the catalog to retry." : "Choose crops to add to or remove from this year plan."; // CHANGE
+                        reloadPlants.title = "Reload the crop catalog from the local database."; // CHANGE
                     }
                 }
             }
@@ -9442,6 +9501,9 @@ Draw.loadPlugin(function (ui) {
                     if (!crop) continue; // CHANGE
                     plan.crops.push(crop); // CHANGE
                     added.push(crop); // CHANGE
+                    const history = getCropChangeHistory(moduleCell, currentYear); // CHANGE
+                    history.removedIdentityKeys.delete(PlanSchema.getCropIdentityKey(crop)); // CHANGE: re-adding replaces the previous removal.
+                    history.addedCropIds.add(String(crop.id)); // CHANGE: row IDs retain Added across variety/growth-stage edits.
                 } // CHANGE
                 if (added.length) setSelectedCropEverywhere(added[0].id); // CHANGE
                 else if (previousSelectedId && setSelectedCropEverywhere(previousSelectedId)) { // CHANGE
@@ -9462,6 +9524,7 @@ Draw.loadPlugin(function (ui) {
 
             function openAddCropPicker() {
                 const key = "add-crop"; // CHANGE
+                const history = getCropChangeHistory(moduleCell, currentYear); // CHANGE: applied actions survive picker/planner reopens without changing the plan.
                 const roots = Array.isArray(addCropPickerNodes) ? addCropPickerNodes : []; // CHANGE
                 const leaves = collectAddCropLeaves(roots); // CHANGE
                 const leafOrder = leaves.map(node => String(node.id)); // CHANGE
@@ -9552,7 +9615,11 @@ Draw.loadPlugin(function (ui) {
                 function cloneAvailableNode(node) { // CHANGE
                     if (!node) return null; // CHANGE
                     if (node.action) return { ...node, children: [] }; // CHANGE
-                    if (node.selectable) return leafIsAvailable(node) ? { ...node, children: [] } : null; // CHANGE
+                    if (node.selectable) { // CHANGE
+                        if (!leafIsAvailable(node)) return null; // CHANGE
+                        const meta = history.removedIdentityKeys.has(addCropOptionIdentityKey(node.value)) ? "Removed" : node.meta; // CHANGE
+                        return { ...node, meta, children: [] }; // CHANGE: decorate copies so status search cannot contaminate cached catalog nodes.
+                    } // CHANGE
                     const children = (node.children || []).map(cloneAvailableNode).filter(Boolean); // CHANGE
                     const copy = { ...node, children }; // CHANGE
                     if (copy.selects === "base" && (!copy.baseLeafId || !leafIsAvailable(leafById.get(String(copy.baseLeafId))))) { // CHANGE
@@ -9569,6 +9636,9 @@ Draw.loadPlugin(function (ui) {
                     if (String(node && node.label || "").toLocaleLowerCase().indexOf(needle) >= 0) return node; // CHANGE
                     const copy = { ...node }; // CHANGE
                     copy.children = (node.children || []).map(filteredAvailableNode).filter(Boolean); // CHANGE
+                    if (copy.selects === "base" && !pickerFlattenLeaves(copy.children).some(leaf => String(leaf.id) === String(copy.baseLeafId))) { // CHANGE
+                        copy.selects = null; copy.baseLeafId = ""; // CHANGE: a matching variety/stage must not expose an Add shortcut for a filtered-out base option.
+                    } // CHANGE
                     return copy; // CHANGE
                 } // CHANGE
 
@@ -9624,6 +9694,7 @@ Draw.loadPlugin(function (ui) {
                     titleEl.textContent = `${label} ${countText}`; // CHANGE
                     const all = mkBtn(actionLabel, label === "Available" ? "add" : "danger"); // CHANGE
                     all.disabled = !!actionDisabled; // CHANGE
+                    all.title = all.disabled ? "No visible crops to change." : label === "Available" ? "Stage all visible crops for addition; Apply changes to update the plan." : "Stage all visible crops for removal; Apply changes to update the plan."; // CHANGE
                     all.addEventListener("click", action); // CHANGE
                     headEl.appendChild(titleEl); headEl.appendChild(all); // CHANGE
                     const list = document.createElement("div"); // CHANGE
@@ -9644,7 +9715,7 @@ Draw.loadPlugin(function (ui) {
                     const meta = document.createElement("span"); // CHANGE
                     meta.className = "yp-package-transfer-meta"; // CHANGE
                     meta.textContent = "Will remove"; // CHANGE
-                    const undo = mkBtn("Add", "add"); // CHANGE
+                    const undo = mkBtn("Add", "add", "Undo the pending removal of this crop."); // CHANGE
                     undo.addEventListener("click", () => { removedCropIds.delete(String(crop && crop.id || "")); discardWarned = false; renderAndScrollTransferListsToTop(); }); // CHANGE
                     controls.appendChild(meta); controls.appendChild(undo); // CHANGE
                     row.appendChild(labelEl); row.appendChild(controls); // CHANGE
@@ -9667,6 +9738,7 @@ Draw.loadPlugin(function (ui) {
                         toggle.type = "button"; // CHANGE
                         toggle.textContent = isExpanded ? "-" : "+"; // CHANGE
                         toggle.setAttribute("aria-label", isExpanded ? "Collapse" : "Expand"); // CHANGE
+                        toggle.title = (isExpanded ? "Collapse " : "Expand ") + node.label; // CHANGE
                         toggle.addEventListener("click", event => { event.stopPropagation(); if (isExpanded) expanded.delete(String(node.id || "")); else expanded.add(String(node.id || "")); savePickerExpandedSet(key, expanded); render(); }); // CHANGE
                     } // CHANGE
                     const spacer = document.createElement("span"); // CHANGE
@@ -9677,11 +9749,17 @@ Draw.loadPlugin(function (ui) {
                     const controls = document.createElement("div"); // CHANGE
                     controls.className = "yp-row"; // CHANGE
                     if (node.action) { // CHANGE
-                        const action = mkBtn("Open", "neutral"); // CHANGE
+                        const action = mkBtn("Open", "neutral", "Open the variety editor to create a variety for this plant."); // CHANGE
                         action.addEventListener("click", event => { event.stopPropagation(); closePicker(true); requestVarietyEditor(node.plantId, null, ""); }); // CHANGE
                         controls.appendChild(action); // CHANGE
                     } else if (actionLeaf && leafIsAvailable(actionLeaf)) { // CHANGE
-                        const add = mkBtn("Add", "add"); // CHANGE
+                        if (history.removedIdentityKeys.has(addCropOptionIdentityKey(actionLeaf.value))) { // CHANGE
+                            const meta = document.createElement("span"); // CHANGE
+                            meta.className = "yp-package-transfer-meta"; // CHANGE
+                            meta.textContent = "Removed"; // CHANGE
+                            controls.appendChild(meta); // CHANGE
+                        } // CHANGE
+                        const add = mkBtn("Add", "add", "Stage this crop for addition; Apply changes to update the plan."); // CHANGE
                         add.addEventListener("click", event => { event.stopPropagation(); stageAddLeaf(actionLeaf); }); // CHANGE
                         controls.appendChild(add); // CHANGE
                     } else { // CHANGE
@@ -9726,7 +9804,7 @@ Draw.loadPlugin(function (ui) {
                     const entries = []; // CHANGE
                     for (const crop of originalCrops) { // CHANGE
                         const cropId = String(crop && crop.id || ""); // CHANGE
-                        if (!removedCropIds.has(cropId)) entries.push({ id: cropId, label: cropLabel(crop), meta: "", crop, pendingAdd: false }); // CHANGE
+                        if (!removedCropIds.has(cropId)) entries.push({ id: cropId, label: cropLabel(crop), meta: history.addedCropIds.has(cropId) ? "Added" : "", crop, pendingAdd: false }); // CHANGE
                     } // CHANGE
                     for (const leafId of addedLeafIds) { // CHANGE
                         const leaf = leafById.get(String(leafId)); // CHANGE
@@ -9760,13 +9838,13 @@ Draw.loadPlugin(function (ui) {
                         labelEl.textContent = entry.label; // CHANGE
                         const controls = document.createElement("div"); // CHANGE
                         controls.className = "yp-row"; // CHANGE
-                        if (entry.pendingAdd) { // CHANGE
+                        if (entry.meta) { // CHANGE: pending text takes precedence; applied rows reuse the existing small-label presentation.
                             const meta = document.createElement("span"); // CHANGE
                             meta.className = "yp-package-transfer-meta"; // CHANGE
-                            meta.textContent = "Will add"; // CHANGE
+                            meta.textContent = entry.meta; // CHANGE
                             controls.appendChild(meta); // CHANGE
                         } // CHANGE
-                        const remove = mkBtn("Remove", "danger"); // CHANGE
+                        const remove = mkBtn("Remove", "danger", "Stage this crop for removal; Apply changes to update the plan."); // CHANGE
                         remove.addEventListener("click", () => { if (entry.pendingAdd) { addedLeafIds.delete(entry.id); discardWarned = false; renderAndScrollTransferListsToTop(); } else stageRemoveCrop(entry.crop); }); // CHANGE
                         controls.appendChild(remove); // CHANGE
                         row.appendChild(labelEl); row.appendChild(controls); // CHANGE
@@ -9788,6 +9866,7 @@ Draw.loadPlugin(function (ui) {
                     status.textContent = hasPendingChanges() ? `Add ${addedLeafIds.size}, remove ${removedCropIds.size}` : "No pending changes"; // CHANGE
                     warning.textContent = ""; // CHANGE
                     apply.disabled = !hasPendingChanges(); // CHANGE
+                    apply.title = apply.disabled ? "Stage a crop addition or removal before applying." : "Apply the staged crop additions and removals to the plan."; // CHANGE
                 } // CHANGE
 
                 function closePicker(force) { // CHANGE
@@ -9849,24 +9928,28 @@ Draw.loadPlugin(function (ui) {
                 const template = name && PlanRepository.loadTemplateByName(name);
                 if (!template) return;
                 replacePlan(PlanRepository.rekeyTemplateToPlan(template, currentYear), currentYear, loadedExistingForCurrentYear, loadedDraftForCurrentYear, state.lastDraftSavedAt && state.lastDraftSavedAt.toISOString ? state.lastDraftSavedAt.toISOString() : ""); // CHANGE
+                cropChangeHistoryByGarden.get(moduleCell)?.delete(currentYear); // CHANGE: replacement invalidates only this garden/year's action history.
                 renderAll();
             });
             templateSel.addEventListener("change", () => {
                 templateNameInput.value = String(templateSel.value || "");
                 saveTemplate.disabled = !templateNameInput.value.trim();
+                refreshTemplateButtonTooltips(); // CHANGE
             });
-            templateNameInput.addEventListener("input", () => { saveTemplate.disabled = !templateNameInput.value.trim(); });
+            templateNameInput.addEventListener("input", () => { saveTemplate.disabled = !templateNameInput.value.trim(); refreshTemplateButtonTooltips(); }); // CHANGE
             saveTemplate.addEventListener("click", () => {
                 const name = String(templateNameInput.value || "").trim();
                 if (!name) return;
                 const template = PlanSchema.serializeForPersistence(plan, { forTemplate: true });
                 template.templateBaseYear = currentYear; template.year = null;
                 PlanRepository.saveTemplateByName(name, template); fillTemplateDropdown(); templateSel.value = name; templateNameInput.value = name; saveTemplate.disabled = false;
+                refreshTemplateButtonTooltips(); // CHANGE
             });
             deleteTemplate.addEventListener("click", () => {
                 const name = String(templateSel.value || "");
                 if (!name || !confirm(`Delete template "${name}"?`)) return;
                 PlanRepository.deleteTemplateByName(name); fillTemplateDropdown(); templateNameInput.value = ""; saveTemplate.disabled = true;
+                refreshTemplateButtonTooltips(); // CHANGE
             });
             cropFilterSel.addEventListener("change", () => {
                 const cropId = String(cropFilterSel.value || "");
@@ -9938,6 +10021,7 @@ Draw.loadPlugin(function (ui) {
                     PlanRepository.deleteDraftForYear(moduleCell, currentYear); // CHANGE
                     replacePlan(PlanSchema.createEmptyPlan(currentYear), currentYear, false, false, ""); // CHANGE
                 }
+                cropChangeHistoryByGarden.get(moduleCell)?.delete(currentYear); // CHANGE: confirmed reset/clear also discards this garden/year's applied labels.
                 state.saveValidationErrors = []; // CHANGE: Reset/Clear deletes stored state instead of saving an empty committed plan.
                 renderAll();
                 YearPlanDashboard.markBaseline(state, plan, null);

@@ -1121,9 +1121,11 @@ Draw.loadPlugin(function (ui) {
         if (state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = "";
     }
 
-    function createButton(label, variant) {
+    function createButton(label, variant, tooltip, ariaLabel) { // CHANGE: callers supply action-specific help rather than repeating labels.
         const button = document.createElement("button");
         button.textContent = label;
+        if (tooltip) button.title = tooltip; // CHANGE
+        if (ariaLabel) button.setAttribute("aria-label", ariaLabel); // CHANGE
         const colors = {
             add: ["#188038", "#166534"],
             danger: ["#b91c1c", "#b91c1c"],
@@ -1602,8 +1604,8 @@ Draw.loadPlugin(function (ui) {
 
             const weekRow = document.createElement("div");
             weekRow.style.cssText = "display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center;";
-            const prev = createButton("<");
-            const next = createButton(">");
+            const prev = createButton("<", "neutral", "Go to the previous actionable sow/start week.", "Previous sow/start week"); // CHANGE
+            const next = createButton(">", "neutral", "Go to the next actionable sow/start week.", "Next sow/start week"); // CHANGE
             const weekSelect = document.createElement("select");
             weekSelect.title = "Select sow/start week";
             weekSelect.style.cssText = "width:100%;min-width:0;box-sizing:border-box;font-weight:700;";
@@ -1686,9 +1688,12 @@ Draw.loadPlugin(function (ui) {
             updateCropSelectOptions(refs.cropSelect, state);
             renderDraftSummary(state, refs.draftBox);
             refs.findBest.disabled = !state.selectedCropId || state.findingBed || state.reviewing; // CHANGE
+            refs.findBest.title = state.reviewing ? "Finish reviewing the current planting first." : state.findingBed ? "Searching for a suitable garden bed." : !state.selectedCropId ? "Select a crop before finding a bed." : "Find the best available garden bed for the selected crop and sow/start week."; // CHANGE
 
             refs.rotate.disabled = !state.draft || !state.draft.geometry;
+            refs.rotate.title = refs.rotate.disabled ? "Choose a planting placement before rotating it." : "Rotate the proposed planting by 90 degrees."; // CHANGE
             refs.create.disabled = state.reviewing || !state.draft || state.draft.status === "structural_failure" || state.draft.status === "unavailable"; // CHANGE
+            refs.create.title = state.reviewing ? "Finish the current schedule review first." : !state.draft ? "Choose a planting placement before reviewing its schedule." : refs.create.disabled ? "Choose a valid, available planting placement before reviewing its schedule." : "Review and configure the proposed planting and tasks before creating them."; // CHANGE
         }
 
         function renderUnresolvedReasons(state, box) {
@@ -2150,9 +2155,9 @@ Draw.loadPlugin(function (ui) {
             div.appendChild(suppress);
             const buttons = document.createElement("div");
             buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
-            const edit = createButton("Edit", "open");
+            const edit = createButton("Edit", "open", "Open the scheduler to edit this proposed planting before creating it."); // CHANGE
             const cancel = createButton("Cancel");
-            const create = createButton(draft.status === "compatible" ? "Create" : "Create anyway", "add");
+            const create = createButton(draft.status === "compatible" ? "Create" : "Create anyway", "add", draft.status === "compatible" ? "Create the reviewed planting and its scheduled tasks." : "Create the reviewed planting and tasks despite the compatibility warnings."); // CHANGE
             buttons.appendChild(edit);
             buttons.appendChild(cancel);
             buttons.appendChild(create);

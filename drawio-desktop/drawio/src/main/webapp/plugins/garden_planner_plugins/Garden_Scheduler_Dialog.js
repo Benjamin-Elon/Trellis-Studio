@@ -3210,6 +3210,7 @@ Draw.loadPlugin(function (ui) {
         const doc = selectEl.ownerDocument || document;
         const ownerWindow = doc.defaultView || window;
         const button = document.createElement('button');
+        button.title = "Choose a crop for this planting; search options and review suitability."; // CHANGE: explicit action tooltip.
         button.type = 'button';
         button.className = 'usl-crop-combobox-button';
         button.style.width = '100%';
@@ -4551,6 +4552,7 @@ Draw.loadPlugin(function (ui) {
         root.style.width = '100%';
         root.style.font = '12px Arial,sans-serif';
         const button = document.createElement('button');
+        button.title = "Choose the city used for climate and planting dates."; // CHANGE: explicit action tooltip.
         button.type = 'button';
         button.style.width = '100%';
         button.style.padding = '6px';
@@ -6002,6 +6004,7 @@ Draw.loadPlugin(function (ui) {
             try {
                 await copyExplainTextToClipboard(fullText);
                 copyBtn.textContent = 'Copied';
+                copyBtn.title = 'Copy the sowing-range explanation to the clipboard.'; // CHANGE: clear an earlier copy failure after success.
                 setTimeout(() => { copyBtn.textContent = 'Copy Text'; }, 1200);
             } catch (copyError) {
                 copyBtn.textContent = 'Copy failed';
@@ -6009,6 +6012,7 @@ Draw.loadPlugin(function (ui) {
                 setTimeout(() => { copyBtn.textContent = 'Copy Text'; }, 1600);
             }
         });
+        copyBtn.title = "Copy the sowing-range explanation to the clipboard."; // CHANGE: explicit action tooltip.
         applySharedButtonStyle(copyBtn, 'neutral');
         header.appendChild(copyBtn);
         div.appendChild(header);
@@ -6666,6 +6670,7 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline('Add plant error: ' + (e?.message || String(e)));
             }
         });
+        addPlantBtn.title = "Create a plant record in the local plant database."; // CHANGE: explicit action tooltip.
         applySharedButtonStyle(addPlantBtn, 'add');
 
         const addVarBtn = mxUtils.button('Add variety', async () => {
@@ -6731,6 +6736,7 @@ Draw.loadPlugin(function (ui) {
                 open = !!nextOpen;
                 body.style.display = open ? '' : 'none';
                 toggle.textContent = open ? 'v' : '>';
+                header.title = (open ? 'Collapse ' : 'Expand ') + titleText + ' settings.'; // CHANGE
                 section.setAttribute('data-open', open ? 'true' : 'false');
             }
             function refreshSummary() {
@@ -7434,6 +7440,7 @@ Draw.loadPlugin(function (ui) {
                 is_default: 0
             });
         });
+        addGrowthStageBtn.title = "Add a growth stage to the current plant record."; // CHANGE: explicit action tooltip.
         applySharedButtonStyle(addGrowthStageBtn, 'add');
         growthStageActions.appendChild(addGrowthStageBtn);
         growthStagePanel.appendChild(growthStageActions);
@@ -7534,6 +7541,8 @@ Draw.loadPlugin(function (ui) {
                 growthStageEditorRows = growthStageEditorRows.filter(item => item.removeBtn !== removeBtn);
                 renderGrowthStageRows(growthStageEditorRows.map(readGrowthStageEditorRow).filter(Boolean));
             });
+            removeBtn.title = "Remove this growth stage from the plant editor."; // CHANGE: explicit action tooltip.
+            removeBtn.setAttribute('aria-label', 'Remove growth stage'); // CHANGE: explicit action tooltip.
             applySharedButtonStyle(removeBtn, 'danger', { compact: true }); // CHANGE
             [keyInput, labelInput, gddInput, yieldRatioInput, spacingInputLocal, diameterInput, heightInput].forEach(input => {
                 input.addEventListener('input', refreshGrowthStageStatus);
@@ -7659,6 +7668,7 @@ Draw.loadPlugin(function (ui) {
             const valid = new Set(Array.from(companionLayoutRelSel.options).map(opt => opt.value));
             companionLayoutRelSel.value = valid.has(preferred) ? preferred : String(companionLayoutRelationships[0]?.relationId || '');
             const hasRelationship = !!selectedCompanionLayoutRelationship();
+            companionLayoutSaveBtn.title = hasRelationship ? 'Save layout defaults for the selected companion relationship.' : 'Select a companion relationship before saving layout defaults.'; // CHANGE
             [companionLayoutTemplateSel, companionLayoutSpacingXInput, companionLayoutSpacingYInput, companionLayoutOffsetXInput, companionLayoutOffsetYInput, companionLayoutSaveBtn].forEach(el => { if (el) el.disabled = !hasRelationship; });
             writeCompanionLayoutControls(selectedCompanionLayoutRelationship());
             await refreshCompanionGroupDefaultsList();
@@ -7989,6 +7999,7 @@ Draw.loadPlugin(function (ui) {
             varietySel.value = valid.has(prev) ? prev : '';
 
             addVarBtn.disabled = !hasPlant;
+            addVarBtn.title = hasPlant ? 'Create a variety for the selected plant.' : 'Select a plant before adding a variety.'; // CHANGE
             plantEditorVarietyCombo.refresh(groups, varietySel.value);
         }
 
@@ -8323,6 +8334,7 @@ Draw.loadPlugin(function (ui) {
 
         function syncSaveButtonLabel() {
             if (!saveBtn) return;
+            saveBtn.title = currentVarietyMode === 'add' || currentVarietyMode === 'edit' ? 'Save the variety record and its overrides to the local database.' : 'Save the plant record and its defaults to the local database.'; // CHANGE
             if (currentVarietyMode === 'add') saveBtn.textContent = 'Save variety';
             else if (currentVarietyMode === 'edit') saveBtn.textContent = 'Save variety';
             else saveBtn.textContent = 'Save plant';
@@ -8376,6 +8388,7 @@ Draw.loadPlugin(function (ui) {
                 plantEditorVarietyCombo.refresh(groups, v);
 
                 addVarBtn.disabled = !hasPlant;
+                addVarBtn.title = hasPlant ? 'Create a variety for the selected plant.' : 'Select a plant before adding a variety.'; // CHANGE
 
                 if (!v) {
                     applyDialogMode(
@@ -8733,6 +8746,8 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline('Add plant error: ' + (e?.message || String(e)));
             }
         }, 'add'), 'add');
+        addPlantBtn.title = "Create a new plant record in the local database."; // CHANGE: explicit action tooltip.
+        addPlantBtn.setAttribute('aria-label', 'Add plant'); // CHANGE: explicit action tooltip.
 
         const editPlantBtn = styleCompactActionButton(inlineButton('Edit', async () => {
             try {
@@ -8760,6 +8775,7 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline('Edit plant error: ' + (e?.message || String(e)));
             }
         }, 'open'), 'open');
+        editPlantBtn.title = "Edit the selected plant's database record."; // CHANGE: explicit action tooltip.
 
         addPlantBtn.classList.add('usl-scheduler-crop-action');
         editPlantBtn.classList.add('usl-scheduler-crop-action');
@@ -8906,6 +8922,8 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline('Add variety error: ' + (e?.message || String(e)));
             }
         }, 'add'), 'add');
+        addVarietyBtn.title = "Create a variety for the selected plant."; // CHANGE: explicit action tooltip.
+        addVarietyBtn.setAttribute('aria-label', 'Add variety'); // CHANGE: explicit action tooltip.
 
         varietyControlsWrap.appendChild(addVarietyBtn);
 
@@ -8959,6 +8977,7 @@ Draw.loadPlugin(function (ui) {
         function syncVarietyButtons() {
             const hasVariety = !!(varietySel && varietySel.value);
             editVarietyBtn.disabled = !hasVariety;
+            editVarietyBtn.title = hasVariety ? 'Edit the selected variety\'s database record.' : 'Select a variety before editing it.'; // CHANGE
             if (!hasVariety) setVarietyStatus('');
         }
 
@@ -9633,6 +9652,7 @@ Draw.loadPlugin(function (ui) {
             rowEl.appendChild(rowState.warningEl);
             rowState.revertButton = mxUtils.button('Revert', () => revertCompanionLayoutRow(rowState));
             rowState.revertButton.disabled = true;
+            rowState.revertButton.title = 'No layout changes to revert for this row.'; // CHANGE
             applySharedButtonStyle(rowState.revertButton, 'neutral');
             rowEl.appendChild(rowState.revertButton);
             rowState.rowEl = rowEl;
@@ -9838,6 +9858,7 @@ Draw.loadPlugin(function (ui) {
             };
         }
         function refreshLayoutPreview() {
+            (companionLayoutEditorState?.rows || []).forEach(row => { if (row.revertButton) row.revertButton.title = row.revertButton.disabled ? 'No layout changes to revert for this row.' : 'Restore this row\'s layout values from when the editor opened.'; }); // CHANGE
             try {
                 if (refreshCompanionGroupLayoutPreview()) return;
                 const draft = syncLayoutDraftFromControls();
@@ -11707,6 +11728,7 @@ Draw.loadPlugin(function (ui) {
 
             } catch (e) { showErrorInline('Explain error: ' + e.message); }
         });
+        explainBtn.title = "Explain how climate and crop requirements determine the feasible sowing dates."; // CHANGE: explicit action tooltip.
 
         applySharedButtonStyle(explainBtn, 'open');
 
@@ -11743,6 +11765,7 @@ Draw.loadPlugin(function (ui) {
                 renderPreviewTable(ui, rows);
             } catch (e) { clearScheduleWarningState(); showErrorInline('Preview error: ' + e.message); }
         });
+        previewBtn.title = "Preview feasible planting dates without saving a schedule."; // CHANGE: explicit action tooltip.
 
 
         applySharedButtonStyle(previewBtn, 'neutral');
@@ -11917,6 +11940,7 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline('Scheduling error: ' + e.message);
             }
         });
+        okBtn.title = allocationDraftContext ? 'Preview the allocation planting with these schedule settings before creating it.' : 'Save this planting schedule and apply its task rules.'; // CHANGE: explicit action tooltip.
 
         applySharedButtonStyle(okBtn, 'add');
         if (allocationDraftContext) okBtn.textContent = 'Preview Planting'; // CHANGE
@@ -12080,6 +12104,7 @@ Draw.loadPlugin(function (ui) {
 
         // "Add Task" button
         const addTaskBtn = mxUtils.button("Add Task", () => openTaskEditor(null, null, addTaskBtn));
+        addTaskBtn.title = "Add a task rule to this planting's task template."; // CHANGE: explicit action tooltip.
         applySharedButtonStyle(addTaskBtn, 'add');
         addTaskBtn.style.marginTop = "12px";
         tasksTab.appendChild(addTaskBtn);
@@ -12111,6 +12136,7 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline("Restore built-in tasks error: " + (e?.message || String(e)));
             }
         });
+        restoreBuiltinsBtn.title = "Restore missing built-in task rules for the current method."; // CHANGE: explicit action tooltip.
 
         // Render list
         function renderTasksList() {
@@ -12142,6 +12168,7 @@ Draw.loadPlugin(function (ui) {
                 btnWrap.style.gap = "6px";
 
                 const editBtn = mxUtils.button("Edit", () => openTaskEditor(rule, originalIndex, wrap));
+                editBtn.title = "Edit this task rule in the current template."; // CHANGE: explicit action tooltip.
                 const delBtn = mxUtils.button("Delete", () => {
 
                     const isBuiltIn = isCanonicalTaskRule(rule);
@@ -12158,6 +12185,7 @@ Draw.loadPlugin(function (ui) {
                     void refreshTasksTabUI();
                     restoreFocus(addTaskBtn);
                 });
+                delBtn.title = "Remove this task rule from the current template."; // CHANGE: explicit action tooltip.
                 applySharedButtonStyle(editBtn, 'open');
                 applySharedButtonStyle(delBtn, 'danger');
 
@@ -12245,6 +12273,7 @@ Draw.loadPlugin(function (ui) {
 
         function updateTaskRecipeComboboxChrome() {
             recipeComboLabel.textContent = selectedTaskRecipeLabel(); // NEW
+            recipeComboButton.title = recipeComboOpen ? "Close the task recipe chooser." : "Choose saved task rules to use for this planting."; // CHANGE
             recipeComboPopup.style.display = recipeComboOpen ? "block" : "none"; // NEW
             recipeComboChevron.textContent = recipeComboOpen ? "^" : "v"; // NEW
         }
@@ -12982,6 +13011,7 @@ Draw.loadPlugin(function (ui) {
                     showErrorInline("Save task error: " + (e?.message || String(e)));
                 }
             });
+            saveBtn.title = "Save this task rule to the current template."; // CHANGE: explicit action tooltip.
 
             const cancelBtn = mxUtils.button("Cancel", () => {
                 taskEditorDiv.innerHTML = "";
@@ -13022,6 +13052,7 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline("Reset tasks error: " + (e?.message || String(e)));
             }
         });
+        resetTasksBtn.title = "Replace this planting's task rules with the selected plant's defaults."; // CHANGE: explicit action tooltip.
 
         applySharedButtonStyle(resetTasksBtn, 'danger');
 
@@ -13034,6 +13065,7 @@ Draw.loadPlugin(function (ui) {
         const taskRecipeModeHint = document.createElement("div"); // NEW
         taskRecipeModeHint.style.cssText = "font-size:12px;color:#6b7280;"; // NEW
         const deleteSelectedTaskRecipeBtn = mxUtils.button("Delete selected recipe", function () { void deleteSelectedTaskRecipe(); }); // NEW
+        deleteSelectedTaskRecipeBtn.title = "Delete the selected saved task recipe."; // CHANGE: explicit action tooltip.
         applySharedButtonStyle(deleteSelectedTaskRecipeBtn, "danger"); // NEW
         deleteSelectedTaskRecipeBtn.style.display = "none"; // NEW
         const taskRecipeMethodsDiv = document.createElement("div"); // NEW
@@ -13257,7 +13289,7 @@ Draw.loadPlugin(function (ui) {
             varietySel.disabled = true;
             growthStageSel.disabled = true; // CHANGE: stage belongs to the Year Plan demand identity.
             growthStageSel.title = 'Grown for is fixed by the selected Year Plan row.'; // CHANGE
-            citySel.querySelectorAll('button, input').forEach(control => { control.disabled = true; }); // CHANGE: the city picker is a custom control, not a native select.
+            citySel.querySelectorAll('button, input').forEach(control => { control.disabled = true; if (control.tagName === 'BUTTON') control.title = 'Allocation uses the city from the active garden settings.'; }); // CHANGE: explain the fixed city on the disabled picker.
             citySel.tabIndex = -1; // CHANGE
             climateSection.body.querySelectorAll('input, select, button').forEach(control => { control.disabled = true; }); // CHANGE
             if (allocationDraftContext.isCurrent && !allocationDraftContext.isCurrent()) { allocationDraftContext.onCancel(); return; } // CHANGE: stale async initialization must never open a dialog.
@@ -17174,6 +17206,7 @@ Draw.loadPlugin(function (ui) {
                 model.endUpdate();
             }
         });
+        ok.title = "Assign the selected plant and its default spacing to this planting group."; // CHANGE: explicit action tooltip.
         const cancel = mxUtils.button('Cancel', () => ui.hideDialog());
         applySharedButtonStyle(ok, 'add');
         applySharedButtonStyle(cancel, 'neutral');

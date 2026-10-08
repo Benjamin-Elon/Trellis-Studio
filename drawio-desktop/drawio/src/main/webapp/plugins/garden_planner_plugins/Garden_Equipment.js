@@ -1795,7 +1795,7 @@ Draw.loadPlugin(function (ui) {
             state.inventory.push(item);
             state.selectedEquipmentId = item.id;
             render();
-        }, null, "add"));
+        }, "Add an equipment item to this garden's inventory.", "add")); // CHANGE: explicit action tooltip.
         toolbar.appendChild(buttonEl("Duplicate", "trellis-eq-btn", function () {
             const selected = state.inventory.find(function (eq) { return eq.id === state.selectedEquipmentId; });
             if (!selected) return;
@@ -1806,14 +1806,14 @@ Draw.loadPlugin(function (ui) {
             state.inventory.push(copy);
             state.selectedEquipmentId = copy.id;
             render();
-        }, null, "neutral"));
+        }, "Duplicate the selected equipment item with a new ID.", "neutral")); // CHANGE: explicit action tooltip.
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedEquipmentId) return;
             if (!confirm("Delete this equipment item?")) return;
             state.inventory = state.inventory.filter(function (eq) { return eq.id !== state.selectedEquipmentId; });
             state.selectedEquipmentId = state.inventory[0] && state.inventory[0].id || null;
             render();
-        }, null, "danger"));
+        }, "Delete the selected equipment item from this garden's inventory.", "danger")); // CHANGE: explicit action tooltip.
         const search = document.createElement("input");
         search.className = "trellis-eq-search";
         search.placeholder = "Search equipment...";
@@ -1929,7 +1929,7 @@ Draw.loadPlugin(function (ui) {
                 notes: ""
             }));
             render();
-        }, null, "add");
+        }, "Add a task-efficiency effect to this equipment item.", "add"); // CHANGE: explicit action tooltip.
         body.appendChild(addBtn);
 
         const editor = div("trellis-eq-row-editor");
@@ -1942,7 +1942,7 @@ Draw.loadPlugin(function (ui) {
             row.appendChild(rowField("Minimum", numberInput(eff.minimumScale.value, function (e) { eff.minimumScale.value = coerceNumber(e.target.value, 0); })));
             row.appendChild(rowField("Unit", selectInput(QUANTITY_BASES.map(optPair), eff.minimumScale.unit, function (e) { eff.minimumScale.unit = e.target.value; render(); })));
             row.appendChild(rowField("Stack", checkboxInput(eff.stackable, function (e) { eff.stackable = e.target.checked; })));
-            row.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () { eq.efficiencyEffects.splice(index, 1); render(); }, null, "danger"));
+            row.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () { eq.efficiencyEffects.splice(index, 1); render(); }, "Remove this task-efficiency effect from the equipment item.", "danger")); // CHANGE: explicit action tooltip.
             editor.appendChild(row);
 
             const notesRow = div("trellis-eq-row compact");
@@ -1998,15 +1998,15 @@ Draw.loadPlugin(function (ui) {
             state.taskTypes.push(tt);
             state.selectedTaskTypeId = tt.id;
             render();
-        }, null, "add"));
+        }, "Add a custom task type to this garden's registry.", "add")); // CHANGE: explicit action tooltip.
         toolbar.appendChild(buttonEl("Restore Defaults", "trellis-eq-btn", function () {
             state.taskTypes = mergeDefaults(state.taskTypes, DEFAULT_TASK_TYPES, normalizeTaskType);
             render();
-        }, null, "danger"));
+        }, "Restore built-in task types; preserve custom IDs.", "danger")); // CHANGE: explicit action tooltip.
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedTaskTypeId) return;
             if (deleteTaskTypeId(state, state.selectedTaskTypeId)) render();
-        }, null, "danger"));
+        }, "Delete the selected task type and remove its dependent references.", "danger")); // CHANGE: explicit action tooltip.
         listPanel.appendChild(toolbar);
         listPanel.appendChild(renderTaskTypeTable(state, render));
 
@@ -2093,15 +2093,15 @@ Draw.loadPlugin(function (ui) {
             state.capabilities.push(c);
             state.selectedCapabilityId = c.id;
             render();
-        }, null, "add"));
+        }, "Add a custom capability to this garden's registry.", "add")); // CHANGE: explicit action tooltip.
         toolbar.appendChild(buttonEl("Restore Defaults", "trellis-eq-btn", function () {
             state.capabilities = mergeDefaults(state.capabilities, DEFAULT_CAPABILITIES, normalizeCapability);
             render();
-        }, null, "danger"));
+        }, "Restore built-in capabilities; preserve custom IDs.", "danger")); // CHANGE: explicit action tooltip.
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedCapabilityId) return;
             if (deleteCapabilityId(state, state.selectedCapabilityId)) render();
-        }, null, "danger"));
+        }, "Delete the selected capability and remove its dependent references.", "danger")); // CHANGE: explicit action tooltip.
         listPanel.appendChild(toolbar);
         listPanel.appendChild(renderCapabilitiesTable(state, render));
 
@@ -2247,14 +2247,14 @@ Draw.loadPlugin(function (ui) {
             state.taskTypes = mergeDefaults(state.taskTypes, DEFAULT_TASK_TYPES, normalizeTaskType);
             state.capabilities = mergeDefaults(state.capabilities, DEFAULT_CAPABILITIES, normalizeCapability);
             render();
-        }, null, "danger"));
+        }, "Restore built-in equipment, task types, and capabilities; preserve custom IDs.", "danger")); // CHANGE: explicit action tooltip.
 
         right.appendChild(buttonEl("Export…", "trellis-eq-btn", function () {
             exportJson(state);
-        }, null, "neutral"));
+        }, "Export equipment, task types, and capabilities as JSON.", "neutral")); // CHANGE: explicit action tooltip.
         right.appendChild(buttonEl("Import…", "trellis-eq-btn", function () {
             importJson(state, render);
-        }, null, "open"));
+        }, "Import equipment, task types, and capabilities from JSON.", "open")); // CHANGE: explicit action tooltip.
         right.appendChild(buttonEl("Save", "trellis-eq-btn", saveAll, "Save equipment changes to the selected garden module.", "add"));
         right.appendChild(buttonEl("Save & Close", "trellis-eq-btn", saveAndClose, "Save changes and close the equipment dialog.", "add"));
         right.appendChild(buttonEl("Cancel", "trellis-eq-btn", close, "Close without saving unsaved changes.", "neutral"));
@@ -2389,7 +2389,7 @@ Draw.loadPlugin(function (ui) {
         btn.textContent = text;
         btn.onclick = onClick;
         applyTooltip(btn, tooltip || trim(text));
-        btn.setAttribute("aria-label", tooltip || trim(text));
+        btn.setAttribute("aria-label", trim(text) === "×" ? "Close" : trim(text)); // CHANGE: accessible names stay concise while title carries the explanation.
         if (variant || (btn.className || "").indexOf("trellis-eq-close") < 0) { // CHANGE
             applyEquipmentButtonStyle(btn, variant || ((btn.className || "").indexOf("danger") >= 0 ? "danger" : ((btn.className || "").indexOf("primary") >= 0 ? "add" : "neutral")));
         }
@@ -2609,7 +2609,7 @@ Draw.loadPlugin(function (ui) {
             const row = div("trellis-eq-row compact");
             row.appendChild(rowField("Key", textDiv("trellis-eq-id-code", key)));
             row.appendChild(rowField("Value", numberInput(map[key], function (e) { onValue(key, e.target.value); })));
-            row.appendChild(onDelete && !requiredKeys.has(key) ? buttonEl("Delete", "trellis-eq-btn danger", function () { onDelete(key); }, null, "danger") : textDiv("", ""));
+            row.appendChild(onDelete && !requiredKeys.has(key) ? buttonEl("Delete", "trellis-eq-btn danger", function () { onDelete(key); }, "Remove this optional value from the equipment configuration.", "danger") : textDiv("", "")); // CHANGE: explicit action tooltip.
             editor.appendChild(row);
         });
         return editor;

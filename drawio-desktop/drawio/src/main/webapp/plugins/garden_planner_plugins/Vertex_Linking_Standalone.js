@@ -1831,7 +1831,7 @@ Draw.loadPlugin(function (ui) {
             const button = document.createElement('button');
             button.type = 'button';
             button.textContent = 'Set plant';
-            button.title = opener ? 'Set plant' : 'Scheduler plant picker is unavailable.';
+            button.title = opener ? 'Assign a plant and its default spacing to this planting group.' : 'Scheduler plant picker is unavailable.'; // CHANGE
             button.disabled = !opener;
             applyVertexButtonStyle(button, 'add', { compact: true });
             button.style.border = '1px solid #188038';
@@ -1933,6 +1933,8 @@ Draw.loadPlugin(function (ui) {
             wrap.style.marginTop = '7px';
 
             const prev = makeYearControlButton('<', idx <= 0);
+            prev.title = prev.disabled ? 'Already at the first available year.' : 'Show the previous year\'s plantings.'; // CHANGE
+            prev.setAttribute('aria-label', 'Previous year'); // CHANGE
             const label = document.createElement('div');
             label.textContent = String(years[idx] || current || years[0]);
             label.style.minWidth = '48px';
@@ -1944,6 +1946,8 @@ Draw.loadPlugin(function (ui) {
             label.style.fontSize = '10px';
             label.style.lineHeight = '20px';
             const next = makeYearControlButton('>', idx >= years.length - 1);
+            next.title = next.disabled ? 'Already at the last available year.' : 'Show the next year\'s plantings.'; // CHANGE
+            next.setAttribute('aria-label', 'Next year'); // CHANGE
 
             mxEvent.addListener(prev, 'mousedown', function (evt) {
                 if (idx > 0) applyOverlayYearFilter(entry, years[idx - 1]);
@@ -2066,6 +2070,7 @@ Draw.loadPlugin(function (ui) {
             const button = document.createElement('button');
             button.type = 'button';
             button.textContent = label;
+            button.title = mode === MODE_CARDS ? 'Show linked planting cards.' : mode === MODE_SCHEDULE ? 'Show planting schedules and occupancy dates.' : 'Edit planting spacing and offsets.'; // CHANGE
             button.style.border = '0';
             button.style.padding = '4px 7px';
             button.style.fontSize = '10px';
@@ -2568,6 +2573,7 @@ Draw.loadPlugin(function (ui) {
             const applySetDefault = document.createElement('button');
             applySetDefault.type = 'button';
             applySetDefault.textContent = 'Apply set default';
+            applySetDefault.title = 'Restore the saved companion-set spacing defaults for active rows.'; // CHANGE
             applySetDefault.style.display = context.hasSetDefault ? '' : 'none';
             applyVertexButtonStyle(applySetDefault, 'neutral', { compact: true });
             actions.appendChild(applySetDefault); // CHANGE: set defaults can be restored explicitly without editing a row first.
@@ -2592,6 +2598,7 @@ Draw.loadPlugin(function (ui) {
                 const draft = spacingDraftFromRowStates(rowStates);
                 const validation = tools.validateSpacingDraft(draft);
                 apply.disabled = !changed.length || !validation.ok;
+                apply.title = !changed.length ? 'Change an active row\'s spacing or offset before applying.' : !validation.ok ? validation.errors.join(' ') : 'Apply the spacing and offsets to the changed active plantings.'; // CHANGE
                 status.textContent = validation.ok ? idleStatus : validation.errors.join(' '); // CHANGE: preserve active-window explanation while editing.
                 if (!changed.length || !validation.ok) {
                     clearSpacingPreview();
@@ -2611,6 +2618,7 @@ Draw.loadPlugin(function (ui) {
                 const preview = tools.buildSpacingPreviewModel(graph, previewRows); // CHANGE: pass graph so scheduler can use the read-only tiler preview API.
                 if (preview && preview.status === 'invalid') {
                     apply.disabled = true; // CHANGE: zero in-bounds plant drafts cannot be applied.
+                    apply.title = preview.warning || 'No plants remain inside the planting area.'; // CHANGE
                     clearSpacingPreview();
                     status.textContent = preview.warning || 'No plants remain inside the planting area.';
                     return;
