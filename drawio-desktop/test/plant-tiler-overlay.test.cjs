@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { JSDOM } = require('jsdom'); // CHANGE: exercise mode visibility against the production DOM and mxGraph.
 
 const plantTilerPath = path.join(
     __dirname,
@@ -326,6 +327,74 @@ test('Garden module overlay repeated selected-module clicks toggle visibility wi
     assert.match(source, /clearHiddenModuleIfTargetChanged\(target\);[\s\S]*if \(target\.mode === "module" && target\.moduleCell === manuallyHiddenModuleCell\) \{ hideToolbar\(\); return; \}/);
 });
 
+test('allocation hides bed controls across lifecycle and view changes while preserving module controls', async t => { // CHANGE
+    const dom = new JSDOM('<!doctype html><body><div id="graph"></div></body>', { runScripts: 'outside-only', pretendToBeVisual: true }); // CHANGE
+    t.after(() => dom.window.close()); // CHANGE
+    const { window } = dom; // CHANGE
+    window.mxLoadResources = false; window.mxLoadStylesheets = false; // CHANGE
+    window.HTMLCanvasElement.prototype.getContext = () => null; // CHANGE: mxGraph uses SVG in this fixture.
+    window.eval(fs.readFileSync(path.join(path.dirname(plantTilerPath), '../../mxgraph/mxClient.js'), 'utf8')); // CHANGE
+    const graph = new window.mxGraph(window.document.getElementById('graph')); // CHANGE
+    graph.setHtmlLabels(true); graph.isSpecialColor = () => false; // CHANGE
+    graph.graphHandler.isPropagateSelectionCell = () => false; // CHANGE: select nested beds directly without the separate click-through plugin.
+    graph.convertValueToString = cell => cell.getAttribute('label') || ''; // CHANGE
+    window.Draw = { loadPlugin: callback => callback({ editor: { graph }, actions: { get: () => null }, hideDialog() {} }) }; // CHANGE
+    window.eval(readPlantTilerSource()); // CHANGE: exercise the complete production plugin rather than duplicating its visibility logic.
+    const xmlValue = attrs => { // CHANGE
+        const value = window.mxUtils.createXmlDocument().createElement('object'); // CHANGE
+        Object.entries(attrs).forEach(([key, text]) => value.setAttribute(key, text)); // CHANGE
+        return value; // CHANGE
+    }; // CHANGE
+    const moduleCell = graph.insertVertex(null, 'garden', xmlValue({ garden_module: '1', label: 'Garden' }), 0, 0, 2000, 2000, 'swimlane;module=1;'); // CHANGE
+    const bed = graph.insertVertex(moduleCell, 'bed', xmlValue({ garden_bed: '1', label: 'East bed' }), 400, 200, 200, 100); // CHANGE
+    const bed2 = graph.insertVertex(moduleCell, 'bed2', xmlValue({ garden_bed: '1', label: 'West bed' }), 400, 400, 200, 100); // CHANGE
+    let active = null; // CHANGE
+    window.Trellis = { interactionModes: { getActive: () => active } }; // CHANGE
+    const flush = () => new Promise(resolve => window.setTimeout(() => window.setTimeout(resolve, 0), 0)); // CHANGE: drain initial scheduling and the deferred selection refresh.
+    const notify = () => window.dispatchEvent(new window.CustomEvent('trellisInteractionModeChanged', { detail: { activeMode: 'stale' } })); // CHANGE
+    graph.setSelectionCell(bed); await flush(); // CHANGE
+    const toolbar = graph.container.querySelector('.trellis-garden-module-label-controls').parentNode; // CHANGE
+    assert.equal(toolbar.style.display, 'flex'); // CHANGE
+    active = { mode: 'allocate', ownerId: 'allocate:garden' }; notify(); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'none'); // CHANGE
+    for (const selected of [bed2, null, bed]) { // CHANGE
+        graph.setSelectionCell(selected); await flush(); // CHANGE
+        assert.equal(toolbar.style.display, 'none'); // CHANGE
+    } // CHANGE
+    active = null; notify(); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'flex'); // CHANGE: closing restores controls without changing selection.
+    active = { mode: 'allocate' }; // CHANGE
+    graph.view.fireEvent(new window.mxEventObject(window.mxEvent.REPAINT)); // CHANGE: repaint before a deferred mode refresh must also hide controls.
+    assert.equal(toolbar.style.display, 'none'); // CHANGE
+    graph.view.setScale(1.75); graph.view.setTranslate(20, 30); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'none'); // CHANGE
+    const bedState = graph.view.getState(bed); // CHANGE
+    const mouseOptions = { bubbles: true, clientX: bedState.x + bedState.width / 2, clientY: bedState.y + bedState.height / 2 }; // CHANGE: click the bed's current position after zoom and pan.
+    bedState.shape.node.dispatchEvent(new window.MouseEvent('mousedown', mouseOptions)); // CHANGE
+    bedState.shape.node.dispatchEvent(new window.MouseEvent('mouseup', mouseOptions)); await flush(); // CHANGE
+    assert.equal(graph.getSelectionCell(), bed); // CHANGE
+    assert.equal(toolbar.style.display, 'none'); // CHANGE
+    graph.setSelectionCell(moduleCell); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'flex'); // CHANGE
+    assert.equal(toolbar.querySelector('input[aria-label="Garden label"]').value, 'Garden'); // CHANGE
+    graph.setSelectionCell(bed); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'none'); // CHANGE: stale module state cannot revive bed controls.
+    active = { mode: 'allocate', ownerId: 'allocate:reopened' }; notify(); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'none'); // CHANGE
+    active = { mode: 'another-mode' }; notify(); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'flex'); // CHANGE: replacement with another mode removes only allocation suppression.
+    window.TrellisIrrigationPlanner = { isIrrigationModeActive: () => true }; // CHANGE
+    window.dispatchEvent(new window.CustomEvent('trellisIrrigationModeChanged')); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'none'); // CHANGE
+    window.TrellisIrrigationPlanner.isIrrigationModeActive = () => false; // CHANGE
+    window.Trellis.users = { isTeamPermissionModeActive: () => true }; // CHANGE
+    window.dispatchEvent(new window.CustomEvent('trellisTeamPermissionModeChanged', { detail: { active: true } })); // CHANGE
+    assert.equal(toolbar.style.display, 'none'); // CHANGE
+    window.Trellis.users.isTeamPermissionModeActive = () => false; // CHANGE
+    window.dispatchEvent(new window.CustomEvent('trellisTeamPermissionModeChanged', { detail: { active: false } })); await flush(); // CHANGE
+    assert.equal(toolbar.style.display, 'flex'); // CHANGE
+}); // CHANGE
+
 test('Garden module overlay suppresses plan actions while irrigation mode is active', () => {
     const source = readPlantTilerSource();
     assert.match(source, /function isIrrigationModeActiveForOverlay\(\)/);
@@ -556,7 +625,7 @@ test('Plant Tiler exposes Allocate proposal and creation contracts', () => {
     assert.match(source, /function listGardenBeds\(moduleCell\)/);
     assert.match(source, /function readBedProfile\(bedCell\)/);
     assert.match(source, /function listPlantingFootprints\(moduleCell, options = \{\}\)/);
-    assert.match(source, /function proposalConflictsForRect\(input, rect\)/);
+    assert.match(source, /function clipPlantingFootprint\(points, rect\)/); // CHANGE: occupancy compares planting polygons, excluding headers and respecting rotation.
     assert.match(source, /orientationOverride/);
     assert.match(source, /entryISO/);
     assert.match(source, /harvestEndISO/);
@@ -566,7 +635,7 @@ test('Plant Tiler exposes Allocate proposal and creation contracts', () => {
     assert.match(source, /readBedProfile,/);
     assert.match(source, /listPlantingFootprints,/);
     assert.match(source, /slots: buildProposalSlots\(best, resolvedPlantCount\)/); // CHANGE
-    assert.match(source, /lodCollapsed: best\.capacity > LOD_TILE_THRESHOLD/);
+    assert.match(source, /lodCollapsed: resolvedPlantCount > LOD_TILE_THRESHOLD/); // CHANGE: LOD follows the reviewed count rather than unused bed capacity.
     assert.match(source, /const vegHeightCm = Number\(input\.vegHeightCm \?\? input\.veg_height_cm\)/);
     assert.match(source, /vegHeightCm: Number\.isFinite\(vegHeightCm\) && vegHeightCm > 0 \? vegHeightCm : null/);
     assert.match(source, /veg_height_cm: proposal\.vegHeightCm == null/);

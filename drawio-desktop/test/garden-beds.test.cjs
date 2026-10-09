@@ -455,6 +455,89 @@ test("selected bed overlays render for garden-bed-only selections", () => {
     assert.equal(getSelectedBedOverlays(graph).length, 0);
 });
 
+test("allocation mode events compact bed overlays and restore conditions without reselection", () => { // CHANGE
+    const { api, bed, bed2, graph, root, window, mouseListeners } = loadPlugin(); // CHANGE
+    let activeMode = null; // CHANGE
+    window.Trellis = { interactionModes: { getActive: () => activeMode } }; // CHANGE
+    api.writeBedConditions(bed, { userBedName: "East bed", sunExposure: "full_sun", notes: "A long condition note that must not determine the compact overlay width." }); // CHANGE
+    graph.getSelectionCells = () => [bed]; // CHANGE
+    api._test.syncSelectedBedOverlays(); // CHANGE
+    assert.match(getSelectedBedOverlays(graph)[0].textContent, /Set Bed Conditions/); // CHANGE
+    const originalWidth = getSelectedBedOverlays(graph)[0].style.width; // CHANGE
+    const notify = () => window.dispatchEvent(new window.CustomEvent("trellisInteractionModeChanged", { detail: { activeMode: "stale" } })); // CHANGE: current controller state wins over stale event details.
+    const assertCompact = () => { // CHANGE
+        const overlays = getSelectedBedOverlays(graph); // CHANGE
+        overlays.forEach(overlay => { // CHANGE
+            assert.equal(overlay.children.length, 1); // CHANGE
+            assert.equal(overlay.children[0], getOverlayNameInput(overlay)); // CHANGE
+            assert.equal(overlay.textContent, ""); // CHANGE: no conditions, buttons, notes, or empty-state message.
+            assert.equal(overlay.style.width, "190px"); // CHANGE
+            assert.equal(getOverlayNameInput(overlay).style.marginBottom, "0px"); // CHANGE
+        }); // CHANGE
+        return overlays; // CHANGE
+    }; // CHANGE
+    activeMode = { mode: "allocate", ownerId: "allocate:module" }; notify(); // CHANGE
+    assert.equal(assertCompact().length, 1); // CHANGE
+    assert.equal(getOverlayNameInput(assertCompact()[0]).value, "East bed"); // CHANGE
+    assert.equal(assertCompact()[0].style.left, "-188px"); // CHANGE: retain the bed-relative placement.
+    graph.getSelectionCells = () => [bed2]; api._test.syncSelectedBedOverlays(); // CHANGE
+    assert.equal(assertCompact().length, 1); // CHANGE
+    assert.equal(getOverlayNameInput(assertCompact()[0]).value, ""); // CHANGE
+    graph.getSelectionCells = () => [bed, bed2]; api._test.syncSelectedBedOverlays(); // CHANGE
+    assert.equal(assertCompact().length, 2); // CHANGE
+    graph.getSelectionCells = () => [bed, root]; api._test.syncSelectedBedOverlays(); // CHANGE
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // CHANGE
+    graph.getSelectionCells = () => []; api._test.syncSelectedBedOverlays(); // CHANGE
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // CHANGE
+    graph.getSelectionCells = () => [bed]; api._test.syncSelectedBedOverlays(); // CHANGE
+    mouseListeners[0].mouseDown(graph, makeGraphMouseEvent(bed, 10, 10)); // CHANGE
+    mouseListeners[0].mouseMove(graph, makeGraphMouseEvent(bed, 15, 10)); // CHANGE
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // CHANGE
+    mouseListeners[0].mouseUp(graph, makeGraphMouseEvent(bed, 15, 10)); // CHANGE
+    assert.equal(assertCompact().length, 1); // CHANGE
+    graph.__states.set(bed, { x: 450, y: 60, width: 200, height: 120 }); // CHANGE
+    api._test.syncSelectedBedOverlays(); // CHANGE
+    assert.equal(assertCompact()[0].style.left, "252px"); // CHANGE
+    activeMode = { mode: "allocate", ownerId: "allocate:reopened" }; notify(); // CHANGE
+    assert.equal(assertCompact().length, 1); // CHANGE
+    activeMode = null; notify(); // CHANGE
+    const restored = getSelectedBedOverlays(graph)[0]; // CHANGE
+    assert.match(restored.textContent, /Set Bed Conditions/); // CHANGE
+    assert.match(restored.textContent, /Sun exposureFull sun/); // CHANGE
+    assert.equal(restored.style.width, originalWidth); // CHANGE
+    assert.equal(getOverlayNameInput(restored).style.marginBottom, "6px"); // CHANGE
+    activeMode = { mode: "allocate" }; notify(); // CHANGE
+    window.TrellisIrrigationPlanner = { isIrrigationModeActive: () => true }; notify(); // CHANGE
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // CHANGE: existing higher-priority suppression remains authoritative.
+    window.TrellisIrrigationPlanner.isIrrigationModeActive = () => false; // CHANGE
+    window.Trellis.users = { isTeamPermissionModeActive: () => true }; notify(); // CHANGE
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // CHANGE
+    window.Trellis.users.isTeamPermissionModeActive = () => false; notify(); // CHANGE
+    assert.equal(assertCompact().length, 1); // CHANGE
+}); // CHANGE
+
+test("allocation name input preserves conditions through blur Enter and Escape", () => { // CHANGE
+    const { api, bed, graph, window } = loadPlugin(); // CHANGE
+    window.Trellis = { interactionModes: { getActive: () => ({ mode: "allocate" }) } }; // CHANGE
+    api.writeBedConditions(bed, { bedType: "raised_bed", bedHeightCm: 30, userBedName: "Initial", sunExposure: "full_sun", notes: "Keep this note." }); // CHANGE
+    graph.getSelectionCells = () => [bed]; api._test.syncSelectedBedOverlays(); // CHANGE
+    let input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // CHANGE
+    input.value = "East bed"; input.dispatchEvent(new window.Event("blur")); // CHANGE
+    assert.equal(bed.getAttribute("label"), "Raised bed (30 cm) - East bed"); // CHANGE
+    input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // CHANGE
+    input.value = "West bed"; dispatchInputKey(input, "Enter"); // CHANGE
+    assert.equal(bed.getAttribute("label"), "Raised bed (30 cm) - West bed"); // CHANGE
+    input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // CHANGE
+    input.value = "Cancelled draft"; dispatchInputKey(input, "Escape"); // CHANGE
+    assert.equal(input.value, "West bed"); // CHANGE
+    input.dispatchEvent(new window.Event("blur")); // CHANGE
+    const profile = api.readBedConditions(bed); // CHANGE
+    assert.equal(profile.userBedName, "West bed"); // CHANGE
+    assert.equal(profile.sunExposure, "full_sun"); // CHANGE
+    assert.equal(profile.notes, "Keep this note."); // CHANGE
+    assert.equal(profile.bedType, "raised_bed"); assert.equal(profile.bedHeightCm, 30); // CHANGE
+}); // CHANGE
+
 test("selected bed overlays are suppressed while irrigation mode is active", () => {
     const { api, bed, graph } = loadPlugin();
     const pluginWindow = graph.container.ownerDocument.defaultView;

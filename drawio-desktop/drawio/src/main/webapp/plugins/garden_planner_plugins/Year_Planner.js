@@ -2758,8 +2758,17 @@ Draw.loadPlugin(function (ui) {
         /**
          * Scans module descendants once and returns all diagram facts needed by recalculation.
          */
-        function readYearFacts(moduleCell, year, weekStarts, cropKeyToKgPerPlant, plan) {
-            const tilerGroups = getTilerGroups(moduleCell);
+        function readYearFacts(moduleCell, year, weekStarts, cropKeyToKgPerPlant, plan, plantingCountOverrides = {}) { // CHANGE
+            // Count overrides are read-only views; existing harvest dates and crop identities remain authoritative. // CHANGE
+            const tilerGroups = getTilerGroups(moduleCell).map(cell => { // CHANGE
+                const key = String(cell.id || ''); // CHANGE
+                if (!Object.prototype.hasOwnProperty.call(plantingCountOverrides, key)) return cell; // CHANGE
+                const count = Number(plantingCountOverrides[key]); // CHANGE
+                if (!Number.isInteger(count) || count < 0) throw new Error('Invalid planting count override for ' + key); // CHANGE
+                const view = Object.create(cell); // CHANGE
+                view.getAttribute = name => name === 'plant_count' ? String(count) : cell.getAttribute(name); // CHANGE
+                return view; // CHANGE
+            }); // CHANGE
             return collectYearFactsFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, plan);
         }
 
@@ -3022,7 +3031,7 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        function recalculate(moduleCell, year, plan) {
+        function recalculate(moduleCell, year, plan, plantingCountOverrides = {}) { // CHANGE
             PlanSchema.normalizeForRuntime(plan, year);
             const selectedYear = Number(plan.year);
             plan.__carryoverCrops = buildCarryoverCrops(moduleCell, selectedYear, plan);
@@ -3041,7 +3050,7 @@ Draw.loadPlugin(function (ui) {
                 selectedYear,
                 weekStarts,
                 kgPerPlantByCropKey,
-                plan
+                plan, plantingCountOverrides // CHANGE: simulate resized groups through the normal diagram supply reader.
             );
             const beforeHarvestById = new Map();
 
@@ -3208,7 +3217,7 @@ Draw.loadPlugin(function (ui) {
             const options = input || {};
             const plan = clonePlan(options.plan, options.year);
             const year = Number(options.year || plan.year);
-            if (options.moduleCell) return coverageFromRuntime(PlanRuntimeService.recalculate(options.moduleCell, year, plan));
+            if (options.moduleCell) return coverageFromRuntime(PlanRuntimeService.recalculate(options.moduleCell, year, plan, options.plantingCountOverrides));
             const warnings = [];
             const weekly = PlanMath.computePlanWeekly(plan, warnings);
             return coverageFromRuntime({
@@ -3233,9 +3242,11 @@ Draw.loadPlugin(function (ui) {
         }
 
         function simulateCandidatePlanting(input) {
-            const base = computeYearCoverage(input || {});
+            const base = computeYearCoverage(Object.assign({}, input || {}, { plantingCountOverrides: undefined })); // CHANGE: before coverage must retain committed counts.
             const candidate = input && input.candidate || {};
-            const nextPlan = clonePlan(base.plan, base.year);
+            const resized = input && input.plantingCountOverrides // CHANGE
+                ? computeYearCoverage(Object.assign({}, input, { candidate: undefined })) : base; // CHANGE
+            const nextPlan = clonePlan(resized.plan, base.year); // CHANGE
             const crop = PlanMath.findCrop(nextPlan, candidate.cropId);
             if (!crop) return { base, coverage: base, demandServedKg: 0, projectedSurplusKg: 0, reason: "missing_crop" };
             const addSeries = candidateHarvestSeries(nextPlan, candidate, base.weekly);
@@ -4503,6 +4514,7 @@ Draw.loadPlugin(function (ui) {
                 .yp-package-transfer-panes{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start} /* CHANGE */
                 .yp-package-transfer-pane{min-width:0;border:1px solid var(--yp-neutral-300);border-radius:7px;background:#fff;overflow:hidden} /* CHANGE */
                 .yp-package-transfer-pane-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;border-bottom:1px solid var(--yp-neutral-300);background:var(--yp-neutral-100);font-weight:700} /* CHANGE */
+                .yp-picker-dialog[data-year-plan-crop-transfer] .yp-package-transfer-pane-head{flex-wrap:wrap} /* CHANGE: longer crop/variety totals can wrap without crowding bulk actions. */
                 .yp-package-transfer-list{display:flex;flex-direction:column;gap:4px;max-height:42vh;overflow:auto;padding:7px} /* CHANGE */
                 .yp-package-transfer-crop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 1px;color:var(--yp-neutral-700);font-size:11px;font-weight:700} /* CHANGE */
                 .yp-package-transfer-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:center;min-height:30px;padding:4px 6px;border-radius:5px;background:#fff} /* CHANGE */
@@ -9212,7 +9224,7 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
 
             function makeAddCropGroupNode(plantId, key, label, children) { // CHANGE
-                return { id: `addcrop:${key}:${String(plantId || "")}`, label, children: children || [] }; // CHANGE
+                return { id: `addcrop:${key}:${String(plantId || "")}`, label, countKind: key, children: children || [] }; // CHANGE
             } // CHANGE
 
             function makeAddCropPlantChildren(group) { // CHANGE
@@ -9235,7 +9247,8 @@ Draw.loadPlugin(function (ui) {
                 const children = makeAddCropPlantChildren(group); // CHANGE
                 return {
                     id: `addcrop:plant:${String(group.plantId || group.plantName)}`,
-                    label: `${group.plantName || "Crop"} (${group.varietyCount})`,
+                    label: group.plantName || "Crop", // CHANGE: counts use explicit units beside the plant name.
+                    countKind: "plant", // CHANGE
                     selects: group.baseLeafId ? "base" : null,
                     baseLeafId: group.baseLeafId,
                     children
@@ -9245,12 +9258,12 @@ Draw.loadPlugin(function (ui) {
             function appendAddCropCategory(nodes, label, optionsByPlant) {
                 const plants = Array.from(optionsByPlant.values()).sort((a, b) => String(a.plantName || "").localeCompare(String(b.plantName || "")));
                 const children = plants.map(group => makeAddCropPlantNode(group)); // CHANGE
-                if (children.length) nodes.push({ id: `addcrop:category:${label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-")}`, label, children }); // CHANGE
+                if (children.length) nodes.push({ id: `addcrop:category:${label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-")}`, label, countKind: "category", children }); // CHANGE
             } // CHANGE
 
             function addOptionToPlantGroup(map, option, disabled, meta) { // CHANGE
                 const plantId = String(option.plantId || ""); // CHANGE
-                if (!map.has(plantId)) map.set(plantId, { plantId, plantName: option.plantName, baseLeaf: null, baseLeafId: "", defaultLeaves: [], userLeaves: [], addVarietyNode: makeAddVarietyActionNode(plantId), varietyCount: 0 }); // CHANGE
+                if (!map.has(plantId)) map.set(plantId, { plantId, plantName: option.plantName, baseLeaf: null, baseLeafId: "", defaultLeaves: [], userLeaves: [], addVarietyNode: makeAddVarietyActionNode(plantId) }); // CHANGE
                 const group = map.get(plantId); // CHANGE
                 const stages = option.growthStages || [option.growthStage || { stageKey: "mature", stageLabel: "Mature", yieldRatio: 1 }]; // CHANGE
                 const leaves = stages.filter(stage => !option.excludedStageKeys || !option.excludedStageKeys.has(PlanSchema.makeCropIdentityKey(option.plantId, option.varietyId, stage.stageKey))).map(stage => { // CHANGE // CHANGE
@@ -9262,12 +9275,11 @@ Draw.loadPlugin(function (ui) {
                     return leaf; // CHANGE
                 }); // CHANGE
                 if (!leaves.length) return; // CHANGE
-                const branch = leaves.length === 1 ? leaves[0] : { id: `addcrop:stages:${plantId}:${option.varietyId || "base"}`, label: option.varietyName || "Base plant", children: leaves }; // CHANGE
+                const branch = leaves.length === 1 ? leaves[0] : { id: `addcrop:stages:${plantId}:${option.varietyId || "base"}`, label: option.varietyName || "Base plant", countKind: "stages", children: leaves }; // CHANGE
                 if (option.varietyId == null) { // CHANGE
                     group.baseLeaf = branch; group.baseLeafId = leaves.find(leaf => !leaf.disabled && leaf.value.growthStageKey === "mature")?.id || ""; // CHANGE
                 } else { // CHANGE
-                    group.varietyCount += 1; // CHANGE
-                    if (isTrellisDefaultVariety(option.varietyRow)) group.defaultLeaves.push(branch); else group.userLeaves.push(branch); // CHANGE
+                    if (isUserCropPickerVariety(option)) group.userLeaves.push(branch); else group.defaultLeaves.push(branch); // CHANGE
                     group.defaultLeaves.sort((a, b) => compareDefaultVarietyRows((a.value || a.children?.[0]?.value)?.varietyRow, (b.value || b.children?.[0]?.value)?.varietyRow)); // CHANGE
                     group.userLeaves.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" })); // CHANGE
                 } // CHANGE
@@ -9492,6 +9504,51 @@ Draw.loadPlugin(function (ui) {
                 return leaves; // CHANGE
             } // CHANGE
 
+            /** Classify catalog varieties consistently; deleted rows fall back to reserved profile names. */ // CHANGE
+            function isUserCropPickerVariety(entry) { // CHANGE
+                const varietyId = String((entry && entry.varietyId) ?? "").trim(); // CHANGE
+                if (!varietyId) return false; // CHANGE
+                const rows = varietyCache.get(String(entry.plantId || "")) || []; // CHANGE
+                const row = entry.varietyRow || rows.find(item => String(item.variety_id) === varietyId); // CHANGE
+                if (row) return !isTrellisDefaultVariety(row); // CHANGE
+                const name = String(entry.varietyName || entry.variety || "").trim(); // CHANGE
+                return !TRELLIS_DEFAULT_VARIETY_PROFILES.some(profile => profile.name === name); // CHANGE
+            } // CHANGE
+
+            /** Count distinct plants and user varieties across entries, independently of harvest stage. */ // CHANGE
+            function countCropPickerEntries(entries) { // CHANGE
+                const plants = new Set(); // CHANGE
+                const varieties = new Set(); // CHANGE
+                for (const entry of entries) { // CHANGE
+                    const plantId = String(entry && entry.plantId || "").trim(); // CHANGE
+                    if (!plantId) continue; // CHANGE
+                    plants.add(plantId); // CHANGE
+                    if (isUserCropPickerVariety(entry)) varieties.add(JSON.stringify([plantId, String(entry.varietyId).trim()])); // CHANGE
+                } // CHANGE
+                return { crops: plants.size, varieties: varieties.size }; // CHANGE
+            } // CHANGE
+
+            /** Format explicit count units for pane headings, tree metadata, and pending entry actions. */ // CHANGE
+            function formatCropPickerCount(count, unit) { // CHANGE
+                const plural = unit.endsWith("y") ? `${unit.slice(0, -1)}ies` : `${unit}s`; // CHANGE
+                return `${count} ${count === 1 ? unit : plural}`; // CHANGE
+            } // CHANGE
+
+            /** Keep summary and pane headings on the same crop/variety presentation. */ // CHANGE
+            function formatCropPickerTotals(counts) { // CHANGE
+                return `${formatCropPickerCount(counts.crops, "crop")} · ${formatCropPickerCount(counts.varieties, "user variety")}`; // CHANGE
+            } // CHANGE
+
+            /** Tree counts describe unfiltered available descendants; action rows contribute nothing. */ // CHANGE
+            function cropPickerTreeCountText(node) { // CHANGE
+                if (!node.countKind) return ""; // CHANGE
+                const leaves = collectAddCropLeaves([node]); // CHANGE
+                if (node.countKind === "stages") return formatCropPickerCount(leaves.length, "stage"); // CHANGE
+                if (node.countKind === "trellis-defaults") return formatCropPickerCount(leaves.length, "entry"); // CHANGE
+                const counts = countCropPickerEntries(leaves.map(leaf => leaf.value)); // CHANGE
+                return node.countKind === "category" ? formatCropPickerTotals(counts) : formatCropPickerCount(counts.varieties, "user variety"); // CHANGE
+            } // CHANGE
+
             function applyAddCropTransferChanges(addedOptions, removedCrops, previousSelectedId) { // CHANGE
                 const removedIndexes = (removedCrops || []).map(crop => (plan.crops || []).indexOf(crop)).filter(index => index >= 0); // CHANGE
                 for (const crop of (removedCrops || [])) removePlanCropAndLinkedRows(crop); // CHANGE
@@ -9544,6 +9601,7 @@ Draw.loadPlugin(function (ui) {
                 layer.dataset.yearPlanPicker = key; // CHANGE
                 const dialog = document.createElement("div"); // CHANGE
                 dialog.className = "yp-picker-dialog yp-package-transfer-dialog"; // CHANGE
+                dialog.dataset.yearPlanCropTransfer = "true"; // CHANGE: scope count layout changes to this dialog.
                 dialog.setAttribute("role", "dialog"); // CHANGE
                 dialog.setAttribute("aria-modal", "true"); // CHANGE
                 const head = document.createElement("div"); // CHANGE
@@ -9622,6 +9680,7 @@ Draw.loadPlugin(function (ui) {
                     } // CHANGE
                     const children = (node.children || []).map(cloneAvailableNode).filter(Boolean); // CHANGE
                     const copy = { ...node, children }; // CHANGE
+                    copy.countText = cropPickerTreeCountText(copy); // CHANGE: compute before search removes descendants.
                     if (copy.selects === "base" && (!copy.baseLeafId || !leafIsAvailable(leafById.get(String(copy.baseLeafId))))) { // CHANGE
                         copy.selects = null; // CHANGE
                         copy.baseLeafId = ""; // CHANGE
@@ -9643,11 +9702,7 @@ Draw.loadPlugin(function (ui) {
                 } // CHANGE
 
                 function availableRoots() { // CHANGE
-                    return roots.map(cloneAvailableNode).filter(Boolean).map(filteredAvailableNode).filter(Boolean); // CHANGE
-                } // CHANGE
-
-                function availableLeafCount(nodes) { // CHANGE
-                    return pickerFlattenLeaves(nodes).length; // CHANGE
+                    return roots.map(cloneAvailableNode).filter(Boolean); // CHANGE: totals use the full staged pane.
                 } // CHANGE
 
                 function hasPendingChanges() { // CHANGE
@@ -9748,6 +9803,12 @@ Draw.loadPlugin(function (ui) {
                     label.textContent = node.label || ""; // CHANGE
                     const controls = document.createElement("div"); // CHANGE
                     controls.className = "yp-row"; // CHANGE
+                    if (node.countText) { // CHANGE
+                        const meta = document.createElement("div"); // CHANGE
+                        meta.className = "yp-picker-meta"; // CHANGE
+                        meta.textContent = node.countText; // CHANGE
+                        controls.appendChild(meta); // CHANGE
+                    } // CHANGE
                     if (node.action) { // CHANGE
                         const action = mkBtn("Open", "neutral", "Open the variety editor to create a variety for this plant."); // CHANGE
                         action.addEventListener("click", event => { event.stopPropagation(); closePicker(true); requestVarietyEditor(node.plantId, null, ""); }); // CHANGE
@@ -9762,12 +9823,6 @@ Draw.loadPlugin(function (ui) {
                         const add = mkBtn("Add", "add", "Stage this crop for addition; Apply changes to update the plan."); // CHANGE
                         add.addEventListener("click", event => { event.stopPropagation(); stageAddLeaf(actionLeaf); }); // CHANGE
                         controls.appendChild(add); // CHANGE
-                    } else { // CHANGE
-                        const meta = document.createElement("div"); // CHANGE
-                        meta.className = "yp-picker-meta"; // CHANGE
-                        const count = availableLeafCount([node]); // CHANGE
-                        meta.textContent = count ? String(count) : ""; // CHANGE
-                        controls.appendChild(meta); // CHANGE
                     } // CHANGE
                     row.appendChild(toggle); row.appendChild(spacer); row.appendChild(label); row.appendChild(controls); // CHANGE
                     row.addEventListener("click", event => { // CHANGE
@@ -9780,15 +9835,15 @@ Draw.loadPlugin(function (ui) {
                     if (hasChildren && isExpanded) for (const child of (node.children || [])) renderAvailableNode(child, depth + 1, list); // CHANGE
                 } // CHANGE
 
-                function renderAvailablePane() { // CHANGE
-                    const nodes = availableRoots(); // CHANGE
-                    const removed = Array.from(removedCropIds).map(id => originalByCropId.get(id)).filter(Boolean).filter(crop => entryMatchesText(cropLabel(crop), "Will remove")); // CHANGE
-                    const count = availableLeafCount(nodes) + removed.length; // CHANGE
-                    const list = renderPaneShell(availablePane, "Available", `${count} crop${count === 1 ? "" : "s"}`, "Add all visible", () => { // CHANGE
+                function renderAvailablePane(allNodes, allRemoved, countText) { // CHANGE
+                    const nodes = allNodes.map(filteredAvailableNode).filter(Boolean); // CHANGE
+                    const removed = allRemoved.filter(crop => entryMatchesText(cropLabel(crop), "Will remove")); // CHANGE
+                    const visibleLeaves = pickerFlattenLeaves(nodes); // CHANGE
+                    const list = renderPaneShell(availablePane, "Available", countText, "Add all visible", () => { // CHANGE
                         for (const crop of removed) removedCropIds.delete(String(crop && crop.id || "")); // CHANGE
-                        for (const leaf of pickerFlattenLeaves(nodes)) addedLeafIds.add(String(leaf.id)); // CHANGE
+                        for (const leaf of visibleLeaves) addedLeafIds.add(String(leaf.id)); // CHANGE
                         discardWarned = false; renderAndScrollTransferListsToTop(); // CHANGE
-                    }, !count); // CHANGE
+                    }, !visibleLeaves.length && !removed.length); // CHANGE: action-only branches are not selectable entries.
                     for (const crop of removed) renderPendingRemovalRow(list, crop); // CHANGE
                     if (!nodes.length && !removed.length) { // CHANGE
                         const empty = document.createElement("div"); // CHANGE
@@ -9810,12 +9865,12 @@ Draw.loadPlugin(function (ui) {
                         const leaf = leafById.get(String(leafId)); // CHANGE
                         if (leaf && leaf.value) entries.push({ id: String(leafId), label: leaf.value.label || leaf.label || "Crop", meta: "Will add", leaf, pendingAdd: true }); // CHANGE
                     } // CHANGE
-                    return entries.filter(entry => entryMatchesText(entry.label, entry.meta)); // CHANGE
+                    return entries; // CHANGE: search is applied only when rendering rows.
                 } // CHANGE
 
-                function renderIncludedPane() { // CHANGE
-                    const entries = includedEntries(); // CHANGE
-                    const list = renderPaneShell(includedPane, "Included", `${entries.length} crop${entries.length === 1 ? "" : "s"}`, "Remove all visible", () => { // CHANGE
+                function renderIncludedPane(allEntries, countText) { // CHANGE
+                    const entries = allEntries.filter(entry => entryMatchesText(entry.label, entry.meta)); // CHANGE
+                    const list = renderPaneShell(includedPane, "Included", countText, "Remove all visible", () => { // CHANGE
                         for (const entry of entries) { // CHANGE
                             if (entry.pendingAdd) addedLeafIds.delete(entry.id); // CHANGE
                             else removedCropIds.add(entry.id); // CHANGE
@@ -9853,17 +9908,20 @@ Draw.loadPlugin(function (ui) {
                 } // CHANGE
 
                 function render() { // CHANGE
-                    const availableCount = availableLeafCount(availableRoots()) + removedCropIds.size; // CHANGE
-                    const includedCount = includedEntries().length; // CHANGE
+                    const nodes = availableRoots(); // CHANGE
+                    const removed = Array.from(removedCropIds).map(id => originalByCropId.get(id)).filter(Boolean); // CHANGE
+                    const entries = includedEntries(); // CHANGE
+                    const availableText = formatCropPickerTotals(countCropPickerEntries(collectAddCropLeaves(nodes).map(leaf => leaf.value).concat(removed))); // CHANGE
+                    const includedText = formatCropPickerTotals(countCropPickerEntries(entries.map(entry => entry.crop || entry.leaf.value))); // CHANGE
                     summary.innerHTML = ""; // CHANGE
-                    for (const text of [`Included ${includedCount}`, `Available ${availableCount}`, `Pending add ${addedLeafIds.size}`, `Pending remove ${removedCropIds.size}`]) { // CHANGE
+                    for (const text of [`Included ${includedText}`, `Available ${availableText}`, `Pending add ${formatCropPickerCount(addedLeafIds.size, "entry")}`, `Pending remove ${formatCropPickerCount(removedCropIds.size, "entry")}`]) { // CHANGE
                         const item = document.createElement("span"); // CHANGE
                         item.textContent = text; // CHANGE
                         summary.appendChild(item); // CHANGE
                     } // CHANGE
-                    renderAvailablePane(); // CHANGE
-                    renderIncludedPane(); // CHANGE
-                    status.textContent = hasPendingChanges() ? `Add ${addedLeafIds.size}, remove ${removedCropIds.size}` : "No pending changes"; // CHANGE
+                    renderAvailablePane(nodes, removed, availableText); // CHANGE
+                    renderIncludedPane(entries, includedText); // CHANGE
+                    status.textContent = hasPendingChanges() ? `Add ${formatCropPickerCount(addedLeafIds.size, "entry")}, remove ${formatCropPickerCount(removedCropIds.size, "entry")}` : "No pending changes"; // CHANGE
                     warning.textContent = ""; // CHANGE
                     apply.disabled = !hasPendingChanges(); // CHANGE
                     apply.title = apply.disabled ? "Stage a crop addition or removal before applying." : "Apply the staged crop additions and removals to the plan."; // CHANGE

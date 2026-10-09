@@ -1752,3 +1752,20 @@ test("stage-specific diagram supply cannot cover another stage's demand", () => 
     assert.equal(coverage.cropSummaries.find(crop => crop.cropId === "mature").shortKg, 1);
     assert.ok(Math.abs(coverage.cropSummaries.find(crop => crop.cropId === "baby").shortKg - 1) < 1e-8);
 }); // CHANGE
+
+// CHANGE: companion previews must subtract resized supply before adding the proposed planting.
+test('companion count overrides include lost supply and never mutate saved groups, including same-crop additions', () => { // CHANGE
+    const { api, root, addCell, TestCell: Cell } = createHarness(); // CHANGE
+    const moduleCell = addCell(root, new Cell('companion-module')); // CHANGE
+    const group = addCell(moduleCell, new Cell('existing-tomato', { tiler_group: '1', plant_id: '1', plant_count: '10', season_start_year: '2026', harvest_start: '2026-06-01', harvest_end: '2026-06-07' })); // CHANGE
+    const plan = api.PlanSchema.createEmptyPlan(2026); // CHANGE
+    plan.crops = [emptyCrop({ id: 'tomato', plantId: '1', kgPerPlant: 1 }), emptyCrop({ id: 'basil', plantId: '2', plant: 'Basil', kgPerPlant: 1 })]; // CHANGE
+    const candidate = { cropId: 'basil', plantCount: 3, kgPerPlant: 1, harvestStart: '2026-06-01', harvestEnd: '2026-06-07' }; // CHANGE
+    const sum = (coverage, id) => coverage.plan.crops.find(crop => crop.id === id).__actualHarvestWeeklyKg.reduce((total, value) => total + value, 0); // CHANGE
+    const result = api.PlanningCore.simulateCandidatePlanting({ moduleCell, year: 2026, plan, plantingCountOverrides: { 'existing-tomato': 4 }, candidate }); // CHANGE
+    assert.ok(Math.abs(sum(result.base, 'tomato') - 10) < 1e-6); assert.ok(Math.abs(sum(result.coverage, 'tomato') - 4) < 1e-6); // CHANGE
+    assert.ok(Math.abs(sum(result.coverage, 'basil') - 3) < 1e-6); assert.equal(group.getAttribute('plant_count'), '10'); // CHANGE
+    const same = api.PlanningCore.simulateCandidatePlanting({ moduleCell, year: 2026, plan, plantingCountOverrides: { 'existing-tomato': 4 }, candidate: { ...candidate, cropId: 'tomato' } }); // CHANGE
+    assert.ok(Math.abs(sum(same.coverage, 'tomato') - 7) < 1e-6); assert.equal(group.getAttribute('plant_count'), '10'); // CHANGE
+    assert.throws(() => api.PlanningCore.simulateCandidatePlanting({ moduleCell, year: 2026, plan, plantingCountOverrides: { 'existing-tomato': -1 }, candidate }), /Invalid planting count/); // CHANGE
+}); // CHANGE

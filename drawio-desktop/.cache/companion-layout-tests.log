@@ -1,0 +1,116 @@
+TAP version 13
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: aligned companion rows preserve tangency, counts, and one-step undo at 0 degrees
+ok 1 - aligned companion rows preserve tangency, counts, and one-step undo at 0 degrees
+  ---
+  duration_ms: 2262.9241
+  type: 'test'
+  ...
+# Subtest: aligned companion rows preserve tangency, counts, and one-step undo at 37 degrees
+ok 2 - aligned companion rows preserve tangency, counts, and one-step undo at 37 degrees
+  ---
+  duration_ms: 1709.9467
+  type: 'test'
+  ...
+# Subtest: staggered companion rows preserve tangency, counts, and one-step undo at 0 degrees
+ok 3 - staggered companion rows preserve tangency, counts, and one-step undo at 0 degrees
+  ---
+  duration_ms: 1299.5481
+  type: 'test'
+  ...
+# Subtest: staggered companion rows preserve tangency, counts, and one-step undo at 37 degrees
+ok 4 - staggered companion rows preserve tangency, counts, and one-step undo at 37 degrees
+  ---
+  duration_ms: 1237.323
+  type: 'test'
+  ...
+# Subtest: unequal circles touch and impossible staggering is rejected
+ok 5 - unequal circles touch and impossible staggering is rejected
+  ---
+  duration_ms: 483.9839
+  type: 'test'
+  ...
+# Subtest: shared spacing editor previews an unsaved row and toggles without graph or default writes
+ok 6 - shared spacing editor previews an unsaved row and toggles without graph or default writes
+  ---
+  duration_ms: 691.1013
+  type: 'test'
+  ...
+# Subtest: saved companion layouts take precedence and invalid saved offsets never expand the footprint
+ok 7 - saved companion layouts take precedence and invalid saved offsets never expand the footprint
+  ---
+  duration_ms: 562.7937
+  type: 'test'
+  ...
+# Subtest: spacing Apply reverses all changes if retile fails, without publishing an undo edit
+ok 8 - spacing Apply reverses all changes if retile fails, without publishing an undo edit
+  ---
+  duration_ms: 518.4682
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: Allocate companion preview cancels cleanly, then commits both groups and tasks in one undoable edit
+ok 9 - Allocate companion preview cancels cleanly, then commits both groups and tasks in one undoable edit
+  ---
+  duration_ms: 2411.9721
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: Allocate disables incompatible beds and requires a target chooser for repeated companions
+ok 10 - Allocate disables incompatible beds and requires a target chooser for repeated companions
+  ---
+  duration_ms: 3914.0174
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: ordinary planting Spacing exposes both patterns and commits only the chosen pair with undo
+ok 11 - ordinary planting Spacing exposes both patterns and commits only the chosen pair with undo
+  ---
+  duration_ms: 3589.4279
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: unknown bed relationships always appear in companion review and do not suppress it
+ok 12 - unknown bed relationships always appear in companion review and do not suppress it
+  ---
+  duration_ms: 2051.8924
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: zero-capacity edits and model changes cannot commit a stale companion preview
+ok 13 - zero-capacity edits and model changes cannot commit a stale companion preview
+  ---
+  duration_ms: 1102.1141
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: failed task creation rolls back resized crops and the new planting
+ok 14 - failed task creation rolls back resized crops and the new planting
+  ---
+  duration_ms: 1894.3509
+  type: 'test'
+  ...
+# Subtest: plant-level saved companion layout is used when no variety-specific layout exists
+ok 15 - plant-level saved companion layout is used when no variety-specific layout exists
+  ---
+  duration_ms: 808.2864
+  type: 'test'
+  ...
+1..15
+# tests 15
+# suites 0
+# pass 15
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 25263.4568

@@ -1,0 +1,2829 @@
+
+> trellis-studio@2.7.0 test:plugins
+> node ./scripts/test-report-runner.mjs
+
+✔ Allocate opportunity model groups actionable, unresolved, and satisfied crops (13.6532ms)
+✔ Allocate opportunity model can narrow actionable crops to the selected week (2.1152ms)
+✔ Allocate week option labels summarize date, shortage, and current status (2.4111ms)
+✔ Allocate sow-week schedule groups future demand by returned start date (39.3898ms)
+✔ Allocate progress text reports row and action counts (3.0621ms)
+✔ Allocate open renders a progress state before sow-week scheduling completes (139.8568ms)
+✔ Allocate graph proposal coordinates convert directly to screen coordinates (2.2566ms)
+✔ Allocate graph overlay coordinates are relative to the graph container (3.3535ms)
+✔ Allocate bed badges stay anchored to distinct rendered bed states after zoom (40.0743ms)
+✔ Allocate close cancels a pending sow-week schedule job (37.9916ms)
+✔ Allocate reuses lifecycle and bed-result checks for repeated crop and bed evaluations (7.3344ms)
+✔ Allocate debug snapshot explains first demand and shortage weeks (3.6107ms)
+✔ Allocate debug snapshot tolerates empty demand collections (2.8041ms)
+✔ Allocate resolves crop method context from explicit and legacy dotted methods (3.8434ms)
+✔ Allocate bed result creates max-fit partial draft when full recommendation is oversized (2.736ms)
+✔ Allocate bed result keeps full-fit draft semantics (6.7585ms)
+✔ Allocate repairs mismatched Year Plan method categories before lifecycle scheduling (2.8505ms)
+✔ Allocate bed result reports category-only Year Plan methods before lifecycle scheduling (1.8755ms)
+✔ Allocate bed result reports unsupported concrete methods before lifecycle scheduling (2.0023ms)
+✔ Allocate plugin owns launch, draft review, and one-transaction create contracts (1.1842ms)
+✔ coverage preview uses simulated fulfilled demand, including storage and expiry (1573.8773ms)
+✔ coverage preview rejects missing series instead of reporting zero coverage (10.0683ms)
+✔ coverage preview includes household, CSA, and sales demand and caps fulfillment at demand (45.1013ms)
+✔ allocation invalidates timing and geometry edits but ignores presentation-only changes (1.7725ms)
+✔ saving an edited schedule updates both previews without creating the planting (104.3097ms)
+✔ crop selection requires a canvas bed or the explicit Find best bed action (83.6067ms)
+✔ canvas groups resolve their bed, same-bed selections preserve edits, and bed switches reset schedules (64.1692ms)
+✔ unrelated, multi-selected, and foreign-module cells clear allocation targets (164.6611ms)
+✔ an unavailable selected bed explains its failure without substituting a suitable bed (110.0271ms)
+✔ Find best bed reports no fit and a crop or week change reevaluates the selected bed (139.3937ms)
+✔ pending bed evaluations and editor results cannot restore a cleared module selection (186.0911ms)
+✔ Edit delegates to the scheduler and creation commits the exact reviewed tasks before deferred defaults (250.5428ms)
+✔ scheduler cancellation and invalid edits retain the accepted proposal (96.186ms)
+✔ allocation revalidation preserves lifecycle preferences and supplies the created cell to deferred defaults (131.4982ms)
+✔ allocation failed creation skips defaults and a post-creation default failure uses the existing notice (158.6377ms)
+✔ an accepted preview creates a planting and its tasks only after explicit review confirmation (122.7882ms)
+✔ pending scheduler results cannot restore a closed or changed allocation proposal (124.1836ms)
+✔ view changes preserve previews while meaningful model edits clear them immediately (48.4895ms)
+✔ partial allocation chart and demand-served summary use one simulation of the fitting plant count (93.8167ms)
+✔ Year Planner no longer owns the Allocate launcher (24.4696ms)
+✔ Allocate keeps accepted badge, ghost and preview while unrelated loading progress updates (90.7731ms)
+✔ fitted allocation updates count and supply without cumulative rounding during rotation (35.0362ms)
+✔ partial fitted allocation uses complete-row capacity and recomputes it on the other axis (9.6486ms)
+✔ Allocate classifies every overlapping crop and lookup failures remain unknown (32.8026ms)
+✔ rotated warned drafts update the HUD, ghost, timeline and reviewed creation metadata (112.3466ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ allocation relationship API reuses forward/inverse scheduler classification without changing pairs (190.4748ms)
+✔ allocation relationship API tolerates missing identities and unavailable reference data (28.539ms)
+✔ bed relationship summaries include spatially separate crops, inclusive dates, repeated plantings, and undated occupancy (28.0742ms)
+✔ allocation proposal renders alone on an empty bed without creating graph cells (618.6251ms)
+✔ virtual cluster includes transitive overlaps and excludes unrelated same-bed groups (79.9247ms)
+✔ virtual cluster uses rotated footprints rather than axis-aligned bounds (30.1526ms)
+✔ coverage and occupancy tracks share widths and selected-week positions (114.66ms)
+✔ weekly coverage details show fulfillment without changing graph selection and close with Escape (144.3279ms)
+✔ a leap year with 54 canonical weeks renders every week without a fixed-column assumption (136.3709ms)
+✔ cross-year and perennial occupancy clips to the plan year while full dates and undated members remain (157.6833ms)
+✔ DST dates retain day widths and narrow windows use one horizontal scroll container (91.9839ms)
+✔ allocation suppresses duplicate rails and only its owner can clear the preview (354.6579ms)
+✔ missing coverage shows an explanation while proposal occupancy remains visible (58.4947ms)
+✔ regular occupancy draws today above bars or explains why today is outside the range (84.9933ms)
+✔ navigator source no longer contains day-count overlap badge machinery (2.4617ms)
+✔ selection visual refresh event refreshes selected planting overlays (1.9902ms)
+✔ selected singleton tiler on a garden bed shows only the bed-select control (28.5532ms)
+✔ occupied bed move unit resolves bed plus contained planting groups (28.4177ms)
+✔ occupied bed move unit includes centered bed irrigation assemblies (42.8324ms)
+✔ bed unit selectors select bed, plantings, and irrigation assemblies (96.7156ms)
+✔ bed unit selectors update click targets after switching beds (41.2689ms)
+✔ selected singleton tiler outside garden beds does not show the bed-select control (19.3701ms)
+✔ two selected tilers in the same garden bed do not cluster unless they overlap (29.1489ms)
+✔ two selected tilers with five-percent overlap hide duplicate cluster select (52.3935ms)
+✔ selected overlap cluster shows Occupancy navigator instead of numeric badge (34.9656ms)
+✔ Occupancy navigator bars center crop variety names with a planting label column (44.7425ms)
+✔ Occupancy navigator bar click selects the exact planting group (55.3775ms)
+✔ cluster visibility keeps selected and temporally overlapping groups active (41.4988ms)
+✔ undated Occupancy navigator groups render dashed and inactive unless selected (35.0869ms)
+✔ Prev and Next cycle through all cluster members and recompute active overlap (108.1202ms)
+✔ Occupancy navigator excludes perennial lifespan from axis and clips perennial display (43.6779ms)
+✔ Occupancy navigator preserves non-perennial cross-year crop span (29.0313ms)
+✔ Occupancy navigator short spans keep monthly axis labels (50.8655ms)
+✔ Occupancy navigator long spans show endpoint month-year labels only (40.958ms)
+✔ Occupancy navigator endpoint labels ignore perennial lifespan (37.834ms)
+✔ Occupancy navigator perennial-only cluster falls back to selected season year (26.1385ms)
+✔ same-bed tilers touching edges do not cluster (25.716ms)
+✔ same-bed tilers below five-percent overlap do not cluster (16.797ms)
+✔ selected cluster occupancy API returns schedule-ordered windows (32.8487ms)
+✔ cluster occupancy includes overhanging planting while bed occupancy excludes it (29.7856ms)
+✔ selected cluster layout context exposes cluster bounds and enabled overlap ids (32.1864ms)
+✔ selected cluster occupancy uses perennial lifespan dates (27.6505ms)
+✔ selected cluster occupancy exposes derived relationship snapshots from either side (53.5184ms)
+✔ selected cluster occupancy exposes turnover relationship snapshots from either side (37.1451ms)
+✔ bed-select returns beds behind tilers after selecting a tiler (38.9212ms)
+✔ selected containing garden bed remains temporarily in front (21.2595ms)
+✔ bed-select selects the containing bed when another bed overlaps the cluster (109.5599ms)
+✔ allocation preview retains panel, focused week, inspection and scroll state across updates (162.4334ms)
+✔ bootstrap detects Trellis Electron through the preload bridge (3.9461ms)
+✔ bootstrap uses shared Electron desktop hook paths (0.9714ms)
+✔ dev Electron bootstrap loads desktop hooks before PostConfig (0.7019ms)
+✔ production Electron bootstrap loads desktop hooks before App.main (0.5ms)
+✔ bundled desktop update menu option is removed (555.5745ms)
+✔ source desktop update menu options are removed while dialog IPC remains (11.0386ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ aligned companion rows preserve tangency, counts, and one-step undo at 0 degrees (5662.9318ms)
+✔ aligned companion rows preserve tangency, counts, and one-step undo at 37 degrees (3541.9549ms)
+✔ staggered companion rows preserve tangency, counts, and one-step undo at 0 degrees (2764.0492ms)
+✔ staggered companion rows preserve tangency, counts, and one-step undo at 37 degrees (2807.9173ms)
+✔ unequal circles touch and impossible staggering is rejected (1823.9355ms)
+✔ shared spacing editor previews an unsaved row and toggles without graph or default writes (1623.672ms)
+✔ saved companion layouts take precedence and invalid saved offsets never expand the footprint (1225.2287ms)
+✔ spacing Apply reverses all changes if retile fails, without publishing an undo edit (1056.9057ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ Allocate companion preview cancels cleanly, then commits both groups and tasks in one undoable edit (2995.5769ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ Allocate disables incompatible beds and requires a target chooser for repeated companions (3513.2674ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✖ companion allocation lifecycle Edit preserves the chosen layout and deferred-default choices through revalidation (1170.3826ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ ordinary planting Spacing exposes both patterns and commits only the chosen pair with undo (2447.5744ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ unknown bed relationships always appear in companion review and do not suppress it (2176.7853ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ zero-capacity edits and model changes cannot commit a stale companion preview (1815.8054ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ failed task creation rolls back resized crops and the new planting (3729.874ms)
+✔ plant-level saved companion layout is used when no variety-specific layout exists (1764.3393ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ closing companion review clears the busy state without graph or default changes (2039.6289ms)
+✔ Allocate perennial badges include companion occupancy after the first harvest year (2360.5889ms)
+✔ change map stamps Trellis user actor metadata before deferred history recording (6.3761ms)
+✔ history API records a baseline and exposes a side-panel action (350.3008ms)
+✔ history panel takes over and restores the format sidebar (153.2912ms)
+✔ fileLoaded turns off ChangeMap and does not reopen history on the next diagram (145.9128ms)
+✔ semantic run records outer category and nested category as a tag (39.7577ms)
+✔ history metadata includes the active Trellis user actor (24.8757ms)
+✔ history event targets accept explicit semantic bounds and union multi-cell model bounds (47.9044ms)
+✔ history panel filters revisions and restore loads the selected snapshot (297.4783ms)
+✔ history compare reports added changed and deleted revisions (39.0538ms)
+✔ history event targets preserve deleted-cell and diff fallback bounds (100.1058ms)
+✔ history compare handles corrupt compressed snapshots without throwing (55.1976ms)
+✔ history restore rejects corrupt snapshots without replacing graph or recording restore (65.0153ms)
+✔ history restore warns when after-restore rehydration mutates the graph (79.3747ms)
+✔ history degrades when dbBridge is unavailable (77.8665ms)
+✔ rejected user edits are not recorded even when rejection is marked by a later listener (55.3429ms)
+✔ user map filter dims nonmatching cells when time slicing is disabled (48.6373ms)
+✔ domain plugins declare semantic history transactions and restore listeners (37.8271ms)
+✔ cursor paste over a child resolves the valid ancestor and preserves visible position (187.8693ms)
+✔ repeat paste within eight pixels reuses the original cached parent (24.3642ms)
+✔ paste after moving beyond eight pixels resolves a new parent (39.7143ms)
+✔ stale cached parent re-resolves at the same point before falling back (16.8836ms)
+✔ nested pasted roots keep hierarchy and only internal top-level edges move with the batch (55.1052ms)
+✔ pasteHere uses the explicit menu point as a fresh anchor (30.9615ms)
+✔ local clipboard diagram paste is cursor-parented after editor movement (51.5937ms)
+✔ non-diagram text paste is not cursor-parented (23.6419ms)
+✔ plain second-click on sole-selected garden module keeps selection (217.1791ms)
+✔ plain second-click on selected garden module does not close irrigation mode (41.2024ms)
+✔ plain second-click also recognizes legacy garden module attribute (16.8351ms)
+✔ plain second-click on regular and team modules stays selected (62.4064ms)
+✔ plain second-click inside selected roadmap timeframe keeps the timeframe selected (26.2876ms)
+✔ roadmap split header delegates upper clicks to board and lower clicks to timeframe (19.7453ms)
+✔ plain second-click on garden objects other than modules stays selected (20.6608ms)
+✔ selected tiler drag over a garden bed keeps the tiler as initial drag cell (45.5173ms)
+✔ movable plant circle is the initial drag cell inside a planting group (32.5181ms)
+✔ non-movable plant circle drag redirects to the planting group (28.4516ms)
+✔ plain click through selected tiler over a garden bed still selects the bed (13.3411ms)
+✔ ctrl-click selection toggle remains unchanged (23.7739ms)
+✔ double-click on selected garden module does not clear selection (10.0791ms)
+✔ workspace classifier recognizes all Trellis modules and lane_key lanes (10.7752ms)
+✔ workspace marquee selects descendants across intersected containers (38.6237ms)
+✔ lane-start marquee selects descendants in other intersected containers (9.7139ms)
+✔ lane-to-lane marquee does not require sibling lane surface in region cells (10.0001ms)
+✔ workspace handles include selected containers and hovered container (11.5594ms)
+✔ occupied garden bed selection shows a bed move handle at the move-unit bounding box (149.0286ms)
+✔ planting group selection shows its containing occupied bed handle (28.9984ms)
+✔ bed assembly selection shows occupied bed handle and drags the whole bed unit (43.7904ms)
+✔ occupied bed handle without irrigation assembly does not suppress irrigation HUD (9.7131ms)
+✔ empty beds and outside-bed planting groups do not show occupied bed handles (23.7768ms)
+✔ occupied bed handle drag moves every contained planting group (9.8832ms)
+✔ occupied bed handle drag selects the bed and contained planting groups (10.6023ms)
+✔ workspace module handle drag uses only the handled module as drag cells (14.7514ms)
+✔ workspace handle drag consumes gesture events and clears active markers (13.7511ms)
+✔ workspace handles omit canonical kanban board lanes (19.5897ms)
+✔ workspace handles remain available for non-board lane_key lanes (29.7214ms)
+✔ workspace handles hide non-movable containers (8.5273ms)
+✔ workspace container body hover uses default cursor and restores over children (14.3465ms)
+✔ workspace body hover stamps default cursor before native move fallback (30.2648ms)
+✔ workspace container body cursor restores on graph mouseleave (13.1626ms)
+✔ workspace container header hover keeps native cursor (9.0495ms)
+✔ workspace drag handle renders editor move image and keeps move cursor (31.1428ms)
+✔ surface drag on workspace modules is marked for scoped marquee (12.7233ms)
+✔ workspace module header drag stays on native graph handler path (8.6182ms)
+✔ workspace first-use callout anchors to cursor point (11.9686ms)
+✔ workspace move callout is suppressed for canonical kanban board lanes (12.5816ms)
+✔ nested workspace surface drag chooses deepest eligible container (11.9546ms)
+✔ lane hover grace keeps lane handle when parent module is hit (19.2204ms)
+✔ child drags inside workspace modules stay on native graph handler path (9.4117ms)
+✔ deep click-through returns children inside regular and team modules (10.9849ms)
+✔ Electron Builder configs rebuild native modules for the packaged Electron runtime (19.0104ms)
+✔ Windows installers offer to run Trellis after installation finishes (4.4349ms)
+✔ Electron Builder configs expose Trellis Studio labels while preserving compatibility IDs (9.8874ms)
+✔ Windows NSIS drawio file associations use the Trellis document icon (3.5326ms)
+✔ file watch registry creates one watcher for repeated window/path subscriptions (12.2039ms)
+✔ file watch registry shares a path watcher across windows until final unwatch (0.6328ms)
+✔ file watch registry broadcasts changes only to live subscribed windows (1.8043ms)
+✔ desktop file watch lifecycle integration is marked and wired (3.321ms)
+✔ short-axis defaults, square ties, and explicit rotation preserve unequal spacing (24.5018ms)
+✔ physical row capacity excludes header and never forces a plant into a narrow bed (13.0171ms)
+✔ oversized demand reports complete-row capacity and fitting demand remains rounded up (7.6762ms)
+✔ dynamic headers, fitted diameter, and committed slot counts agree in detail and LOD (211.4151ms)
+✔ headers do not cause conflicts and separated dates do not occupy planting space (7.1733ms)
+✔ least occupied placement minimizes union area and keeps the first position on ties (18.4745ms)
+✔ Allocate permits warned incompatible overlap and bed scheduling retains its block (24.9055ms)
+✔ rotated footprints use actual intersections rather than overlapping bounding boxes (7.6202ms)
+✔ mxGraph fold controls use the Trellis fixed-size renderer patch (4.2481ms)
+✔ native fold controls batch only selected foldable siblings in the clicked scope (5.3958ms)
+✔ native fold controls use the mousedown selection snapshot after live selection narrows (2.438ms)
+✔ clicking a parent fold control still folds the parent without selected children (1.9963ms)
+✔ built editor bundles carry the fixed-size fold-control patch and top marker (569.0595ms)
+✔ garden beds no longer register bed condition context menu actions (244.7797ms)
+✔ bed conditions persist, mirror, and clear safely (53.7774ms)
+✔ bed identity persists separately and generates the visible label (40.9158ms)
+✔ bed identity dialog saves metric height and user name (115.0348ms)
+✔ bed identity follows imperial module units without changing stored centimeters (66.8745ms)
+✔ existing labels are not migrated into bed identity by default (21.7749ms)
+✔ legacy module default attributes are ignored (19.4365ms)
+✔ legacy moisture frost and irrigation values are ignored by bed conditions (78.86ms)
+✔ invalid JSON and invalid enum values normalize to non-throwing fallbacks (28.059ms)
+✔ legacy tags are tolerated but omitted from normalized bed profiles (24.8467ms)
+✔ bed dialog exposes copy, paste, and clear actions (98.4222ms)
+✔ selected bed overlays render for garden-bed-only selections (32.7825ms)
+✔ allocation mode events compact bed overlays and restore conditions without reselection (76.4757ms)
+✔ allocation name input preserves conditions through blur Enter and Escape (29.2751ms)
+✔ selected bed overlays are suppressed while irrigation mode is active (22.5591ms)
+✔ selected bed overlays are suppressed while team permission mode is active (28.7857ms)
+✔ selected bed overlays hide while a selected garden bed is dragged (22.7817ms)
+✔ selected bed overlay opens the bed conditions editor (38.7908ms)
+✔ selected bed overlay edits user names without changing conditions (40.0898ms)
+✔ selected bed overlay escape reverts and blank user names keep prefix only (27.15ms)
+✔ selected bed overlay position is not clamped to the viewport (17.5397ms)
+✔ selected bed overlay autosizes from conditions but not bed names (41.3466ms)
+✔ preset identity persists as selected baseline until cleared (108.8459ms)
+✔ greenhouse preset persists new infrastructure fields and allows extra protection (88.6419ms)
+✔ condition option groups expose season extension and crop protection (23.7634ms)
+✔ overlay summary shows presets, extras, and set values without unknowns (32.6918ms)
+✔ selected bed overlay renders notes as a labeled bottom block (32.4392ms)
+✔ season extension defaults and overrides normalize for scheduler use (16.9238ms)
+✔ advanced season extension UI is conditional and saves metric overrides (45.6279ms)
+✔ advanced season extension UI converts imperial display temperatures to stored Celsius (31.14ms)
+✔ season extension defaults save on parent module and populate later dialogs (105.4982ms)
+✔ advanced season extension controls sit at the bottom of infrastructure (46.9055ms)
+✔ bed condition dialog omits derived and climate-inferred fields (39.176ms)
+✔ bed condition dialog caps to viewport and scrolls its body (42.1384ms)
+✔ garden dashboard toolbar is mounted to the graph viewport and sized from the viewport (5.0607ms)
+✔ garden dashboard toolbar width follows a narrowed graph container rect (0.7702ms)
+✔ garden dashboard toolbar follows garden module and descendant selection (2.2357ms)
+✔ garden dashboard blank toolbar leaves module-scoped flash lookup to active render (4.1738ms)
+✔ garden dashboard toolbar controls use module scoped plugin contracts (1.6375ms)
+✔ garden dashboard toolbar exposes share only for eligible selected scopes (1.7794ms)
+✔ garden dashboard toolbar groups tools left and messages export share table right (3.2343ms)
+✔ garden dashboard toolbar disables Allocate until the selected year has saved crops (10.0717ms)
+✔ garden dashboard blank state keeps controls visible and exposes searchable garden picker (2.5703ms)
+✔ garden dashboard waits for an opened diagram before rendering toolbar (5.9834ms)
+✔ garden dashboard picker searches by garden name while preserving city grouping (1.5419ms)
+✔ garden dashboard picker selection and no-garden create path select and zoom gardens (3.9535ms)
+✔ garden dashboard startup focuses sole garden only once (2.9275ms)
+✔ garden dashboard persists the last selected garden by diagram page and user (2.14ms)
+✔ garden dashboard updates last garden memory only for unambiguous garden contexts (1.6589ms)
+✔ garden dashboard startup uses selected remembered then sole-garden fallback (2.1668ms)
+✔ garden dashboard last garden restore runs only on file open, not page switch (9.8809ms)
+✔ garden dashboard resolves linked and ambiguous module contexts (3.1647ms)
+✔ garden dashboard applies selected year to linked task module cards (1.9027ms)
+✔ garden dashboard derives active workspace from selection (1.3633ms)
+✔ garden workspace switcher repairs companions and pulses destinations (1.5451ms)
+✔ garden dashboard disables garden tools outside Garden workspace (2.3866ms)
+✔ garden dashboard toolbar exposes Garden Workspace Switcher with task badge and selector (9.8179ms)
+✔ garden dashboard toolbar uses task manager API for boards and unseen counts (3.406ms)
+✔ garden dashboard toolbar persists the selected task board in local user storage (2.418ms)
+✔ garden dashboard selected task board resolver is strict across selected cells (0.9733ms)
+✔ garden dashboard toolbar marks Irrigation active with existing blue (3.2787ms)
+✔ garden dashboard irrigation buttons close active irrigation mode (2.9714ms)
+✔ garden dashboard messages button calls users API for active module and prompts auth (3.8847ms)
+✔ garden dashboard table is collapsed by default and session scoped (1.806ms)
+✔ legacy dashboard cell code is removed from the viewport dashboard plugin (2.0122ms)
+✔ defaults normalize legacy frequency effects to hours multipliers (169.0436ms)
+✔ defaults include scheduler task type integration records (22.9361ms)
+✔ yearly replacement reserve counts owned capital only (19.7795ms)
+✔ equipment dialog shows yearly reserve tile and native tooltips (466.8514ms)
+✔ equipment inventory persists with existing module attribute schema (22.5319ms)
+✔ validation blocks missing references and invalid effect rows (18.1283ms)
+✔ capability rename repairs equipment and task type references (22.3962ms)
+✔ task type delete removes dependent links and effects (17.283ms)
+✔ import preview merges with imported records winning (25.9614ms)
+✔ structured effect editor can add and persist an effect (141.8403ms)
+✔ typing names does not replace the focused input (143.5089ms)
+✔ typing checklist search and notes keeps focus (166.4317ms)
+✔ grouped equipment links show display names and bulk select whole crop categories (176.1839ms)
+✔ task registry groups category first with canonical before other tasks (100.8207ms)
+✔ loaded crop and bed checklists drop unmatched legacy tokens on save (60.8916ms)
+✔ fallback bed condition groups include greenhouse infrastructure options (105.7296ms)
+✔ crop fallback textarea preserves unmatched crop ids when catalog is unavailable (92.5155ms)
+✔ equipment warnings resolve capability display names (10.9302ms)
+✔ equipment date fields calculate replacement dates with override support (58.3736ms)
+✔ date normalization infers legacy overrides and blocks invalid saved dates (77.3325ms)
+✔ already-foldable irrigation assemblies collapse around their geometry center (173.3859ms)
+✔ moved collapsed irrigation assemblies expand around their moved center (34.7237ms)
+✔ center-stable folding excludes bed assemblies, modules, and generic cells (26.994ms)
+✔ selected irrigation assembly does not show header collapse and expand icons (645.5394ms)
+✔ selected inner part does not show parent assembly collapse controls (264.4902ms)
+✔ mixed selected assembly fold states do not show header toggles (539.4406ms)
+✔ assembly fold controls exclude bed module generic and pipe-only selections (1076.4611ms)
+✔ catalog manager renders category/size group headers, catalog filters, and connector dropdowns (1947.2023ms)
+✔ catalog manager row selection updates the editor without replacing the scrolled list (447.6086ms)
+✔ catalog and add-part lists keep current grouping depth but use logical flow order (476.809ms)
+✔ catalog manager filters are faceted by other active filters (507.4553ms)
+✔ catalog manager contextual filters respect selected catalogue scope (101.8554ms)
+✔ catalog manager compact view hides detail columns and persists per module user (651.9114ms)
+✔ catalog manager inline on hand edits stock without selecting the row (608.0538ms)
+✔ catalog manager inline price edits cost without selecting the row (678.712ms)
+✔ BOM broad category filter narrows the category dropdown (354.4471ms)
+✔ BOM rows sort by logical flow taxonomy without changing raw catalog categories (102.6353ms)
+✔ BOM renders broad section headers and useful fitting subheaders for planned and completed rows (613.2573ms)
+✔ BOM display and CSV hide each-count unit labels but keep length units (568.7923ms)
+✔ BOM search filters in place without replacing the focused input (522.3364ms)
+✔ BOM compact view hides detail and action columns and persists per module user (686.3095ms)
+✔ BOM compact stock and price inputs commit on blur or Enter and cancel on Escape (1475.1071ms)
+✔ catalog manager opens scoped to a selected inner part cell and can show all parts (330.8773ms)
+✔ catalog manager treats selected assembly containers as their child catalogue parts (77.8997ms)
+✔ catalog manager deduplicates selected diagram instances of the same catalogue part (77.853ms)
+✔ catalog manager falls back to full catalog when selected part ids are missing (218.6694ms)
+✔ catalog manager opens scoped to a selected pipe edge part (115.4541ms)
+✔ catalog manager ignores selected direct-link edges without pipe parts (95.6736ms)
+✔ catalog manager opens selected bed assemblies to saved BOM catalogue parts (173.4278ms)
+✔ catalog manager deduplicates bed assembly role template and pipe part ids (120.6355ms)
+✔ catalog manager falls back when selected bed assembly BOM parts are missing (271.9063ms)
+✔ pipe catalog editor saves one shared size without rejecting old asymmetric pipe data (139.0119ms)
+✔ linear catalog specs derive flow from emitter source data and preserve legacy fallback (39.1722ms)
+✔ linear catalog editor uses one size field and preserves pipe-style connector family (223.924ms)
+✔ starter catalog includes 1 inch and 1/4 inch poly/barb irrigation components (32.7352ms)
+✔ Hazen-Williams pressure loss uses PSI over the pipe length (12.7911ms)
+✔ connector compatibility respects GHT and pipe-thread gender (14.0223ms)
+✔ generated twist-lock and push-connect connectors infer pipe edges by size (828.1359ms)
+✔ starter PC drip emitters connect to 1/2 barb hosts through connector alternates (319.6009ms)
+✔ hydraulics use minimum operating psi and warn over maximum operating psi (15.4297ms)
+✔ unit-cost line categories use route length when available (19.0217ms)
+✔ starter catalog upgrade merges new parts into existing catalogs without overwriting user edits (44.6822ms)
+✔ fitting intent grouping infers granular buckets from existing part data (30.3151ms)
+✔ source commit creates one undoable edit at the latest click point and HUD follows zoom events (383.7542ms)
+✔ creation previews, HUDs, viewport centering, and commits share transformed model coordinates (1029.1693ms)
+✔ creation mode switches preserve the frozen creation point (1182.6712ms)
+✔ HUD-originated pointer movement does not change the next creation anchor (329.3152ms)
+✔ module click anchors irrigation creation entry before source or part mode is chosen (1058.505ms)
+✔ module clicks reposition active creation previews without closing irrigation mode (1101.9085ms)
+✔ module clicks keep irrigation mode open when no creation preview is active (81.4843ms)
+✔ source and part assemblies store compact stack row geometry (79.5513ms)
+✔ irrigation mode exposes active state and normalizes invalid entry selection (59.7714ms)
+✔ irrigation mode HUD renders only for active-module irrigation selections (635.0607ms)
+✔ Add Part groups global options and creates one undoable unconnected assembly without context (1309.5652ms)
+✔ selected inner assembly parts expose contextual bottom delete action (1245.7792ms)
+✔ water source overlay title edits source and assembly labels (954.2202ms)
+✔ water source connector fields lock after downstream assembly connection (1225.1052ms)
+✔ water source connector fields lock when source assembly contains downstream parts (600.9399ms)
+✔ inner assembly parts remain selectable while native moves are guarded (914.3297ms)
+✔ Delete Part splits downstream assembly and updates reports in one redoable edit (2691.2584ms)
+✔ context Add Part suppresses upstream singleton categories only after a source route exists (519.2552ms)
+✔ exposed assembly outlet Add Part lists direct pipe-thread candidates (61.7676ms)
+✔ exposed assembly outlet Add Part lists direct hose-thread candidates (68.281ms)
+✔ exposed pipe outlet Add Part still creates external pipe assemblies (251.8482ms)
+✔ exposed pipe outlet Add Part lists flipped canonical thread adapters (88.989ms)
+✔ normal orientation Add Part keeps canonical adapter name (69.6812ms)
+✔ inactive irrigation selection shows entry button and opens irrigation mode (1675.4259ms)
+✔ selected part and assembly overlays render labeled connection rows with disabled empty choices (2835.8656ms)
+✔ connection combobox groups choices by safety and collapsible catalog category (1825.4859ms)
+✔ connection combobox persists collapsed category state per user (2057.0063ms)
+✔ connection combobox search reveals matching collapsed categories (839.6948ms)
+✔ connection combobox shows reversed names for flipped-compatible parts (309.0529ms)
+✔ connection combobox Escape closes without writing diagram state (803.9855ms)
+✔ connection combobox focus loss closes without writing diagram state (847.472ms)
+✔ connection combobox outside click closes without writing diagram state (942.34ms)
+✔ connection combobox keyboard selection writes diagram state (2036.489ms)
+✔ connection dropdown creates external pipe assemblies and makes occupied pipe rows read-only (1765.5024ms)
+✔ first assembly inlet direct Add Part inserts at the start of the assembly (31.0349ms)
+✔ selected inlet dropdown inserts direct parts at the start of the assembly (387.2836ms)
+✔ first assembly inlet pipe Add Part creates a separate upstream assembly (87.3805ms)
+✔ internal assembly inlets stay read-only after a direct inlet insertion (208.4016ms)
+✔ selected port badges connect with automatic pipe choice and disconnect selected connections (2317.1022ms)
+✔ same-role free badges show Flip and Connect and flip the lower disconnected fitting (925.1072ms)
+✔ Flip and Connect flips the disconnected other fitting when one selected part is connected (907.1188ms)
+✔ Flip and Connect is hidden when both selected parts already have any connection (471.3785ms)
+✔ Flip and Connect falls back to the only flippable fitting when the lower preferred part is not reversible (1382.2886ms)
+✔ only one-inlet one-outlet fittings are reversible for flip and connect (38.8603ms)
+✔ flipped fitting instances keep stored badge positions and reverse connector labels (235.6085ms)
+✔ flipped connected fitting keeps occupied stored input on inlet side without changing edge target attrs (347.1699ms)
+✔ flipped connected fitting keeps occupied stored output on outlet side without changing edge source attrs (393.4191ms)
+✔ connection HUD hides port row and updates pipe edge style (664.1683ms)
+✔ standalone irrigation endpoints disable native editor connectors (27.1733ms)
+✔ selected 3/4 pipe edge can add a free 1/4 barb takeoff branch (693.8572ms)
+✔ selected 1/2 pipe edge can add a free 1/4 barb takeoff branch (543.997ms)
+✔ 1/4 barb takeoff branch renders left and right aliases and keeps the connected side (4135.2201ms)
+✔ connected ordinary ports render on the closest side with side-local spacing (728.807ms)
+✔ inline port action controls avoid SVG overlay panes (949.3033ms)
+✔ inline port action controls anchor to port badge DOM rect with graph scroll (975.2063ms)
+✔ internal connection badge selection shows only inline disconnect and stays mutually exclusive (2718.9052ms)
+✔ free selected port badges FIFO-replace incompatible second ports (2952.0467ms)
+✔ free port selection keeps at most two ports and one port per part (170.5847ms)
+✔ free port selection FIFO-replaces opposite-role connector-incompatible ports (21.2181ms)
+✔ port badges show size-only pipe labels and size-plus-type threaded labels (174.8699ms)
+✔ selecting a free port clears the selected occupied edge port pair (875.3834ms)
+✔ pipe edge stroke width is proportional to nominal pipe size (182.7276ms)
+✔ direct link edges do not receive proportional pipe stroke widths (24.0575ms)
+✔ reused generated pipe edges are restyled from the current pipe part (38.7245ms)
+✔ irrigation mode renders global port badges and highlights compatible free targets (3297.9898ms)
+✔ single selected port compatibility scan stays quiet while highlighting targets (1165.8631ms)
+✔ direct compatible reversible ports prefer Connect over Flip and Connect (707.5177ms)
+✔ stored direct pair with flipped target still uses stored-role Connect (743.7554ms)
+✔ Flip and Connect keeps pipe edge anchors stored-role based and reverses badge labels (1153.546ms)
+✔ same-role reversible pipe size mismatch FIFO-replaces the previous selected port (851.1175ms)
+✔ multi-output dropdowns create branches and make occupied branch rows read-only (1653.0835ms)
+✔ occupied branch replacement keeps stored-role anchors for flipped canonical parts (80.8009ms)
+✔ occupied direct branch rows stay read-only without reclassifying links (399.2512ms)
+✔ internal connection badges show compact right-side connectors with detailed titles (139.699ms)
+✔ occupied pipe branch rows stay read-only when matching tubing is unavailable (2258.8621ms)
+✔ occupied incompatible branch rows stay read-only until explicitly disconnected (1039.1664ms)
+✔ drag-created compatible edges normalize into one redoable edit (400.2213ms)
+✔ removed irrigation assemblies clean related edges in one redoable edit (623.7379ms)
+✔ undo redo replay guard keeps add and remove listeners refresh-only (569.153ms)
+✔ 1 inch barb connections auto-select 1 inch poly pipe edges (288.5265ms)
+✔ 1/2 inch paths can suggest a 1/4 inch transfer barb into micro emitters (8576.9413ms)
+✔ Suggest Connection only proposes neutral adapter and fitting bridge parts (57.8471ms)
+✔ thread-to-pipe starter adapters bridge threaded sources to pipe-style targets (3703.1006ms)
+✔ pipe-to-thread starter adapters bridge pipe-style sources to threaded targets (25209.5142ms)
+✔ non-pipe connector types create direct assembly merges instead of pipe edges (53.1128ms)
+✔ unflagged barb connectors infer pipe edges when matching pipe exists (31.6043ms)
+✔ pipe-required connections block when no compatible pipe part exists (69.5337ms)
+✔ ConnectorRules facade preserves connection decision rejection contracts (227.5358ms)
+✔ Suggest Connection eligibility rejects structural failures before connector search (1702.2222ms)
+✔ Suggest Connection is hidden for non-boundary assembly part selections (67.5979ms)
+✔ branch direct connections and bed direct connections use direct-link edges (62.9934ms)
+✔ drag-created incompatible irrigation edges are removed with a warning (972.5218ms)
+✔ Suggest Connection appends direct source prefix before pipe bridge boundaries (4991.4472ms)
+✔ Suggest Connection keeps bridge parts after the first pipe boundary external (1317.0755ms)
+✔ Suggest Connection applies all-pipe barb bridge chains as separate assemblies and pipe edges (38624.0562ms)
+✔ BOM counts generated pipe edges by size and lifecycle without explicit waypoints (39193.0756ms)
+✔ direct-only Suggest Connection still merges through the downstream assembly (134.4919ms)
+✔ stale bridge plans fail before creating partial bridge assemblies or edges (911.6048ms)
+✔ bed assemblies sync to linked beds, apply templates, and assembly reports ignore legacy objects (3358.2368ms)
+✔ direct bed template commits create assembly-owned visual rows (227.9038ms)
+✔ multiple bed assemblies on one bed own independent templates and derive method labels (292.1544ms)
+✔ bed assemblies reject child drops and moved assemblies are lifted back to the module (49.6802ms)
+✔ linked bed geometry events refresh bed assembly rows and saved template metrics (493.0164ms)
+✔ moving a bed assembly to another bed relinks and carries template data (457.4571ms)
+✔ relinking preserves old bed template while another assembly still uses it (387.6748ms)
+✔ missing required catalog parts preserve saved metrics while refreshing row geometry (212.4723ms)
+✔ syncing legacy swimlane bed assemblies does not restyle them (28.4604ms)
+✔ syncing existing regular bed assemblies moves labels above the bed edge (24.6785ms)
+✔ unconfigured bed assembly does not render fallback canvas port badges (2169.6409ms)
+✔ bed assembly BOM parts persist and drive inlet/outlet connector compatibility (245.4997ms)
+✔ bed assembly select cascade commits BOM fields in UI order (5619.7656ms)
+✔ bed assembly inlet supply size filters rows takeoffs and reversed option names (894.3401ms)
+✔ equal-size bed inlet adapters preserve catalog orientation (524.6141ms)
+✔ bed assembly 1/4 inch supply exposes 1/4 tee row takeoff (1779.5863ms)
+✔ bed assembly large supply to 1/4 row exposes host-size barb takeoff (3594.2387ms)
+✔ bed assembly header end cap selection does not prefill row end cap (412.6687ms)
+✔ bed assembly part picker exposes Choose part option to clear selections (3888.7285ms)
+✔ bed assembly labels soaker rows without emitter spacing (20573.6686ms)
+✔ connected bed assembly inlet and outlet part selectors lock by connected port (16941.8828ms)
+✔ locked bed assembly part selectors preserve values during template refresh (8451.073ms)
+✔ bed inlet role uses the selected non-pipe part upstream side (392.8354ms)
+✔ selected bed assembly ports do not show Add Part placement UI (7085.0894ms)
+✔ unconnected bed inlet port renders only the selected inlet selector (7820.0051ms)
+✔ unconnected bed outlet port renders only outlet selector and clears header end cap on change (2243.4951ms)
+✔ unconnected regular part port renders only the single connection combobox (4955.0746ms)
+✔ graph cell selection clears selected port badge state and restores normal HUD (10392.0526ms)
+✔ connected port badge does not enter unconnected port-only selector mode (5749.0703ms)
+✔ bed template anchor selection uses largest pipe-like required part deterministically (62.8664ms)
+✔ bed template BOM quantities, flow, pressure, and meter costs scale from row meters (95.4746ms)
+✔ bed recipe BOM reads persisted nested emitter spacing when recomputing demand (206.9467ms)
+✔ bed recipe BOM keeps emitter spacing compatibility and precedence (534.6372ms)
+✔ bed recipe BOM uses catalog spacing for self-emitting row parts (170.0094ms)
+✔ bed recipe UI toggles self-emitting and device row controls (2367.3748ms)
+✔ bed recipe numeric edits keep incomplete draft fields instead of restoring saved template (2839.6952ms)
+✔ bed recipe emitter spacing follows garden module units (2061.452ms)
+✔ legacy bed terminal choices prefer outlet and clear header on next commit (15415.1878ms)
+✔ overhead sprinkler bed recipe resolves precise BOM roles (131.9596ms)
+✔ moved bed supply line persists while BOM length remains formula based (332.7828ms)
+✔ bed assembly Exit closes before recipe field blur can rerender overlays (3581.1148ms)
+✔ bed assembly port-only HUD hides Exit and clears on graph selection without add-part UI (7417.7105ms)
+✔ bed template auto-apply blocks missing required parts and rejects one-sided boundary parts (1017.3324ms)
+✔ invalid bed template auto-apply preserves the previous saved layout (6114.181ms)
+✔ irrigation mode rendering does not write derived zone or path state (9122.246ms)
+✔ opening zone manager is read-only (1016.0963ms)
+✔ explicit report sync writes stable summaries but not the legacy path cache (137.0089ms)
+✔ internal architecture facades expose domain seams without changing public contracts (57.6213ms)
+✔ ZoneModel preserves inferred zones, ignores manual records, ambiguous beds, and unzoned beds (451.5659ms)
+✔ report model builds summaries before explicit persistence (149.4906ms)
+✔ irrigation part lifecycle defaults legacy BOM parts to planned (583.2085ms)
+✔ completed irrigation parts move to completed BOM rows and preserve total design value (1224.0295ms)
+✔ HUD lifecycle actions mark selected assemblies completed and planned (4767.0727ms)
+✔ HUD lifecycle actions mark standalone branchpoint catalog endpoints completed (1245.1423ms)
+✔ HUD lifecycle actions show both directions for mixed selections (1068.2437ms)
+✔ HUD lifecycle actions mark selected pipe edges completed (2711.2134ms)
+✔ HUD lifecycle actions mark selected bed assemblies completed and refresh reports (5704.2224ms)
+✔ multi-pipe assembly hydraulics sum per-segment pipe losses (605.904ms)
+✔ missing pipe edge geometry blocks hydraulic completeness (262.5189ms)
+✔ daisy-chained bed assemblies use cumulative downstream demand (397.0698ms)
+✔ public API is mode-focused while legacy path helpers remain isolated under __test (21.4438ms)
+✔ irrigation planner registration and dashboard wiring remain present (910.7ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ crop lifecycle classification requires exactly one lifecycle flag (4.6463ms)
+✔ harvest request method resolver accepts complete and legacy dotted method context (1.7644ms)
+✔ harvest request method resolver rejects missing or mismatched category context (0.9045ms)
+✔ growth stage ratio scales timing and layout with sqrt defaults (2.0308ms)
+✔ growth stage explicit layout ratios override sqrt derivation (0.7895ms)
+✔ missing and legacy saved growth stages normalize for scheduler reopen (0.5782ms)
+✔ growth stage table schema and editor validation stay aligned (0.8834ms)
+✔ lifecycle filter control reads and persists the shared crop filter preference (19.3822ms)
+✔ grouped crop options filter by lifecycle and auto-show hidden current selection (1.7593ms)
+✔ empty lifecycle filter renders an explicit disabled placeholder (8.032ms)
+✔ sowing-window scoring ranks inside windows before nearest outside windows (1.2417ms)
+✔ sowing season selector labels include relative timing (1.0265ms)
+✔ crop option sorting prefers suitability then name within lifecycle groups (0.8277ms)
+✔ proposeLifecycle returns lifecycle metadata and task preview without graph mutation (304.0554ms)
+✔ proposeLifecycle can choose the earliest calculable bed-entry day in a week (492.459ms)
+✔ proposeLifecycleForDemandWindow back-schedules sow date from future demand (9735.6274ms)
+✔ proposeLifecycle reports overrideable warnings separately from structural failures (252.549ms)
+✔ Scheduler exposes Allocate resolver and draft editing contracts (4.3333ms)
+✔ allocation draft target retains dates and rules without becoming a graph cell (21.2799ms)
+✔ allocation reusable task defaults persist actual rules rather than dated task occurrences (27.1317ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation Edit opens the full scheduler with fixed crop identity and returns preview without graph writes (1853.6116ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation locks lifecycle by default, preserves edits when relocked, and keeps footer defaults on Tasks (2420.3766ms)
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-08',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-13',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation lifecycle edits solve demand and wait for capacity revalidation before Preview (10830.0123ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation discards older fits and blocks Preview when the latest bed fit fails (20870.2497ms)
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-08',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-08',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation indoor method and lead-day edits refit demand and use transplant dates for offsets (16006.1262ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[PlantModel.update] patch keys = [
+  'default_planting_method',
+  'default_planting_method_category',
+  'days_transplant',
+  'harvest_window_days'
+]
+[PlantModel.update] default_planting_method = transplant.indoor
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-05-08',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation no feasible demand fit clears harvest dates and blocks both Preview actions (2765.7243ms)
+✔ allocation compares bed entry against all overlapping crops and omits off-axis markers (18.7458ms)
+✔ allocation lifecycle defaults are opt-in and merge selected-variety overrides without timing writes (23.7599ms)
+✖ allocation plant lifecycle defaults require first-time opt-in and variety methods preserve explicit selection and inheritance (22.9983ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-05-08',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation spacing default starts checked for new active sets and persists only after creation (1402.6795ms)
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-05-08',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-05-08',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-05-08',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation spacing default starts unchecked for existing exact and broad defaults and preserves explicit choice on reopen (7396.6691ms)
+✔ allocation recommendation lookup preserves missing timing and normalizes both stored relationship directions (18.425ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ allocation cancellation during revalidation cannot publish a fitted result (6181.1282ms)
+✔ lifecycle proposals resolve variety, plant, and method task defaults and respect explicit empty rules (1502.3671ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[recomputeAnchors] result {
+  forceWriteStart: false,
+  forceWriteEnd: false,
+  startISO_before: '2026-04-01',
+  latestHarvestEndISO_before: '2026-12-31',
+  sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+  climateEndDate: '2027-02-06',
+  lastFeasibleSowDate: '2026-12-31'
+}
+[SCHEDULE RESULT] {
+  rowsCount: 1,
+  firstRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastRow: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  lastScheduledHarvestEndISO: '2026-05-08'
+}
+[recomputeLastHarvestFromSchedule] rows summary {
+  count: 1,
+  first: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  },
+  last: {
+    plant: 'Lettuce',
+    method: 'direct_sow.field',
+    sow: '2026-04-01',
+    germ: '2026-04-06',
+    trans: '',
+    harvStart: '2026-05-01',
+    harvEnd: '2026-05-08',
+    mult: '1.00',
+    plantsReq: ''
+  }
+}
+[recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+✔ full allocation scheduler cancellation and dismissal retain the draft without writes (2406.7127ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+✔ full allocation scheduler preserves explicitly empty rules when returning to preview (2842.8497ms)
+✔ shared allocation result preserves relative task rules, rejects crop changes, and uses the fixed Year Plan growth-stage geometry (438.0585ms)
+✔ companion metadata annotates crop options without changing suitability order (1.7354ms)
+✔ scheduler crop combobox syncs selection and renders companion badges (15.0746ms)
+✔ scheduler crop combobox floats outside clipped containers and clamps to viewport (7.6065ms)
+✔ scheduler crop combobox closes on outside click and Escape (18.1237ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+(node:65624) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ scheduler crop combobox closes when the owning dialog is removed (1181.5821ms)
+✔ crop picker row uses custom layout without section overflow workaround (5.0291ms)
+✔ derived dialogs do not persist resolved city onto the source while opening (0.7822ms)
+✔ scheduler requires inherited city instead of silently falling back to first city (2.0567ms)
+✔ derived save creates sibling after validation and rolls it back on save failure (17.8826ms)
+✔ existing legacy companion metadata opens as an ordinary schedule edit (3.816ms)
+✔ companion timing help shows recommended and current actual offsets (3.2975ms)
+✔ guided companion creation writes ordinary layout, not relationship identity metadata (1.0151ms)
+✔ guided companion layout patch materializes only ordinary spacing and offsets (0.5638ms)
+✔ layout preview model renders no-bed and clamps companion placement (9.5209ms)
+✔ spacing preview model uses tiler-faithful draft group copies with a 1000 circle cap (1.9286ms)
+✔ spacing preview model supports upright bed context rows without status noise (0.7743ms)
+✔ active companion layout templates compute distinct placements (0.7909ms)
+✔ multi-companion preview model renders anchor and all companions with warnings (1.308ms)
+✔ saved plant-set defaults select their saved anchor when opened from another set member (0.3189ms)
+✔ interplant preview offsets alternating row and column parity like the tiler (0.686ms)
+✔ layout patches write spacing and bed-relative offsets for current planting rows (0.2091ms)
+✔ companion set layout defaults use unordered crop identities and collapse duplicates (0.4537ms)
+✔ graph-created companion pairs get an in-memory relationship before DB default save (0.4338ms)
+✔ scheduler companion layout reads prefer current planting offsets over legacy companion offsets (0.867ms)
+✔ derived schedule helpers gate companion lifecycle and compute turnover gaps (0.5703ms)
+✔ scheduler adjacent gap hints render before and after gaps (1.0177ms)
+✔ scheduler adjacent gap hints label overlaps by occupancy start delta (0.5147ms)
+✔ scheduler classifies occupancy overlaps by companion rating (0.4062ms)
+✔ bed-first scheduler entrypoint is separate from strict planting-group scheduler (2.3103ms)
+✔ scheduler start hints use selected-cluster occupancy context (1.8467ms)
+✔ scheduler adjacent gap hints cap multiple overlaps and disambiguate duplicate crop names (0.9482ms)
+✔ scheduler adjacent gap hints hide when no comparable plantings exist (0.2763ms)
+✔ scheduler adjacent gap hints support companion-own window and turnover bases (1.3112ms)
+✔ scheduler dialog removes Layout tab while exposing diagram spacing tools (6.7612ms)
+✔ plant editor exposes layout defaults without a diagram preview (2.0776ms)
+✔ plant editor yield inputs use tenth-step affordance without rejecting precise values (5.4751ms)
+✔ add variety editor focuses and temporarily highlights the variety name field (20.1236ms)
+✔ turnover computed-window filtering rejects same-bed occupancy overlap (0.6827ms)
+✔ turnover capacity ignores overhanging cluster occupancy when bed API is present (0.5154ms)
+✔ turnover candidate filtering uses the computed schedule window (450.0119ms)
+✔ perennial crop suitability is alphabetic and date-flexible (0.5748ms)
+✔ variety options group exact Trellis defaults separately from user varieties (0.8344ms)
+✔ variety options require exact generic name and class for Trellis defaults (0.5433ms)
+✔ variety picker uses flat user-only list and defaults-only add group (0.556ms)
+✔ rendered variety dropdown keeps base plant first and source groups (1.7719ms)
+✔ manual variety maturity mismatch warns only when inference is available (0.746ms)
+✔ missing city fallback keeps Set Plant style options grouped alphabetically (0.4015ms)
+✔ date-only crop-menu scoring reuses cached windows instead of queueing recomputation (976.2384ms)
+✔ pending annual crop options render calculating hints and remain selectable (1.2209ms)
+✔ crop suitability cache key changes with full growing context (1.2852ms)
+✔ selected-crop date fast path selects containing cached sowing season (0.6074ms)
+✔ selected-crop date fast path preserves active season when outside cached windows (0.3818ms)
+✔ missing selected-crop cached windows require anchor recomputation fallback (0.1558ms)
+✔ date and filter handlers use cached fast paths (3.2212ms)
+✔ growth stage dropdown change recomputes scheduler anchors and harvest dates (2.8779ms)
+✔ crop picker selection stays fresh across async refreshes (7.7256ms)
+✔ crop changes preserve only genuine selected dates before recomputing windows (9.8333ms)
+✔ schedule summary view state de-duplicates warning bullet messages (0.8243ms)
+✔ schedule summary renders warnings as bullet list in double-wide feasibility item (4.1661ms)
+✔ scheduler hides duplicate harvest and context fields from main sections (3.8583ms)
+✔ scheduler year selector owns visible date bounds and clamping (28.2024ms)
+✔ today timeline boundary is blue while latest harvest remains neutral (7.0084ms)
+✔ schedule summary keeps non-warning feasibility as plain text (1.761ms)
+✔ lifecycle marker tooltip shows immediately and avoids native title (7.3383ms)
+✔ annual task preview fallback range remains sow through harvest (239.2579ms)
+✔ perennial task preview fallback range remains lifespan start through end (0.8294ms)
+✔ visible pre-sow task expands generated task timeline start (265.2239ms)
+✔ unchecked pre-sow task does not expand generated task timeline start (246.1413ms)
+✔ visible task after harvest extends generated task timeline end (205.0694ms)
+✔ generated task timeline renders blue today marker only inside display range (5.6145ms)
+✔ generated task timeline renders adaptive calendar ticks (16.3205ms)
+✔ growth-stage yield ratio scales resolved variety yield without changing the source plant (1.0911ms)
+✔ existing stage database upgrades yield defaults, saves ratios and blocks inactive custom stages (32.5292ms)
+✔ seeded stage yield multiplies the seeded variety override in the scheduler (534.8273ms)
+✔ Trellis identity assets match the canonical raster masters (10.6659ms)
+✔ canonical integrated-background sources retain their supplied bytes and dimensions (5.3954ms)
+✔ platform icon containers and multiresolution formats keep their required dimensions (12.0775ms)
+✔ header and native window placements use the Negative Space T mark (10.1555ms)
+✔ compact transparent icons use the full canvas without generator margins (502.8243ms)
+✔ large transparent icons retain five-percent edge margins (739.5292ms)
+✔ ICO frames preserve the generated Negative Space T frames (8.5005ms)
+✔ visible install metadata uses Trellis branding without changing compatibility identity (15.4927ms)
+✔ createModuleAtPoint creates a regular module at requested coordinates (273.1736ms)
+✔ createModuleAtPoint creates garden module with settings-needed event (96.224ms)
+✔ createModuleAtPoint creates garden neighbor modules including roadmap when available (47.3053ms)
+✔ garden creation falls back to partial cluster when roadmap manager is unavailable (22.611ms)
+✔ new blank diagram fileLoaded auto-creates a focused garden cluster (50.3572ms)
+✔ new blank diagram seeder ignores unflagged or nonempty diagrams (81.9748ms)
+✔ createModuleAtPoint creates team module (223.9623ms)
+✔ garden companion team repair does not backfill starter team content (61.5527ms)
+✔ createModuleAtPoint creates task module (29.551ms)
+✔ garden companion team repair reuses typed team module (45.0668ms)
+✔ garden companion task repair reuses typed task module and mirrors access (61.8144ms)
+✔ regular modules collapse around their geometry center (13.9734ms)
+✔ moved collapsed modules expand around their moved center (81.54ms)
+✔ typed modules and nested submodules use center-stable folding (85.5686ms)
+✔ center-stable module folding excludes non-module and explicitly non-collapsible cells (11.0123ms)
+✔ delete on expanded module folds without deleting (12.7552ms)
+✔ workspace handle drag suppresses module delete lifecycle (39.3205ms)
+✔ delete on folded standalone module confirms and removes descendants (20.5761ms)
+✔ delete on expanded garden folds cluster root without deleting neighbors (56.2605ms)
+✔ delete on folded garden confirms and removes typed cluster with descendants (22.0337ms)
+✔ delete on folded garden companion is blocked (26.1672ms)
+✔ mixed delete removes ordinary cells while folding expanded modules (11.7331ms)
+✔ garden cluster deletion requires delete permission for every descendant (18.5002ms)
+✔ folded module deletion cancels when confirmation is unavailable (10.3119ms)
+✔ folded leaf module deletion tolerates null child lists (14.8282ms)
+✔ folded module deletion does not re-prompt when Roadmap Manager wraps after Modules (11.8813ms)
+✔ module cells cannot be dropped under non-module parents (24.1479ms)
+✔ only regular modules can be dropped under regular modules (74.5814ms)
+✔ invalid nested modules are restored to root with page position preserved (14.4441ms)
+✔ protected trellis objects clamp by module type (105.5424ms)
+✔ regular module children can drag past right and bottom to grow the module (18.0368ms)
+✔ regular module children clamp at left and top edges (11.2561ms)
+✔ team and task module ordinary children do not use regular outside growth (24.1057ms)
+✔ role cards clamp to team modules and role internals clamp to their role parent (85.8436ms)
+✔ mixed protected selections share one clamped delta (20.2593ms)
+✔ protected cells reject drops outside their current module (23.2165ms)
+✔ CELLS_MOVED clamps leaked protected cells instead of reparenting to root (49.9149ms)
+✔ garden child moves do not auto-shrink the garden module (21.9549ms)
+✔ kanban cards can move to another board lane while lanes remain fixed (12.4984ms)
+✔ promptSetModuleMargin updates style and reapplies module sizing (76.5295ms)
+✔ module margin prompt can be requested through the fallback graph event (25.3025ms)
+✔ module margin API updates style and reapplies module sizing without prompt (11.3839ms)
+✔ garden module margin API ignores legacy internal margin values (16.4153ms)
+✔ garden module resize cannot shrink below child contents (17.9546ms)
+✔ garden module resize restores only undersized dimensions (17.3971ms)
+✔ garden module resize minimum ignores legacy internal margin (19.2272ms)
+✔ empty garden module resize honors base minimum (16.3655ms)
+✔ garden resize minimum does not normalize negative child positions (30.0536ms)
+✔ module margin can be set through the fallback graph event (13.7436ms)
+✔ module external margin API stores spacing and pushes neighbors (14.3102ms)
+✔ created modules push neighboring modules to maintain external margins (13.2843ms)
+✔ moved modules push neighbors using the move vector (25.3046ms)
+✔ moved typed top-level modules still push neighbors (18.9413ms)
+✔ resized modules push neighbors on expanded edges (15.7862ms)
+✔ shrunk modules pull nearby right-side neighbors to the exact external margin (15.1808ms)
+✔ programmatic module margin growth preserves external margins (19.7459ms)
+✔ programmatic module margin shrink pulls nearby neighbors to the exact external margin (11.7269ms)
+✔ shrunk modules leave neighbors beyond three external margins in place (13.9692ms)
+✔ programmatic module margin no-op leaves neighbors in place (12.5979ms)
+✔ empty canvas click renders root module overlay buttons (62.6221ms)
+✔ overlay buttons create the selected module type at stored click point and hide (50.4426ms)
+✔ module context menu omits module type conversion actions (18.6915ms)
+✔ clicking an existing cell does not render the root module overlay (13.1884ms)
+✔ overlay dismisses on Escape and outside graph gesture (41.7369ms)
+✔ empty canvas click while overlay is active dismisses without reopening (49.8179ms)
+✔ selecting one team module renders the team management overlay (40.0257ms)
+✔ selecting team sections and role cards renders permissions in their overlays (48.707ms)
+✔ team sections lazily migrate direct role cards into Unassigned (41.9995ms)
+✔ team-aware role insertion uses selected named team section (59.3281ms)
+✔ role cards can use active team sections as live drop targets (56.7256ms)
+✔ dragged role cards reparent to the team section containing their center (62.7252ms)
+✔ dragged role cards stay in their team when their center lands in a gap (43.0248ms)
+✔ dragged unassigned role cards reparent into named team sections (58.4641ms)
+✔ dragged role cards do not reparent into archived team sections (51.9299ms)
+✔ manual team section enlargement persists after resize events (42.9798ms)
+✔ team section resize restores only dimensions undersized for role contents (47.5057ms)
+✔ resized team sections push neighboring sections away (48.288ms)
+✔ dragged team sections stay fixed while neighbors restore the minimum spacing (49.7998ms)
+✔ resized team sections restore spacing by shortest movement instead of resize vector (55.1979ms)
+✔ dragged team sections push Unassigned sections out of the 20px minimum spacing (17.3827ms)
+✔ dragged team sections push archived sections out of the 20px minimum spacing (27.5512ms)
+✔ Add Team creates the next section below unassigned active and archived teams (55.3165ms)
+✔ team module overlay edits labels without graph action side effects (55.9132ms)
+✔ team section overlay edits labels with the module overlay name field behavior (45.1675ms)
+✔ module label API writes garden and team labels with clone-backed undo values (19.1443ms)
+✔ linked team module overlay uses a single editable team label field (56.4971ms)
+✔ garden team overlay set permissions opens team permission mode (38.2733ms)
+✔ team role overlay stays suppressed while team permission mode is active (47.7672ms)
+✔ team module overlay position is not clamped to the viewport (27.439ms)
+✔ first click selecting a team module shows role overlay next to the click (44.7919ms)
+✔ first click selecting a team section shows team overlay next to the click (51.3562ms)
+✔ selecting regular or garden modules does not render the role card overlay (39.1814ms)
+✔ role overlay button creates role card from stored click point and focuses name (101.6736ms)
+✔ context menu add role card uses one top-level model transaction and focuses name (44.3201ms)
+✔ role overlay button falls back to top-left content placement (46.7748ms)
+✔ role overlay margin button opens the combined module margins dialog (57.3778ms)
+✔ standalone team module margin dialog uses diagram units (131.9761ms)
+✔ clicking the already-selected team module hides role overlay without reopening (23.7367ms)
+✔ clicking the already-selected team section hides team overlay without reopening (40.194ms)
+✔ role overlay hides on Escape, outside gesture, model change, and view change (93.6489ms)
+✔ new role cards use v2 compact roster profile geometry (43.3406ms)
+✔ v2 role card summary syncs name and role without prefixing value fields (32.9907ms)
+✔ legacy role cards are not rewritten by summary sync (41.4149ms)
+✔ single clicking role text fields starts editing (107.7105ms)
+✔ single click editing ignores role labels image boxes drags double clicks and modifiers (77.5972ms)
+✔ empty role image slot has no add-image overlay and keeps context affordances (57.9128ms)
+✔ clicking the role card does not open the native image picker (127.0975ms)
+✔ existing role image does not render an add-image overlay (93.9249ms)
+✔ clicking the photo box opens native image picker and creates the avatar (55.8316ms)
+✔ canceling the native role image picker leaves the photo unchanged (106.5114ms)
+✔ clicking an existing role avatar replaces it with a native image (100.0916ms)
+✔ production detail/LOD tiling and rotated geometry match the reviewed proposal (2655.904ms)
+✔ a single undo/redo restores the fitted group, tiles, counts and axis attributes (911.8258ms)
+✔ a shallow fitted bed retains membership and axis intent during resize (441.6133ms)
+✔ Garden Settings suppresses the garden options overlay while the dialog is open (15.3595ms)
+✔ team permission mode suppresses the garden options overlay while active (5.9479ms)
+✔ Garden Settings entry points route through the overlay-suppressed opener (4.3268ms)
+✔ planting geometry ranks bed-first overlap candidates by relationship severity (3.6394ms)
+✔ Garden Settings close can focus newly-created gardens using dashboard zoom pattern (7.3303ms)
+✔ Garden Settings can open with an empty city table so City Manager can add the first city (3.0869ms)
+✔ Garden Settings starts new garden dimensions from whole-number unit presets (3.9859ms)
+✔ Garden module and bed overlays expose exclusive mode launchers (3.8329ms)
+✔ Garden module settings expose external margin but no internal margin (5.6013ms)
+✔ Garden Settings exposes fixed path width presets with explicit enablement (10.5979ms)
+✔ Garden bed path snapping evaluates direct neighbors and closest path presets (4.7943ms)
+✔ Garden bed path snapping hooks creation, move, resize, Alt bypass, and overlay badges (3.792ms)
+✔ Garden bed path snap move policy distinguishes pointer drags, handle drags, and nudges (4.307ms)
+✔ Garden module overlay uses a single editable bed-style label input (3.0352ms)
+✔ Garden module overlay repeated selected-module clicks toggle visibility without changing selection (5.1038ms)
+✔ allocation hides bed controls across lifecycle and view changes while preserving module controls (767.8396ms)
+✔ Garden module overlay suppresses plan actions while irrigation mode is active (3.8071ms)
+✔ Plant group creation finalizes tiling and bed fit inside the creation transaction (2.5968ms)
+✔ scheduler sibling plant groups clone footprint and attrs without reusing source id (2.9394ms)
+✔ plant tiler exposes a read-only draft group preview helper (3.8522ms)
+✔ planting groups and plant circles disable native editor connectors (3.0627ms)
+✔ interplant companion groups offset alternating tile slots during retile (3.4964ms)
+✔ Bed fit diagnostics expose a self-verifying debug surface (6.7162ms)
+✔ Bed fit centers only fitted axes after plant group resize (3.5367ms)
+✔ Bed fit persists per-axis intent and bed resize consumes only persisted axes (4.3919ms)
+✔ Garden bed resize refits before-contained groups without capturing expanded-bed neighbors (3.9777ms)
+✔ Layering orders bed assemblies between beds and planting groups (3.274ms)
+✔ Garden module overlay exposes schedule-first planting only in bed mode (4.3677ms)
+✔ Context menu omits direct empty plant group creation for garden beds (4.0289ms)
+✔ Plant Tiler exposes Allocate proposal and creation contracts (5.6524ms)
+✔ planting groups reject plain child drops on the group or descendants (123.7217ms)
+✔ generated planting children stay inside planting groups after move events (15.1939ms)
+✔ leaked plain children are ejected from planting groups with geometry preserved (14.0228ms)
+✔ tiler-group-to-tiler-group drops are rejected and repaired (12.1725ms)
+[Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+[Scheduler] Ignoring invalid plant default method {
+  plantId: 1,
+  methodId: 'broken.default',
+  reason: 'Unsupported methodId: broken.unsupported'
+}
+[Scheduler] Skipping invalid allowed method record {
+  plantId: 1,
+  methodCategoryId: 'direct_sow',
+  methodId: 'direct_sow.invalid',
+  reason: 'Unsupported methodId: direct_sow.invalid'
+}
+[Scheduler] Ignoring invalid plant default method {
+  plantId: 1,
+  methodId: 'broken.default',
+  reason: 'invalid default record'
+}
+[Scheduler] Unable to load allowed method categories { plantId: 1, reason: 'invalid allowed records' }
+✔ annual direct sow computes maturity and harvest window (371.9093ms)
+✔ annual latest harvest display date does not cap feasibility (614.9545ms)
+✔ no feasible annual window returns null derived dates (811.1433ms)
+✔ indoor transplant applies transplant lead time (193.7992ms)
+✔ indoor transplant primary date derives sow date for scheduler core (183.4876ms)
+✔ cutting transplant primary date uses transplant-date conversion (0.4901ms)
+✔ transplant lead override availability follows lead-day transplant methods (10.7633ms)
+✔ cell transplant-days override beats plant default for derived sow date (1.1459ms)
+✔ schedule patch persists transplant-days only for explicit cell override (250.5706ms)
+✔ schedule patch persists growth stage metadata and stage-adjusted layout (285.2261ms)
+✔ growth stage maturity scaling changes computed harvest dates (552.0858ms)
+✔ schedule patch ignores transplant-days override for methods without lead days (804.9394ms)
+✔ transplant-date display windows project sowing windows by lead days (83.7846ms)
+✔ lifecycle timeline shows annual direct sow and harvest milestones (376.1405ms)
+✔ spring annual timeline stays in the selected year even when crop is winter-hardy (340.0979ms)
+✔ fall overwinter-required crop timeline extends from the selected cross-year result (342.4242ms)
+✔ winter-survivable annuals do not require overwinter metadata (0.3821ms)
+✔ lifecycle timeline exposes latest harvest as a separate non-task boundary (506.779ms)
+✔ lifecycle timeline includes transplant milestone for transplant schedules (510.5812ms)
+✔ lifecycle timeline renders all feasible sowing seasons as bands (330.1987ms)
+✔ lifecycle timeline axis renders quarterly months and year marker for annual range (0.6207ms)
+✔ lifecycle timeline axis repeats quarterly months and year markers for multi-year range (0.6502ms)
+✔ lifecycle timeline axis clips markers to custom bounds (0.39ms)
+✔ lifecycle timeline uses full multi-year scan bounds (0.7846ms)
+✔ lifecycle timeline today marker appears only inside range (2.6884ms)
+✔ lifecycle timeline hides germination and maturity while retaining marker tooltip text (1.01ms)
+✔ lifecycle timeline marker layout leaves separated markers unshifted (0.7217ms)
+✔ lifecycle timeline marker layout spaces dense markers deterministically (0.241ms)
+✔ lifecycle timeline marker layout falls back to zero offsets without width (0.2089ms)
+✔ lifecycle timeline task association uses start anchors only (1.0509ms)
+✔ lifecycle timeline opens first matching task rule by display order (1.8688ms)
+✔ lifecycle timeline milestone task dot follows generated display order (436.6573ms)
+✔ indoor transplant gate outside scan end is rejected when annual cross-year harvests are disabled (121.6618ms)
+✔ indoor transplant gate may validate into next year when annual cross-year harvests are allowed (187.0578ms)
+✔ cooling trigger ignores January cold and finds autumn crossing (1.0558ms)
+✔ cooling trigger returns null without an observed warm-to-cool transition (0.4824ms)
+✔ spring frost resolver prefers stored p50 before monthly inference (0.5718ms)
+✔ spring frost resolver infers missing frost dates from monthly lows (4.5216ms)
+✔ spring frost resolver handles warm and unusable monthly normals (2.0975ms)
+✔ fall frost resolver prefers stored p50 before monthly inference (0.7261ms)
+✔ fall frost resolver infers missing frost dates from monthly lows (0.5802ms)
+✔ fall frost resolver returns null without stored dates or a monthly crossing (0.6295ms)
+✔ annual crop cooling threshold does not force a fall-only sowing season (303.8692ms)
+✔ bed-aware soil model opens Vancouver sweet corn threshold by early June (33.516ms)
+✔ shaded slow-draining clay bed delays soil readiness (62.7271ms)
+✔ annual GDD calibration matches stored city base GDD and recomputes crop-base heat (5.5635ms)
+✔ daily climate curves interpolate monthly normals and blend near-term forecasts (4.7923ms)
+✔ single-sine GDD respects crop upper cap (0.4768ms)
+✔ daily GDD calibration scales GDD rates without changing climate temperatures (109.9998ms)
+✔ season extension shifts frost gate independently from soil temperature (0.3993ms)
+✔ corn-like annual December sowing is blocked when daily lows exceed cold-survival tolerance (143.5835ms)
+✔ explicit kill temperature can be stricter than the estimated tolerance (128.2173ms)
+✔ explicit kill temperature can be hardier than the tmin estimate (2.6632ms)
+✔ tropical open-bed annuals allow cross-year harvests when climate gates pass (144.703ms)
+✔ cold open-bed annual harvests are rejected by cold-survival gates (140.0069ms)
+✔ heated greenhouse bed effects can rescue a cold cross-year annual harvest (113.532ms)
+✔ missing kill temperature uses the tmin minus three estimate (110.2054ms)
+✔ missing kill temperature and tmin use zero celsius fallback (115.2117ms)
+✔ cold shoulder-season daily lows block annual survival outside winter months (104.307ms)
+✔ Langley-like sweet corn reports insufficient GDD before lethal cold instead of winter survival (136.5403ms)
+✔ Langley-like before-cold diagnostics summarize usable GDD instead of annual estimate (1034.6589ms)
+✔ annual GDD crop remains feasible when maturity and harvest finish before lethal cold (11.5287ms)
+✔ annual crop reports cold survival when harvest window overlaps lethal cold (4.7804ms)
+✔ explicit kill temperature changes the cold GDD deadline (135.4057ms)
+✔ heated greenhouse can push lethal cold deadline later and rescue GDD maturity (297.0394ms)
+✔ season extension override values take precedence over preset defaults (0.4218ms)
+✔ annual cross-year policy disables cross-year harvests even with overwinter metadata (207.6152ms)
+✔ strict GDD maturity remains infeasible when target exceeds calibrated cross-year scan heat (170.8549ms)
+✔ warning-tolerant annual schedule uses DTM when GDD is short (496.1059ms)
+✔ warning-tolerant annual schedule scales GDD only within cap (224.0421ms)
+✔ warning-tolerant annual schedule uses inferred fall frost as thermal deadline (325.9989ms)
+✔ warning-tolerant annual schedule does not invent fall frost without a crossing (218.9369ms)
+✔ warning-tolerant annual schedule scales GDD before lethal cold when within cap (47.8972ms)
+✔ warning-tolerant annual schedule blocks GDD scaling above cap or without heat (384.9287ms)
+✔ warning-tolerant annual schedule fails when before-cold scaling exceeds cap (50.0338ms)
+✔ warning-tolerant annual schedule reports no heat before lethal cold (19.71ms)
+✔ thermal harvest and yield issues are warnings for selected-date schedules (715.5914ms)
+✔ warning-tolerant annual schedule still blocks non-thermal gates (797.1139ms)
+✔ feasibility diagnostics include soil, bed, calibration, and failing gate summary (286.087ms)
+✔ explain sowing range reports full scheduler span even with blank selected start (187.5043ms)
+✔ feasibility scan ranges compress soil gate and insufficient GDD failures (7.2394ms)
+✔ feasibility scan ranges normalize parameterized frost reasons (9.4748ms)
+✔ feasibility blocking summary preserves primary post-readiness GDD blocker with a narrow ok range (487.3351ms)
+✔ feasibility scan ranges normalize parameterized harvest temperature reasons (0.3368ms)
+✔ feasible scan ranges include representative maturity and harvest dates (608.1039ms)
+✔ explain sowing range uses full multi-year scheduler scan span (1135.2383ms)
+✔ overwinter crop can mature in the following year (186.0119ms)
+✔ Langley garlic uses inferred spring frost date for cooling-gate exemption (1192.7081ms)
+✔ annual sowing seasons derive one continuous season-bound window (752.8174ms)
+✔ indoor transplant sowing season shifts earlier by transplant lead time (2014.8293ms)
+✔ hot-climate annual derives separate early and late sowing seasons (896.7922ms)
+✔ overwinter annual derives spring and fall windows inside the selected season year (1659.1146ms)
+✔ overwinter spring sowing belongs to its own season year (2964.3771ms)
+✔ cool-season heat above optimum adds diagnostics without blocking by default (532.1465ms)
+✔ establishment heat block policy excludes otherwise feasible sow dates (541.4634ms)
+✔ photoperiod diagnostics use city latitude and do not block warn-policy windows (611.6154ms)
+✔ missing latitude skips photoperiod diagnostics without changing feasible windows (1444.9958ms)
+✔ chilling diagnostics report insufficient vernalization without default blocking (2259.988ms)
+✔ variety physiology overrides affect diagnostics without mutating base plant (1633.753ms)
+✔ spring-sown chilling does not receive pre-sowing winter credit (138.1554ms)
+✔ fall-sown overwinter crop accumulates chilling after sowing (132.5221ms)
+✔ chilling required hours use daily-equivalent accumulation (127.4472ms)
+✔ smoothed diagnostic block gap remains blocked for the exact selected date (674.5994ms)
+✔ photoperiod block excludes dates when latitude is present and daylength fails (1220.9942ms)
+✔ missing latitude does not block photoperiod block policy and shows data badge (1068.9073ms)
+✔ unsupported stored latitude does not silently clamp or block photoperiod policy (1023.4256ms)
+✔ diagnostic ranges format the same human risk labels as selector summaries (1360.745ms)
+✔ city latitude validation accepts clearing and rejects out-of-range values (0.3553ms)
+✔ city latitude update persists to Cities.latitude (2.4087ms)
+✔ city latitude save helper persists cache and refreshes annual scheduling state (0.78ms)
+✔ city climate resolver prefers city_id and falls back to city_name (1.153ms)
+✔ city climate unique-name fallback rejects ambiguous legacy names (0.7363ms)
+✔ biennial scan window uses its configured lifespan (0.1903ms)
+✔ lifespan-only perennial saves without maturity dates (0.6709ms)
+✔ perennial save patch contains lifespan dates and clears annual stages (1.7238ms)
+✔ schedule save patch clears legacy sowing window attributes (200.7882ms)
+✔ persisted start is distinct from a session edit and is not auto-overwritten (0.3497ms)
+✔ generated start can replace stale unscheduled date while persisted and edited dates stay fixed (0.1551ms)
+✔ new annual schedule defaults sow date to today inside the active window (0.1366ms)
+✔ new annual schedule startup preview uses today only inside the active sowing season (0.925ms)
+✔ new transplant schedule startup preview defaults from projected visible windows (4.3616ms)
+✔ perennial lifecycle is detected before requesting a maturity budget (201.7905ms)
+✔ perennial result does not initialize GDD rates (0.5588ms)
+✔ variety overrides change maturity and harvest window (428.4148ms)
+✔ zero-day harvest window has equal exclusive start and end (204.6801ms)
+✔ invalid saved and default methods fall through to a valid allowed method (1.4921ms)
+✔ method lookup failures retain the canonical hard fallback (0.9374ms)
+✔ mixed-case method records and attributes normalize to canonical IDs (0.3207ms)
+✔ combined method selection round-trips delimiter-like identifiers (0.3211ms)
+✔ feasibility helpers classify schedule dates and humanize planner reasons (0.8413ms)
+✔ orphan saved sow date is visible as guidance without blocking validation (0.3847ms)
+✔ switching sowing seasons preserves an in-window sow date and otherwise defaults to the selected window start (0.3557ms)
+✔ sowing season change refreshes derived UI after harvest recomputation (8.285ms)
+✔ derived sowing season summary matches selector labels (1.0195ms)
+✔ schedule summary state uses perennial and annual harvest semantics (0.8986ms)
+✔ schedule summary state renders thermal warnings as warning status (0.3269ms)
+✔ task rule normalization defaults repeat cutoff fields (0.3144ms)
+✔ task template resolution uses cell, variety, plant, method, none precedence (1.0892ms)
+✔ plant task template rows match legacy method ids and recipe method metadata (0.5149ms)
+✔ purchased transplant built-in template backfills hardening off before transplant (307.0821ms)
+✔ task rule task type metadata is custom-only and canonical mappings are generated (0.8476ms)
+✔ custom task type validation is opt-in for editor saves (0.6981ms)
+✔ task rule validation requires valid repeat cutoff configuration (0.9716ms)
+✔ task rule anchor order rejects starts after end or cutoff anchors (332.7423ms)
+✔ task editor placement and visibility rules stay wired (15.7708ms)
+✔ x-times repeat generation is capped by the exclusive cutoff anchor (262.5906ms)
+✔ until-anchor repeat generation uses the exclusive cutoff anchor (225.8135ms)
+✔ repeat cutoff offset shifts the exclusive cap before and after the anchor (165.9584ms)
+✔ repeat cutoff can omit all occurrences and is preview-warning eligible (188.1761ms)
+✔ task rule descriptions include repeat cutoff wording (0.5484ms)
+✔ task preview and save share generated dates before display filtering (187.9836ms)
+✔ task titles use plant and variety for built-in and custom task rules (238.014ms)
+✔ generated scheduler tasks include canonical and custom task type ids (212.2146ms)
+✔ task titles fall back to plant-only names when no variety is selected (210.3802ms)
+✔ built-in task titles separate action and crop with an en dash (275.3135ms)
+✔ hardening off is clamped to short transplant lead window (282.7793ms)
+✔ hardening off keeps default timing when transplant lead is long enough (299.1284ms)
+✔ task preview range uses the complete annual schedule instead of selected task dates (404.8896ms)
+✔ task preview range uses the complete perennial lifespan (0.4543ms)
+✔ task preview filtering is display-only and includes all occurrences for selected rules (586.0568ms)
+✔ task rule display order follows first generated occurrence and keeps original indexes (0.5168ms)
+✔ task preview groups repeats on one row ordered by first occurrence (0.9549ms)
+✔ perennial task generation omits rules whose annual anchors are missing (0.9077ms)
+✔ generated tasks include stable scheduler anchor and method metadata (408.2241ms)
+✔ task recipe registry normalizes module storage and filters by plant, method, and growth stage (10.4959ms)
+✔ task recipe upsert blocks duplicate plant names unless updating selected recipe (1.8445ms)
+✔ task recipe auto-select helper only chooses one clean current-garden recipe (0.4392ms)
+✔ task recipe delete removes editable recipes without touching other module recipes (1.3933ms)
+✔ task recipe search matches recipe, owner, module, method, and growth stage metadata (2.517ms)
+✔ task recipe groups sort current garden first and other modules by climate similarity (3.0611ms)
+✔ task recipe ownership blocks updates when users are enabled (1.1962ms)
+✔ database persistence failure prevents graph mutation (0.8797ms)
+✔ graph patch failure restores snapshotted graph attributes (0.8144ms)
+✔ scheduler permission guard blocks unauthorized planting groups (0.6512ms)
+✔ scheduler open and save preflight permissions before side effects (48.6002ms)
+✔ async UI boundary reports labeled rejection (0.5629ms)
+✔ task replacement is backward-compatible and clears on empty tasks (0.428ms)
+✔ task replacement creates only the latest supplied task set (0.2533ms)
+✔ differential task sync planner leaves unchanged generated tasks alone (3.7251ms)
+✔ differential task sync planner updates changed dates and clears date overrides (0.5824ms)
+✔ differential task sync planner creates new tasks and removes missing tasks (1.5092ms)
+✔ differential task sync planner matches repeated occurrences by scheduler task key (0.6278ms)
+✔ differential task sync planner falls back to replacement for unsafe legacy identities (0.3454ms)
+✔ task planning date helpers use Sunday weeks and bounded day navigation (1.6148ms)
+✔ task planning view lanes and legacy workflow state are deterministic (0.9634ms)
+✔ task planning workflow patches assign and complete from view context (3.2408ms)
+✔ task planning mode lane decisions reflow from card attributes (0.8218ms)
+✔ stack scheduler time helpers snap, normalize hours, and pack cumulatively (5.0921ms)
+✔ selected period staged sort is date relative and sinks missing starts (3.4365ms)
+✔ selected period staged start badge text uses visible-week wording (1.2053ms)
+✔ selected period staged mode applies only to staged planning views (0.2501ms)
+✔ scheduler sync respects date locks and preserves touched missing cards (1.6021ms)
+✔ repeat series identity normalizes links and text without using dates (1.2608ms)
+✔ collapsed repeat planning keeps one representative per lane and excludes hidden years (1.1916ms)
+✔ expanded repeat planning shows every eligible occurrence when any series card is expanded (0.3903ms)
+✔ repeat planning clears stale state and uses deterministic malformed-date fallbacks (0.3028ms)
+✔ repeat planning reveals the next source-lane card after a representative moves (0.7053ms)
+✔ done-lane repeats collapse and both hidden flags are excluded from rendering (0.4042ms)
+✔ completion logic remains independent from renderability (2.4125ms)
+✔ new task cards store scheduler dates as active and baseline dates (0.2932ms)
+✔ new task cards copy scheduler task type metadata (10.5471ms)
+✔ task replacement bridge retains differential sync without scheduler task-edit callback (20.3164ms)
+✔ manual card date shifts preserve calendar duration across edge cases (2.2553ms)
+✔ legacy card edit captures a reset baseline and reset removes only the override (8.8597ms)
+✔ unchanged and invalid card dates do not produce override patches (0.651ms)
+✔ card date menu eligibility includes work lanes and excludes completed lanes (0.3396ms)
+✔ kanban parenting policy allows only canonical board lane and lane card structure (1.2315ms)
+✔ scheduler regeneration creates a fresh baseline without preserving an override (0.4205ms)
+✔ card note normalization trims, collapses whitespace, and enforces 40 Unicode code points (0.4014ms)
+✔ card note patches set or clear only card_note and leave scheduler notes untouched (0.4906ms)
+✔ card note badge is escaped and ordered between timing and edited-date badges (2.5358ms)
+✔ unified card editor exposes notes on all cards and dates only when eligible (10.607ms)
+✔ combined card saves use one value replacement and reflow only for date changes (4.1565ms)
+✔ manual date actions still use reflow and edited badge rendering (3.2734ms)
+✔ task manager installs kanban parenting drop and move guards (30.7345ms)
+✔ task manager installs planning mode header controls and selected-card DOM overlay (15.6037ms)
+✔ task manager day-owned breaks use assigned day ownership (3.3523ms)
+✔ task manager schedule order is date scoped for tasks and breaks (3.6494ms)
+✔ task manager edit hours dialog uses a readable table layout and preserves save reflow (8.002ms)
+✔ task manager dialog calls use Trellis dialog elevation (14.6403ms)
+✔ task manager isolates no-undo planning view reflow (45.4942ms)
+✔ save path passes the in-memory task template to graph application (11.4106ms)
+✔ scheduler tab buttons do not style an out-of-scope save button (17.0715ms)
+✔ schedule save requests selection overlay refresh after final graph refresh (8.5814ms)
+✔ scheduler clears stale no-window warning after feasible crop recovery (6.9603ms)
+✔ scheduler crop picker suitability compares real today against the selected schedule year (19.691ms)
+Release tag pushed: v1.2.4
+Actions: https://github.com/Benjamin-Elon/trellis-studio/actions/workflows/release.yml
+Draft release URL after workflow creates it: https://github.com/Benjamin-Elon/trellis-studio/releases/tag/v1.2.4
+✔ validates Trellis release semver strings (2.3211ms)
+✔ formats release tags from exact versions (0.8336ms)
+✔ computes stable version bumps (0.4163ms)
+✔ parses release CLI arguments (1.7042ms)
+✔ normalizes supported GitHub remotes (0.6384ms)
+✔ resolves Yarn through cmd.exe on Windows (0.4323ms)
+✔ keeps non-Yarn commands direct (0.4023ms)
+✔ formats explicit command failures (0.6534ms)
+✔ formats captured stderr before stdout (0.7204ms)
+✔ does not write package version when install fails (2.0053ms)
+✔ does not write package version when tests fail (0.8472ms)
+✔ writes package version only after install and tests pass (1.4353ms)
+✔ exports the same frozen API globally and through CommonJS without Draw (9.0283ms)
+✔ strict ISO parsing rejects normalized, ambiguous, and non-calendar dates (1.8638ms)
+✔ UTC day round trips include leap centuries, pre-epoch dates, and years below 100 (1.2556ms)
+✔ local today follows timezone calendar dates across DST and UTC date boundaries (237.2401ms)
+✔ view normalization independently defaults and clamps each perspective without mutation (2.1412ms)
+✔ default user view hides past columns and gives nominal 75px/400px widths (1.1609ms)
+✔ timeline uses exact half-open boundaries, stable labels, and pixels per day (1.0473ms)
+✔ calendar ticks align to days, Sunday weeks, and first-of-month boundaries (1.2836ms)
+✔ outer ranges expand inclusively without moving inner boundaries or shrinking defaults (1.9746ms)
+✔ all trim combinations preserve This Week, contiguous x, inverse conversion, and extrapolation (5.5039ms)
+✔ full view selects inception settings while the caller controls anchor (0.7883ms)
+✔ packing is deterministic, inclusive, first-available, and uses final row heights (2.5388ms)
+✔ packing rejects duplicate identities, malformed dates, and invalid dimensions (0.7987ms)
+✔ progress weights inclusive durations and status policy without rewriting stored values (0.7803ms)
+✔ every title-case transition preserves stored progress except Done and forbids Done to Blocked (1.0629ms)
+✔ cost totals use inclusive durations and ignore malformed pricing without disrupting summaries (0.6604ms)
+✔ checkpoint funding counts remaining overlap from today through a clamped checkpoint (0.3948ms)
+✔ layout uses board/process coordinate spaces, inclusive widths, and fixed dimensions (1.6691ms)
+✔ process packing is independent of input order and uses final heights of reused rows (1.2889ms)
+✔ layout expands parents to contain objects and preserves extrapolated trimmed dates (0.6769ms)
+✔ 50 processes / 500 objects and worst-case 500 overlapping intervals stay practical (20.9965ms)
+✔ preferred process rows remain compact, deterministic, and account for final heights (0.798ms)
+✔ collision planning cascades without mutating inputs and rejects conflicting protected peers (1.3705ms)
+✔ collision shrink follows the neighboring-module proximity rule (0.4142ms)
+✔ Main creation is usable, idempotent, inclusive, and gives secondary projects unused names (1131.8868ms)
+✔ roadmap tooltips show relative dates and inclusive duration (427.6896ms)
+✔ roadmap selected date HUD previews resize dates in place (716.9309ms)
+✔ roadmap right resize HUD matches commit across custom timeframe scales (522.4002ms)
+✔ roadmap left resize HUD matches commit across custom timeframe scales (461.9835ms)
+✔ roadmap process right resize HUD keeps child-expanded dates across custom timeframe scales (602.6541ms)
+✔ roadmap move HUD matches commit across custom timeframe scales (386.9195ms)
+✔ roadmap process renderer honors rounded style (229.8106ms)
+✔ goal marker renderer draws a yellow badge outline and date line (161.2076ms)
+✔ new roadmap view defaults hide past frames and use 75px/400px nominal widths (150.0306ms)
+✔ roadmap split header targets board above and timeframes below (279.4649ms)
+✔ old v1 roadmap view scale preferences do not affect v2 defaults (366.252ms)
+✔ explicit view preferences keep past visibility (174.2879ms)
+✔ personal perspectives change projection but neither serialized XML nor undo history (284.6685ms)
+✔ roadmap personal scale keeps board timeframe geometry and frame styles aligned (396.6459ms)
+✔ object shifts expand processes, shrinking clamps to children, and every edit undoes together (245.1373ms)
+✔ status transitions retain progress and reject Done to Blocked without changing XML (227.526ms)
+✔ new processes rotate colors while object borders stay neutral (350.9503ms)
+✔ process overlay exposes color picker without inline date fields (703.4869ms)
+✔ process object date badges are opt-in, undoable, and exported (1816.5087ms)
+✔ process object inline duration badge renders for short object bars (379.8353ms)
+✔ process object date badges follow object edits and respect permissions (503.1996ms)
+✔ transparent columns select the object; process handles are movable; view is exported from a clone (436.3078ms)
+✔ process goal markers create at midpoint, edit percent/date, report derived status, and delete with undo (565.5097ms)
+✔ goal marker visibility defaults on, follows the board toggle, and export projection mirrors visibility (624.8618ms)
+✔ goal markers hit-test above process bars and drag as clamped point dates (708.741ms)
+✔ roadmap object dependencies link selected objects as an adjacent date ordered chain (1752.1504ms)
+✔ roadmap object dependency unlink is undoable and permission checked (1175.8076ms)
+✔ roadmap dependency reveal filters links, draws arrows, and export projection includes selected pills (1813.8516ms)
+✔ roadmap dependency arrows skip date-overlapping linked pairs while keeping reveal badges (911.1616ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[Kanban] linksChanged: no deletedIds/impactedIds payload
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ generic vertex link overlay does not duplicate roadmap dependency arrows (1148.8235ms)
+✔ readers can change their view but cannot mutate roadmap content (325.1863ms)
+✔ standalone roadmap task creation integrates production Modules and Task Manager atomically (4184.4135ms)
+✔ Garden creation links all companions while unavailable Roadmap Manager leaves no shell (5626.8869ms)
+✔ task creation validates dates before mutation and rolls back a failed destination command (1136.2921ms)
+✔ missing assignee linking is explicit, permission checked, and never changes source assignments (3284.2151ms)
+✔ deletion prompts only with tasks, preserves tasks by default, and undo restores reciprocal links (3647.17ms)
+✔ roadmap process and object overlays expose delete buttons (4356.5725ms)
+✔ roadmap object overlay uses direct status buttons, note dialog, and Doing progress stepper (2619.2763ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ roadmap object overlay hides invalid and current status transitions (575.5975ms)
+✔ copying planning content clears task links and source IDs while retaining dates and valid roles (2474.403ms)
+✔ live gestures leave XML untouched until release, Escape cancels, and multiple objects shift equally (744.1984ms)
+✔ actual Users identity changes invalidate personal geometry without XML changes (338.8063ms)
+✔ reader clicks select short objects without beginning a date gesture (407.298ms)
+✔ growing projects resolves collisions without imposing a fixed stack (2432.0019ms)
+✔ clipped date gestures keep preview bars inside visible timeframes (1048.0983ms)
+✔ Main deletion is explicit, recreation is on request, and secondary names fill unused numbers (761.6524ms)
+✔ copy insertion remaps role membership, preserves module Main, and clears task links (2398.1515ms)
+✔ decoded roadmap module paste materializes blank IDs before layout (1929.2401ms)
+✔ decoded roadmap board paste materializes blank IDs and becomes secondary (2350.5847ms)
+✔ roadmap process paste into another module keeps only destination-valid assignees (4887.5215ms)
+✔ Users permits task companion creation and navigation cleanup without task edit access (2289.1518ms)
+✔ the real isolated renderer applies personal geometry while embedded XML stays canonical (883.5024ms)
+✔ Today rollover waits for gesture release and preserves document data (390.7107ms)
+✔ unavailable storage retains isolated session preferences (580.8384ms)
+✔ Users rejection cannot hide unauthorized task edits inside authorized roadmap cleanup (3157.3075ms)
+✔ task dialog cancellation leaves no companion or document edit (690.259ms)
+✔ focused trim buttons refresh state across repeated clicks (1556.0659ms)
+✔ Columns toggles a visible per-user timeline controls panel without document edits (1480.4609ms)
+✔ today and inception perspective buttons expose only the selected mode as active (671.4888ms)
+✔ show cost checkbox is a per-user board preference and does not edit diagram XML (870.4908ms)
+✔ pricing visuals hide when selection leaves the roadmap module context (645.8899ms)
+✔ object cost editor writes pricing attributes and renders object process and board badges (1771.1165ms)
+✔ pricing checkpoint click creates a red funding line for remaining cost through the checkpoint (1794.5297ms)
+[DeepClickThrough] Deep child selection enabled.
+✔ reader can explore pricing but cannot edit object costs (2408.3318ms)
+✔ export decodes unopened pages in isolation (441.1895ms)
+✔ selected roadmap board click-through selects objects and preserves board/background hits (966.1077ms)
+✔ roadmap hit testing uses layout geometry when child view states are stale (460.3192ms)
+✔ selected roadmap object repeated plain clicks toggle controls without changing selection (1605.528ms)
+✔ selected roadmap object click opens absent controls before the next click closes them (898.4516ms)
+✔ selected roadmap object overlay toggle ignores drag-like movement (734.386ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ roadmap process and goal marker repeated clicks do not toggle controls (2185.6689ms)
+✔ native graph handler previews without XML edits, commits dates and supports Escape (914.1761ms)
+✔ native vertex handlers expose only horizontal external handles and resize semantic dates (1547.6117ms)
+✔ native vertex resize HUD uses handler bounds under viewport offset and scroll (680.6286ms)
+✔ native process movement shifts descendants once and persists compact row preference (885.6274ms)
+✔ native movement reparents objects and cross-project transfers preserve calendar dates (1054.0962ms)
+✔ cross-project transfer prompts once and cancellation has no side effects (1075.3457ms)
+✔ bulk status is atomic and roadmap labels are not native-editable (451.9077ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ roadmap overlay name inputs commit on blur and Enter while Escape reverts (924.206ms)
+✔ new roadmap objects focus the overlay name input for immediate editing (969.6081ms)
+✔ roadmap overlay name inputs consume graph gesture events (333.2471ms)
+[DeepClickThrough] Deep child selection enabled.
+[DeepClickThrough] Deep child selection enabled.
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ reader roadmap overlay name inputs are disabled and reject scripted writes (467.5964ms)
+✔ native modifier-copy uses remapped planning data and clears task links (621.9128ms)
+✔ timeframe native resize changes only personal scale (534.4928ms)
+✔ timeframe resize hint reports effective px per day while dragging (896.1956ms)
+✔ cold roadmap board drag does not require a timeframe resize hint (571.9572ms)
+✔ roadmap board drag hides an existing timeframe resize hint (502.9041ms)
+✔ shared workspace handles move processes through the native handler (1010.1847ms)
+✔ roadmap module workspace handle moves the module without folding or deleting boards (1735.3551ms)
+✔ Users permits only task navigation repair during authorized cross-project transfers (3480.5134ms)
+✔ free board movement resolves peer collisions atomically and rejects protected neighbors (636.4437ms)
+✔ personal collision offsets protect outer modules and are included in visual export only (353.0549ms)
+✔ Task-style multi-selection controls use shared styling and an anchored assignment picker (977.0356ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ multi-selection direct status buttons hide invalid mixed transitions (621.491ms)
+✔ cross-project decline removes only moved assignments and stale transfer decisions do not mutate (764.4628ms)
+✔ native project copying remains inside its module and undoes atomically (748.9685ms)
+✔ native outlines at 50 processes and 500 objects reuse the frozen layout without model edits (7560.8543ms)
+✔ sowing-season diagnostic reports scheduler mismatch without failing (1711.4754ms)
+✔ sowing-season diagnostic can compare benchmark reference JSON (1441.7185ms)
+✔ sowing-season diagnostic fails setup for unresolved dependencies (114.0582ms)
+✔ sowing-season diagnostic fails setup for malformed reference rows (145.3353ms)
+✔ SplashDialog renders the personal project intro before license selection (538.3622ms)
+✔ SplashDialog routes from project intro to usage wizard (121.4805ms)
+✔ Commercial path shows contact guidance and the Grand Oath gate (142.9209ms)
+✔ Nonprofit path shows the short obligation copy before oath completion (118.1282ms)
+✔ Skip oath decoy evades pointer proximity only before gate completion (195.8903ms)
+✔ Skip oath decoy caps non-pointer evasions before the oath is ready (111.6936ms)
+✔ Real affirm button stays put and reports missing oath requirements (108.1436ms)
+✔ Oath agreement preview personalizes individual and commercial paths (207.0437ms)
+✔ Commercial oath requires organization before affirmation (146.8212ms)
+✔ Oath completion stores the wizard record and reveals actions after two seconds (168.9254ms)
+✔ New oath records require a complete email without invalidating legacy records (373.3387ms)
+✔ Saved wizard records show summary, contact guidance, Change license, and delayed actions (60.1311ms)
+✔ Incomplete or corrupt saved wizard records are ignored (96.0919ms)
+✔ Saved commercial wizard records show the completed organization agreement (70.4621ms)
+✔ SplashDialog ignores old v1 license acknowledgements (98.1435ms)
+✔ Incomplete splash dismissal requests exit and does not create a blank diagram (6.88ms)
+✔ Completed splash dismissal preserves blank diagram creation (3.1957ms)
+✔ SplashDialog source and bundle use oath wizard storage, close hook, validation, and card dimensions (506.0276ms)
+✔ Trellis splash enhancement adds the branded shell, saved-state structure, and actions without the Help row (104.2624ms)
+✔ Trellis splash renders a saved local avatar without changing license state (147.5523ms)
+✔ Trellis splash ignores corrupt local avatar data (22.1589ms)
+✔ Trellis splash remove avatar control clears local avatar storage (103.4088ms)
+✔ Trellis splash avatar click opens an image file picker (125.6473ms)
+✔ Trellis splash avatar upload crops, stores, and renders the compact image (110.9257ms)
+✔ Trellis splash outer decoration stays below app chrome and applies a validated background (59.7327ms)
+✔ Trellis splash eats percentage margins before compact mode and removes its resize listener (76.5891ms)
+✔ Trellis splash hides top chrome only while the splash dialog remains active (103.4782ms)
+✔ Trellis splash rejects unsafe background filenames and keeps the gradient fallback (108.286ms)
+✔ Trellis splash tries the packaged default before Electron selection (164.8426ms)
+✔ Trellis splash reveals a loaded background on the next animation frame (159.0535ms)
+✔ Trellis splash skips duplicate pending Electron background selection (97.4126ms)
+✔ Trellis splash handles image load failures without setting the background (37.4528ms)
+✔ Trellis splash assets and bootstrap wire the same enhancement into packaged runtime (204.2375ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager routes garden board creation through companion Task Modules (7.7841ms)
+✔ task manager exposes dashboard board APIs and unseen-created state (40.5054ms)
+✔ task manager canonical lane and card styles disable native editor connectors (8.3823ms)
+✔ task manager installs a selected Task Module add-board overlay (4.1153ms)
+✔ task manager fails closed instead of creating garden-contained boards without Modules API (1222.0085ms)
+✔ task manager list open and scheduler do not create missing companion Task Modules (403.8167ms)
+✔ task manager source keeps dashboard open highlights before seen marking (6.9517ms)
+✔ task manager interactive overlays are suppressed during team permission mode (8.1534ms)
+✔ task manager source clears manual selection by active dashboard year only (204.102ms)
+✔ task manager scheduler emissions may create a missing main board in an existing Task Module (9.0326ms)
+✔ scheduler sync-created tasks target the companion Task Module main board (285.841ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay edits labels with one bed-style field and no clamping (412.0446ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay creates a main board when no task board exists (207.3716ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay creates a secondary board when a task board already exists (287.2158ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay still creates a board when module resize API is unavailable (190.9707ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task board header overlay edits board labels with role defaults (600.4876ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task board header overlay does not migrate existing Kanban labels (177.6278ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay delegates label writes to the Modules API when available (245.8684ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay delegates margin prompts to the Modules API (218.0322ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ unlinked task module overlay only shows the editable label input (221.2813ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay follows the cursor and alternates show and hide (121.0722ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay keeps cursor anchor when view coordinates differ from model geometry (239.7295ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay uses the right-click cursor as its anchor (133.952ms)
+✔ task manager reflow scope policy maps command categories (30.0033ms)
+✔ task manager normalizes canonical assignee ids and treats assignments as user touches (7.3911ms)
+✔ task manager preserves assignments only across unique scheduler keys and retains unsafe occurrences as missing (6.8048ms)
+✔ task manager builds greedy height-aware pages and clamps full cards to standard minimum (34.6285ms)
+✔ task manager rebuilds paging cache on load and migrates invalid numeric state without undo edits (137.4587ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager selection overlays render above graph and defer until states are available (411.7738ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager DOM overlays avoid SVG overlayPane hosts (241.6293ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides task overlays during week card drag and refreshes once after mouseup (297.0051ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides task overlays during full-mode card drag (202.3877ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager releases overlay suppression on moved and resized commit events (498.3008ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager non-task mouse interactions do not suppress overlays (393.1849ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager staged start badge uses visible-week weekday wording (352.8761ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week scheduler lays out day heights and selected-lane controls (377.0795ms)
+✔ scheduler task replacement API joins caller update when requested (176.562ms)
+✔ scheduler sync-created tasks preserve selection and viewport (225.4167ms)
+✔ direct task replacement focuses generated cards by default (207.5524ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ legacy tasksCreated event still performs standalone replacement (229.6086ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager keeps week time scale visible for the last active board (270.5992ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week board shrinks to visible day lanes and aligns time scale (429.7114ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides remembered week time scale when another task board becomes active in full view (247.9971ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager normalizes narrow and wide day cards to the lane interior (189.2165ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager dragged cards adopt the destination day-lane width (161.7325ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane overlay appears only for selected week day lanes (487.295ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane overlay opens closes and adds breaks for selected day (466.7233ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane overlay hides open close on non-empty days and hides add break when closed (446.5869ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane change hours dialog saves only selected weekday override (305.05ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane vertical resize edits selected-week hours by moved edge (519.8924ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager shrinking day-lane hours keeps cards visible and marks overflow (273.288ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager overflow cards do not auto-expand day lanes or persist hours (443.809ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week selection only reflows when active day changes (322.5117ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager note-only edits refresh badges without layout (248.3735ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager unchanged badge refresh skips label rewrites (381.8834ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager restores staged card style when week card is dragged back to staged (210.496ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager toggles destination view labels, arrows, and board selection (1109.2507ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager board controls show current-mode lane toggles and apply visibility (795.9287ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager lane toggles keep full and week selections independent (1506.1671ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager lane toggles keep at least one lane visible and expand legacy folded lanes (334.2549ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week day cards show workflow colors and time badge (574.724ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager adds break cards and derives stacked schedule attributes (282.903ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides day-owned breaks outside their visible week (618.1841ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager same-lane reorder refreshes persisted schedule order (590.0584ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager assigns times from same-lane drop order and recalculates overflow (594.6247ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager midpoint drops support between after-last and unchanged slots (546.1379ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager inserts cross-day task and break drops by position (576.0974ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager keeps multi-card schedule moves contiguous (345.7797ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager reflows source and destination schedules across boards (302.6723ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager card resize and horizontal movement do not reorder schedules (463.553ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager migrates existing undated breaks to the visible lane date (505.0441ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager allocates selected staged cards to clamped start dates (383.3181ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager direct day-lane resize persists selected weekday width (402.0418ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager rejects direct horizontal day-card geometry changes (435.5549ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager ignores week-lane layout geometry when width is unchanged (295.093ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager replaces legacy board layout ownership with canonical managed styles (244.7701ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager full-mode board resize persists lane height and refreshes paging (178.9514ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager direct full-mode lane resize snaps shared lane and board height (254.6106ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager direct full-mode lane width resize persists per non-day lane and grows board (177.3475ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager narrower non-day lane widths persist and shrink board to content (183.2626ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager renders retained Trellis pager controls and repairs hidden-card selection (370.895ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager scales and clamps retained pager controls at low zoom (405.2347ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager pages week-view staged lane with retained Trellis controls (269.7147ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager refreshes week-view staged paging after selected-period context changes (568.2861ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-view staged search filters task fields without persisting state (656.4882ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-view staged width persists separately from weekday widths (359.1808ms)
+✔ task manager repairs same-lane and same-board hidden selections but preserves cross-board selection (219.819ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager keeps week schedule height separate from full-view card height (779.227ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager migrates existing full-view card height without using week schedule height (188.8509ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-mode board resize expands staged lane only (357.9465ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager repairs direct week-view staged lane resize to board-owned height (386.8538ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-mode board resize clamps below tallest day lane (237.3107ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-mode board height is restored per selected week (481.4789ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager restores persisted full-mode board height after week mode (253.4361ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager closed week days label closed and clear schedule attributes (396.612ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager all-closed week hides time scale and keeps day lanes compact (269.9952ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager edit hours shifts existing day stack and marks overflow (618.2756ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager edit hours start and end changes do not compress durations (498.638ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager edit hours dialog uses Trellis dialog layer (246.817ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager single DONE card still offers TODO and DOING actions (308.4409ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides workflow actions for staged and mixed non-day selections (297.9943ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager multi-card overlay applies note, date, reset, and clear actions (614.6076ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager assignment control enforces Week-mode single-board task eligibility (413.0771ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager assignment picker groups linked roles, searches, and applies a single assignment (543.5183ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager bulk assignment uses reversible Existing and All cards controls (471.1086ms)
+✔ task manager assignee badges expand to readable name stack, navigate, and clear deleted roles (309.5011ms)
+✔ test report aggregates files and tests by descending duration (19.7245ms)
+✔ test report markdown shows slowest file and test tables (5.7711ms)
+✔ test report parser reads newline-delimited reporter events (1.4873ms)
+✔ test report runner writes latest and history artifacts for passing tests (9557.4581ms)
+✔ test report runner writes reports and preserves failing exit codes (9622.7784ms)
+✔ tidy menu applies standard action submenus to regular cells (473.9815ms)
+✔ tidy menu keeps Trellis cells under the standard actions parent (47.2194ms)
+✔ tidy menu leaves blank canvas menus unchanged when no selection exists (77.4434ms)
+✔ tidy menu still suppresses Trellis tooltips without suppressing regular cells (15.5579ms)
+✔ Trellis context menu contributors run in deterministic priority order (7.5964ms)
+✔ Trellis context menu install is idempotent for the same popup handler (1.862ms)
+✔ Trellis database tools registers Extras restore action and confirms before restoring (1572.6502ms)
+✔ Trellis database tools dispatches restore event after successful restore (149.3243ms)
+✔ Trellis database tools reports restore failures without hiding the error (110.87ms)
+✔ Trellis database tools shows locked-file restore errors as failures (27.2069ms)
+✔ Trellis database restore bridge and default plugin registration are wired (4567.5326ms)
+✔ graph overlay plugins share a dialog-safe layer contract (83.7626ms)
+✔ native editor modal dialogs render above graph overlay controls (356.6299ms)
+✔ production bundles keep native modal dialogs above graph overlays (4507.2669ms)
+✔ irrigation controls render above irrigation annotations and connection overlays (94.0945ms)
+✔ graph-local Trellis controls use control layers (90.1636ms)
+✔ custom Trellis dialogs render at the editor dialog layer (111.3846ms)
+✔ non-control graph overlays stay below controls (6.1441ms)
+✔ packaged splash gallery includes the garden scene and excludes small icons (234.0801ms)
+✔ splash background listing includes valid large landscape regular files only (18.3337ms)
+✔ splash background listing rejects small, portrait, and corrupt supported files (127.3549ms)
+✔ splash background listing treats missing and empty directories as empty galleries (65.4171ms)
+✔ pure random selection covers boundaries and permits repeat selections (0.9556ms)
+✔ process-scoped selector reads and chooses only once (78.8508ms)
+✔ fresh Electron settings use Trellis startup defaults (67.7846ms)
+✔ empty stored plugin settings are normalized to the full Trellis default set (2.5141ms)
+✔ non-empty stored plugin settings are preserved (2.1606ms)
+✔ old editor autosave transition no longer forces Trellis autosave off (2.1282ms)
+✔ Trellis splash is not suppressed by stored false Electron preference (1.6154ms)
+✔ Trellis plugin defaults stay aligned across source and bundled runtime (1408.8312ms)
+✔ new blank diagram runtime flag is carried through fileLoaded (596.1774ms)
+✔ App.js actual registry, public list, and defaults register Roadmap dependencies (16.5027ms)
+✔ App.js waits for Core completion, deduplicates requests, and retries failures (34.9119ms)
+✔ app.min.js actual registry, public list, and defaults register Roadmap dependencies (150.2864ms)
+✔ app.min.js waits for Core completion, deduplicates requests, and retries failures (688.6443ms)
+✔ integrate.min.js actual registry, public list, and defaults register Roadmap dependencies (419.4438ms)
+✔ integrate.min.js waits for Core completion, deduplicates requests, and retries failures (1505.5827ms)
+✔ startup collapses header row, sidebars, and prunes toolbar controls (234.3519ms)
+✔ shared Trellis button helper applies semantic variants and preserves button state (201.3945ms)
+✔ File keeps normal entries and moves only named editor entries to overflow (69.0017ms)
+✔ Edit and Arrange expose a single escape-hatch submenu (60.3092ms)
+✔ View top level contains only Grid, Guides, and overflow (55.7703ms)
+✔ Extras keeps Plugins and Trellis database restore at top level (18.9269ms)
+✔ Help moves only desktop zoom items into overflow (44.1442ms)
+✔ plugin install guard prevents duplicate wrapping (46.0328ms)
+✔ Trellis updates helpers compare versions and sanitize release summaries (173.3736ms)
+✔ Trellis updates plugin registers Help action and opens dialog (143.1561ms)
+✔ Trellis updates falls back to direct release fetch without bridge (60.8259ms)
+✔ Trellis updates dialog remains visible but disables update checks for developer builds (36.5415ms)
+✔ Trellis updates dialog shows inline GitHub fallback on fetch failure (51.0392ms)
+✔ Trellis updates integration is registered, default-loaded, and bridged (455.6051ms)
+✔ disabled diagrams do not prompt or block edits (354.8703ms)
+✔ toolbar login enables users and keeps the first admin logged in for this diagram (113.0218ms)
+✔ public diagram key API preserves remembered-login diagram identity (30.8295ms)
+✔ users toolbar button is inserted beside an existing ChangeMap History button (39.1763ms)
+✔ enable users creates the first admin and persists usersEnabled (53.1413ms)
+✔ accepted visible edits merge actor metadata into the same undoable edit (31.9189ms)
+✔ created planting ownership metadata is included in the creation undo edit (51.8963ms)
+✔ direct actor stamping mutates XML without model setValue calls (44.1926ms)
+✔ logged-out enabled diagrams reject edits (107.6528ms)
+✔ permission rejected edits show a cursor popover with request access (102.7392ms)
+✔ rejected edit popover clamps to the viewport and replaces prior notices (68.7492ms)
+✔ rejected edit popover auto-dismiss pauses while hovered or focused (103.1772ms)
+✔ rejected edit popover login action opens auth dialog (62.4423ms)
+✔ rejected edit popover falls back to status when no host is available (24.7825ms)
+✔ enabled diagram load changes are allowed while logged out but later edits are rejected (50.5832ms)
+✔ direct setGraphXml load changes are allowed and then show the auth gate (42.2335ms)
+✔ auth gate failed login stays inline without a host editor alert (43.1862ms)
+✔ auth gate successful login closes silently and leaves no stale failed alert (35.2167ms)
+✔ repeated auth gate triggers reuse one overlay (41.7807ms)
+✔ logged-out enabled diagrams show an opaque auth gate until login succeeds (34.5645ms)
+✔ remembered login restores on file load and logout forgets it (31.8926ms)
+✔ remembered login is ignored when the stored user is disabled (61.2046ms)
+✔ logged-in toolbar button toggles a user panel below the button (102.8051ms)
+✔ admin roster management supports PIN reset disable reactivate and last-admin guards (67.1087ms)
+✔ admin roster PIN reset uses an inline form without native prompt (231.0942ms)
+✔ admin panel groups networked local and pending users (247.1783ms)
+✔ people access panel title and filters search roster invites and access rows by name or email (399.8368ms)
+✔ selected access summarizes scope labels and hides editor for multiple selections (187.5824ms)
+✔ visitor grant keeps regular users view-only (48.3593ms)
+✔ team grants create derived mirrors and merge more permissively than individual grants (47.5545ms)
+✔ archived team sections keep grants but do not grant effective access (26.0358ms)
+✔ team permission mode renders linked scopes and applies team radio grants (134.7093ms)
+✔ team permission mode exposes active state and dispatches lifecycle events (30.4618ms)
+✔ team permission mode seeds subjects from selected scope grants and expands badge clicks (77.593ms)
+✔ team permission action labels and scope-derived role checks follow the current selection (39.0291ms)
+✔ access request from inaccessible child resolves to nearest shareable scope (94.0443ms)
+✔ duplicate pending access request updates level note and timestamp (33.0912ms)
+✔ denied access request persists with note and can be reopened (53.4025ms)
+✔ approving access request creates grant and removes request (65.4072ms)
+✔ approval creates unread requester message and supports read and dismiss lifecycle (96.9729ms)
+✔ denial creates requester message while denied request remains reopenable (72.5041ms)
+✔ already-granted access request cleanup still creates requester message (46.4326ms)
+✔ selected access panel shows requester approval response without no-access contradiction (106.5941ms)
+✔ deleted scope response remains visible as unavailable in requester messages (48.2684ms)
+✔ requester access messages are private to the requester (91.8925ms)
+✔ messages dialog renders access request and response sections with response actions (1.5337ms)
+✔ incoming access request count is visible only to owner or admin (97.0299ms)
+✔ disabled requester and deleted scope access requests cannot be approved (162.2086ms)
+✔ selected access panel shows request access action and requester status (58.7191ms)
+✔ permission diagnostics stay quiet unless explicitly enabled (44.9897ms)
+✔ permission diagnostics do not throw when console is unavailable (58.2412ms)
+✔ trellis debug surface reports users status and toggles debug flags (15.5131ms)
+✔ admin remains allowed for bed-fit relevant child geometry and style changes (34.887ms)
+✔ admin planting creation allows generated plant tile churn in the same edit (23.1133ms)
+✔ gardener grant creates and manages only owned planting groups (44.3452ms)
+✔ gardener planting creation allows initialization edits and generated plant tile churn (50.5526ms)
+✔ gardener cannot create or delete garden beds in a granted module (55.1571ms)
+✔ generated plant tile churn still requires a valid planting context (44.0597ms)
+✔ generated plant tile initialization rejects outside the created planting context (33.2183ms)
+✔ created planting context does not allow manual plant tile initialization (36.3745ms)
+✔ planting context does not allow ordinary or manual orphan child changes (34.7501ms)
+✔ owner can transfer ownership to an active user (53.1349ms)
+✔ regular granted users cannot add delete move reparent or change protected access attributes (63.0132ms)
+✔ owner and admin can add delete and move within owned scopes (19.4058ms)
+✔ unowned modules are claimed on first allowed edit and only owner or admin can delete modules (55.1299ms)
+✔ gardener grant allows only owned linked or created manual task edits (47.4644ms)
+✔ coordinator grant can manage access but cannot transfer ownership (44.5806ms)
+✔ coordinator preset manages all content and access (51.7873ms)
+✔ access editor exposes presets without granular capability checkboxes (112.8234ms)
+✔ child access view shows inherited coordinator without writing grants (48.9381ms)
+✔ ordinary child cells cannot receive direct access grants (34.389ms)
+✔ direct named child grants remain distinguishable from inherited parent access (97.4025ms)
+✔ coordinator can create and delete garden beds in a granted module (48.53ms)
+✔ linked role cards do not bypass gardener task ownership rules (33.8967ms)
+✔ garden grant creates a garden-scoped role card and links it to garden task boards (47.7953ms)
+✔ user can have separate active role cards in multiple gardens (35.8957ms)
+✔ removing garden access unlinks the user but preserves the role card (43.5713ms)
+✔ rechecking garden access restores the archived role card without duplicating profile data in archive (42.3815ms)
+✔ admin roster garden access view does not repair missing companion teams (114.7452ms)
+✔ admin roster shows one garden access dropdown per user with checkbox rows (93.0058ms)
+✔ garden access dropdown checkbox creates archives and restores role cards (190.1472ms)
+✔ garden access popover filters by garden name and preserves search after checkbox changes (189.3862ms)
+✔ restored garden role keeps task assignment ids and relinks boards (24.1108ms)
+✔ garden access dropdown checkboxes keep multiple gardens independent for one user (177.835ms)
+✔ pending invite creates regular pending user grants and email draft (22.2004ms)
+✔ pending garden invite creates no role card until acceptance (19.7963ms)
+✔ duplicate invite email is rejected for pending users (17.781ms)
+✔ pending invite stores selected preset capabilities (28.6785ms)
+✔ accept invite activates pending regular user and prevents token reuse (63.906ms)
+✔ revoking pending invite removes pending grants (19.7655ms)
+✔ resend invite rotates code and expiry (25.3808ms)
+✔ regular non-owner cannot invite selected scopes (30.1801ms)
+✔ expired invites are hidden and remove pending grants (18.2171ms)
+✔ desktop updater download progress is marked and guarded (14.5101ms)
+✔ desktop updater progress starts indeterminate then switches to percent progress (4.4455ms)
+✔ desktop updater progress formats percent and speed detail text (1.2976ms)
+✔ desktop updater progress error path avoids private progressbar internals (1.5374ms)
+✔ lane overlay headers do not use browser title tooltips (5.1366ms)
+✔ planting overlay has Cards, Schedule, and Spacing modes (2.4302ms)
+✔ team permission mode suppresses only the planting schedule panel controls (5.2702ms)
+✔ schedule-only planting overlays expose Spacing without linked tasks (3.5195ms)
+✔ spacing editor isolates each plant in a fixed-width row and labels inactive rows (3.8862ms)
+✔ spacing editor preserves active-window preview and reserved revert gating (3.1532ms)
+✔ spacing preview renders DOM-only draft planting group copies (8.2143ms)
+✔ spacing drafts survive view refresh but clear on affected graph edits (2.6286ms)
+✔ selected planting overlay clamps to cluster top instead of measuring occupancy navigator bounds (13.456ms)
+✔ schedule action button mirrors Trellis user planting permissions (2.9469ms)
+✔ schedule action button label uses ordinary schedule wording for all plantings (3.9735ms)
+✔ occupancy uses navigator API with selected-group fallback (2.139ms)
+✔ occupancy interval prefers transplant date, then sow date, and requires harvest end (2.9622ms)
+✔ derived schedule actions are gated by schedule dates and annual turnover (2.0759ms)
+✔ occupancy relationship badges expose only explicit turnover gaps by tooltip (2.1702ms)
+✔ occupancy rows select and reveal their planting group (2.3236ms)
+✔ role-card multi-selection dispatches to the multi-role link renderer (3.5038ms)
+✔ selection visual refresh event rebuilds link and schedule overlays (2.2373ms)
+✔ multi-selected role cards draw links without opening task overlays (2.2825ms)
+✔ linked task navigation delegates hidden-card paging to the task manager (2.3079ms)
+✔ plant-tiler sibling task highlights use blue with ordinary blue outlines (3.4761ms)
+✔ standard link overlays use the native editor overlay pane (2.1547ms)
+✔ standard link overlays and ordinary outlines use blue fallback color with half-width link strokes (2.1886ms)
+✔ standard link overlays skip reciprocal roadmap object dependencies (2.402ms)
+✔ standard link overlays navigate on plain left click without a vertex shift fallback (20.6598ms)
+✔ task overlay guide lines keep the custom connection layer (2.1773ms)
+✔ selected linked vertices draw direct connections even when task overlay is active (2.1156ms)
+✔ standard link endpoints use a five pixel center offset (2.0649ms)
+✔ standard link labels stagger visible same-side labels by fifteen pixels (2.3092ms)
+✔ task overlay guide lines keep centered anchors (2.1521ms)
+✔ crop picker counts distinct plants and user varieties across all included stages (1820.9724ms)
+✔ crop picker tree counts retain explicit units and full totals during search (574.1182ms)
+✔ crop picker totals follow staged entries, filtered bulk actions, undo, apply and cancel (1335.1054ms)
+✔ crop picker excludes built-ins and action-only branches when all entries are included (330.5825ms)
+✔ crop picker deduplicates garden and catalog entries using plant and variety identities (342.3502ms)
+✔ crop picker classifies deleted varieties by saved name and known varieties by profile (616.7494ms)
+✔ modal renders ordered strips with the expected defaults and crop tabs (297.2776ms)
+✔ Crop Plan Basics separates editable controls, derived totals, tooltips, and yield reset (969.7087ms)
+✔ crop menu is searchable and renders compact status dots (374.5037ms)
+✔ every crop dot opens a summary and keyboard activation leaves crop selection unchanged (382.2953ms)
+✔ a single crop issue previews on hover and click pins instead of navigating (579.6314ms)
+✔ crop dot groups linked diagnostics and navigates to their existing repair controls (561.691ms)
+✔ crop dots refresh after repair and remove stale popovers after filtering (502.7411ms)
+✔ crop dots expose missing prices and navigate to the exact package row (357.4906ms)
+✔ Basics crop timeline renders diagram-backed harvest, demand, and inventory bars (298.5118ms)
+✔ Basics crop timeline includes CSA demand and keeps carryover inventory visible (258.1063ms)
+✔ Sowing window defaults on per crop when no actual harvest exists (303.6952ms)
+✔ Unavailable sowing window is disabled and reports the scheduler reason (426.5811ms)
+✔ Harvest date source selector switches markers without replacing actual harvest bars (700.512ms)
+✔ Packages render labeled compact package rows (323.9307ms)
+✔ Edit packages and Add package scroll to the package section (761.9505ms)
+✔ empty plans show Demand and Crop Plan guidance (322.7682ms)
+✔ empty year plans save as drafts until a crop exists (1137.8183ms)
+✔ hero stays overview-only for clean and unsaved clean plans (557.0591ms)
+✔ Needs attention surfaces problems while the hero remains simple (3054.4337ms)
+✔ Demand invalid badge shows count, tooltip, and navigates to the first invalid demand line (1167.1504ms)
+✔ Demand invalid unit diagnostics use crop and unit instead of demand ids (544.3391ms)
+✔ Self Sufficiency invalid badge shows count, tooltip, and navigates to the first invalid line (1072.1156ms)
+✔ CSA setup badge shows count, tooltip, and navigates to the first invalid field (555.9874ms)
+✔ crop metric warning badge selects crop, opens editor, and scrolls to Plan Check row (616.1618ms)
+✔ Expired attention badge opens Plan Check and highlights the expired summary chip (564.2009ms)
+✔ Plan Check diagnostics badge opens and highlights diagnostics (552.076ms)
+✔ crop diagnostics popover navigates to invalid basics and package fields (676.8537ms)
+✔ multi-item crop row warning badge opens a chooser before row navigation (711.0648ms)
+✔ diagnostics popovers render in the modal layer and clamp inside the card (1121.7701ms)
+✔ duplicate crop identity diagnostics attach to the second crop and focus variety (1709.8995ms)
+✔ missing plant diagnostics fall back to the trigger instead of disabled Plant (621.1534ms)
+✔ CSA diagnostics popover navigates to global and component fields (3374.7275ms)
+✔ save failure focuses diagnostics trigger and unavailable actual harvest is disabled (1029.6162ms)
+✔ strip expansion preferences are year scoped and survive template application and clearing (2827.6231ms)
+✔ debounced Demand typing preserves the focused control (983.4527ms)
+✔ Demand channels support editing, collapse state, safe removal, and labeled line controls (2606.5337ms)
+✔ Demand lines collapse to operational summaries without losing edits (1146.8235ms)
+✔ Year Planner collapse preferences persist by garden and year (1988.231ms)
+✔ Demand validation auto-expands saved-collapsed demand lines (637.8952ms)
+✔ Demand line warning chips expand the line and highlight relevant fields (837.0528ms)
+✔ quantity unit dropdowns show crop packages only and open Packages from the add option (2736.924ms)
+✔ Add package fills missing standard weight packages before a custom blank row (1735.8525ms)
+✔ unused package removal deletes without confirmation (965.3236ms)
+✔ package removal confirms and deletes linked demand self-use and CSA rows (2550.9813ms)
+✔ canceling linked package removal preserves package and rows (879.9353ms)
+✔ new crops without saved package defaults start with no demand unit choices (1173.0158ms)
+✔ planned crop selector shows package counts and a clickable needs-packages badge (1334.6803ms)
+✔ Demand package transfer manages included and available packages with staged apply (2085.4754ms)
+✔ Complete demand destinations can still open package management for removal (6252.5657ms)
+✔ Demand row package controls hide units used by other rows and auto-pick the next missing package on crop change (1164.6515ms)
+✔ no-package crop dropdown choices open package unit repair without changing rows (5210.5967ms)
+✔ disabled demand sections show disabled headers and grey inactive controls (2782.0599ms)
+✔ Tree picker dirty close guard covers cancel, escape, outside click, and close (949.0354ms)
+✔ Package transfer search filters rows without persisting between opens (542.5487ms)
+✔ Self Sufficiency lines collapse, persist, expand, and prune on remove (1182.5372ms)
+✔ Self Sufficiency validation auto-expands saved-collapsed self-use lines (633.8064ms)
+✔ Self Sufficiency line warning chips expand the line and highlight relevant fields (723.1905ms)
+✔ Demand price is read-only and follows matching package price edits (941.8092ms)
+✔ Demand with missing package price keeps the line listed and surfaces a warning (497.1063ms)
+✔ Missing package price badge targets self-use before demand and CSA prices (1439.6077ms)
+✔ warning badge popovers bridge hover gaps and sticky close paths (1226.2455ms)
+✔ Demand quantity edits update visible sales and total revenue (675.5788ms)
+✔ CSA box pricing updates component value, sale value, reset, and total revenue (2847.8433ms)
+✔ Add crop tree ignores legacy expansion and preserves other saved preferences (1193.2624ms)
+✔ Add crop tree remembers expansion and collapse across picker and planner opens (1526.7563ms)
+✔ Add crop tree session expansion follows the active year (1287.7612ms)
+✔ Add crop tree session expansion is isolated by garden (1400.6887ms)
+✔ Add crop tree resets in a fresh window with the same persistent preferences (783.0502ms)
+✔ Add crop tree search reveals matches without remembering automatic expansion (424.4669ms)
+✔ Add crop prioritizes garden crops and groups remaining plants by lifecycle (555.0365ms)
+✔ Add crop picker groups Trellis defaults and user varieties per plant (532.0963ms)
+✔ Add crop picker shows user-only varieties flat and defaults-only add row (583.4387ms)
+✔ Add crop picker Add variety row requests the variety editor and is not counted (570.3192ms)
+✔ Crop editor variety action opens add mode when no variety is selected (634.2506ms)
+✔ Crop editor variety action shows an edit icon and edits selected variety (508.0427ms)
+✔ Garden variety resolution preserves identity, applies yield override, and refreshes after add and remove (1121.7417ms)
+✔ Add crops transfer stages additions and removals before applying (1478.9493ms)
+✔ Crop change labels distinguish pending actions and remember the latest applied action (2005.057ms)
+✔ Crop change history ignores canceled staging and declined deletion confirmations (1302.0235ms)
+✔ Added follows identity edits and individual deletion records the updated Removed identity (1402.4952ms)
+✔ Unmarked crop edits and automatic metadata refreshes do not create change labels (1057.5187ms)
+✔ Crop labels survive Save and planner reopening but never enter persistence or a fresh window (3040.9608ms)
+✔ Crop change history is isolated by year and garden object even when cell IDs match (4925.4495ms)
+✔ Template replacement and draft reset clear only the affected crop history (3570.4891ms)
+✔ Add crops transfer add and remove actions reset both pane scroll positions (571.059ms)
+✔ Add crops removal confirmation cancel keeps staged changes and linked rows intact (710.6707ms)
+✔ direct crop removal confirmation groups linked rows by crop variety (917.6726ms)
+✔ canceling direct crop removal preserves linked rows (650.7395ms)
+✔ direct crop removal without linked rows does not ask for confirmation (602.2278ms)
+✔ Centralized Demand remains visible and removes lines with their crop (1145.7031ms)
+✔ crop selection syncs Crop Plan and Plan Check while preserving all-crop filter selection (862.0808ms)
+✔ Needs attention crop clicks expand related strips and sync Plan Check (612.9135ms)
+✔ crop add and remove paths keep Plan Check filter aligned with valid crop selection (1230.2435ms)
+✔ adding a crop selects it and syncs Plan Check filter (1196.2004ms)
+✔ Add crop stores planting method category from defaults and blank defaults use direct sow field (3564.3889ms)
+✔ Unavailable garden records are skipped while deleted persisted varieties remain selectable (854.6499ms)
+✔ Add crop options refresh after year changes, template application, and reset (1233.8229ms)
+✔ Footer and reset action follow the currently loaded year (899.3308ms)
+✔ Stale Add crop loads cannot replace newer grouped options (424.262ms)
+✔ Plan Check summary follows the crop filter and chart hover shows inventory details (601.4826ms)
+✔ Plan Check status badges group crops by coverage thresholds and navigate to crop timeline (680.3014ms)
+✔ Plan Check chart summary revenue follows crop filter and CSA value attribution (694.3352ms)
+✔ interactive chart legend controls drawing and hover details without changing Plan Check (2178.7874ms)
+✔ question mark diagnostics badge sections collapse for the dialog session (1166.9251ms)
+✔ template input controls save state and saves without a native prompt (290.3867ms)
+✔ invalid enabled CSA auto-expands CSA and Plan Check (345.2003ms)
+✔ CSA summary updates as controls and components change (1285.1519ms)
+✔ Demand date controls reject reversed ranges and expose reciprocal picker constraints (1170.9314ms)
+✔ CSA date controls reject reversed ranges and retain harvest-window clamping (1839.6429ms)
+✔ Harvest date controls reject reversed ranges and allow same-day windows (1546.8725ms)
+✔ Existing reversed persisted dates remain visible, save as draft, and can be corrected (764.7265ms)
+✔ Sync and harvest date changes keep expanded CSA and reopened Demand dates current (1875.0998ms)
+✔ Harvest-window suggestions synchronize visible Demand and CSA date controls (684.4464ms)
+✔ Self Sufficiency strip edits household fields, lines, package repair flow, and nutrition warnings (1449.2321ms)
+✔ Self Sufficiency nutrition coverage rerenders when nutrition-affecting line fields change (3286.8163ms)
+✔ Plan Check scope selector filters combined, self, and sales demand (1016.0988ms)
+✔ dirty close auto-saves a draft that can be discarded (1585.0324ms)
+✔ year changes auto-save dirty work as a draft without blocking (2155.6601ms)
+✔ crop timeline details popover rows navigate to demand rows and planting cells (1800.697ms)
+✔ crop timeline details popover includes grouped demand action rows and supports keyboard close behavior (1708.3128ms)
+✔ public plan request event opens one modal and replaces the active session (740.0462ms)
+✔ Year Plan adds multiple stages, rejects duplicate edits and retains manual yield after defaults change (2770.679ms)
+✔ Year Plan reload refreshes stage-scaled plant defaults while preserving manual yield (9470.3629ms)
+✔ Year Plan rejects growth-stage queries that finish after newer defaults are saved (2244.5481ms)
+✔ Year Plan ignores stale harvest suggestions after switching growth stage (2025.1965ms)
+✔ PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields (29.2478ms)
+✔ PlanningCore treats CSA components as committed demand (15.9999ms)
+✔ PlanningCore coverage week summaries expose canonical week start dates (7.2701ms)
+✔ PlanningCore recommends the smallest whole plant count for reachable shortage (24.4826ms)
+✔ PlanSchema normalizes weekStartDow to an integer from zero through six (8.9621ms)
+✔ PlanSchema adds default demand channels only when the collection is absent (2.9731ms)
+✔ Planting-method SQL starts directly with SQL text (0.8783ms)
+✔ PlanSchema detects duplicate crop identities and validates invalid units (5.946ms)
+✔ PlanSchema rejects duplicate crop package units (3.1568ms)
+✔ PlanSchema clears demand-like units that are not crop packages (3.0925ms)
+✔ PlanSchema strips legacy demand prices from persisted plans (3.0793ms)
+✔ PlanSchema exposes CSA validation independently from the full plan (3.0579ms)
+✔ PlanSchema rejects reversed demand and effective CSA date ranges (3.0511ms)
+✔ PlanMath excludes reversed demand ranges while retaining explicit valid CSA components (5.0218ms)
+✔ PlanMath ignores manual harvest windows for supply and validation still rejects reversed dates (4.3636ms)
+✔ PlanRepository round-trips plans, templates, defaults, and leap-day shifts (10.8848ms)
+✔ PlanRepository migrates legacy root maps on the first diagram-level write (2.3193ms)
+✔ DiagramPlanReader aggregates perennial and cross-year tiler facts with one crop key (6.772ms)
+✔ DiagramPlanReader resolves legacy variety names and rejects malformed harvest ranges (4.923ms)
+✔ DiagramPlanReader reports ambiguous planned legacy variety matches (2.6504ms)
+✔ DiagramPlanReader returns normalized garden crop candidates and ignores groups without plant identity (2.2399ms)
+✔ PlanRuntimeService recalculation is idempotent and preserves manual harvest dates (14.8626ms)
+✔ PlanRuntimeService derives actual harvest windows and returns calculation warnings (11.8806ms)
+✔ PlanRuntimeService defaults legacy crops to sowing-window estimate only without actual harvest records (5.1385ms)
+✔ PlanRuntimeService does not default sowing-window estimate when actual harvest records exist (5.6467ms)
+✔ PlanRuntimeService keeps harvest windows independent from actual-only supply (24.8489ms)
+✔ PlanRuntimeService does not synthesize prior-year saved harvest windows as supply (6.4694ms)
+✔ PlanMath inventory uses conservative weekly shelf-life buckets and FIFO consumption (5.0998ms)
+✔ PlanMath tracks planting source provenance through FIFO inventory (5.8247ms)
+✔ PlanningCore keeps diagram planting provenance JSON-safe after allocation refresh (29.3348ms)
+✔ PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors (3.7321ms)
+✔ PlanMath allocates CSA first, then priority and channel order, with requested and fulfilled revenue (15.8089ms)
+✔ PlanMath derives CSA box value and prorates CSA revenue by component fulfillment (13.0453ms)
+✔ PlanMath counts missing CSA component prices as zero with a non-blocking warning (4.7196ms)
+✔ PlanMath counts missing self-use and demand prices as zero with non-blocking warnings (6.5595ms)
+✔ PlanMath requires explicit packages for built-in unit names (4.3477ms)
+✔ PlanMath resolves standard package weight bases to kg (2.0911ms)
+✔ PlanMath still blocks demand-like rows when package quantity conversion is invalid (4.7707ms)
+✔ PlanMath prices demand from package unit matches only (5.8492ms)
+✔ PlanMath breaks equal-priority shortages by stored channel order (9.8448ms)
+✔ PlanMath keeps raw harvest stable and never pools inventory across crops (10.9134ms)
+✔ PlanMath builds filtered and aggregate chart models with additive flow summaries (2.5946ms)
+✔ CropTimeline orders solid bars by value and keeps raw harvest in front (2.8316ms)
+✔ PlanRuntimeService syncs demand to harvest dates and collapses legacy shelf extensions (2.6186ms)
+✔ YearPlanDashboard aggregates shortage and surplus without netting crops (3.525ms)
+✔ YearPlanDashboard classifies weekly timing and avoids inventory snapshot surplus double-counting (4.7322ms)
+✔ YearPlanDashboard treats zero supply as a full shortage and validation errors as missing data (3.4423ms)
+✔ YearPlanDashboard promotes a missing harvest window to missing data when demand exists (3.1338ms)
+✔ crop dots attribute linked validation to exact rows and keep shared setup global (4.0895ms)
+✔ crop dot issues deduplicate validations but retain distinct repair destinations (4.2252ms)
+✔ crop dots collect active price and nutrition warnings by identity without persisting them (16.1398ms)
+✔ disabled demand sections contribute no linked validation or price warnings to crop dots (8.581ms)
+✔ crop stage and package warnings override no demand and disappear when repaired (3.5179ms)
+✔ YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines (17.8606ms)
+✔ YearPlanDashboard builds compact status and CSA summaries without timezone parsing (2.8003ms)
+✔ YearPlanDashboard expands checks only when blocking errors first appear (2.4036ms)
+✔ YearPlanDashboard resolves selection after crop removal and preserves unknown methods (2.2472ms)
+✔ PlanSchema infers method category for legacy dotted crop methods (2.1635ms)
+✔ Self Sufficiency demand expands separately from sales demand (10.0164ms)
+✔ disabled self-use, commercial channels, and CSA stay saved but leave demand totals (10.4618ms)
+✔ Harvest allocation satisfies Self Sufficiency before CSA and sales (11.3832ms)
+✔ Required plants and Plan Check default to combined demand (7.193ms)
+✔ NutritionPlanner calculates requested and fulfilled self-use nutrition (5.8984ms)
+✔ YearPlanDashboard opens Self Sufficiency strip on first self-use validation errors (2.0553ms)
+✔ growth stages allow the same variety while rejecting duplicate stage identities (2.8496ms)
+✔ stage-specific diagram supply cannot cover another stage's demand (42.9567ms)
+✔ companion count overrides include lost supply and never mutate saved groups, including same-crop additions (43.4658ms)
+ℹ tests 1645
+ℹ suites 0
+ℹ pass 1643
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 415276.8807
+
+✖ failing tests:
+
+test at test\companion-layout-preview.test.cjs:204:1
+✖ companion allocation lifecycle Edit preserves the chosen layout and deferred-default choices through revalidation (1170.3826ms)
+  TypeError [Error]: Cannot read properties of undefined (reading 'click')
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\companion-layout-preview.test.cjs:220:32)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+
+test at test\garden-scheduler-dialog.test.cjs:599:1
+✖ allocation plant lifecycle defaults require first-time opt-in and variety methods preserve explicit selection and inheritance (22.9983ms)
+  TypeError [Error]: fixture.api.buildScheduleContextFromForm is not a function
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\garden-scheduler-dialog.test.cjs:611:38)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+
+Test duration report: test-results\latest.md

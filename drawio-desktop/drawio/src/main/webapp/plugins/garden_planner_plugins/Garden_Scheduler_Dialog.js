@@ -1180,7 +1180,7 @@ Draw.loadPlugin(function (ui) {
                 const forward = Number(row.source_plant_id) === sourceId;
                 const companionPlantId = forward ? Number(row.companion_plant_id) : Number(row.source_plant_id);
                 if (!Number.isFinite(companionPlantId)) return;
-                const recommended = finiteNumberOrNull(row.start_offset_days) ?? 0;
+                const recommended = finiteNumberOrNull(row.start_offset_days); // CHANGE: unknown timing is distinct from a same-day recommendation.
                 const key = `${row.relation_id || ''}:${companionPlantId}`;
                 if (!byKey.has(key)) {
                     byKey.set(key, {
@@ -1190,7 +1190,7 @@ Draw.loadPlugin(function (ui) {
                         storedSourcePlantId: row.source_plant_id != null ? String(row.source_plant_id) : '',
                         storedCompanionPlantId: row.companion_plant_id != null ? String(row.companion_plant_id) : '',
                         direction: forward ? 'forward' : 'inverse',
-                        recommendedStartOffsetDays: forward ? recommended : -recommended,
+                        recommendedStartOffsetDays: recommended == null ? null : (forward ? recommended : -recommended), // CHANGE: preserve missing timing in either relationship direction.
                         storedStartOffsetDays: recommended,
                         rating: row.rating,
                         companionType: row.companion_type || '',
@@ -2146,7 +2146,11 @@ Draw.loadPlugin(function (ui) {
     function applyPlantOverrides(basePlantRow, overridesObj) {
         const out = Object.assign({}, basePlantRow || {});
         const o = (overridesObj && typeof overridesObj === 'object') ? overridesObj : {};
-        Object.keys(o).forEach(k => { out[k] = o[k]; });
+        Object.keys(o).forEach(k => { // CHANGE: empty variety method overrides inherit the base method.
+            if (['default_planting_method', 'default_planting_method_category'].includes(k) && !normId(o[k])) return; // CHANGE
+            out[k] = o[k]; // CHANGE
+        }); // CHANGE
+        if (normId(o.default_planting_method)) out.default_planting_method_category = normId(o.default_planting_method_category) || inferMethodCategoryFromMethodId(o.default_planting_method); // CHANGE: a variety method must not inherit an unrelated base category.
         return out;
     }
 
@@ -2157,8 +2161,8 @@ Draw.loadPlugin(function (ui) {
         const basePlant = await PlantModel.loadById(pid);
         if (!basePlant) return null;
     
-        const vid = Number(varietyId);
-        if (!Number.isFinite(vid)) {
+        const vid = finiteNumberOrNull(varietyId); // CHANGE: empty variety selections inherit plant defaults without looking up variety zero.
+        if (vid == null || vid <= 0) { // CHANGE
             return basePlant;
         }
     
@@ -5203,7 +5207,8 @@ Draw.loadPlugin(function (ui) {
         scheduleResult = null,
         todayISO = null,
         taskRules = [],
-        generatedTasks = []
+        generatedTasks = [], // CHANGE
+        overlappingPlantings = [] // CHANGE: contextual bed starts share the axis without extending its range.
     } = {}) {
         if (perennial) return { hidden: true, reason: 'perennial' };
         let bounds = buildLifecycleTimelineBounds({ plant, seasonStartYear });
@@ -5287,7 +5292,8 @@ Draw.loadPlugin(function (ui) {
             visibleMilestones,
             latestHarvestBoundary,
             todayISO: todayPercent == null ? null : fmtISO(todayDate),
-            todayPercent
+            todayPercent, // CHANGE
+            overlappingStarts: overlappingPlantings.filter(item => item.startISO >= bounds.startISO && item.startISO <= bounds.endISO).map(item => ({ ...item, percent: timelinePercentForDate(parseISODateUTCValue(item.startISO), bounds.start, totalDays) })).filter(item => item.percent != null) // CHANGE
         };
     }
     function findFirstLifecycleTimelineTaskRule(taskRules, stage, generatedTasks = []) {
@@ -7188,6 +7194,8 @@ Draw.loadPlugin(function (ui) {
 
         function buildOverridesFromUI() {
             const out = {};
+            const saved = varietyOverridesObject(currentVarietyRow); // CHANGE: preserve allocation-authored method overrides through Plant Editor saves.
+            ['default_planting_method', 'default_planting_method_category'].forEach(key => { if (normId(saved[key])) out[key] = saved[key]; }); // CHANGE
             for (const key of Object.keys(overrideInlineByKey)) {
                 const { def, chk, input } = overrideInlineByKey[key];
                 if (!chk.checked) continue;
@@ -9101,7 +9109,7 @@ Draw.loadPlugin(function (ui) {
         }
 
 
-        async function resetMethodOptionsForMethodCategory(methodCategoryId, { preferMethodId = null } = {}) {
+        async function resetMethodOptionsForMethodCategory(methodCategoryId, { preferMethodId = null, allocationVersion = null } = {}) { // CHANGE: allocation edits must not publish obsolete method lookups.
             const mcid = normId(methodCategoryId);
             let loadedMethods = currentMethodsByCategory.get(mcid) || [];
             if (!loadedMethods.length) {
@@ -9117,6 +9125,7 @@ Draw.loadPlugin(function (ui) {
                 }
             }
 
+            if (allocationVersion != null && !allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
             currentMethods = (loadedMethods || []).filter(methodRow => { // FIX: invalid DB methods must not enter the UI
                 try {
                     resolveValidMethodRecord(methodRow, mcid);
@@ -9234,6 +9243,20 @@ Draw.loadPlugin(function (ui) {
             ? sowDateFromPrimaryDate(derivedPrimaryStartISO, methodSel.value, transplantDaysOverrideInitial ?? plantDefaultTransplantDays(effectivePlant))
             : initialStartISO;
         const startInput = makeDate(initialPrimaryDateISO, false);
+        const allocationLifecycleLock = makeCheckbox(true); // CHANGE: allocation starts as a review of the demand-fitting proposal.
+        allocationLifecycleLock.setAttribute('data-allocation-lifecycle-lock', '1'); // CHANGE
+        const allocationSaveLifecycle = makeCheckbox(!!allocationDraftContext?.draft?.saveLifecycleDefaults); // CHANGE
+        allocationSaveLifecycle.setAttribute('data-allocation-save-lifecycle', '1'); // CHANGE
+        const allocationSaveSpacing = makeCheckbox(false); // CHANGE: initialize from the active companion set after occupancy is known.
+        allocationSaveSpacing.setAttribute('data-allocation-save-spacing', '1'); // CHANGE
+        const allocationTimingRows = document.createElement('div'); // CHANGE
+        allocationTimingRows.setAttribute('data-allocation-timing-comparisons', '1'); // CHANGE
+        let allocationCurrentDraft = allocationDraftContext?.draft || null; // CHANGE
+        let allocationFitVersion = 0; // CHANGE: only the newest lifecycle fit may update the dialog.
+        let allocationFitPending = false; // CHANGE
+        let allocationFitError = ''; // CHANGE
+        let allocationSpacingKey = ''; // CHANGE: preserve checkbox intent until the active crop set changes.
+        let allocationDialogClosed = false; // CHANGE
 
         // Auto-computed season end constraint (read-only for annuals, editable for perennials)
         const seasonEndInput = makeDate(initialLatestHarvestEndISO, true);
@@ -9279,7 +9302,7 @@ Draw.loadPlugin(function (ui) {
 
         // --- Harvest window
         const hwDefault = effectivePlant.defaultHW();
-        const harvestWindowInput = makeNullableNumber(hwDefault ?? null, { min: 0, step: 1 });
+        const harvestWindowInput = makeNullableNumber(allocationCurrentDraft?.lifecycle?.harvestWindowDays ?? hwDefault ?? null, { min: 0, step: 1 }); // CHANGE: retain a reviewed allocation duration when reopening the scheduler.
         const growthStageSel = makeSelect([{ value: initialGrowthStage.stageKey, label: initialGrowthStage.stageLabel }], initialGrowthStage.stageKey);
         let currentGrowthStages = [initialGrowthStage];
         const minYieldMultInput = makeNumber(0.50, { min: 0 }); minYieldMultInput.step = '0.01';
@@ -9665,14 +9688,14 @@ Draw.loadPlugin(function (ui) {
         }
         function markCompanionLayoutRowChanged(rowState) {
             rowState.changed = true;
-            if (rowState.revertButton) rowState.revertButton.disabled = false;
+            if (rowState.revertButton) { rowState.revertButton.disabled = false; rowState.revertButton.title = 'Restore this row\'s layout values from when the editor opened.'; } // CHANGE: refresh the tooltip with the enabled state.
             refreshLayoutPreview();
         }
         function revertCompanionLayoutRow(rowState) {
             if (!rowState?.initial) return;
             writeLayoutRowControls(rowState, rowState.initial);
             rowState.changed = false;
-            if (rowState.revertButton) rowState.revertButton.disabled = true;
+            if (rowState.revertButton) { rowState.revertButton.disabled = true; rowState.revertButton.title = 'No layout changes to revert for this row.'; } // CHANGE: refresh the tooltip with the disabled state.
             refreshLayoutPreview();
         }
         function readCompanionGroupLayoutDraftFromEditor() {
@@ -9796,7 +9819,7 @@ Draw.loadPlugin(function (ui) {
             }
             draft.rows.forEach(row => { if (row.cell) activeGraph.refresh?.(row.cell); });
             layoutStatus.textContent = preview.warning || 'Layout applied.';
-            (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.revertButton) row.revertButton.disabled = true; });
+            (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.revertButton) { row.revertButton.disabled = true; row.revertButton.title = 'No layout changes to revert for this row.'; } }); // CHANGE: explain why Revert is unavailable after applying.
             refreshCompanionGroupLayoutPreview();
         }
         async function saveCompanionGroupLayoutDefaults() {
@@ -9804,7 +9827,7 @@ Draw.loadPlugin(function (ui) {
             if (!draft) throw new Error('No companion layout group is available to save.');
             await CompanionSetLayoutDefaultModel.save(draft.rows); // CHANGE: even dormant layout default saves target the split, anchorless model.
             layoutStatus.textContent = 'Group layout defaults saved.';
-            (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.revertButton) row.revertButton.disabled = true; });
+            (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.revertButton) { row.revertButton.disabled = true; row.revertButton.title = 'No layout changes to revert for this row.'; } }); // CHANGE: explain why Revert is unavailable after saving defaults.
         }
         function buildLayoutGraphApplication(targetCell) { // ADDED: apply row-editor spacing, offsets, and retile intent during Save.
             const draft = readCompanionGroupLayoutDraftFromEditor();
@@ -9858,7 +9881,6 @@ Draw.loadPlugin(function (ui) {
             };
         }
         function refreshLayoutPreview() {
-            (companionLayoutEditorState?.rows || []).forEach(row => { if (row.revertButton) row.revertButton.title = row.revertButton.disabled ? 'No layout changes to revert for this row.' : 'Restore this row\'s layout values from when the editor opened.'; }); // CHANGE
             try {
                 if (refreshCompanionGroupLayoutPreview()) return;
                 const draft = syncLayoutDraftFromControls();
@@ -10042,8 +10064,14 @@ Draw.loadPlugin(function (ui) {
             const usesTransplantDate = methodUsesTransplantDateInput(formState.methodId);
             formState.transplantDaysOverrideEnabled = usesTransplantDate && !!transplantDaysOverrideChk.checked;
             formState.transplantDaysOverrideValue = formState.transplantDaysOverrideEnabled ? readOptionalIntGE1(transplantDaysInput) : null;
-            clampPrimaryDateToSelectedYear();
-            formState.startISO = internalSowDateISO(startInput.value);
+            if (allocationDraftContext) { // CHANGE: dates stay demand-derived even when lifecycle settings change their displayed meaning.
+                formState.startISO = allocationCurrentDraft.lifecycle?.startISO || allocationCurrentDraft.actionStartISO; // CHANGE
+                startInput.value = displayPrimaryDateISO(formState.startISO); // CHANGE
+                seasonYearInput.value = String(allocationCurrentDraft.allocationYear); // CHANGE
+            } else { // CHANGE
+                clampPrimaryDateToSelectedYear(); // CHANGE
+                formState.startISO = internalSowDateISO(startInput.value); // CHANGE
+            } // CHANGE
             formState.activeSowingSeasonId = sowingSeasonSel.value || formState.activeSowingSeasonId || '';
             if (mode.perennial) formState.seasonEndISO = seasonEndInput.value;
             else formState.latestHarvestEndISO = seasonEndInput.value;
@@ -10144,7 +10172,7 @@ Draw.loadPlugin(function (ui) {
         function syncControlsFromState({ start = false, end = false, harvest = false } = {}) {
             if (start) {
                 syncStartInputFromState();
-                if (clampPrimaryDateToSelectedYear()) {
+                if (!allocationDraftContext && clampPrimaryDateToSelectedYear()) { // CHANGE: never clamp a demand-derived allocation date during display synchronization.
                     formState.startISO = internalSowDateISO(startInput.value);
                 }
             }
@@ -10289,6 +10317,13 @@ Draw.loadPlugin(function (ui) {
         windowSection.body.appendChild(endRow.row);
 
         inputsSection.body.appendChild(firstSowRowObj.row);
+        if (allocationDraftContext) { // CHANGE: every overlap gets its own date/offset comparison rather than an arbitrary source crop.
+            inputsSection.body.appendChild(allocationTimingRows); // CHANGE
+            const note = makeTimelineSmallText('Dates are calculated to fit demand. Unlock lifecycle settings to recalculate this proposal.'); // CHANGE
+            inputsSection.body.appendChild(note); // CHANGE
+            inputsSection.body.appendChild(row('Lock lifecycle:', allocationLifecycleLock).row); // CHANGE
+            allocationLifecycleLock.addEventListener('change', applyAllocationLifecycleLock); // CHANGE
+        } // CHANGE
         inputsSection.body.appendChild(transplantDaysRowObj.row);
         const climateSection = makeSection('Climate model');
         climateSection.wrap.style.marginTop = '10px';
@@ -10559,6 +10594,7 @@ Draw.loadPlugin(function (ui) {
 
             seasonEndInput.disabled = !perennial;
             updateTransplantDaysControls();
+            applyAllocationLifecycleLock(); // CHANGE: mode refreshes must not re-enable locked allocation controls.
             refreshSowingSeasonSelector();
             updateScheduleSummaryFromState();
         }
@@ -10602,7 +10638,7 @@ Draw.loadPlugin(function (ui) {
         //  - concern: climate feasibility window (earliest sow, last feasible sow, climate last harvest)
         //  - does NOT decide scheduling or yield
         //  - allowed to change latestHarvestEndISO ONLY when called with forceWriteEnd=true
-        async function recomputeAnchors(forceWriteStart = false, forceWriteEnd = false) {
+        async function recomputeAnchors(forceWriteStart = false, forceWriteEnd = false, allocationVersion = null) { // CHANGE: stale allocation fits cannot replace feasible-season state.
             try {
                 if (mode.perennial) return true; // FIX: lifespan dates are recomputed by recomputeAll
 
@@ -10631,6 +10667,7 @@ Draw.loadPlugin(function (ui) {
                 const climatePolicy = climateResolution.effective;
                 formState.climateModelPolicy = climatePolicy;
                 const dailyClimate = await city.loadDailyClimateModel({ scanStart, scanEndHard, climatePolicy });
+                if (allocationVersion != null && !allocationRequestIsCurrent(allocationVersion)) return false; // CHANGE
                 formState.dailyClimate = dailyClimate;
                 formState.dailyClimateKey = `${city.city_name || formState.cityName}|${fmtISO(scanStart)}|${fmtISO(scanEndHard)}|${JSON.stringify(climatePolicy)}`;
                 const dailyRates = city.dailyRates(env.Tbase, seasonStartYear, climatePolicy);
@@ -10824,8 +10861,147 @@ Draw.loadPlugin(function (ui) {
         // recomputeAll:
         //  - concern: policy: when to let climate auto window override constraint
         //  - enforce: annual latestHarvestEndISO and perennial seasonEndISO stay separate
+        /** Lifecycle settings are editable independently of the dates chosen to satisfy allocation demand. */ // CHANGE
+        function applyAllocationLifecycleLock() { // CHANGE
+            if (!allocationDraftContext) return; // CHANGE
+            startInput.readOnly = true; // CHANGE
+            startInput.setAttribute('data-allocation-start-date', '1'); // CHANGE
+            seasonYearInput.disabled = true; // CHANGE
+            sowingSeasonSel.disabled = true; // CHANGE
+            seasonEndInput.disabled = true; // CHANGE
+            minYieldMultInput.disabled = true; // CHANGE: allocation yield policy is part of the accepted demand context.
+            const locked = allocationLifecycleLock.checked; // CHANGE
+            [combinedMethodSel, methodCategorySel, methodSel, harvestWindowInput].forEach(control => { control.disabled = locked; }); // CHANGE
+            transplantDaysOverrideChk.disabled = locked || !currentMethodUsesTransplantDateInput(); // CHANGE
+            transplantDaysInput.disabled = locked || !currentMethodUsesTransplantDateInput() || !transplantDaysOverrideChk.checked; // CHANGE
+            transplantDaysRowObj.row.style.setProperty('display', currentMethodUsesTransplantDateInput() ? '' : 'none', currentMethodUsesTransplantDateInput() ? '' : 'important'); // CHANGE: responsive row CSS must respect method-specific visibility.
+            endRow.row.style.setProperty('display', mode.perennial ? '' : 'none', mode.perennial ? '' : 'important'); // CHANGE: annual allocations show harvest end through the timeline instead of a lifespan field.
+        } // CHANGE
+
+        function allocationRequestIsCurrent(version) { // CHANGE
+            return version === allocationFitVersion && !allocationDialogClosed && (!allocationDraftContext.isCurrent || allocationDraftContext.isCurrent()); // CHANGE
+        } // CHANGE
+
+        function allocationComparisons() { // CHANGE
+            if (!allocationDraftContext || allocationFitPending || allocationFitError || !latestScheduleResult) return []; // CHANGE
+            return buildAllocationTimingComparisons({ ...allocationCurrentDraft, lifecycle: { ...allocationCurrentDraft.lifecycle, result: latestScheduleResult } }, allocationDraftContext.relationships); // CHANGE
+        } // CHANGE
+
+        function renderAllocationTimingComparisons() { // CHANGE
+            if (!allocationDraftContext) return; // CHANGE
+            allocationTimingRows.replaceChildren(); // CHANGE
+            for (const item of allocationComparisons()) { // CHANGE
+                const actual = item.actualOffsetDays === 0 ? 'same day' : `${Math.abs(item.actualOffsetDays)} days ${item.actualOffsetDays > 0 ? 'after' : 'before'}`; // CHANGE
+                const recommendation = item.recommendedOffsetDays == null ? 'No recommended offset' : `recommended ${formatSignedDays(item.recommendedOffsetDays)}; ${item.differenceDays === 0 ? 'matches recommendation' : `${Math.abs(item.differenceDays)} days ${item.differenceDays > 0 ? 'later' : 'earlier'} than recommended`}`; // CHANGE
+                const text = `${item.displayLabel} — starts ${item.startISO}: ${actual}; ${recommendation}.`; // CHANGE
+                const comparison = makeTimelineSmallText(text); // CHANGE
+                comparison.style.margin = '5px 0'; // CHANGE
+                comparison.style.overflowWrap = 'anywhere'; // CHANGE
+                comparison.setAttribute('data-allocation-timing-row', item.cellId); // CHANGE
+                allocationTimingRows.appendChild(comparison); // CHANGE
+            } // CHANGE
+        } // CHANGE
+
+        async function refreshAllocationSpacingChoice(version = allocationFitVersion) { // CHANGE
+            if (!allocationDraftContext) return; // CHANGE
+            const rows = await allocationSpacingRows(ui.editor.graph, allocationCurrentDraft); // CHANGE
+            const key = rows.length > 1 ? CompanionSetLayoutDefaultModel.cropSetKey(rows) : ''; // CHANGE
+            const saved = key ? await CompanionSetLayoutDefaultModel.loadForRows(rows) : null; // CHANGE
+            if (!allocationRequestIsCurrent(version)) return; // CHANGE
+            if (key !== allocationSpacingKey) { // CHANGE: preserve explicit checkbox intent while the same set remains active.
+                allocationSaveSpacing.checked = !!key && !saved?.default; // CHANGE
+                if (!allocationSpacingKey && allocationCurrentDraft.saveSpacingDefaults != null) allocationSaveSpacing.checked = !!key && allocationCurrentDraft.saveSpacingDefaults; // CHANGE
+                allocationSpacingKey = key; // CHANGE
+            } // CHANGE
+            allocationSaveSpacing.disabled = !key; // CHANGE
+            allocationCurrentDraft.spacingDefaultRows = rows; // CHANGE
+        } // CHANGE
+
+        /** Solve timing first, then revalidate bed capacity/coverage, and publish only the newest complete result. */ // CHANGE
+        async function refitAllocationLifecycle(selectedMethod = null) { // CHANGE
+            const version = ++allocationFitVersion; // CHANGE
+            allocationFitPending = true; // CHANGE
+            allocationFitError = ''; // CHANGE
+            okBtn.disabled = true; // CHANGE
+            previewBtn.disabled = true; // CHANGE
+            clearComputedHarvestResult(); // CHANGE
+            generatedPreviewTasks = []; // CHANGE: pending fits cannot display task dates from the previous allocation lifecycle.
+            taskPreviewScheduleRange = null; // CHANGE
+            renderCachedTaskPreview({ message: 'Recalculating allocation…' }); // CHANGE
+            updateTimeline(); // CHANGE
+            try { // CHANGE
+                if (selectedMethod) { // CHANGE: invalidate earlier fits before resolving a newly selected method.
+                    methodCategorySel.value = selectedMethod.methodCategoryId; // CHANGE
+                    await resetMethodOptionsForMethodCategory(selectedMethod.methodCategoryId, { preferMethodId: selectedMethod.methodId, allocationVersion: version }); // CHANGE
+                    if (!allocationRequestIsCurrent(version)) return false; // CHANGE
+                    methodSel.value = selectedMethod.methodId; // CHANGE
+                    syncCombinedMethodControl(); // CHANGE
+                } // CHANGE
+                syncStateFromControls(); // CHANGE
+                const snapshot = { ...formState }; // CHANGE: asynchronous resolution reads the settings that triggered this fit.
+                const rules = normalizeTaskTemplate({ version: 2, rules: taskRules }); // CHANGE: dated tasks and relative rules share the same fit snapshot.
+                const { inputs } = await buildScheduleContextFromForm(snapshot, selPlant, { currentVarieties }); // CHANGE
+                if (!allocationRequestIsCurrent(version)) return false; // CHANGE
+                const proposal = await proposeLifecycleForDemandWindow({ // CHANGE
+                    plant: inputs.plant, city: inputs.city, methodId: inputs.methodId, methodCategoryId: inputs.methodCategoryId, // CHANGE
+                    effectiveTransplantDays: inputs.plant.days_transplant, harvestWindowDays: inputs.harvestWindowDays, // CHANGE
+                    minYieldMultiplier: inputs.minYieldMultiplier, policy: inputs.policy, dailyClimate: inputs.dailyClimate, // CHANGE
+                    bedProfile: inputs.bedProfile, bedProfileSource: inputs.bedProfileSource, seasonStartYear: snapshot.seasonStartYear, // CHANGE
+                    targetStartISO: allocationCurrentDraft.targetDemandStartISO, targetEndISO: allocationCurrentDraft.targetDemandEndISO, // CHANGE
+                    varietyId: snapshot.varietyId, varietyName: inputs.varietyName, taskTemplate: rules // CHANGE
+                }); // CHANGE
+                if (!allocationRequestIsCurrent(version)) return false; // CHANGE
+                if (!proposal.ok) throw new Error(proposal.reason); // CHANGE
+                let candidate = { // CHANGE
+                    ...allocationCurrentDraft, // CHANGE
+                    lifecycle: { ...proposal, harvestWindowDays: inputs.harvestWindowDays, growthStageKey: snapshot.growthStageKey }, // CHANGE
+                    actionStartISO: proposal.startISO, methodId: inputs.methodId, methodCategoryId: inputs.methodCategoryId, // CHANGE
+                    taskPreview: proposal.taskPreview, plantResolution: { ...allocationCurrentDraft.plantResolution, plant: inputs.plant } // CHANGE
+                }; // CHANGE
+                if (allocationDraftContext.revalidateDraft) candidate = await allocationDraftContext.revalidateDraft(candidate); // CHANGE
+                if (!allocationRequestIsCurrent(version)) return false; // CHANGE
+                if (!candidate?.ok && allocationDraftContext.revalidateDraft) throw new Error(candidate?.reason || 'This lifecycle no longer fits the selected bed and demand.'); // CHANGE
+                allocationCurrentDraft = candidate; // CHANGE
+                effectivePlant = inputs.plant; // CHANGE: method and lead-day help uses the same effective lifecycle as the fitted dates.
+                formState.startISO = proposal.startISO; // CHANGE
+                userEditedStartThisSession = true; // CHANGE: keep the solver's exact date through feasibility refreshes.
+                syncStartInputFromState(); // CHANGE
+                await recomputeAnchors(false, false, version); // CHANGE
+                if (!allocationRequestIsCurrent(version)) return false; // CHANGE
+                latestScheduleResult = proposal.result; // CHANGE
+                formState.firstHarvestISO = proposal.result.firstScheduledHarvestISO; // CHANGE
+                formState.lastHarvestISO = proposal.result.lastScheduledHarvestEndISO; // CHANGE
+                formState.lastScheduleEndISO = formState.lastHarvestISO; // CHANGE
+                formState.windowFeasible = true; // CHANGE
+                syncScheduleWarningState(proposal.warnings || []); // CHANGE
+                syncControlsFromState({ start: true, harvest: true }); // CHANGE
+                await refreshAllocationSpacingChoice(version); // CHANGE
+                if (!allocationRequestIsCurrent(version)) return false; // CHANGE
+                generatedPreviewTasks = proposal.taskPreview; // CHANGE
+                taskPreviewScheduleRange = resolveTaskPreviewScheduleRange(proposal.result); // CHANGE
+                renderCachedTaskPreview({ message: '' }); // CHANGE
+                refreshContextSummary(); // CHANGE
+                return true; // CHANGE
+            } catch (error) { // CHANGE
+                if (!allocationRequestIsCurrent(version)) return false; // CHANGE
+                allocationFitError = error.message || String(error); // CHANGE
+                clearComputedHarvestResult(); // CHANGE
+                showErrorInline('No allocation fit: ' + allocationFitError); // CHANGE
+                return false; // CHANGE
+            } finally { // CHANGE
+                if (allocationRequestIsCurrent(version)) { // CHANGE
+                    allocationFitPending = false; // CHANGE
+                    okBtn.disabled = !!allocationFitError; // CHANGE
+                    previewBtn.disabled = !!allocationFitError; // CHANGE
+                    applyModeToUI(); // CHANGE
+                    updateTimeline(); // CHANGE
+                } // CHANGE
+            } // CHANGE
+        } // CHANGE
+
         async function recomputeAll(reason) {
             syncStateFromControls();
+            if (allocationDraftContext && ['methodChanged', 'hwChanged'].includes(reason)) return refitAllocationLifecycle(); // CHANGE: lifecycle edits re-fit demand instead of holding the old sow date.
             refreshContextSummary();
             void refreshClimateModelTips();
 
@@ -11178,6 +11354,26 @@ Draw.loadPlugin(function (ui) {
             timelineWrap.appendChild(track);
             applyLifecycleTimelineMarkerOffsets(track);
             timelineWrap.appendChild(renderLifecycleTimelineAxis(model));
+            if (model.overlappingStarts?.length) { // CHANGE: each contextual start has a separate label lane at its true axis position.
+                const heading = makeTimelineSmallText('Overlapping planting starts'); // CHANGE
+                timelineWrap.appendChild(heading); // CHANGE
+                model.overlappingStarts.forEach(item => { // CHANGE
+                    const lane = document.createElement('div'); // CHANGE
+                    lane.style.cssText = 'position:relative;min-height:36px;padding:12px 0 4px;border-top:1px solid #e2e8f0;box-sizing:border-box;'; // CHANGE
+                    const marker = document.createElement('div'); // CHANGE
+                    marker.setAttribute('data-allocation-overlap-start', item.cellId); // CHANGE
+                    marker.style.cssText = `position:absolute;left:${item.percent}%;top:0;height:10px;border-left:2px solid #64748b;transform:translateX(-50%);`; // CHANGE
+                    const label = makeTimelineSmallText(`${item.displayLabel || item.label} — ${item.startISO}`); // CHANGE
+                    label.style.overflowWrap = 'anywhere'; // CHANGE: full-width label lanes avoid collisions without moving date markers.
+                    const tooltip = `${item.displayLabel || item.label}: bed start ${item.startISO}`; // CHANGE
+                    marker.setAttribute('aria-label', tooltip); // CHANGE
+                    setTooltip(marker, tooltip); // CHANGE
+                    setTooltip(label, tooltip); // CHANGE
+                    lane.appendChild(marker); // CHANGE
+                    lane.appendChild(label); // CHANGE
+                    timelineWrap.appendChild(lane); // CHANGE
+                }); // CHANGE
+            } // CHANGE
             const status = makeTimelineSmallText(classification.label);
             status.style.color = classification.status === 'feasible' ? '#166534' : '#b91c1c';
             timelineWrap.appendChild(status);
@@ -11202,6 +11398,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function updateTimeline() {
+            renderAllocationTimingComparisons(); // CHANGE: contextual offsets and markers use the same current occupancy window.
             const classification = classifySelectedSowDate({
                 perennial: mode.perennial,
                 windowFeasible: formState.windowFeasible,
@@ -11218,7 +11415,8 @@ Draw.loadPlugin(function (ui) {
                 latestHarvestEndISO: formState.latestHarvestEndISO,
                 scheduleResult: latestScheduleResult,
                 taskRules,
-                generatedTasks: generatedPreviewTasks
+                generatedTasks: generatedPreviewTasks, // CHANGE
+                overlappingPlantings: allocationComparisons() // CHANGE
             });
             renderLifecycleTimelineModel(model, classification);
             updateScheduleSummaryFromState();
@@ -11356,6 +11554,7 @@ Draw.loadPlugin(function (ui) {
 
 
         startInput.addEventListener('input', () => {
+            if (allocationDraftContext) { syncStartInputFromState(); return; } // CHANGE: lifecycle unlock never unlocks the demand-derived date.
             void runUiAsync('Date change error', async () => {
                 userEditedStartThisSession = true;
                 generatedStartThisSession = false;
@@ -11379,6 +11578,7 @@ Draw.loadPlugin(function (ui) {
         });
 
         sowingSeasonSel.addEventListener('change', () => {
+            if (allocationDraftContext) return; // CHANGE: the demand solver owns season selection.
             void runUiAsync('Sowing season change error', async () => {
                 formState.activeSowingSeasonId = sowingSeasonSel.value || '';
                 formState.startISO = resolveStartForSowingSeasonSwitch(formState.sowingSeasons, formState.activeSowingSeasonId, formState.startISO);
@@ -11417,6 +11617,7 @@ Draw.loadPlugin(function (ui) {
         harvestWindowInput.addEventListener('input', () => {
             void runUiAsync('Harvest window change error', async () => {
                 syncStateFromControls();
+                if (allocationDraftContext) { await refitAllocationLifecycle(); return; } // CHANGE: allocation fits own their dates and task refresh together.
                 await recomputeAll('hwChanged');
                 await refreshTaskTemplateFromSelection();
                 scheduleCropPickerSuitabilityRefresh();
@@ -11445,6 +11646,7 @@ Draw.loadPlugin(function (ui) {
         function handleTransplantDaysChanged() {
             void runUiAsync('Transplant days change error', async () => {
                 syncStateFromControls();
+                if (allocationDraftContext) { await refitAllocationLifecycle(); return; } // CHANGE: reserve the fit version before any effective-plant lookup.
                 await refreshEffectivePlant();
                 syncStartInputFromState();
                 updateTransplantDaysControls();
@@ -11470,6 +11672,7 @@ Draw.loadPlugin(function (ui) {
             void runUiAsync('Method change error', async () => {
                 const selected = decodeMethodSelection(combinedMethodSel.value);
                 if (!selected) throw new Error('Select a planting method.');
+                if (allocationDraftContext) { await refitAllocationLifecycle(selected); return; } // CHANGE: method lookups participate in allocation cancellation and stale-result protection.
                 methodCategorySel.value = selected.methodCategoryId;
                 await resetMethodOptionsForMethodCategory(selected.methodCategoryId, {
                     preferMethodId: selected.methodId
@@ -11743,15 +11946,18 @@ Draw.loadPlugin(function (ui) {
         advancedBody.appendChild(windowActions);
 
         const previewBtn = mxUtils.button('Preview', async () => {
+            const allocationVersion = allocationFitVersion; // CHANGE: a closed or changed allocation cannot open an obsolete preview.
             try {
+                if (allocationDraftContext && (allocationFitPending || allocationFitError)) return; // CHANGE
                 syncStateFromControls();
                 requireSelectedScheduleDate();
 
                 const { inputs } = await buildScheduleContextFromForm(
-                    formState,
+                    allocationDraftContext ? { ...formState } : formState, // CHANGE: allocation submission resolves one immutable settings snapshot.
                     selPlant,
                     { currentVarieties }
                 );
+                if (allocationDraftContext && !allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
                 requireNoBlockingScheduleQualityDiagnostics(inputs);
 
                 const result = computeScheduleResult(inputs);
@@ -11771,15 +11977,18 @@ Draw.loadPlugin(function (ui) {
         applySharedButtonStyle(previewBtn, 'neutral');
 
         const okBtn = mxUtils.button('Save', async () => {
+            const allocationVersion = allocationFitVersion; // CHANGE: reject edits or cancellation while submission is resolving inputs.
             try {
+                if (allocationDraftContext && (allocationFitPending || allocationFitError)) throw new Error(allocationFitError || 'Allocation recalculation is still running.'); // CHANGE: never accept stale fit data.
                 syncStateFromControls();
                 requireSelectedScheduleDate();
 
                 const { inputs } = await buildScheduleContextFromForm(
-                    formState,
+                    allocationDraftContext ? { ...formState } : formState, // CHANGE
                     selPlant,
                     { currentVarieties }
                 );
+                if (allocationDraftContext && !allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
                 requireNoBlockingScheduleQualityDiagnostics(inputs);
 
                 // Build taskTemplate object from current rules
@@ -11870,18 +12079,26 @@ Draw.loadPlugin(function (ui) {
                 let forceCompanionSetDefaults = false;
                 let bedTargetCreation = null; // CHANGE
                 if (allocationDraftContext) { // CHANGE: share the full scheduler calculation and task rules, bypass every graph-save operation.
-                    const next = await buildAllocationSchedulerResult(allocationDraftContext.draft, inputs, scheduleResult, taskTemplate, {
+                    const next = await buildAllocationSchedulerResult(allocationCurrentDraft, inputs, scheduleResult, taskTemplate, { // CHANGE: return the re-fitted capacity/coverage context.
                         sowingSeasonId: activeWindow?.id || '', sowingSeasonLabel: activeWindow?.label || '',
                         transplantDaysOverrideEnabled: formState.transplantDaysOverrideEnabled,
                         effectiveTransplantDays: inputs?.plant?.days_transplant,
                         taskTemplateSource
                     });
-                    next.commitAllocationDefaults = async function () { // CHANGE: selected reusable defaults are committed only after successful planting creation.
+                    if (!allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
+                    next.saveLifecycleDefaults = allocationSaveLifecycle.checked; // CHANGE
+                    next.saveSpacingDefaults = !allocationSaveSpacing.disabled && allocationSaveSpacing.checked; // CHANGE
+                    next.lifecycleOverrides = { methodId: inputs.methodId, methodCategoryId: inputs.methodCategoryId, effectiveTransplantDays: inputs.plant.days_transplant, harvestWindowDays: inputs.harvestWindowDays }; // CHANGE
+                    next.bedTimingComparisons = buildAllocationTimingComparisons(next, allocationDraftContext.relationships); // CHANGE
+                    next.commitAllocationDefaults = async function (createdCell) { // CHANGE: reusable defaults are committed only after successful planting creation.
+                        if (!createdCell) throw new Error('A created planting is required before saving allocation defaults.'); // CHANGE
                         await persistPlantTaskDefault();
                         await persistAllocationReusableDefaults(next, { defaultStatus: allocationDraftContext.defaultStatus });
+                        if (next.saveSpacingDefaults) await persistAllocationSpacingDefaults(ui.editor.graph, next, createdCell); // CHANGE
                     };
                     if (allocationDraftContext.isCurrent && !allocationDraftContext.isCurrent()) throw new Error('Allocation selection changed. Close this scheduler and review the current proposal.');
                     allocationDraftContext.onPreview(next);
+                    allocationDialogClosed = true; // CHANGE: closing after Preview also invalidates outstanding computations.
                     ui.hideDialog();
                     return;
                 } // CHANGE
@@ -11944,13 +12161,29 @@ Draw.loadPlugin(function (ui) {
 
         applySharedButtonStyle(okBtn, 'add');
         if (allocationDraftContext) okBtn.textContent = 'Preview Planting'; // CHANGE
+        if (allocationDraftContext) { // CHANGE: reusable-default choices stay visible in the footer on both tabs.
+            const defaultActions = document.createElement('div'); // CHANGE
+            defaultActions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;'; // CHANGE
+            const lifecycleLabel = document.createElement('label'); // CHANGE
+            lifecycleLabel.style.cssText = 'display:flex;gap:5px;align-items:center;'; // CHANGE
+            lifecycleLabel.appendChild(allocationSaveLifecycle); // CHANGE
+            lifecycleLabel.appendChild(document.createTextNode('Save lifecycle settings as defaults — ' + (allocationCurrentDraft.plantResolution?.varietyName || effectivePlant.plant_name))); // CHANGE
+            const spacingLabel = document.createElement('label'); // CHANGE
+            spacingLabel.style.cssText = 'display:flex;gap:5px;align-items:center;'; // CHANGE
+            spacingLabel.appendChild(allocationSaveSpacing); // CHANGE
+            spacingLabel.appendChild(document.createTextNode('Save companion-set spacing as default')); // CHANGE
+            defaultActions.appendChild(lifecycleLabel); // CHANGE
+            defaultActions.appendChild(spacingLabel); // CHANGE
+            btns.appendChild(defaultActions); // CHANGE
+        } // CHANGE
 
-        const cancelBtn = mxUtils.button('Cancel', () => { if (allocationDraftContext) allocationDraftContext.onCancel(); ui.hideDialog(); }); // CHANGE
+        const cancelBtn = mxUtils.button('Cancel', () => { allocationDialogClosed = true; if (allocationDraftContext) allocationDraftContext.onCancel(); ui.hideDialog(); }); // CHANGE: cancel invalidates in-flight lifecycle fits.
         applySharedButtonStyle(cancelBtn, 'neutral');
         [previewBtn, okBtn, cancelBtn].forEach(b => rightBtns.appendChild(b));
         btns.appendChild(rightBtns);
 
         await recomputeAll('cityChanged');
+        await refreshAllocationSpacingChoice(); // CHANGE: first render knows whether the active companion set already has defaults.
         applyModeToUI();
         syncStartDateBounds();
         updateTimeline();
@@ -12591,7 +12824,14 @@ Draw.loadPlugin(function (ui) {
 
         async function updateTaskPreview() {
             const requestVersion = ++taskPreviewVersion;
+            const allocationVersion = allocationFitVersion; // CHANGE: task previews belong to the same allocation fit as lifecycle dates.
             syncStateFromControls();
+            if (allocationDraftContext && (allocationFitPending || allocationFitError)) { // CHANGE
+                generatedPreviewTasks = []; // CHANGE
+                taskPreviewScheduleRange = null; // CHANGE
+                renderCachedTaskPreview({ message: allocationFitError || 'Recalculating allocation…' }); // CHANGE
+                return; // CHANGE
+            } // CHANGE
             renderTaskPreviewRuleSelectors();
             if (!taskRules.length) {
                 generatedPreviewTasks = [];
@@ -12609,7 +12849,8 @@ Draw.loadPlugin(function (ui) {
                 return;
             }
             try {
-                const { inputs } = await buildScheduleContextFromForm(formState, selPlant, { currentVarieties });
+                const { inputs } = await buildScheduleContextFromForm(allocationDraftContext ? { ...formState } : formState, selPlant, { currentVarieties }); // CHANGE
+                if (allocationDraftContext && !allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
                 requireNoBlockingScheduleQualityDiagnostics(inputs);
                 const result = computeScheduleResult(inputs);
                 syncScheduleWarningState(result.warnings || []);
@@ -12623,7 +12864,7 @@ Draw.loadPlugin(function (ui) {
                     varietyName: inputs.varietyName,
                     includePreviewMetadata: true
                 });
-                if (requestVersion !== taskPreviewVersion) return;
+                if (requestVersion !== taskPreviewVersion || (allocationDraftContext && !allocationRequestIsCurrent(allocationVersion))) return; // CHANGE
                 generatedPreviewTasks = tasks;
                 taskPreviewScheduleRange = resolveTaskPreviewScheduleRange(result);
                 taskPreviewCutoffOmittedRuleKeys = findRepeatCutoffOmittedRuleKeys({
@@ -12645,7 +12886,7 @@ Draw.loadPlugin(function (ui) {
                     taskPreviewStatus.textContent += ` ${missingAnchorCount} selected rule${missingAnchorCount === 1 ? '' : 's'} omitted because schedule anchors are unavailable.`;
                 }
             } catch (e) {
-                if (requestVersion !== taskPreviewVersion) return;
+                if (requestVersion !== taskPreviewVersion || (allocationDraftContext && !allocationRequestIsCurrent(allocationVersion))) return; // CHANGE
                 generatedPreviewTasks = [];
                 taskPreviewScheduleRange = null;
                 taskPreviewCutoffOmittedRuleKeys = new Set();
@@ -13291,11 +13532,11 @@ Draw.loadPlugin(function (ui) {
             growthStageSel.title = 'Grown for is fixed by the selected Year Plan row.'; // CHANGE
             citySel.querySelectorAll('button, input').forEach(control => { control.disabled = true; if (control.tagName === 'BUTTON') control.title = 'Allocation uses the city from the active garden settings.'; }); // CHANGE: explain the fixed city on the disabled picker.
             citySel.tabIndex = -1; // CHANGE
-            climateSection.body.querySelectorAll('input, select, button').forEach(control => { control.disabled = true; }); // CHANGE
+            climateSection.body.querySelectorAll('input, select, button').forEach(control => { control.disabled = true; if (control.tagName === 'BUTTON') control.title = 'Allocation uses the climate from the active garden settings.'; }); // CHANGE: explain the fixed climate on disabled actions.
             if (allocationDraftContext.isCurrent && !allocationDraftContext.isCurrent()) { allocationDraftContext.onCancel(); return; } // CHANGE: stale async initialization must never open a dialog.
         } // CHANGE
 
-        ui.showDialog(tabsContainer, 1120, 720, true, true, () => { if (allocationDraftContext) allocationDraftContext.onCancel(); }); // CHANGE: close/Escape resolves pending draft editing as cancellation.
+        ui.showDialog(tabsContainer, 1120, 720, true, true, () => { allocationDialogClosed = true; if (allocationDraftContext) allocationDraftContext.onCancel(); }); // CHANGE: close/Escape also invalidates pending lifecycle fits.
         elevateTrellisDialog(ui);
 
     }
@@ -15576,13 +15817,22 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
+    /** Read-only relationship data for Allocate; unavailable data is explicitly unknown. */ // CHANGE
+    async function listAllocationOverlapRelationships(plantId) { // CHANGE
+        const relationships = await companionRelationshipMapForPlant(plantId); // CHANGE
+        return Array.from(relationships, ([companionPlantId, relationship]) => ({ // CHANGE
+            companionPlantId, relationship, conflictKind: schedulerConflictKindFromRelationship(relationship) // CHANGE
+        })); // CHANGE
+    } // CHANGE
+
     function schedulerPlantSpacingForGeometry(plant) {
         const fallback = finiteNumberOrNull(plant?.spacing_cm) ?? 30;
         return {
             spacingCm: fallback,
             spacingXCm: finiteNumberOrNull(plant?.spacing_x_cm) ?? fallback,
             spacingYCm: finiteNumberOrNull(plant?.spacing_y_cm) ?? fallback,
-            vegHeightCm: finiteNumberOrNull(plant?.veg_height_cm)
+            vegHeightCm: finiteNumberOrNull(plant?.veg_height_cm), // CHANGE
+            vegDiameterCm: finiteNumberOrNull(plant?.veg_diameter_cm) // CHANGE
         }; // CHANGE: bed-first geometry uses the same spacing attributes saved by the schedule patch.
     }
 
@@ -15619,6 +15869,7 @@ Draw.loadPlugin(function (ui) {
             spacingXCm: spacing.spacingXCm,
             spacingYCm: spacing.spacingYCm,
             vegHeightCm: spacing.vegHeightCm,
+            vegDiameterCm: spacing.vegDiameterCm, // CHANGE: fitted overhang uses the diameter that will be saved on the planting.
             entryISO: startISO,
             harvestEndISO: endISO,
             occupancy: annotatedOccupancy
@@ -16393,6 +16644,71 @@ Draw.loadPlugin(function (ui) {
         return String(aStart) <= String(bEnd) && String(aEnd) >= String(bStart);
     }
 
+    /** Compare proposed bed entry with every valid overlapping planting in the same bed. Recommendations are read from the proposed crop's perspective. */ // CHANGE
+    function buildAllocationTimingComparisons(draft, relationships = []) { // CHANGE
+        const result = draft?.lifecycle?.result; // CHANGE
+        const startISO = derivedOccupancyStartISO(result) || draft?.lifecycle?.primaryDateISO || draft?.actionStartISO || ''; // CHANGE
+        const endISO = derivedOccupancyEndISO(result) || draft?.harvestEnd || ''; // CHANGE
+        if (fmtISO(parseISODateUTCValue(startISO)) !== startISO || fmtISO(parseISODateUTCValue(endISO)) !== endISO || endISO < startISO) return []; // CHANGE: reject malformed calendar dates rather than normalizing them into invented occupancy.
+        const byPlant = new Map((Array.isArray(relationships) ? relationships : []).filter(Boolean).map(item => [String(item.companionPlantId), item.relationship || item])); // CHANGE
+        const bedId = String(draft?.bed?.id || draft?.bed?.getId?.() || ''); // CHANGE
+        if (!bedId) return []; // CHANGE: unknown bed membership cannot establish an overlap.
+        const seen = new Set(); // CHANGE
+        const comparisons = (Array.isArray(draft?.bedOccupancy) ? draft.bedOccupancy : []).map(item => { // CHANGE
+            if (!item || typeof item !== 'object') return null; // CHANGE: malformed neighbors do not suppress the valid comparisons.
+            const cellId = String(item.groupId || item.cellId || item.id || ''); // CHANGE
+            const otherStart = item.bedEntryISO || item.startISO || ''; // CHANGE
+            const otherEnd = item.harvestEndISO || item.endISO || ''; // CHANGE
+            if (!cellId || seen.has(cellId) || String(item.bedId || '') !== bedId) return null; // CHANGE
+            if (fmtISO(parseISODateUTCValue(otherStart)) !== otherStart || fmtISO(parseISODateUTCValue(otherEnd)) !== otherEnd || otherEnd < otherStart || !isoWindowsOverlap(startISO, endISO, otherStart, otherEnd)) return null; // CHANGE
+            seen.add(cellId); // CHANGE
+            const relationship = byPlant.get(String(item.plantId || item.plant_id || '')); // CHANGE
+            const recommended = finiteNumberOrNull(relationship?.recommendedStartOffsetDays); // CHANGE
+            const actualOffsetDays = daysDeltaISO(otherStart, startISO); // CHANGE
+            const recommendedOffsetDays = recommended == null ? null : -recommended; // CHANGE: lookup says when the other crop starts relative to the proposed crop.
+            const label = [item.plantName || item.cropName || item.label || 'Planting', item.varietyName].filter(Boolean).join(' - '); // CHANGE
+            return { ...item, cellId, label, startISO: otherStart, endISO: otherEnd, actualOffsetDays, recommendedOffsetDays, differenceDays: recommendedOffsetDays == null ? null : actualOffsetDays - recommendedOffsetDays }; // CHANGE
+        }).filter(Boolean).sort((a, b) => a.startISO.localeCompare(b.startISO) || a.cellId.localeCompare(b.cellId)); // CHANGE
+        const counts = new Map(); // CHANGE
+        comparisons.forEach(item => counts.set(item.label, (counts.get(item.label) || 0) + 1)); // CHANGE
+        const ordinals = new Map(); // CHANGE
+        return comparisons.map(item => { // CHANGE
+            const ordinal = (ordinals.get(item.label) || 0) + 1; // CHANGE
+            ordinals.set(item.label, ordinal); // CHANGE
+            return { ...item, displayLabel: counts.get(item.label) > 1 ? `${item.label} (planting ${ordinal})` : item.label }; // CHANGE
+        }); // CHANGE
+    } // CHANGE
+
+    /** Capture spacing for the proposed planting and all its overlapping neighbors without applying graph changes. */ // CHANGE
+    async function allocationSpacingRows(activeGraph, draft) { // CHANGE
+        const model = activeGraph?.getModel?.(); // CHANGE
+        const plant = draft.plantResolution?.plant || {}; // CHANGE
+        const defaults = plantSpacingDefaults(plant); // CHANGE
+        const rows = [{ plantId: draftPlantId(draft), varietyId: draftVarietyId(draft), plantName: plant.plant_name || '', varietyName: draft.plantResolution?.varietyName || '', spacingXCm: defaults.spacingXCm, spacingYCm: defaults.spacingYCm, offsetXCm: 0, offsetYCm: 0, enabled: true }]; // CHANGE
+        for (const comparison of buildAllocationTimingComparisons(draft)) { // CHANGE
+            const cell = model?.getCell?.(comparison.cellId); // CHANGE
+            if (!cell) throw new Error('An overlapping planting is no longer available.'); // CHANGE
+            const identity = spacingIdentityForCell(cell); // CHANGE
+            const neighbor = await resolveEffectivePlant(identity.plantId, identity.varietyId); // CHANGE
+            const spacing = plantSpacingDefaults(neighbor); // CHANGE
+            const offsets = spacingBedOffsetForCell(cell, draft.bed); // CHANGE
+            rows.push({ ...identity, enabled: true, spacingXCm: layoutNumberOrNull(cell.getAttribute?.('spacing_x_cm')) ?? layoutNumberOrNull(cell.getAttribute?.('spacing_cm')) ?? spacing.spacingXCm, spacingYCm: layoutNumberOrNull(cell.getAttribute?.('spacing_y_cm')) ?? layoutNumberOrNull(cell.getAttribute?.('spacing_cm')) ?? spacing.spacingYCm, offsetXCm: offsets.x, offsetYCm: offsets.y }); // CHANGE
+        } // CHANGE
+        return rows; // CHANGE
+    } // CHANGE
+
+    /** Save the reviewed active set after creation, using the created planting's actual spacing and bed offsets. */ // CHANGE
+    async function persistAllocationSpacingDefaults(activeGraph, draft, createdCell) { // CHANGE
+        if (!createdCell) throw new Error('A created planting is required before saving spacing defaults.'); // CHANGE
+        const rows = await allocationSpacingRows(activeGraph, draft); // CHANGE: capture the final neighbor spacing after any companion layout changes succeed.
+        if (rows.length < 2) throw new Error('No active companion set is available to save.'); // CHANGE
+        const offsets = spacingBedOffsetForCell(createdCell, draft.bed); // CHANGE
+        rows[0] = { ...rows[0], ...spacingIdentityForCell(createdCell), spacingXCm: layoutNumberOrNull(createdCell.getAttribute?.('spacing_x_cm')) ?? rows[0].spacingXCm, spacingYCm: layoutNumberOrNull(createdCell.getAttribute?.('spacing_y_cm')) ?? rows[0].spacingYCm, offsetXCm: offsets.x, offsetYCm: offsets.y }; // CHANGE
+        const validation = validateSpacingDraft(rows); // CHANGE
+        if (!validation.ok) throw new Error(validation.errors.join('\n')); // CHANGE
+        await CompanionSetLayoutDefaultModel.save(rows); // CHANGE: timing recommendations are never written from an allocation.
+    } // CHANGE
+
     async function proposeLifecycleForDemandWindow(options = {}) {
         try {
             const targetStartISO = String(options.targetStartISO || options.demandStartISO || "").trim();
@@ -16621,7 +16937,7 @@ Draw.loadPlugin(function (ui) {
         const varietyId = draftVarietyId(draft);
         const methodId = draftMethodId(draft);
         const missing = [];
-        const plant = plantId != null ? await PlantModel.loadById(plantId) : null;
+        const plant = plantId != null ? await resolveEffectivePlant(plantId, varietyId) : null; // CHANGE: variety method defaults satisfy the same lifecycle default lookup.
         const taskTemplate = await resolveTaskTemplate({ cell: null, plantId, varietyId, methodId });
         if (!plant || !normId(plant.default_planting_method)) missing.push('method');
         if (!taskTemplate || taskTemplate.source === 'method_builtin' || taskTemplate.source === 'none' || taskTemplate.source === 'unknown') missing.push('tasks');
@@ -16645,19 +16961,15 @@ Draw.loadPlugin(function (ui) {
         const methodId = draftMethodId(draft);
         const methodCategoryId = draftMethodCategoryId(draft, methodId);
         const saved = [];
-        const plant = await PlantModel.loadById(plantId);
-        const patch = {};
-        if (plant && !normId(plant.default_planting_method)) {
-            patch.default_planting_method = methodId;
-            patch.default_planting_method_category = methodCategoryId;
-        }
-        if (draft.lifecycle && draft.lifecycle.effectiveTransplantDays != null && plant && finiteNumberOrNull(plant.days_transplant) == null) {
-            patch.days_transplant = Number(draft.lifecycle.effectiveTransplantDays);
-        }
-        if (Object.keys(patch).length) {
-            await PlantModel.update(plantId, patch);
-            saved.push('method');
-        }
+        if (draft.saveLifecycleDefaults) { // CHANGE: lifecycle defaults always require explicit opt-in, including first-time allocations.
+            const patch = { default_planting_method: methodId, default_planting_method_category: methodCategoryId, days_transplant: draft.lifecycle.effectiveTransplantDays, harvest_window_days: draft.lifecycle.harvestWindowDays }; // CHANGE
+            if (varietyId != null) { // CHANGE
+                const variety = await PlantVarietyModel.loadById(varietyId); // CHANGE
+                if (!variety || Number(variety.plant_id) !== plantId) throw new Error('The selected variety is no longer available.'); // CHANGE
+                await PlantVarietyModel.update({ varietyId, overrides: { ...variety.overridesObject(), ...patch } }); // CHANGE: merge rather than replace unrelated variety overrides.
+            } else await PlantModel.update(plantId, patch); // CHANGE
+            saved.push('lifecycle'); // CHANGE
+        } // CHANGE
         const status = options.defaultStatus || await resolveAllocationDefaultStatus(draft);
         if ((status.missing || []).includes('tasks')) {
             await TaskTemplateModel.saveForSelection({
@@ -16686,7 +16998,7 @@ Draw.loadPlugin(function (ui) {
         const lifecycle = { ok: true, status: warnings.length ? 'warning' : 'compatible', warnings, result, attributePatch,
             methodId: inputs.methodId, methodCategoryId: inputs.methodCategoryId, planningMode: inputs.planningMode,
             startISO: inputs.startISO, primaryDateISO: primaryDateFromSowDate(inputs.startISO, inputs.methodId, inputs.plant.days_transplant),
-            effectiveTransplantDays: inputs.plant.days_transplant, growthStageKey: inputs.plant.growth_stage_key || DEFAULT_GROWTH_STAGE_KEY,
+            effectiveTransplantDays: inputs.plant.days_transplant, harvestWindowDays: inputs.harvestWindowDays, growthStageKey: inputs.plant.growth_stage_key || DEFAULT_GROWTH_STAGE_KEY, // CHANGE: retain reusable harvest duration, separate from dated occurrences.
             growthStageLabel: inputs.plant.growth_stage_label || DEFAULT_GROWTH_STAGE_LABEL,
             taskPreview: tasks, taskTemplate, taskTemplateSource: options.taskTemplateSource || 'explicit' };
         return Object.assign({}, draft, { lifecycle, taskPreview: tasks, methodId: inputs.methodId, methodCategoryId: inputs.methodCategoryId,
@@ -16716,10 +17028,12 @@ Draw.loadPlugin(function (ui) {
         const city = current.city instanceof CityClimate ? current.city : new CityClimate(current.city || {});
         if (options.isCurrent && !options.isCurrent()) return { action: 'cancel' };
         const target = allocationSchedulerTarget(current);
+        const relationships = await listAllocationOverlapRelationships(draftPlantId(current)); // CHANGE: fetch read-only timing metadata before opening the dialog.
         return await new Promise((resolve, reject) => {
             let settled = false;
             const finish = value => { if (!settled) { settled = true; resolve(value); } };
-            const draftContext = { draft: current, defaultStatus: options.defaultStatus, isCurrent: options.isCurrent,
+            const draftContext = { draft: current, defaultStatus: options.defaultStatus, isCurrent: options.isCurrent, revalidateDraft: options.revalidateDraft, // CHANGE
+                relationships, // CHANGE: reuse direction-aware scheduler timing metadata.
                 onPreview: next => finish({ action: options.previewOnly ? 'preview' : 'create', draft: next }), onCancel: () => finish({ action: 'cancel' }) };
             buildScheduleDialog(ui, target, [plant], [city], null, {
                 selectedPlant: plant, earliestFeasibleSowDate: parseISODateUTCValue(target.getAttribute('sow_date')),
@@ -16752,12 +17066,9 @@ Draw.loadPlugin(function (ui) {
     }
 
     function spacingBedOffsetForCell(cell, bed) {
-        const pxPerCm = 5 * 0.18;
-        const rect = graphRectForCell(cell);
-        const bedRect = graphRectForCell(bed);
-        return {
-            x: layoutNumberOrNull(cell?.getAttribute?.('layout_offset_x_cm')) ?? (rect && bedRect ? (rect.x - bedRect.x) / pxPerCm : 0),
-            y: layoutNumberOrNull(cell?.getAttribute?.('layout_offset_y_cm')) ?? (rect && bedRect ? (rect.y - bedRect.y) / pxPerCm : 0)
+        return { // CHANGE: group-local offsets are independent of the containing bed's origin.
+            x: layoutNumberOrNull(cell?.getAttribute?.('layout_offset_x_cm')) ?? layoutNumberOrNull(cell?.getAttribute?.('companion_offset_x_cm')) ?? 0, // CHANGE: offsets move the internal lattice, rather than the group's bed position.
+            y: layoutNumberOrNull(cell?.getAttribute?.('layout_offset_y_cm')) ?? layoutNumberOrNull(cell?.getAttribute?.('companion_offset_y_cm')) ?? 0 // CHANGE
         };
     }
 
@@ -16793,9 +17104,106 @@ Draw.loadPlugin(function (ui) {
         }); // CHANGE: companion-set defaults persist only ordinary planting layout fields.
     }
 
+    /** Bed-wide relationships deliberately ignore spatial intersection; dates are inclusive. */ // CHANGE
+    function summarizeBedRelationships(occupancy, bedId, startISO, endISO, excludeGroupId = '') { // CHANGE
+        const summary = { companion: [], incompatible: [], unknown: [], unresolved: [] }; // CHANGE
+        const seen = new Set(); // CHANGE
+        for (const item of occupancy || []) { // CHANGE
+            const id = String(item.groupId || item.cellId || ''); // CHANGE
+            if (String(item.bedId || '') !== String(bedId || '') || id === String(excludeGroupId) || seen.has(id)) continue; // CHANGE
+            seen.add(id); // CHANGE
+            const start = String(item.bedEntryISO || ''), end = String(item.harvestEndISO || ''); // CHANGE
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || start > end) { summary.unresolved.push(item); continue; } // CHANGE
+            if (!startISO || !endISO || startISO > endISO || start > endISO || end < startISO) continue; // CHANGE
+            const kind = ['companion', 'incompatible'].includes(item.conflictKind) ? item.conflictKind : 'unknown'; // CHANGE
+            summary[kind].push(Object.assign({}, item, { overlapStartISO: start > startISO ? start : startISO, overlapEndISO: end < endISO ? end : endISO })); // CHANGE
+        } // CHANGE
+        return summary; // CHANGE
+    } // CHANGE
+
+    /** Resolve relationship classifications once, using the same forward/inverse scheduler database policy. */ // CHANGE
+    async function companionBedRelationships(activeGraph, selectedCell) { // CHANGE
+        const model = activeGraph.getModel(), module = findGardenModuleAncestor(model, selectedCell); // CHANGE
+        const bed = findContainingBedForScheduleCell(selectedCell), window = sourceOccupancyWindowForDerived(selectedCell); // CHANGE
+        const tiler = globalThis.window.USL && globalThis.window.USL.tiler; // CHANGE
+        if (!module || !bed || !window || !tiler || !tiler.listPlantingFootprints) return null; // CHANGE
+        const relations = await listAllocationOverlapRelationships(cellPlantId(selectedCell)); // CHANGE
+        const byPlant = new Map(relations.map(item => [String(item.companionPlantId), item])); // CHANGE
+        const occupancy = tiler.listPlantingFootprints(module, { includeUndatedOccupancy: true }).map(item => // CHANGE
+            Object.assign({}, item, { conflictKind: byPlant.get(String(item.plantId))?.conflictKind || 'unknown' })); // CHANGE
+        return summarizeBedRelationships(occupancy, bed.id, window.startISO, window.endISO, selectedCell.id); // CHANGE
+    } // CHANGE
+
+    /** Relevant graph state guards read-only previews across asynchronous relationship lookups. */ // CHANGE
+    function spacingCellRevision(cell) { // CHANGE
+        const names = ['plant_id', 'variety_id', 'growth_stage_key', 'spacing_x_cm', 'spacing_y_cm', 'veg_diameter_cm', 'layout_offset_x_cm', 'layout_offset_y_cm', 'disabled_plants', 'plant_count', 'plant_yield', 'sow_date', 'transplant_date', 'harvest_start', 'harvest_end', 'lifespan_start', 'lifespan_end']; // CHANGE
+        return JSON.stringify([cell.getGeometry(), cell.getStyle?.() || cell.style || '', names.map(name => cell.getAttribute(name))]); // CHANGE
+    } // CHANGE
+
+    /** Generate touching rows in a common local frame; effective diameters are frozen in the resulting draft. */ // CHANGE
+    function generateCompanionPairLayout(activeGraph, rows, pattern = 'aligned') { // CHANGE
+        if (rows.length !== 2 || !['aligned', 'staggered'].includes(pattern)) throw new Error('Choose two plantings and a row layout.'); // CHANGE
+        const initial = buildSpacingPreviewModel(activeGraph, rows).rows; // CHANGE
+        if (initial.length !== 2 || initial.some(row => !row.groupPreview)) throw new Error('Planting preview tools are unavailable.'); // CHANGE
+        const pxPerCm = 5 * 0.18, previews = initial.map(row => row.groupPreview); // CHANGE
+        const diameters = previews.map(preview => preview.iconDiameterPx), pitch = Math.max(...diameters); // CHANGE
+        const radiusSum = (diameters[0] + diameters[1]) / 2; // CHANGE
+        const separation = pattern === 'staggered' ? Math.sqrt(radiusSum * radiusSum - pitch * pitch / 4) : radiusSum; // CHANGE
+        if (!Number.isFinite(separation) || separation <= 0 || 2 * separation < pitch - 1e-7) throw new Error('Staggered touching rows cannot fit these circle sizes without intersecting. Use Aligned or manual spacing.'); // CHANGE
+        const frame = rows[0].rect, baseBounds = previews[0].contentBounds; // CHANGE
+        const top = Math.max(...previews.map(preview => preview.contentBounds.minY)); // CHANGE
+        const bounds = { minX: baseBounds.minX, maxX: baseBounds.maxX, minY: top, maxY: baseBounds.maxY }; // CHANGE
+        return rows.map((row, index) => Object.assign({}, row, { // CHANGE
+            rect: Object.assign({}, frame), modelRect: rows[0].modelRect, rotationDeg: rows[0].rotationDeg, // CHANGE
+            spacingXCm: pitch / pxPerCm, spacingYCm: 2 * separation / pxPerCm, vegDiameterCm: diameters[index] / pxPerCm, // CHANGE
+            offsetXCm: (index && pattern === 'staggered' ? pitch / 2 : 0) / pxPerCm, // CHANGE
+            offsetYCm: (top + pitch / 2 + index * separation - previews[index].contentBounds.minY - separation) / pxPerCm, // CHANGE
+            clipBounds: bounds, resetDisabled: true, generatedPattern: pattern, strictFootprint: false // CHANGE
+        })); // CHANGE
+    } // CHANGE
+
+    /** Resolve saved defaults before generating a pair; the proposed row is a descriptor, never a graph cell. */ // CHANGE
+    async function prepareCompanionPair(activeGraph, selectedCell, companionRow, options = {}) { // CHANGE
+        const context = await buildSpacingLayoutRows(activeGraph, selectedCell); // CHANGE
+        const source = context.rows.find(row => row.cellId === String(selectedCell.id)); // CHANGE
+        if (!source) throw new Error('The selected planting is no longer available.'); // CHANGE
+        const target = Object.assign({}, companionRow, { enabled: true, previewOnly: false }); // CHANGE
+        let rows = [Object.assign({}, source, { enabled: true, previewOnly: false }), target]; // CHANGE
+        if (target.proposed) rows[1] = Object.assign({}, target, { rect: Object.assign({}, source.rect), modelRect: source.modelRect, rotationDeg: source.rotationDeg }); // CHANGE
+        const setInfo = await CompanionSetLayoutDefaultModel.loadForRows(rows); // CHANGE
+        let sourceLabel = 'Custom'; // CHANGE
+        if (setInfo.default) { // CHANGE
+            rows = rows.map(row => Object.assign(rowWithAppliedLayout(row, setDefaultRowForSpacingRow(setInfo.default, row)), { strictFootprint: true })); // CHANGE
+            sourceLabel = 'Saved layout'; // CHANGE
+        } else { // CHANGE
+            const legacySet = await CompanionLayoutGroupDefaultModel.load([source.plantId, target.plantId], source.plantId); // CHANGE
+            const relationship = (await companionRelationshipMapForPlant(source.plantId)).get(String(target.plantId)); // CHANGE
+            const legacy = companionLayoutDefaultsForRelationship(relationship); // CHANGE
+            const hasLegacy = relationship && [relationship.layoutTemplate, legacy.spacingXCm, legacy.spacingYCm, legacy.offsetXCm, legacy.offsetYCm].some(value => value != null && value !== ''); // CHANGE
+            if (legacySet?.rows?.length) { // CHANGE
+                rows = rows.map(row => Object.assign(rowWithAppliedLayout(row, legacySet.rows.find(saved => String(saved.plantId) === String(row.plantId))), { strictFootprint: true })); // CHANGE
+                sourceLabel = 'Saved layout'; // CHANGE
+            } else if (hasLegacy) { // CHANGE
+                rows[1] = Object.assign(rowWithAppliedLayout(rows[1], resolveCompanionLayout(selectedCell, target.plant || { spacing_x_cm: target.spacingXCm, spacing_y_cm: target.spacingYCm }, relationship)), { strictFootprint: true }); // CHANGE
+                sourceLabel = 'Saved layout'; // CHANGE
+            } else if (options.generate !== false) { rows = generateCompanionPairLayout(activeGraph, rows); sourceLabel = 'Aligned'; } // CHANGE
+        } // CHANGE
+        if (sourceLabel === 'Saved layout') { // CHANGE
+            const sourcePreview = buildSpacingPreviewModel(activeGraph, [source]).rows[0]?.groupPreview; // CHANGE
+            rows = rows.map(row => Object.assign({}, row, { clipBounds: sourcePreview?.contentBounds, strictFootprint: true })); // CHANGE
+        } // CHANGE
+        return { scope: 'companion', selectedId: source.cellId, rows, layoutSource: sourceLabel, pairTargetId: target.cellId, // CHANGE
+            setDefault: setInfo.default, hasSetDefault: !!setInfo.default, companionTargets: [target] }; // CHANGE
+    } // CHANGE
+
     async function buildSpacingLayoutRows(activeGraph, selectedCell) {
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         const context = spacingLayoutContextForCell(activeGraph, selectedCell);
+        const bedRelationships = await companionBedRelationships(activeGraph, selectedCell); // CHANGE
+        if (bedRelationships) { // CHANGE
+            context.cellIds = Array.from(new Set([...(context.cellIds || []), ...bedRelationships.companion.map(item => item.groupId)])); // CHANGE
+            context.enabledIds = Array.from(new Set([...(context.enabledIds || context.cellIds || []), ...bedRelationships.companion.map(item => item.groupId)])); // CHANGE
+        } // CHANGE
         const enabledIds = new Set((context.enabledIds || context.cellIds || []).map(id => String(id || '')));
         const rows = [];
         for (const cellId of context.cellIds || []) {
@@ -16822,7 +17230,10 @@ Draw.loadPlugin(function (ui) {
                 spacingYCm: layoutNumberOrNull(cell.getAttribute?.('spacing_y_cm')) ?? layoutNumberOrNull(cell.getAttribute?.('spacing_cm')) ?? defaults.spacingYCm,
                 offsetXCm: offsets.x,
                 offsetYCm: offsets.y,
-                plantDefaultLayout: spacingPlantDefaultLayout(plant),
+                plantDefaultLayout: spacingPlantDefaultLayout(plant), plant, // CHANGE
+                vegDiameterCm: layoutNumberOrNull(cell.getAttribute?.('veg_diameter_cm')) ?? defaults.vegDiameterCm, // CHANGE
+                rotationDeg: Number(activeGraph.getCellStyle?.(cell)?.rotation || 0), // CHANGE
+                modelRect: Object.assign({}, cell.getGeometry()), cellRevision: spacingCellRevision(cell), // CHANGE
                 rect: graphRectForCell(cell),
                 bedId: bed && bed.id ? String(bed.id) : '', // CHANGE: spacing preview can hide and redraw the containing bed.
                 bedRect: graphRectForCell(bed)
@@ -16830,8 +17241,10 @@ Draw.loadPlugin(function (ui) {
         }
         const activeRows = rows.filter(row => row.enabled && row.plantId != null);
         const setInfo = activeRows.length > 1 ? await CompanionSetLayoutDefaultModel.loadForRows(activeRows) : { exactKey: '', broadKey: '', default: null };
-        return Object.assign({}, context, {
-            rows,
+        const companionTargets = bedRelationships && !bedRelationships.incompatible.length // CHANGE
+            ? bedRelationships.companion.map(item => rows.find(row => row.cellId === item.groupId)).filter(Boolean) : []; // CHANGE
+        return Object.assign({}, context, { // CHANGE
+            rows, companionTargets, bedRelationships, layoutSource: setInfo.default && activeRows.every(row => spacingLayoutMatches(row, setDefaultRowForSpacingRow(setInfo.default, row))) ? 'Saved layout' : 'Custom', // CHANGE
             activeSetKey: setInfo.exactKey,
             activeBroadSetKey: setInfo.broadKey,
             setDefault: setInfo.default,
@@ -16903,16 +17316,16 @@ Draw.loadPlugin(function (ui) {
         const sourceRows = Array.isArray(activeGraphOrRows) ? activeGraphOrRows : maybeRows;
         const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
         const previewRows = normalizeSpacingDraftRows(sourceRows).filter(row => row.enabled || row.previewOnly).map(row => { // CHANGE: bed previews include unchanged plantings as upright context.
-            const cell = activeGraph && row.cellId ? graphCellById(activeGraph, row.cellId) : null;
-            if (tiler && typeof tiler.buildDraftTilerGroupPreview === 'function' && cell) {
+            const cell = activeGraph && row.cellId ? graphCellById(activeGraph, row.cellId) : null; // CHANGE
+            if (tiler && typeof tiler.buildDraftTilerGroupPreview === 'function' && (cell || row.proposed)) { // CHANGE
                 const fallbackRect = row.rect || { x: 0, y: 0, width: 120, height: 80 };
-                const previewOpts = row.previewUnrotated ? { rotationDeg: 0 } : {}; // CHANGE: bed-scoped spacing previews render upright even when the diagram bed is rotated.
-                const preview = tiler.buildDraftTilerGroupPreview(activeGraph, cell, Object.assign({}, row, {
-                    rect: fallbackRect,
-                    maxCircles: 1000
-                }), previewOpts); // CHANGE: spacing drafts use a read-only copy of the real tiler layout.
+                const previewOpts = row.previewUnrotated ? { rotationDeg: 0 } : { rotationDeg: row.rotationDeg }; // CHANGE // CHANGE: bed-scoped spacing previews render upright even when the diagram bed is rotated.
+                const draft = Object.assign({}, row, { rect: fallbackRect, maxCircles: 1000 }); // CHANGE
+                const preview = cell ? tiler.buildDraftTilerGroupPreview(activeGraph, cell, draft, previewOpts) // CHANGE
+                    : tiler.buildUnsavedTilerGroupPreview(activeGraph, { cellId: row.cellId, rect: fallbackRect, attributes: row.attributes || {} }, draft, previewOpts); // CHANGE // CHANGE: spacing drafts use a read-only copy of the real tiler layout.
                 if (preview && preview.status === 'ok') {
                     const dots = { circles: preview.circles || [], total: preview.total || 0, summarized: !!preview.capped, clamped: false };
+                    if (row.strictFootprint && (preview.omitted > 0 || preview.clipped > 0)) return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, groupPreview: preview, invalid: true, warning: 'Saved layout exceeds the chosen planting footprint. Adjust its spacing or offsets.' }); // CHANGE
                     if (Number(preview.actual != null ? preview.actual : preview.total) <= 0) {
                         return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, invalid: !row.previewOnly, warning: row.previewOnly ? '' : 'No plants remain inside the planting area.' }); // CHANGE: preview-only bed rows cannot block Apply.
                     }
@@ -16964,21 +17377,36 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-    async function applyLayoutRowsToGraph(activeGraph, rows) {
+    function applyLayoutRowsToGraph(activeGraph, rows) { // CHANGE: synchronous edits can join the atomic allocation transaction.
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         if (!activeGraph || !model) throw new Error('Graph is unavailable.');
         const editable = normalizeSpacingDraftRows(rows).filter(row => row.enabled);
-        const geometryValidation = validateSpacingDraftGeometry(activeGraph, editable);
+        const geometryValidation = validateSpacingDraftGeometry(activeGraph, editable); // CHANGE
+        const preview = buildSpacingPreviewModel(activeGraph, editable); // CHANGE
+        if (preview.status === 'invalid') throw new Error(preview.warning || 'Invalid planting layout.'); // CHANGE
         if (!geometryValidation.ok) throw new Error(geometryValidation.errors.join('\n')); // CHANGE: prevent zero-plant offset commits.
         model.beginUpdate();
+        const edit = model.currentEdit, start = edit?.changes?.length || 0; // CHANGE: spacing Apply is atomic if a retile fails.
         try {
             const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
             editable.forEach(row => {
                 const cell = graphCellById(activeGraph, row.cellId);
-                if (!cell) return;
-                applyCellAttributePatch(cell, plantingLayoutAttributePatch(row), model);
+                if (!cell || row.cellRevision && row.cellRevision !== spacingCellRevision(cell)) throw new Error('The planting changed. Reopen Spacing.'); // CHANGE
+                const result = preview.rows.find(item => item.cellId === row.cellId)?.groupPreview; // CHANGE
+                const patch = plantingLayoutAttributePatch(row); // CHANGE
+                if (row.clipBounds && result) patch.disabled_plants = JSON.stringify(result.disabledSlots); // CHANGE
+                if (row.generatedPattern) { patch.companion_layout_interplant = ''; patch.companion_layout_template = ''; patch.bed_fit_width = '0'; patch.bed_fit_height = '0'; patch.bed_auto_fit = '0'; } // CHANGE
+                if (row.modelRect && row.generatedPattern) { // CHANGE
+                    const geometry = cell.getGeometry().clone(); // CHANGE
+                    Object.assign(geometry, row.modelRect); model.setGeometry(cell, geometry); // CHANGE
+                    activeGraph.setCellStyles?.('rotation', String(row.rotationDeg || 0), [cell]); // CHANGE
+                } // CHANGE
+                applyCellAttributePatch(cell, patch, model); // CHANGE
                 if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(activeGraph, cell, { inTransaction: true, preferInPlace: true });
             });
+        } catch (error) { // CHANGE
+            if (edit?.changes) { const changes = edit.changes.splice(start); for (let index = changes.length - 1; index >= 0; index--) changes[index].execute(); } // CHANGE
+            throw error; // CHANGE
         } finally {
             model.endUpdate();
         }
@@ -17069,14 +17497,22 @@ Draw.loadPlugin(function (ui) {
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         if (!activeGraph || !model) throw new Error('Graph is unavailable.');
         const normalized = normalizeSpacingDraftRows(rows);
+        const pair = normalized.filter(row => row.enabled && row.generatedPattern); // CHANGE
+        if (pair.length === 2) { // CHANGE
+            const selected = graphCellById(activeGraph, pair[0].cellId); // CHANGE
+            const summary = selected ? await companionBedRelationships(activeGraph, selected) : null; // CHANGE
+            if (!summary || summary.incompatible.length || !summary.companion.some(item => item.groupId === pair[1].cellId)) throw new Error('The companion relationships changed. Reopen Spacing.'); // CHANGE
+        } // CHANGE
         const validation = validateSpacingDraft(normalized);
         if (!validation.ok) throw new Error(validation.errors.join('\n'));
-        if (options.saveDefaults) await saveSpacingDefaultsForRows(normalized, activeGraph, model);
-        return applyLayoutRowsToGraph(activeGraph, normalized);
+        const result = applyLayoutRowsToGraph(activeGraph, normalized); // CHANGE
+        if (options.saveDefaults) await saveSpacingDefaultsForRows(normalized, activeGraph, model); // CHANGE: only persist reusable defaults after a successful graph commit.
+        return result; // CHANGE
     }
 
     const layoutTools = {
-        buildSpacingLayoutRows,
+        buildSpacingLayoutRows, // CHANGE
+        summarizeBedRelationships, prepareCompanionPair, generateCompanionPairLayout, saveSpacingDefaultsForRows, applyLayoutRowsToGraph, setDefaultRowForSpacingRow, // CHANGE
         validateSpacingDraft,
         buildSpacingPreviewModel,
         applySpacingDraft,
@@ -17092,6 +17528,7 @@ Draw.loadPlugin(function (ui) {
         openSetPlantDialog: (ui, cell) => openSetPlantDialog(ui, cell),
         listPlantOptions: listPlantOptions,
         resolvePlantForPlanCrop,
+        listAllocationOverlapRelationships, // CHANGE: reuse scheduler relationship lookup rather than duplicating its database policy.
         listGrowthStagesForPlanCrop, resolveGrowthStageForPlanCrop, // CHANGE: public Year Plan stage contract.
         resolveCityForModule,
         proposeLifecycle,
@@ -17790,6 +18227,7 @@ Draw.loadPlugin(function (ui) {
             resolveAllocationDefaultStatus,
             persistAllocationReusableDefaults,
             buildAllocationSchedulerResult, allocationSchedulerTarget, // CHANGE: test the shared calculation/draft boundaries.
+            buildAllocationTimingComparisons, allocationSpacingRows, persistAllocationSpacingDefaults, // CHANGE: exercise read-only timing and post-creation spacing persistence.
             buildScheduleViewState,
             renderScheduleSummary,
             updateScheduleSummary,

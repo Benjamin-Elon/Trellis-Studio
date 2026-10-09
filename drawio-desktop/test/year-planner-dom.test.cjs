@@ -165,6 +165,209 @@ function pickerCategoryLabels(document) {
         .map(row => row.querySelector(".yp-picker-label").textContent.trim());
 }
 
+/** Crop-count fixture includes three stages, two user varieties, and one built-in profile. */ // CHANGE
+function createCropCountHarness(options = {}) { // CHANGE
+    const harness = createYearPlannerHarness({ // CHANGE
+        plants: [{ plant_id: 1, plant_name: "Broad Bean", yield_per_plant_kg: 1, annual: 1 }], // CHANGE
+        varietiesByPlantId: { "1": [ // CHANGE
+            { plant_id: 1, variety_id: 10, variety_name: "Aquadulce", maturity_class: "early" }, // CHANGE
+            { plant_id: 1, variety_id: 11, variety_name: "Witkiem", maturity_class: "" }, // CHANGE
+            { plant_id: 1, variety_id: 12, variety_name: "Early maturity", maturity_class: "early" } // CHANGE
+        ] }, // CHANGE
+        ...options // CHANGE
+    }); // CHANGE
+    harness.window.USL = { ...harness.window.USL, scheduler: { listGrowthStagesForPlanCrop: async () => [ // CHANGE
+        { stageKey: "mature", stageLabel: "Mature", yieldRatio: 1 }, // CHANGE
+        { stageKey: "shoots", stageLabel: "Shoots", yieldRatio: 0.2 }, // CHANGE
+        { stageKey: "shell", stageLabel: "Fresh shell beans", yieldRatio: 0.7 } // CHANGE
+    ] } }; // CHANGE
+    return harness; // CHANGE
+} // CHANGE
+
+/** Check both presentations so search or staging cannot make the summary disagree with its pane. */ // CHANGE
+function assertCropPickerTotals(document, pane, expected) { // CHANGE
+    const text = `${pane} ${expected}`; // CHANGE
+    assert.equal(transferPane(document, pane).querySelector(".yp-package-transfer-pane-head > div").textContent, text); // CHANGE
+    assert.ok(Array.from(findPicker(document).querySelectorAll(".yp-package-transfer-summary > span")).some(item => item.textContent === text)); // CHANGE
+} // CHANGE
+
+test("crop picker counts distinct plants and user varieties across all included stages", async t => { // CHANGE
+    const harness = createCropCountHarness(); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    savePlan(harness, 2026, plan => { // CHANGE
+        plan.crops = [ // CHANGE
+            ...[10, 11].flatMap(varietyId => ["mature", "shoots", "shell"].map(growthStageKey => makePlanCrop({ // CHANGE
+                id: `${varietyId}_${growthStageKey}`, plant: "Broad Bean", varietyId, // CHANGE
+                variety: varietyId === 10 ? "Aquadulce" : "Witkiem", growthStageKey // CHANGE
+            }))), // CHANGE
+            makePlanCrop({ id: "default", plant: "Broad Bean", varietyId: 12, variety: "Early maturity" }), // CHANGE
+            makePlanCrop({ id: "base", plant: "Broad Bean", growthStageKey: "shoots" }) // CHANGE
+        ]; // CHANGE
+    }); // CHANGE
+    await harness.openModal(2026); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 0 user varieties"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 8); // CHANGE
+    setPickerSearch(harness, "no matching crop"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 0 user varieties"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 0); // CHANGE
+    assert.ok(Array.from(findPicker(harness.document).querySelectorAll("button")).filter(button => /all visible/.test(button.textContent)).every(button => button.disabled)); // CHANGE
+}); // CHANGE
+
+test("crop picker tree counts retain explicit units and full totals during search", async t => { // CHANGE
+    const harness = createCropCountHarness(); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    await harness.openModal(2026); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "0 crops · 0 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 2 user varieties"); // CHANGE
+    expandPickerRow(harness.document, "Annual crops"); // CHANGE
+    expandPickerRow(harness.document, "Broad Bean"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Annual crops").querySelector(".yp-picker-meta").textContent, "1 crop · 2 user varieties"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Broad Bean").querySelector(".yp-picker-meta").textContent, "2 user varieties"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Base plant").querySelector(".yp-picker-meta").textContent, "3 stages"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Trellis defaults").querySelector(".yp-picker-meta").textContent, "3 entries"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Your varieties").querySelector(".yp-picker-meta").textContent, "2 user varieties"); // CHANGE
+    setPickerSearch(harness, "Aquadulce"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Aquadulce").querySelector(".yp-picker-meta").textContent, "3 stages"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Broad Bean").querySelector(".yp-picker-meta").textContent, "2 user varieties"); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Aquadulce").querySelector(".yp-picker-meta").textContent, "2 stages"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 1 user variety"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 2 user varieties"); // CHANGE
+    assert.match(findPicker(harness.document).querySelector(".yp-package-transfer-summary").textContent, /Pending add 1 entry/); // CHANGE
+    assert.equal(findPicker(harness.document).querySelector(".yp-picker-status").textContent, "Add 1 entry, remove 0 entries"); // CHANGE
+}); // CHANGE
+
+test("crop picker totals follow staged entries, filtered bulk actions, undo, apply and cancel", async t => { // CHANGE
+    const harness = createCropCountHarness(); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    const session = await harness.openModal(2026); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    setPickerSearch(harness, "Aquadulce"); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add all visible"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 1 user variety"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 1 user variety"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 3); // CHANGE
+    setPickerSearch(harness, "Witkiem"); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add all visible"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 0 user varieties"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 3); // CHANGE
+    assert.equal(session.plan.crops.length, 0); // CHANGE
+    assert.match(findPicker(harness.document).querySelector(".yp-package-transfer-summary").textContent, /Pending add 6 entries/); // CHANGE
+    harness.findButton("Apply changes").click(); // CHANGE
+    await harness.settle(30); // CHANGE
+    assert.equal(session.plan.crops.length, 6); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    setPickerSearch(harness, "Aquadulce"); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 1 user variety"); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove all visible"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 1 user variety"); // CHANGE
+    assert.match(findPicker(harness.document).querySelector(".yp-package-transfer-summary").textContent, /Pending remove 3 entries/); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 1 user variety"); // CHANGE
+    Array.from(findPicker(harness.document).querySelectorAll("button")).find(button => button.textContent === "Cancel").click(); // CHANGE
+    Array.from(findPicker(harness.document).querySelectorAll("button")).find(button => button.textContent === "Cancel").click(); // CHANGE: discard staged removals after the existing warning.
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 0 user varieties"); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove all visible"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "0 crops · 0 user varieties"); // CHANGE
+    harness.findButton("Apply changes").click(); // CHANGE
+    await harness.settle(30); // CHANGE
+    assert.equal(session.plan.crops.length, 0); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "0 crops · 0 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 2 user varieties"); // CHANGE
+}); // CHANGE
+
+test("crop picker excludes built-ins and action-only branches when all entries are included", async t => { // CHANGE
+    const harness = createCropCountHarness({ varietiesByPlantId: { "1": [ // CHANGE
+        { plant_id: 1, variety_id: 12, variety_name: "Early maturity", maturity_class: "early" } // CHANGE
+    ] } }); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    await harness.openModal(2026); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 0 user varieties"); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add all visible"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 0 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "0 crops · 0 user varieties"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 6); // CHANGE
+    expandPickerRow(harness.document, "Annual crops"); // CHANGE
+    expandPickerRow(harness.document, "Broad Bean"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Annual crops").querySelector(".yp-picker-meta").textContent, "0 crops · 0 user varieties"); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Broad Bean").querySelector(".yp-picker-meta").textContent, "0 user varieties"); // CHANGE
+    expandPickerRow(harness.document, "Your varieties"); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Add variety...")); // CHANGE
+    assert.ok(Array.from(transferPane(harness.document, "Available").querySelectorAll("button")).find(button => button.textContent === "Add all visible").disabled); // CHANGE
+}); // CHANGE
+
+test("crop picker deduplicates garden and catalog entries using plant and variety identities", async t => { // CHANGE
+    const harness = createCropCountHarness({ // CHANGE
+        plants: [ // CHANGE
+            { plant_id: 1, plant_name: "Broad Bean", yield_per_plant_kg: 1, annual: 1 }, // CHANGE
+            { plant_id: 2, plant_name: "Runner Bean", yield_per_plant_kg: 1, annual: 1 } // CHANGE
+        ], // CHANGE
+        varietiesByPlantId: { // CHANGE
+            "1": [{ plant_id: 1, variety_id: 10, variety_name: "Favorite", maturity_class: "" }], // CHANGE
+            "2": [{ plant_id: 2, variety_id: 20, variety_name: "Favorite", maturity_class: "" }] // CHANGE
+        } // CHANGE
+    }); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    for (const id of ["garden-a", "garden-b"]) harness.addCell(harness.moduleCell, new harness.TestCell(id, { // CHANGE
+        tiler_group: "1", plant_id: "1", plant_name: "Broad Bean", variety_id: "10", variety_name: "Favorite" // CHANGE
+    })); // CHANGE
+    await harness.openModal(2026); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "2 crops · 2 user varieties"); // CHANGE
+    setPickerSearch(harness, "Favorite"); // CHANGE
+    clickTransferButton(harness.document, "Available", "Add all visible"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "2 crops · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "2 crops · 0 user varieties"); // CHANGE
+    assert.equal(transferRows(harness.document, "Included").length, 6); // CHANGE
+}); // CHANGE
+
+test("crop picker classifies deleted varieties by saved name and known varieties by profile", async t => { // CHANGE
+    const harness = createCropCountHarness(); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    savePlan(harness, 2026, plan => { // CHANGE
+        plan.crops = [ // CHANGE
+            makePlanCrop({ id: "old-mature", varietyId: 99, variety: "Old Favorite" }), // CHANGE
+            makePlanCrop({ id: "old-shoots", varietyId: "99", variety: "Old Favorite", growthStageKey: "shoots" }), // CHANGE
+            makePlanCrop({ id: "old-profile", varietyId: 98, variety: " Late maturity " }), // CHANGE
+            makePlanCrop({ id: "known-profile", varietyId: 12, variety: "Renamed saved label" }), // CHANGE
+            makePlanCrop({ id: "known-user", varietyId: 10, variety: "Early maturity" }) // CHANGE
+        ]; // CHANGE
+    }); // CHANGE
+    harness.addCell(harness.moduleCell, new harness.TestCell("deleted-garden-profile", { // CHANGE
+        tiler_group: "1", plant_id: "1", plant_name: "Broad Bean", variety_id: "97", variety_name: "Mid maturity" // CHANGE
+    })); // CHANGE
+    await harness.openModal(2026); // CHANGE
+    await harness.settle(20); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 2 user varieties"); // CHANGE
+    setPickerSearch(harness, "Old Favorite"); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 2 user varieties"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 3 user varieties"); // CHANGE
+    clickTransferButton(harness.document, "Included", "Remove all visible"); // CHANGE
+    assertCropPickerTotals(harness.document, "Included", "1 crop · 1 user variety"); // CHANGE
+    assertCropPickerTotals(harness.document, "Available", "1 crop · 3 user varieties"); // CHANGE
+}); // CHANGE
+
 function assertPickerHasLabel(harness, label) {
     setPickerSearch(harness, label);
     assert.ok(pickerRowByLabel(harness.document, label));
@@ -1002,7 +1205,7 @@ test("empty year plans save as drafts until a crop exists", async t => {
     assert.match(findStripHeader(harness.document, "crop-plan").getAttribute("aria-expanded"), /true/);
     assert.ok(harness.findButton("Save draft"));
 
-    await addCropFromPicker(harness, "Tomato (0)");
+    await addCropFromPicker(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
 
     harness.findButton("Save").click();
 
@@ -1857,7 +2060,7 @@ test("new crops without saved package defaults start with no demand unit choices
     });
     t.after(() => harness.dom.window.close());
     const session = await harness.openModal(2026);
-    await addCropFromPicker(harness, "Tomato (0)");
+    await addCropFromPicker(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
 
     assert.deepEqual(Array.from(session.plan.crops[0].packages), []);
     const addDemand = findDemandPackageButton(findStripDetails(harness.document, "demand")); // CHANGE
@@ -2140,8 +2343,8 @@ test("Tree picker dirty close guard covers cancel, escape, outside click, and cl
     async function expectGuard(action) {
         harness.findButton("Add/Remove crops").click();
         await harness.settle(10);
-        setPickerSearch(harness, "Tomato (0)");
-        Array.from(pickerRowByLabel(harness.document, "Tomato (0)").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
+        setPickerSearch(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
+        Array.from(pickerRowByLabel(harness.document, "Tomato").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
         action();
         await harness.settle(10);
         assert.ok(findPicker(harness.document));
@@ -2517,9 +2720,9 @@ test("Add crop tree remembers expansion and collapse across picker and planner o
     harness.findButton("Add/Remove crops").click(); // CHANGE
     assert.deepEqual(pickerLabels(harness.document), ["Annual crops"]); // CHANGE
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
-    expandPickerRow(harness.document, "Tomato (0)"); // CHANGE
+    expandPickerRow(harness.document, "Tomato"); // CHANGE
     const expandedLabels = pickerLabels(harness.document); // CHANGE
-    const plantRow = pickerRowByLabel(harness.document, "Tomato (0)"); // CHANGE
+    const plantRow = pickerRowByLabel(harness.document, "Tomato"); // CHANGE
     Array.from(plantRow.querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
     closeOpenPicker(harness); // CHANGE
     assert.ok(findPicker(harness.document), "pending crop changes still require the existing discard guard"); // CHANGE
@@ -2680,12 +2883,12 @@ test("Add crop prioritizes garden crops and groups remaining plants by lifecycle
         "Perennial crops",
         "Uncategorized crops"
     ]);
-    assertPickerHasLabel(harness, "Tomato (0)");
-    assertPickerHasLabel(harness, "Basil (0)");
-    assertPickerHasLabel(harness, "Beet (0)");
-    assertPickerHasLabel(harness, "Asparagus (0)");
-    assertPickerHasLabel(harness, "Conflicted (0)");
-    assertPickerHasLabel(harness, "Mystery (0)");
+    assertPickerHasLabel(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
+    assertPickerHasLabel(harness, "Basil"); // CHANGE: plant counts now use explicit metadata.
+    assertPickerHasLabel(harness, "Beet"); // CHANGE: plant counts now use explicit metadata.
+    assertPickerHasLabel(harness, "Asparagus"); // CHANGE: plant counts now use explicit metadata.
+    assertPickerHasLabel(harness, "Conflicted"); // CHANGE: plant counts now use explicit metadata.
+    assertPickerHasLabel(harness, "Mystery"); // CHANGE: plant counts now use explicit metadata.
 });
 
 test("Add crop picker groups Trellis defaults and user varieties per plant", async t => { // CHANGE
@@ -2708,13 +2911,13 @@ test("Add crop picker groups Trellis defaults and user varieties per plant", asy
     harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
-    expandPickerRow(harness.document, "Basil (5)"); // CHANGE
+    expandPickerRow(harness.document, "Basil"); // CHANGE
     expandPickerRow(harness.document, "Trellis defaults"); // CHANGE
     expandPickerRow(harness.document, "Your varieties"); // CHANGE
 
     assert.deepEqual(pickerLabels(harness.document), [ // CHANGE
         "Annual crops", // CHANGE
-        "Basil (5)", // CHANGE
+        "Basil", // CHANGE
         "Base plant", // CHANGE
         "Trellis defaults", // CHANGE
         "Very early maturity", // CHANGE
@@ -2751,17 +2954,17 @@ test("Add crop picker shows user-only varieties flat and defaults-only add row",
     await harness.settle(10); // CHANGE
 
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
-    expandPickerRow(harness.document, "Tomato (2)"); // CHANGE
-    assert.deepEqual(pickerPlantSubtreeLabels(harness.document, "Tomato (2)"), ["Tomato (2)", "Base plant", "Add variety...", "Amish Paste", "Roma"]); // CHANGE
+    expandPickerRow(harness.document, "Tomato"); // CHANGE
+    assert.deepEqual(pickerPlantSubtreeLabels(harness.document, "Tomato"), ["Tomato", "Base plant", "Add variety...", "Amish Paste", "Roma"]); // CHANGE
 
     closeOpenPicker(harness); // CHANGE
     harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
-    expandPickerRow(harness.document, "Lettuce (1)"); // CHANGE
+    expandPickerRow(harness.document, "Lettuce"); // CHANGE
     expandPickerRow(harness.document, "Trellis defaults"); // CHANGE
     expandPickerRow(harness.document, "Your varieties"); // CHANGE
-    assert.deepEqual(pickerPlantSubtreeLabels(harness.document, "Lettuce (1)"), ["Lettuce (1)", "Base plant", "Trellis defaults", "Mid maturity", "Your varieties", "Add variety..."]); // CHANGE
+    assert.deepEqual(pickerPlantSubtreeLabels(harness.document, "Lettuce"), ["Lettuce", "Base plant", "Trellis defaults", "Mid maturity", "Your varieties", "Add variety..."]); // CHANGE
 }); // CHANGE
 
 test("Add crop picker Add variety row requests the variety editor and is not counted", async t => { // CHANGE
@@ -2780,9 +2983,9 @@ test("Add crop picker Add variety row requests the variety editor and is not cou
     harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
-    expandPickerRow(harness.document, "Lettuce (1)"); // CHANGE
+    expandPickerRow(harness.document, "Lettuce"); // CHANGE
     expandPickerRow(harness.document, "Your varieties"); // CHANGE
-    assert.ok(pickerLabels(harness.document).includes("Lettuce (1)")); // CHANGE
+    assert.ok(pickerLabels(harness.document).includes("Lettuce")); // CHANGE
 
     pickerRowByLabel(harness.document, "Add variety...").click(); // CHANGE
     await harness.settle(10); // CHANGE
@@ -2857,7 +3060,7 @@ test("Garden variety resolution preserves identity, applies yield override, and 
     harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.ok(pickerCategoryLabels(harness.document).includes("Crops in this garden"));
-    assertPickerHasLabel(harness, "Tomato (1)");
+    assertPickerHasLabel(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
     assertPickerHasLabel(harness, "Roma");
 
     Array.from(pickerRowByLabel(harness.document, "Roma").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
@@ -2909,7 +3112,7 @@ test("Add crops transfer stages additions and removals before applying", async t
     await harness.settle(10); // CHANGE
     assert.ok(transferRowByLabel(harness.document, "Included", "Tomato - Roma - Mature")); // CHANGE
     setPickerSearch(harness, "Lettuce"); // CHANGE
-    Array.from(pickerRowByLabel(harness.document, "Lettuce (0)").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
+    Array.from(pickerRowByLabel(harness.document, "Lettuce").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
     assert.equal(session.plan.crops.length, 1); // CHANGE
     assert.ok(transferRowByLabel(harness.document, "Included", "Lettuce - Mature")); // CHANGE
     setPickerSearch(harness, ""); // CHANGE
@@ -2974,9 +3177,9 @@ test("Crop change labels distinguish pending actions and remember the latest app
     harness.findButton("Add/Remove crops").click(); // CHANGE
     setPickerSearch(harness, "ReMoVeD"); // CHANGE
     assert.equal(pickerRowByLabel(harness.document, "Base plant").querySelector(".yp-package-transfer-meta").textContent, "Removed"); // CHANGE
-    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE
-    assert.ok(pickerRowByLabel(harness.document, "Lettuce (0)")); // CHANGE
-    assert.equal(pickerRowByLabel(harness.document, "Carrot (0)"), null); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Tomato")); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Lettuce")); // CHANGE
+    assert.equal(pickerRowByLabel(harness.document, "Carrot"), null); // CHANGE
     clickTransferButton(harness.document, "Available", "Add all visible"); // CHANGE
     setPickerSearch(harness, "Will add"); // CHANGE
     assert.equal(transferRows(harness.document, "Included").length, 2); // CHANGE
@@ -2997,7 +3200,7 @@ test("Crop change history ignores canceled staging and declined deletion confirm
     const harness = createYearPlannerHarness(settings); // CHANGE
     t.after(() => harness.dom.window.close()); // CHANGE
     const session = await harness.openModal(2026); // CHANGE
-    await addCropFromPicker(harness, "Tomato (1)"); // CHANGE
+    await addCropFromPicker(harness, "Tomato"); // CHANGE
     addDemand(session.plan, { cropId: session.plan.crops[0].id }); // CHANGE: linked rows activate the existing removal confirmation.
     settings.confirmResult = false; // CHANGE
     harness.findButton("Remove crop").click(); // CHANGE
@@ -3031,7 +3234,7 @@ test("Added follows identity edits and individual deletion records the updated R
     let stages = [{ stageKey: "mature", stageLabel: "Mature", yieldRatio: 1 }, { stageKey: "baby", stageLabel: "Baby", yieldRatio: 0.25 }]; // CHANGE
     harness.window.USL = { ...harness.window.USL, scheduler: { listGrowthStagesForPlanCrop: async () => stages } }; // CHANGE
     const session = await harness.openModal(2026); // CHANGE
-    await addCropFromPicker(harness, "Tomato (1)"); // CHANGE
+    await addCropFromPicker(harness, "Tomato"); // CHANGE
     const cropId = session.plan.crops[0].id; // CHANGE
     harness.setControlValue(findYearPlanField(harness.document, "varietyId", { cropId }), 10, "change"); // CHANGE
     await harness.settle(20); // CHANGE
@@ -3051,7 +3254,7 @@ test("Added follows identity edits and individual deletion records the updated R
     assert.equal(pickerRowByLabel(harness.document, "Baby").querySelector(".yp-package-transfer-meta").textContent, "Removed"); // CHANGE
     assert.equal(pickerRowByLabel(harness.document, "Mature"), null); // CHANGE
     assert.equal(pickerRowByLabel(harness.document, "Base plant"), null); // CHANGE
-    assert.equal(Array.from(pickerRowByLabel(harness.document, "Tomato (1)").querySelectorAll("button")).some(button => button.textContent === "Add"), false); // CHANGE: matching a removed variety must not expose an unrelated base Add shortcut.
+    assert.equal(Array.from(pickerRowByLabel(harness.document, "Tomato").querySelectorAll("button")).some(button => button.textContent === "Add"), false); // CHANGE: matching a removed variety must not expose an unrelated base Add shortcut.
     closeOpenPicker(harness); // CHANGE
     stages = [stages[0]]; // CHANGE
     harness.window.dispatchEvent(new harness.window.CustomEvent("usl:growthStagesSaved", { detail: { plantId: "1" } })); // CHANGE
@@ -3085,7 +3288,7 @@ test("Crop labels survive Save and planner reopening but never enter persistence
     const freshWindow = createYearPlannerHarness(); // CHANGE
     t.after(() => { harness.dom.window.close(); freshWindow.dom.window.close(); }); // CHANGE
     let session = await harness.openModal(2026); // CHANGE
-    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    await addCropFromPicker(harness, "Tomato"); // CHANGE
     Object.assign(session.plan.crops[0], makePlanCrop({ id: session.plan.crops[0].id, harvestWindowSource: "manual" })); // CHANGE: supply a valid save fixture without changing its tracked row ID.
     (harness.findButton("Save") || harness.findButton("Save draft")).click(); // CHANGE
     const committed = harness.api.PlanRepository.loadPlanForYear(harness.moduleCell, 2026); // CHANGE
@@ -3132,7 +3335,7 @@ test("Crop labels survive Save and planner reopening but never enter persistence
     session = await harness.openModal(2026); // CHANGE
     harness.findButton("Add/Remove crops").click(); // CHANGE
     setPickerSearch(harness, "Removed"); // CHANGE
-    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Tomato")); // CHANGE
 
     freshWindow.api.PlanRepository.savePlanForYear(freshWindow.moduleCell, 2026, committed); // CHANGE
     freshWindow.api.PlanRepository.saveDraftForYear(freshWindow.moduleCell, 2026, draft.plan); // CHANGE
@@ -3152,14 +3355,14 @@ test("Crop labels survive Save and planner reopening but never enter persistence
     assert.equal(transferRows(freshWindow.document, "Included").length, 0); // CHANGE
     setPickerSearch(freshWindow, ""); // CHANGE
     assert.ok(transferRowByLabel(freshWindow.document, "Included", "Tomato - Mature")); // CHANGE
-    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE: another window cannot clear the original window's history.
+    assert.ok(pickerRowByLabel(harness.document, "Tomato")); // CHANGE: another window cannot clear the original window's history.
 }); // CHANGE
 
 test("Crop change history is isolated by year and garden object even when cell IDs match", async t => { // CHANGE
     const harness = createYearPlannerHarness(); // CHANGE
     t.after(() => harness.dom.window.close()); // CHANGE
     await harness.openModal(2026); // CHANGE
-    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    await addCropFromPicker(harness, "Tomato"); // CHANGE
     const yearInput = Array.from(harness.document.querySelectorAll('input[type="number"]')).find(input => input.value === "2026"); // CHANGE
     harness.setControlValue(yearInput, 2027, "change"); // CHANGE
     await harness.settle(20); // CHANGE
@@ -3167,7 +3370,7 @@ test("Crop change history is isolated by year and garden object even when cell I
     setPickerSearch(harness, "Added"); // CHANGE
     assert.equal(transferRows(harness.document, "Included").length, 0); // CHANGE
     closeOpenPicker(harness); // CHANGE
-    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    await addCropFromPicker(harness, "Tomato"); // CHANGE
     harness.setControlValue(yearInput, 2026, "change"); // CHANGE
     await harness.settle(20); // CHANGE
     harness.findButton("Add/Remove crops").click(); // CHANGE
@@ -3185,12 +3388,12 @@ test("Crop change history is isolated by year and garden object even when cell I
     setPickerSearch(harness, "Added"); // CHANGE
     assert.equal(transferRows(harness.document, "Included").length, 0); // CHANGE
     closeOpenPicker(harness); // CHANGE
-    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    await addCropFromPicker(harness, "Tomato"); // CHANGE
     harness.findButton("Remove crop").click(); // CHANGE
     await harness.settle(20); // CHANGE
     harness.findButton("Add/Remove crops").click(); // CHANGE
     setPickerSearch(harness, "Removed"); // CHANGE
-    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE
+    assert.ok(pickerRowByLabel(harness.document, "Tomato")); // CHANGE
     closeOpenPicker(harness); // CHANGE
     harness.findButton("Clear").click(); // CHANGE
     await harness.settle(20); // CHANGE
@@ -3221,7 +3424,7 @@ test("Template replacement and draft reset clear only the affected crop history"
     template.templateBaseYear = 2026; template.year = null; // CHANGE
     harness.api.PlanRepository.saveTemplateByName("Empty layout", template); // CHANGE
     await harness.openModal(2027); // CHANGE
-    await addCropFromPicker(harness, "Tomato (0)"); // CHANGE
+    await addCropFromPicker(harness, "Tomato"); // CHANGE
     const yearInput = Array.from(harness.document.querySelectorAll('input[type="number"]')).find(input => input.value === "2027"); // CHANGE
     harness.setControlValue(yearInput, 2026, "change"); // CHANGE
     await harness.settle(20); // CHANGE
@@ -3232,7 +3435,7 @@ test("Template replacement and draft reset clear only the affected crop history"
     harness.findButton("Discard draft").click(); // CHANGE
     harness.findButton("Add/Remove crops").click(); // CHANGE
     setPickerSearch(harness, "Removed"); // CHANGE
-    assert.ok(pickerRowByLabel(harness.document, "Tomato (0)")); // CHANGE: declining reset must keep history.
+    assert.ok(pickerRowByLabel(harness.document, "Tomato")); // CHANGE: declining reset must keep history.
     closeOpenPicker(harness); // CHANGE
     settings.confirmResult = true; // CHANGE
     harness.findButton("Discard draft").click(); // CHANGE
@@ -3283,7 +3486,7 @@ test("Add crops transfer add and remove actions reset both pane scroll positions
 
     setPickerSearch(harness, "Lettuce"); // CHANGE
     setTransferScrolls(); // CHANGE
-    Array.from(pickerRowByLabel(harness.document, "Lettuce (0)").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
+    Array.from(pickerRowByLabel(harness.document, "Lettuce").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
     assertTransferScrollsReset(); // CHANGE
 
     setTransferScrolls(); // CHANGE
@@ -3492,7 +3695,7 @@ test("adding a crop selects it and syncs Plan Check filter", async t => {
     t.after(() => harness.dom.window.close());
     const session = await harness.openModal(2026);
 
-    await addCropFromPicker(harness, "Tomato (0)");
+    await addCropFromPicker(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
 
     assert.equal(session.plan.crops.length, 1);
     assert.equal(findCropFilterSelect(harness.document).value, session.plan.crops[0].id);
@@ -3508,7 +3711,7 @@ test("Add crop stores planting method category from defaults and blank defaults 
     });
     t.after(() => defaultHarness.dom.window.close());
     let session = await defaultHarness.openModal(2026);
-    await addCropFromPicker(defaultHarness, "Pepper (0)");
+    await addCropFromPicker(defaultHarness, "Pepper"); // CHANGE: plant counts now use explicit metadata.
     assert.equal(session.plan.crops[0].method, "transplant.indoor");
     assert.equal(session.plan.crops[0].methodCategoryId, "transplant");
 
@@ -3517,7 +3720,7 @@ test("Add crop stores planting method category from defaults and blank defaults 
     });
     t.after(() => fallbackHarness.dom.window.close());
     session = await fallbackHarness.openModal(2026);
-    await addCropFromPicker(fallbackHarness, "Radish (0)");
+    await addCropFromPicker(fallbackHarness, "Radish"); // CHANGE: plant counts now use explicit metadata.
     assert.equal(session.plan.crops[0].method, "direct_sow.field");
     assert.equal(session.plan.crops[0].methodCategoryId, "direct_sow");
 });
@@ -3576,7 +3779,7 @@ test("Add crop options refresh after year changes, template application, and res
     harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.ok(pickerCategoryLabels(harness.document).includes("Crops in this garden"));
-    assertPickerHasLabel(harness, "Tomato (0)");
+    assertPickerHasLabel(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
     closeOpenPicker(harness);
 
     const templateSelect = Array.from(harness.document.querySelectorAll("select")).find(candidate =>
@@ -3595,7 +3798,7 @@ test("Add crop options refresh after year changes, template application, and res
     harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.ok(pickerCategoryLabels(harness.document).includes("Crops in this garden"));
-    assertPickerHasLabel(harness, "Tomato (0)");
+    assertPickerHasLabel(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
     closeOpenPicker(harness);
 });
 
@@ -3652,8 +3855,8 @@ test("Stale Add crop loads cannot replace newer grouped options", async t => {
 
     harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
-    assertPickerHasLabel(harness, "Newer (0)");
-    assert.equal(pickerRowByLabel(harness.document, "Stale (0)"), null);
+    assertPickerHasLabel(harness, "Newer"); // CHANGE: plant counts now use explicit metadata.
+    assert.equal(pickerRowByLabel(harness.document, "Stale"), null); // CHANGE: plant counts now use explicit metadata.
     assert.equal(harness.findButton("Add crop"), null);
 });
 
@@ -4146,7 +4349,7 @@ test("Harvest date controls reject reversed ranges and allow same-day windows", 
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
     const session = await harness.openModal(2026);
-    await addCropFromPicker(harness, "Tomato (0)");
+    await addCropFromPicker(harness, "Tomato"); // CHANGE: plant counts now use explicit metadata.
     const crop = session.plan.crops[0];
     crop.useActualHarvest = false;
     crop.harvestStart = "2026-06-01";

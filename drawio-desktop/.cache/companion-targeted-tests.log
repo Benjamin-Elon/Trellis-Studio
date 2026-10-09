@@ -1,0 +1,3383 @@
+TAP version 13
+# Subtest: Allocate opportunity model groups actionable, unresolved, and satisfied crops
+ok 1 - Allocate opportunity model groups actionable, unresolved, and satisfied crops
+  ---
+  duration_ms: 8.5901
+  type: 'test'
+  ...
+# Subtest: Allocate opportunity model can narrow actionable crops to the selected week
+ok 2 - Allocate opportunity model can narrow actionable crops to the selected week
+  ---
+  duration_ms: 1.5687
+  type: 'test'
+  ...
+# Subtest: Allocate week option labels summarize date, shortage, and current status
+ok 3 - Allocate week option labels summarize date, shortage, and current status
+  ---
+  duration_ms: 2.8623
+  type: 'test'
+  ...
+# Subtest: Allocate sow-week schedule groups future demand by returned start date
+ok 4 - Allocate sow-week schedule groups future demand by returned start date
+  ---
+  duration_ms: 32.4913
+  type: 'test'
+  ...
+# Subtest: Allocate progress text reports row and action counts
+ok 5 - Allocate progress text reports row and action counts
+  ---
+  duration_ms: 1.838
+  type: 'test'
+  ...
+# Subtest: Allocate open renders a progress state before sow-week scheduling completes
+ok 6 - Allocate open renders a progress state before sow-week scheduling completes
+  ---
+  duration_ms: 149.7063
+  type: 'test'
+  ...
+# Subtest: Allocate graph proposal coordinates convert directly to screen coordinates
+ok 7 - Allocate graph proposal coordinates convert directly to screen coordinates
+  ---
+  duration_ms: 1.6238
+  type: 'test'
+  ...
+# Subtest: Allocate graph overlay coordinates are relative to the graph container
+ok 8 - Allocate graph overlay coordinates are relative to the graph container
+  ---
+  duration_ms: 1.1921
+  type: 'test'
+  ...
+# Subtest: Allocate bed badges stay anchored to distinct rendered bed states after zoom
+ok 9 - Allocate bed badges stay anchored to distinct rendered bed states after zoom
+  ---
+  duration_ms: 33.167
+  type: 'test'
+  ...
+# Subtest: Allocate close cancels a pending sow-week schedule job
+ok 10 - Allocate close cancels a pending sow-week schedule job
+  ---
+  duration_ms: 29.4267
+  type: 'test'
+  ...
+# Subtest: Allocate reuses lifecycle and bed-result checks for repeated crop and bed evaluations
+ok 11 - Allocate reuses lifecycle and bed-result checks for repeated crop and bed evaluations
+  ---
+  duration_ms: 2.4769
+  type: 'test'
+  ...
+# Subtest: Allocate debug snapshot explains first demand and shortage weeks
+ok 12 - Allocate debug snapshot explains first demand and shortage weeks
+  ---
+  duration_ms: 2.1625
+  type: 'test'
+  ...
+# Subtest: Allocate debug snapshot tolerates empty demand collections
+ok 13 - Allocate debug snapshot tolerates empty demand collections
+  ---
+  duration_ms: 1.5815
+  type: 'test'
+  ...
+# Subtest: Allocate resolves crop method context from explicit and legacy dotted methods
+ok 14 - Allocate resolves crop method context from explicit and legacy dotted methods
+  ---
+  duration_ms: 1.333
+  type: 'test'
+  ...
+# Subtest: Allocate bed result creates max-fit partial draft when full recommendation is oversized
+ok 15 - Allocate bed result creates max-fit partial draft when full recommendation is oversized
+  ---
+  duration_ms: 13.6206
+  type: 'test'
+  ...
+# Subtest: Allocate bed result keeps full-fit draft semantics
+ok 16 - Allocate bed result keeps full-fit draft semantics
+  ---
+  duration_ms: 2.7895
+  type: 'test'
+  ...
+# Subtest: Allocate repairs mismatched Year Plan method categories before lifecycle scheduling
+ok 17 - Allocate repairs mismatched Year Plan method categories before lifecycle scheduling
+  ---
+  duration_ms: 2.9592
+  type: 'test'
+  ...
+# Subtest: Allocate bed result reports category-only Year Plan methods before lifecycle scheduling
+ok 18 - Allocate bed result reports category-only Year Plan methods before lifecycle scheduling
+  ---
+  duration_ms: 2.0874
+  type: 'test'
+  ...
+# Subtest: Allocate bed result reports unsupported concrete methods before lifecycle scheduling
+ok 19 - Allocate bed result reports unsupported concrete methods before lifecycle scheduling
+  ---
+  duration_ms: 1.5879
+  type: 'test'
+  ...
+# Subtest: Allocate plugin owns launch, draft review, and one-transaction create contracts
+ok 20 - Allocate plugin owns launch, draft review, and one-transaction create contracts
+  ---
+  duration_ms: 0.7999
+  type: 'test'
+  ...
+# Subtest: coverage preview uses simulated fulfilled demand, including storage and expiry
+ok 21 - coverage preview uses simulated fulfilled demand, including storage and expiry
+  ---
+  duration_ms: 1172.4296
+  type: 'test'
+  ...
+# Subtest: coverage preview rejects missing series instead of reporting zero coverage
+ok 22 - coverage preview rejects missing series instead of reporting zero coverage
+  ---
+  duration_ms: 2.3222
+  type: 'test'
+  ...
+# Subtest: coverage preview includes household, CSA, and sales demand and caps fulfillment at demand
+ok 23 - coverage preview includes household, CSA, and sales demand and caps fulfillment at demand
+  ---
+  duration_ms: 39.8739
+  type: 'test'
+  ...
+# Subtest: allocation invalidates timing and geometry edits but ignores presentation-only changes
+ok 24 - allocation invalidates timing and geometry edits but ignores presentation-only changes
+  ---
+  duration_ms: 3.4704
+  type: 'test'
+  ...
+# Subtest: saving an edited schedule updates both previews without creating the planting
+ok 25 - saving an edited schedule updates both previews without creating the planting
+  ---
+  duration_ms: 72.3451
+  type: 'test'
+  ...
+# Subtest: crop selection requires a canvas bed or the explicit Find best bed action
+ok 26 - crop selection requires a canvas bed or the explicit Find best bed action
+  ---
+  duration_ms: 64.8177
+  type: 'test'
+  ...
+# Subtest: canvas groups resolve their bed, same-bed selections preserve edits, and bed switches reset schedules
+ok 27 - canvas groups resolve their bed, same-bed selections preserve edits, and bed switches reset schedules
+  ---
+  duration_ms: 73.2507
+  type: 'test'
+  ...
+# Subtest: unrelated, multi-selected, and foreign-module cells clear allocation targets
+ok 28 - unrelated, multi-selected, and foreign-module cells clear allocation targets
+  ---
+  duration_ms: 184.8333
+  type: 'test'
+  ...
+# Subtest: an unavailable selected bed explains its failure without substituting a suitable bed
+ok 29 - an unavailable selected bed explains its failure without substituting a suitable bed
+  ---
+  duration_ms: 137.2301
+  type: 'test'
+  ...
+# Subtest: Find best bed reports no fit and a crop or week change reevaluates the selected bed
+ok 30 - Find best bed reports no fit and a crop or week change reevaluates the selected bed
+  ---
+  duration_ms: 297.3512
+  type: 'test'
+  ...
+# Subtest: pending bed evaluations and editor results cannot restore a cleared module selection
+ok 31 - pending bed evaluations and editor results cannot restore a cleared module selection
+  ---
+  duration_ms: 129.3046
+  type: 'test'
+  ...
+# Subtest: Edit delegates to the scheduler and creation commits the exact reviewed tasks before deferred defaults
+ok 32 - Edit delegates to the scheduler and creation commits the exact reviewed tasks before deferred defaults
+  ---
+  duration_ms: 165.5994
+  type: 'test'
+  ...
+# Subtest: scheduler cancellation and invalid edits retain the accepted proposal
+ok 33 - scheduler cancellation and invalid edits retain the accepted proposal
+  ---
+  duration_ms: 175.3177
+  type: 'test'
+  ...
+# Subtest: an accepted preview creates a planting and its tasks only after explicit review confirmation
+ok 34 - an accepted preview creates a planting and its tasks only after explicit review confirmation
+  ---
+  duration_ms: 77.5921
+  type: 'test'
+  ...
+# Subtest: pending scheduler results cannot restore a closed or changed allocation proposal
+ok 35 - pending scheduler results cannot restore a closed or changed allocation proposal
+  ---
+  duration_ms: 67.0076
+  type: 'test'
+  ...
+# Subtest: view changes preserve previews while meaningful model edits clear them immediately
+ok 36 - view changes preserve previews while meaningful model edits clear them immediately
+  ---
+  duration_ms: 86.0821
+  type: 'test'
+  ...
+# Subtest: partial allocation chart and demand-served summary use one simulation of the fitting plant count
+ok 37 - partial allocation chart and demand-served summary use one simulation of the fitting plant count
+  ---
+  duration_ms: 38.5718
+  type: 'test'
+  ...
+# Subtest: Year Planner no longer owns the Allocate launcher
+ok 38 - Year Planner no longer owns the Allocate launcher
+  ---
+  duration_ms: 17.5786
+  type: 'test'
+  ...
+# Subtest: Allocate keeps accepted badge, ghost and preview while unrelated loading progress updates
+ok 39 - Allocate keeps accepted badge, ghost and preview while unrelated loading progress updates
+  ---
+  duration_ms: 62.5772
+  type: 'test'
+  ...
+# Subtest: fitted allocation updates count and supply without cumulative rounding during rotation
+ok 40 - fitted allocation updates count and supply without cumulative rounding during rotation
+  ---
+  duration_ms: 18.8614
+  type: 'test'
+  ...
+# Subtest: partial fitted allocation uses complete-row capacity and recomputes it on the other axis
+ok 41 - partial fitted allocation uses complete-row capacity and recomputes it on the other axis
+  ---
+  duration_ms: 15.3567
+  type: 'test'
+  ...
+# Subtest: Allocate classifies every overlapping crop and lookup failures remain unknown
+ok 42 - Allocate classifies every overlapping crop and lookup failures remain unknown
+  ---
+  duration_ms: 31.262
+  type: 'test'
+  ...
+# Subtest: rotated warned drafts update the HUD, ghost, timeline and reviewed creation metadata
+ok 43 - rotated warned drafts update the HUD, ghost, timeline and reviewed creation metadata
+  ---
+  duration_ms: 127.3449
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: allocation relationship API reuses forward/inverse scheduler classification without changing pairs
+ok 44 - allocation relationship API reuses forward/inverse scheduler classification without changing pairs
+  ---
+  duration_ms: 181.0867
+  type: 'test'
+  ...
+# Subtest: allocation relationship API tolerates missing identities and unavailable reference data
+ok 45 - allocation relationship API tolerates missing identities and unavailable reference data
+  ---
+  duration_ms: 24.0957
+  type: 'test'
+  ...
+# Subtest: bed relationship summaries include spatially separate crops, inclusive dates, repeated plantings, and undated occupancy
+ok 46 - bed relationship summaries include spatially separate crops, inclusive dates, repeated plantings, and undated occupancy
+  ---
+  duration_ms: 25.9027
+  type: 'test'
+  ...
+# Subtest: short-axis defaults, square ties, and explicit rotation preserve unequal spacing
+ok 47 - short-axis defaults, square ties, and explicit rotation preserve unequal spacing
+  ---
+  duration_ms: 17.9375
+  type: 'test'
+  ...
+# Subtest: physical row capacity excludes header and never forces a plant into a narrow bed
+ok 48 - physical row capacity excludes header and never forces a plant into a narrow bed
+  ---
+  duration_ms: 9.762
+  type: 'test'
+  ...
+# Subtest: oversized demand reports complete-row capacity and fitting demand remains rounded up
+ok 49 - oversized demand reports complete-row capacity and fitting demand remains rounded up
+  ---
+  duration_ms: 6.3193
+  type: 'test'
+  ...
+# Subtest: dynamic headers, fitted diameter, and committed slot counts agree in detail and LOD
+ok 50 - dynamic headers, fitted diameter, and committed slot counts agree in detail and LOD
+  ---
+  duration_ms: 117.543
+  type: 'test'
+  ...
+# Subtest: headers do not cause conflicts and separated dates do not occupy planting space
+ok 51 - headers do not cause conflicts and separated dates do not occupy planting space
+  ---
+  duration_ms: 18.447
+  type: 'test'
+  ...
+# Subtest: least occupied placement minimizes union area and keeps the first position on ties
+ok 52 - least occupied placement minimizes union area and keeps the first position on ties
+  ---
+  duration_ms: 12.756
+  type: 'test'
+  ...
+# Subtest: Allocate permits warned incompatible overlap and bed scheduling retains its block
+ok 53 - Allocate permits warned incompatible overlap and bed scheduling retains its block
+  ---
+  duration_ms: 12.0248
+  type: 'test'
+  ...
+# Subtest: rotated footprints use actual intersections rather than overlapping bounding boxes
+ok 54 - rotated footprints use actual intersections rather than overlapping bounding boxes
+  ---
+  duration_ms: 11.0777
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# Subtest: crop lifecycle classification requires exactly one lifecycle flag
+ok 55 - crop lifecycle classification requires exactly one lifecycle flag
+  ---
+  duration_ms: 3.5853
+  type: 'test'
+  ...
+# Subtest: harvest request method resolver accepts complete and legacy dotted method context
+ok 56 - harvest request method resolver accepts complete and legacy dotted method context
+  ---
+  duration_ms: 1.8106
+  type: 'test'
+  ...
+# Subtest: harvest request method resolver rejects missing or mismatched category context
+ok 57 - harvest request method resolver rejects missing or mismatched category context
+  ---
+  duration_ms: 0.8071
+  type: 'test'
+  ...
+# Subtest: growth stage ratio scales timing and layout with sqrt defaults
+ok 58 - growth stage ratio scales timing and layout with sqrt defaults
+  ---
+  duration_ms: 1.4436
+  type: 'test'
+  ...
+# Subtest: growth stage explicit layout ratios override sqrt derivation
+ok 59 - growth stage explicit layout ratios override sqrt derivation
+  ---
+  duration_ms: 0.8424
+  type: 'test'
+  ...
+# Subtest: missing and legacy saved growth stages normalize for scheduler reopen
+ok 60 - missing and legacy saved growth stages normalize for scheduler reopen
+  ---
+  duration_ms: 0.5726
+  type: 'test'
+  ...
+# Subtest: growth stage table schema and editor validation stay aligned
+ok 61 - growth stage table schema and editor validation stay aligned
+  ---
+  duration_ms: 0.8501
+  type: 'test'
+  ...
+# Subtest: lifecycle filter control reads and persists the shared crop filter preference
+ok 62 - lifecycle filter control reads and persists the shared crop filter preference
+  ---
+  duration_ms: 15.5457
+  type: 'test'
+  ...
+# Subtest: grouped crop options filter by lifecycle and auto-show hidden current selection
+ok 63 - grouped crop options filter by lifecycle and auto-show hidden current selection
+  ---
+  duration_ms: 2.5411
+  type: 'test'
+  ...
+# Subtest: empty lifecycle filter renders an explicit disabled placeholder
+ok 64 - empty lifecycle filter renders an explicit disabled placeholder
+  ---
+  duration_ms: 4.7604
+  type: 'test'
+  ...
+# Subtest: sowing-window scoring ranks inside windows before nearest outside windows
+ok 65 - sowing-window scoring ranks inside windows before nearest outside windows
+  ---
+  duration_ms: 2.1143
+  type: 'test'
+  ...
+# Subtest: sowing season selector labels include relative timing
+ok 66 - sowing season selector labels include relative timing
+  ---
+  duration_ms: 3.3813
+  type: 'test'
+  ...
+# Subtest: crop option sorting prefers suitability then name within lifecycle groups
+ok 67 - crop option sorting prefers suitability then name within lifecycle groups
+  ---
+  duration_ms: 1.6571
+  type: 'test'
+  ...
+# Subtest: proposeLifecycle returns lifecycle metadata and task preview without graph mutation
+ok 68 - proposeLifecycle returns lifecycle metadata and task preview without graph mutation
+  ---
+  duration_ms: 320.303
+  type: 'test'
+  ...
+# Subtest: proposeLifecycle can choose the earliest calculable bed-entry day in a week
+ok 69 - proposeLifecycle can choose the earliest calculable bed-entry day in a week
+  ---
+  duration_ms: 435.7975
+  type: 'test'
+  ...
+# Subtest: proposeLifecycleForDemandWindow back-schedules sow date from future demand
+ok 70 - proposeLifecycleForDemandWindow back-schedules sow date from future demand
+  ---
+  duration_ms: 7550.0599
+  type: 'test'
+  ...
+# Subtest: proposeLifecycle reports overrideable warnings separately from structural failures
+ok 71 - proposeLifecycle reports overrideable warnings separately from structural failures
+  ---
+  duration_ms: 200.0446
+  type: 'test'
+  ...
+# Subtest: Scheduler exposes Allocate resolver and draft editing contracts
+ok 72 - Scheduler exposes Allocate resolver and draft editing contracts
+  ---
+  duration_ms: 1.5043
+  type: 'test'
+  ...
+# Subtest: allocation draft target retains dates and rules without becoming a graph cell
+ok 73 - allocation draft target retains dates and rules without becoming a graph cell
+  ---
+  duration_ms: 21.5943
+  type: 'test'
+  ...
+# Subtest: allocation reusable task defaults persist actual rules rather than dated task occurrences
+ok 74 - allocation reusable task defaults persist actual rules rather than dated task occurrences
+  ---
+  duration_ms: 20.379
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# Subtest: allocation Edit opens the full scheduler with fixed crop identity and returns preview without graph writes
+ok 75 - allocation Edit opens the full scheduler with fixed crop identity and returns preview without graph writes
+  ---
+  duration_ms: 1419.8546
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# Subtest: allocation locks lifecycle by default, preserves edits when relocked, and keeps footer defaults on Tasks
+ok 76 - allocation locks lifecycle by default, preserves edits when relocked, and keeps footer defaults on Tasks
+  ---
+  duration_ms: 1571.0486
+  type: 'test'
+  ...
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-08',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-13',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# Subtest: allocation lifecycle edits solve demand and wait for capacity revalidation before Preview
+ok 77 - allocation lifecycle edits solve demand and wait for capacity revalidation before Preview
+  ---
+  duration_ms: 4728.7237
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-05-08',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# [resolveEffectivePlant] variety does not belong to plant { plantId: 2, varietyId: 0, varietyPlantId: 1 }
+# Subtest: allocation discards older fits and blocks Preview when the latest bed fit fails
+ok 78 - allocation discards older fits and blocks Preview when the latest bed fit fails
+  ---
+  duration_ms: 5952.2962
+  type: 'test'
+  ...
+# Subtest: allocation compares bed entry against all overlapping crops and omits off-axis markers
+ok 79 - allocation compares bed entry against all overlapping crops and omits off-axis markers
+  ---
+  duration_ms: 14.9815
+  type: 'test'
+  ...
+# Subtest: allocation lifecycle defaults are opt-in and merge selected-variety overrides without timing writes
+ok 80 - allocation lifecycle defaults are opt-in and merge selected-variety overrides without timing writes
+  ---
+  duration_ms: 15.8008
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-05-08',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# [resolveEffectivePlant] variety does not belong to plant { plantId: 2, varietyId: 0, varietyPlantId: 1 }
+# Subtest: allocation spacing default starts checked for new active sets and persists only after creation
+ok 81 - allocation spacing default starts checked for new active sets and persists only after creation
+  ---
+  duration_ms: 713.3587
+  type: 'test'
+  ...
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-05-08',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# [resolveEffectivePlant] variety does not belong to plant { plantId: 2, varietyId: 0, varietyPlantId: 1 }
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-05-08',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# [resolveEffectivePlant] variety does not belong to plant { plantId: 2, varietyId: 0, varietyPlantId: 1 }
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-05-08',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# [resolveEffectivePlant] variety does not belong to plant { plantId: 2, varietyId: 0, varietyPlantId: 1 }
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# Subtest: allocation spacing default starts unchecked for existing exact and broad defaults and preserves explicit choice on reopen
+ok 82 - allocation spacing default starts unchecked for existing exact and broad defaults and preserves explicit choice on reopen
+  ---
+  duration_ms: 3044.3243
+  type: 'test'
+  ...
+# Subtest: allocation recommendation lookup preserves missing timing and normalizes both stored relationship directions
+ok 83 - allocation recommendation lookup preserves missing timing and normalizes both stored relationship directions
+  ---
+  duration_ms: 11.6861
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# Subtest: allocation cancellation during revalidation cannot publish a fitted result
+ok 84 - allocation cancellation during revalidation cannot publish a fitted result
+  ---
+  duration_ms: 3341.3964
+  type: 'test'
+  ...
+# Subtest: lifecycle proposals resolve variety, plant, and method task defaults and respect explicit empty rules
+ok 85 - lifecycle proposals resolve variety, plant, and method task defaults and respect explicit empty rules
+  ---
+  duration_ms: 670.8447
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [recomputeAnchors] result {
+#   forceWriteStart: false,
+#   forceWriteEnd: false,
+#   startISO_before: '2026-04-01',
+#   latestHarvestEndISO_before: '2026-12-31',
+#   sowingSeasons: [ 'Summer (Jan 1-Dec 31)' ],
+#   climateEndDate: '2027-02-06',
+#   lastFeasibleSowDate: '2026-12-31'
+# }
+# [SCHEDULE RESULT] {
+#   rowsCount: 1,
+#   firstRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastRow: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   lastScheduledHarvestEndISO: '2026-05-08'
+# }
+# [recomputeLastHarvestFromSchedule] rows summary {
+#   count: 1,
+#   first: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   },
+#   last: {
+#     plant: 'Lettuce',
+#     method: 'direct_sow.field',
+#     sow: '2026-04-01',
+#     germ: '2026-04-06',
+#     trans: '',
+#     harvStart: '2026-05-01',
+#     harvEnd: '2026-05-08',
+#     mult: '1.00',
+#     plantsReq: ''
+#   }
+# }
+# [recomputeLastHarvestFromSchedule] scheduleEnd { lastScheduleEndISO: '2026-05-08' }
+# Subtest: full allocation scheduler cancellation and dismissal retain the draft without writes
+ok 86 - full allocation scheduler cancellation and dismissal retain the draft without writes
+  ---
+  duration_ms: 892.9779
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: full allocation scheduler preserves explicitly empty rules when returning to preview
+ok 87 - full allocation scheduler preserves explicitly empty rules when returning to preview
+  ---
+  duration_ms: 839.62
+  type: 'test'
+  ...
+# Subtest: shared allocation result preserves relative task rules, rejects crop changes, and uses the fixed Year Plan growth-stage geometry
+ok 88 - shared allocation result preserves relative task rules, rejects crop changes, and uses the fixed Year Plan growth-stage geometry
+  ---
+  duration_ms: 107.2237
+  type: 'test'
+  ...
+# Subtest: companion metadata annotates crop options without changing suitability order
+ok 89 - companion metadata annotates crop options without changing suitability order
+  ---
+  duration_ms: 0.3827
+  type: 'test'
+  ...
+# Subtest: scheduler crop combobox syncs selection and renders companion badges
+ok 90 - scheduler crop combobox syncs selection and renders companion badges
+  ---
+  duration_ms: 6.0162
+  type: 'test'
+  ...
+# Subtest: scheduler crop combobox floats outside clipped containers and clamps to viewport
+ok 91 - scheduler crop combobox floats outside clipped containers and clamps to viewport
+  ---
+  duration_ms: 3.1894
+  type: 'test'
+  ...
+# Subtest: scheduler crop combobox closes on outside click and Escape
+ok 92 - scheduler crop combobox closes on outside click and Escape
+  ---
+  duration_ms: 4.9427
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# (node:27880) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: scheduler crop combobox closes when the owning dialog is removed
+ok 93 - scheduler crop combobox closes when the owning dialog is removed
+  ---
+  duration_ms: 283.9701
+  type: 'test'
+  ...
+# Subtest: crop picker row uses custom layout without section overflow workaround
+ok 94 - crop picker row uses custom layout without section overflow workaround
+  ---
+  duration_ms: 3.5834
+  type: 'test'
+  ...
+# Subtest: derived dialogs do not persist resolved city onto the source while opening
+ok 95 - derived dialogs do not persist resolved city onto the source while opening
+  ---
+  duration_ms: 0.5225
+  type: 'test'
+  ...
+# Subtest: scheduler requires inherited city instead of silently falling back to first city
+ok 96 - scheduler requires inherited city instead of silently falling back to first city
+  ---
+  duration_ms: 1.7936
+  type: 'test'
+  ...
+# Subtest: derived save creates sibling after validation and rolls it back on save failure
+ok 97 - derived save creates sibling after validation and rolls it back on save failure
+  ---
+  duration_ms: 5.84
+  type: 'test'
+  ...
+# Subtest: existing legacy companion metadata opens as an ordinary schedule edit
+ok 98 - existing legacy companion metadata opens as an ordinary schedule edit
+  ---
+  duration_ms: 2.9533
+  type: 'test'
+  ...
+# Subtest: companion timing help shows recommended and current actual offsets
+ok 99 - companion timing help shows recommended and current actual offsets
+  ---
+  duration_ms: 2.035
+  type: 'test'
+  ...
+# Subtest: guided companion creation writes ordinary layout, not relationship identity metadata
+ok 100 - guided companion creation writes ordinary layout, not relationship identity metadata
+  ---
+  duration_ms: 0.9516
+  type: 'test'
+  ...
+# Subtest: guided companion layout patch materializes only ordinary spacing and offsets
+ok 101 - guided companion layout patch materializes only ordinary spacing and offsets
+  ---
+  duration_ms: 0.4575
+  type: 'test'
+  ...
+# Subtest: layout preview model renders no-bed and clamps companion placement
+ok 102 - layout preview model renders no-bed and clamps companion placement
+  ---
+  duration_ms: 7.1553
+  type: 'test'
+  ...
+# Subtest: spacing preview model uses tiler-faithful draft group copies with a 1000 circle cap
+ok 103 - spacing preview model uses tiler-faithful draft group copies with a 1000 circle cap
+  ---
+  duration_ms: 1.0227
+  type: 'test'
+  ...
+# Subtest: spacing preview model supports upright bed context rows without status noise
+ok 104 - spacing preview model supports upright bed context rows without status noise
+  ---
+  duration_ms: 0.4906
+  type: 'test'
+  ...
+# Subtest: active companion layout templates compute distinct placements
+ok 105 - active companion layout templates compute distinct placements
+  ---
+  duration_ms: 0.5248
+  type: 'test'
+  ...
+# Subtest: multi-companion preview model renders anchor and all companions with warnings
+ok 106 - multi-companion preview model renders anchor and all companions with warnings
+  ---
+  duration_ms: 0.9819
+  type: 'test'
+  ...
+# Subtest: saved plant-set defaults select their saved anchor when opened from another set member
+ok 107 - saved plant-set defaults select their saved anchor when opened from another set member
+  ---
+  duration_ms: 0.2248
+  type: 'test'
+  ...
+# Subtest: interplant preview offsets alternating row and column parity like the tiler
+ok 108 - interplant preview offsets alternating row and column parity like the tiler
+  ---
+  duration_ms: 0.4303
+  type: 'test'
+  ...
+# Subtest: layout patches write spacing and bed-relative offsets for current planting rows
+ok 109 - layout patches write spacing and bed-relative offsets for current planting rows
+  ---
+  duration_ms: 0.1528
+  type: 'test'
+  ...
+# Subtest: companion set layout defaults use unordered crop identities and collapse duplicates
+ok 110 - companion set layout defaults use unordered crop identities and collapse duplicates
+  ---
+  duration_ms: 0.2961
+  type: 'test'
+  ...
+# Subtest: graph-created companion pairs get an in-memory relationship before DB default save
+ok 111 - graph-created companion pairs get an in-memory relationship before DB default save
+  ---
+  duration_ms: 0.2931
+  type: 'test'
+  ...
+# Subtest: scheduler companion layout reads prefer current planting offsets over legacy companion offsets
+ok 112 - scheduler companion layout reads prefer current planting offsets over legacy companion offsets
+  ---
+  duration_ms: 0.7108
+  type: 'test'
+  ...
+# Subtest: derived schedule helpers gate companion lifecycle and compute turnover gaps
+ok 113 - derived schedule helpers gate companion lifecycle and compute turnover gaps
+  ---
+  duration_ms: 0.3498
+  type: 'test'
+  ...
+# Subtest: scheduler adjacent gap hints render before and after gaps
+ok 114 - scheduler adjacent gap hints render before and after gaps
+  ---
+  duration_ms: 0.6923
+  type: 'test'
+  ...
+# Subtest: scheduler adjacent gap hints label overlaps by occupancy start delta
+ok 115 - scheduler adjacent gap hints label overlaps by occupancy start delta
+  ---
+  duration_ms: 0.3477
+  type: 'test'
+  ...
+# Subtest: scheduler classifies occupancy overlaps by companion rating
+ok 116 - scheduler classifies occupancy overlaps by companion rating
+  ---
+  duration_ms: 0.293
+  type: 'test'
+  ...
+# Subtest: bed-first scheduler entrypoint is separate from strict planting-group scheduler
+ok 117 - bed-first scheduler entrypoint is separate from strict planting-group scheduler
+  ---
+  duration_ms: 2.0564
+  type: 'test'
+  ...
+# Subtest: scheduler start hints use selected-cluster occupancy context
+ok 118 - scheduler start hints use selected-cluster occupancy context
+  ---
+  duration_ms: 1.5054
+  type: 'test'
+  ...
+# Subtest: scheduler adjacent gap hints cap multiple overlaps and disambiguate duplicate crop names
+ok 119 - scheduler adjacent gap hints cap multiple overlaps and disambiguate duplicate crop names
+  ---
+  duration_ms: 0.6522
+  type: 'test'
+  ...
+# Subtest: scheduler adjacent gap hints hide when no comparable plantings exist
+ok 120 - scheduler adjacent gap hints hide when no comparable plantings exist
+  ---
+  duration_ms: 0.1845
+  type: 'test'
+  ...
+# Subtest: scheduler adjacent gap hints support companion-own window and turnover bases
+ok 121 - scheduler adjacent gap hints support companion-own window and turnover bases
+  ---
+  duration_ms: 0.9692
+  type: 'test'
+  ...
+# Subtest: scheduler dialog removes Layout tab while exposing diagram spacing tools
+ok 122 - scheduler dialog removes Layout tab while exposing diagram spacing tools
+  ---
+  duration_ms: 5.3021
+  type: 'test'
+  ...
+# Subtest: plant editor exposes layout defaults without a diagram preview
+ok 123 - plant editor exposes layout defaults without a diagram preview
+  ---
+  duration_ms: 1.4846
+  type: 'test'
+  ...
+# Subtest: plant editor yield inputs use tenth-step affordance without rejecting precise values
+ok 124 - plant editor yield inputs use tenth-step affordance without rejecting precise values
+  ---
+  duration_ms: 4.0764
+  type: 'test'
+  ...
+# Subtest: add variety editor focuses and temporarily highlights the variety name field
+ok 125 - add variety editor focuses and temporarily highlights the variety name field
+  ---
+  duration_ms: 10.4034
+  type: 'test'
+  ...
+# Subtest: turnover computed-window filtering rejects same-bed occupancy overlap
+ok 126 - turnover computed-window filtering rejects same-bed occupancy overlap
+  ---
+  duration_ms: 0.5847
+  type: 'test'
+  ...
+# Subtest: turnover capacity ignores overhanging cluster occupancy when bed API is present
+ok 127 - turnover capacity ignores overhanging cluster occupancy when bed API is present
+  ---
+  duration_ms: 0.4492
+  type: 'test'
+  ...
+# Subtest: turnover candidate filtering uses the computed schedule window
+ok 128 - turnover candidate filtering uses the computed schedule window
+  ---
+  duration_ms: 203.2461
+  type: 'test'
+  ...
+# Subtest: perennial crop suitability is alphabetic and date-flexible
+ok 129 - perennial crop suitability is alphabetic and date-flexible
+  ---
+  duration_ms: 0.4053
+  type: 'test'
+  ...
+# Subtest: variety options group exact Trellis defaults separately from user varieties
+ok 130 - variety options group exact Trellis defaults separately from user varieties
+  ---
+  duration_ms: 0.4061
+  type: 'test'
+  ...
+# Subtest: variety options require exact generic name and class for Trellis defaults
+ok 131 - variety options require exact generic name and class for Trellis defaults
+  ---
+  duration_ms: 0.2631
+  type: 'test'
+  ...
+# Subtest: variety picker uses flat user-only list and defaults-only add group
+ok 132 - variety picker uses flat user-only list and defaults-only add group
+  ---
+  duration_ms: 0.2572
+  type: 'test'
+  ...
+# Subtest: rendered variety dropdown keeps base plant first and source groups
+ok 133 - rendered variety dropdown keeps base plant first and source groups
+  ---
+  duration_ms: 1.2194
+  type: 'test'
+  ...
+# Subtest: manual variety maturity mismatch warns only when inference is available
+ok 134 - manual variety maturity mismatch warns only when inference is available
+  ---
+  duration_ms: 0.3627
+  type: 'test'
+  ...
+# Subtest: missing city fallback keeps Set Plant style options grouped alphabetically
+ok 135 - missing city fallback keeps Set Plant style options grouped alphabetically
+  ---
+  duration_ms: 0.1948
+  type: 'test'
+  ...
+# Subtest: date-only crop-menu scoring reuses cached windows instead of queueing recomputation
+ok 136 - date-only crop-menu scoring reuses cached windows instead of queueing recomputation
+  ---
+  duration_ms: 326.8649
+  type: 'test'
+  ...
+# Subtest: pending annual crop options render calculating hints and remain selectable
+ok 137 - pending annual crop options render calculating hints and remain selectable
+  ---
+  duration_ms: 0.8799
+  type: 'test'
+  ...
+# Subtest: crop suitability cache key changes with full growing context
+ok 138 - crop suitability cache key changes with full growing context
+  ---
+  duration_ms: 0.7762
+  type: 'test'
+  ...
+# Subtest: selected-crop date fast path selects containing cached sowing season
+ok 139 - selected-crop date fast path selects containing cached sowing season
+  ---
+  duration_ms: 0.4684
+  type: 'test'
+  ...
+# Subtest: selected-crop date fast path preserves active season when outside cached windows
+ok 140 - selected-crop date fast path preserves active season when outside cached windows
+  ---
+  duration_ms: 0.3166
+  type: 'test'
+  ...
+# Subtest: missing selected-crop cached windows require anchor recomputation fallback
+ok 141 - missing selected-crop cached windows require anchor recomputation fallback
+  ---
+  duration_ms: 0.1478
+  type: 'test'
+  ...
+# Subtest: date and filter handlers use cached fast paths
+ok 142 - date and filter handlers use cached fast paths
+  ---
+  duration_ms: 2.5955
+  type: 'test'
+  ...
+# Subtest: growth stage dropdown change recomputes scheduler anchors and harvest dates
+ok 143 - growth stage dropdown change recomputes scheduler anchors and harvest dates
+  ---
+  duration_ms: 2.008
+  type: 'test'
+  ...
+# Subtest: crop picker selection stays fresh across async refreshes
+ok 144 - crop picker selection stays fresh across async refreshes
+  ---
+  duration_ms: 6.2478
+  type: 'test'
+  ...
+# Subtest: crop changes preserve only genuine selected dates before recomputing windows
+ok 145 - crop changes preserve only genuine selected dates before recomputing windows
+  ---
+  duration_ms: 7.847
+  type: 'test'
+  ...
+# Subtest: schedule summary view state de-duplicates warning bullet messages
+ok 146 - schedule summary view state de-duplicates warning bullet messages
+  ---
+  duration_ms: 0.5982
+  type: 'test'
+  ...
+# Subtest: schedule summary renders warnings as bullet list in double-wide feasibility item
+ok 147 - schedule summary renders warnings as bullet list in double-wide feasibility item
+  ---
+  duration_ms: 3.0981
+  type: 'test'
+  ...
+# Subtest: scheduler hides duplicate harvest and context fields from main sections
+ok 148 - scheduler hides duplicate harvest and context fields from main sections
+  ---
+  duration_ms: 2.1294
+  type: 'test'
+  ...
+# Subtest: scheduler year selector owns visible date bounds and clamping
+ok 149 - scheduler year selector owns visible date bounds and clamping
+  ---
+  duration_ms: 5.6006
+  type: 'test'
+  ...
+# Subtest: today timeline boundary is blue while latest harvest remains neutral
+ok 150 - today timeline boundary is blue while latest harvest remains neutral
+  ---
+  duration_ms: 3.4256
+  type: 'test'
+  ...
+# Subtest: schedule summary keeps non-warning feasibility as plain text
+ok 151 - schedule summary keeps non-warning feasibility as plain text
+  ---
+  duration_ms: 0.8076
+  type: 'test'
+  ...
+# Subtest: lifecycle marker tooltip shows immediately and avoids native title
+ok 152 - lifecycle marker tooltip shows immediately and avoids native title
+  ---
+  duration_ms: 3.1806
+  type: 'test'
+  ...
+# Subtest: annual task preview fallback range remains sow through harvest
+ok 153 - annual task preview fallback range remains sow through harvest
+  ---
+  duration_ms: 96.9603
+  type: 'test'
+  ...
+# Subtest: perennial task preview fallback range remains lifespan start through end
+ok 154 - perennial task preview fallback range remains lifespan start through end
+  ---
+  duration_ms: 0.5058
+  type: 'test'
+  ...
+# Subtest: visible pre-sow task expands generated task timeline start
+ok 155 - visible pre-sow task expands generated task timeline start
+  ---
+  duration_ms: 101.9621
+  type: 'test'
+  ...
+# Subtest: unchecked pre-sow task does not expand generated task timeline start
+ok 156 - unchecked pre-sow task does not expand generated task timeline start
+  ---
+  duration_ms: 97.0459
+  type: 'test'
+  ...
+# Subtest: visible task after harvest extends generated task timeline end
+ok 157 - visible task after harvest extends generated task timeline end
+  ---
+  duration_ms: 113.2817
+  type: 'test'
+  ...
+# Subtest: generated task timeline renders blue today marker only inside display range
+ok 158 - generated task timeline renders blue today marker only inside display range
+  ---
+  duration_ms: 3.5787
+  type: 'test'
+  ...
+# Subtest: generated task timeline renders adaptive calendar ticks
+ok 159 - generated task timeline renders adaptive calendar ticks
+  ---
+  duration_ms: 16.4379
+  type: 'test'
+  ...
+# Subtest: growth-stage yield ratio scales resolved variety yield without changing the source plant
+ok 160 - growth-stage yield ratio scales resolved variety yield without changing the source plant
+  ---
+  duration_ms: 0.701
+  type: 'test'
+  ...
+# Subtest: existing stage database upgrades yield defaults, saves ratios and blocks inactive custom stages
+ok 161 - existing stage database upgrades yield defaults, saves ratios and blocks inactive custom stages
+  ---
+  duration_ms: 34.7207
+  type: 'test'
+  ...
+# Subtest: seeded stage yield multiplies the seeded variety override in the scheduler
+ok 162 - seeded stage yield multiplies the seeded variety override in the scheduler
+  ---
+  duration_ms: 1766.1666
+  type: 'test'
+  ...
+# Subtest: production detail/LOD tiling and rotated geometry match the reviewed proposal
+ok 163 - production detail/LOD tiling and rotated geometry match the reviewed proposal
+  ---
+  duration_ms: 3098.2118
+  type: 'test'
+  ...
+# Subtest: a single undo/redo restores the fitted group, tiles, counts and axis attributes
+ok 164 - a single undo/redo restores the fitted group, tiles, counts and axis attributes
+  ---
+  duration_ms: 951.9793
+  type: 'test'
+  ...
+# Subtest: a shallow fitted bed retains membership and axis intent during resize
+ok 165 - a shallow fitted bed retains membership and axis intent during resize
+  ---
+  duration_ms: 537.0955
+  type: 'test'
+  ...
+# Subtest: Garden Settings suppresses the garden options overlay while the dialog is open
+ok 166 - Garden Settings suppresses the garden options overlay while the dialog is open
+  ---
+  duration_ms: 11.1151
+  type: 'test'
+  ...
+# Subtest: team permission mode suppresses the garden options overlay while active
+ok 167 - team permission mode suppresses the garden options overlay while active
+  ---
+  duration_ms: 4.1244
+  type: 'test'
+  ...
+# Subtest: Garden Settings entry points route through the overlay-suppressed opener
+ok 168 - Garden Settings entry points route through the overlay-suppressed opener
+  ---
+  duration_ms: 3.5264
+  type: 'test'
+  ...
+# Subtest: planting geometry ranks bed-first overlap candidates by relationship severity
+ok 169 - planting geometry ranks bed-first overlap candidates by relationship severity
+  ---
+  duration_ms: 4.8333
+  type: 'test'
+  ...
+# Subtest: Garden Settings close can focus newly-created gardens using dashboard zoom pattern
+ok 170 - Garden Settings close can focus newly-created gardens using dashboard zoom pattern
+  ---
+  duration_ms: 8.8202
+  type: 'test'
+  ...
+# Subtest: Garden Settings can open with an empty city table so City Manager can add the first city
+ok 171 - Garden Settings can open with an empty city table so City Manager can add the first city
+  ---
+  duration_ms: 5.7769
+  type: 'test'
+  ...
+# Subtest: Garden Settings starts new garden dimensions from whole-number unit presets
+ok 172 - Garden Settings starts new garden dimensions from whole-number unit presets
+  ---
+  duration_ms: 3.7373
+  type: 'test'
+  ...
+# Subtest: Garden module and bed overlays expose exclusive mode launchers
+ok 173 - Garden module and bed overlays expose exclusive mode launchers
+  ---
+  duration_ms: 4.2572
+  type: 'test'
+  ...
+# Subtest: Garden module settings expose external margin but no internal margin
+ok 174 - Garden module settings expose external margin but no internal margin
+  ---
+  duration_ms: 9.2895
+  type: 'test'
+  ...
+# Subtest: Garden Settings exposes fixed path width presets with explicit enablement
+ok 175 - Garden Settings exposes fixed path width presets with explicit enablement
+  ---
+  duration_ms: 12.2946
+  type: 'test'
+  ...
+# Subtest: Garden bed path snapping evaluates direct neighbors and closest path presets
+ok 176 - Garden bed path snapping evaluates direct neighbors and closest path presets
+  ---
+  duration_ms: 3.9871
+  type: 'test'
+  ...
+# Subtest: Garden bed path snapping hooks creation, move, resize, Alt bypass, and overlay badges
+ok 177 - Garden bed path snapping hooks creation, move, resize, Alt bypass, and overlay badges
+  ---
+  duration_ms: 4.4275
+  type: 'test'
+  ...
+# Subtest: Garden bed path snap move policy distinguishes pointer drags, handle drags, and nudges
+ok 178 - Garden bed path snap move policy distinguishes pointer drags, handle drags, and nudges
+  ---
+  duration_ms: 5.5963
+  type: 'test'
+  ...
+# Subtest: Garden module overlay uses a single editable bed-style label input
+ok 179 - Garden module overlay uses a single editable bed-style label input
+  ---
+  duration_ms: 3.6751
+  type: 'test'
+  ...
+# Subtest: Garden module overlay repeated selected-module clicks toggle visibility without changing selection
+ok 180 - Garden module overlay repeated selected-module clicks toggle visibility without changing selection
+  ---
+  duration_ms: 5.2004
+  type: 'test'
+  ...
+# Subtest: allocation hides bed controls across lifecycle and view changes while preserving module controls
+ok 181 - allocation hides bed controls across lifecycle and view changes while preserving module controls
+  ---
+  duration_ms: 1283.0492
+  type: 'test'
+  ...
+# Subtest: Garden module overlay suppresses plan actions while irrigation mode is active
+ok 182 - Garden module overlay suppresses plan actions while irrigation mode is active
+  ---
+  duration_ms: 8.1481
+  type: 'test'
+  ...
+# Subtest: Plant group creation finalizes tiling and bed fit inside the creation transaction
+ok 183 - Plant group creation finalizes tiling and bed fit inside the creation transaction
+  ---
+  duration_ms: 3.0775
+  type: 'test'
+  ...
+# Subtest: scheduler sibling plant groups clone footprint and attrs without reusing source id
+ok 184 - scheduler sibling plant groups clone footprint and attrs without reusing source id
+  ---
+  duration_ms: 2.9856
+  type: 'test'
+  ...
+# Subtest: plant tiler exposes a read-only draft group preview helper
+ok 185 - plant tiler exposes a read-only draft group preview helper
+  ---
+  duration_ms: 2.9614
+  type: 'test'
+  ...
+# Subtest: planting groups and plant circles disable native editor connectors
+ok 186 - planting groups and plant circles disable native editor connectors
+  ---
+  duration_ms: 2.8426
+  type: 'test'
+  ...
+# Subtest: interplant companion groups offset alternating tile slots during retile
+ok 187 - interplant companion groups offset alternating tile slots during retile
+  ---
+  duration_ms: 3.2086
+  type: 'test'
+  ...
+# Subtest: Bed fit diagnostics expose a self-verifying debug surface
+ok 188 - Bed fit diagnostics expose a self-verifying debug surface
+  ---
+  duration_ms: 5.3716
+  type: 'test'
+  ...
+# Subtest: Bed fit centers only fitted axes after plant group resize
+ok 189 - Bed fit centers only fitted axes after plant group resize
+  ---
+  duration_ms: 14.8306
+  type: 'test'
+  ...
+# Subtest: Bed fit persists per-axis intent and bed resize consumes only persisted axes
+ok 190 - Bed fit persists per-axis intent and bed resize consumes only persisted axes
+  ---
+  duration_ms: 3.4011
+  type: 'test'
+  ...
+# Subtest: Garden bed resize refits before-contained groups without capturing expanded-bed neighbors
+ok 191 - Garden bed resize refits before-contained groups without capturing expanded-bed neighbors
+  ---
+  duration_ms: 3.1815
+  type: 'test'
+  ...
+# Subtest: Layering orders bed assemblies between beds and planting groups
+ok 192 - Layering orders bed assemblies between beds and planting groups
+  ---
+  duration_ms: 2.7431
+  type: 'test'
+  ...
+# Subtest: Garden module overlay exposes schedule-first planting only in bed mode
+ok 193 - Garden module overlay exposes schedule-first planting only in bed mode
+  ---
+  duration_ms: 3.9989
+  type: 'test'
+  ...
+# Subtest: Context menu omits direct empty plant group creation for garden beds
+ok 194 - Context menu omits direct empty plant group creation for garden beds
+  ---
+  duration_ms: 3.8154
+  type: 'test'
+  ...
+# Subtest: Plant Tiler exposes Allocate proposal and creation contracts
+ok 195 - Plant Tiler exposes Allocate proposal and creation contracts
+  ---
+  duration_ms: 4.3972
+  type: 'test'
+  ...
+# Subtest: lane overlay headers do not use browser title tooltips
+ok 196 - lane overlay headers do not use browser title tooltips
+  ---
+  duration_ms: 3.7317
+  type: 'test'
+  ...
+# Subtest: planting overlay has Cards, Schedule, and Spacing modes
+ok 197 - planting overlay has Cards, Schedule, and Spacing modes
+  ---
+  duration_ms: 1.7687
+  type: 'test'
+  ...
+# Subtest: team permission mode suppresses only the planting schedule panel controls
+ok 198 - team permission mode suppresses only the planting schedule panel controls
+  ---
+  duration_ms: 11.8853
+  type: 'test'
+  ...
+# Subtest: schedule-only planting overlays expose Spacing without linked tasks
+ok 199 - schedule-only planting overlays expose Spacing without linked tasks
+  ---
+  duration_ms: 3.1691
+  type: 'test'
+  ...
+# Subtest: spacing editor isolates each plant in a fixed-width row and labels inactive rows
+ok 200 - spacing editor isolates each plant in a fixed-width row and labels inactive rows
+  ---
+  duration_ms: 2.9554
+  type: 'test'
+  ...
+# Subtest: spacing editor preserves active-window preview and reserved revert gating
+ok 201 - spacing editor preserves active-window preview and reserved revert gating
+  ---
+  duration_ms: 2.2055
+  type: 'test'
+  ...
+# Subtest: spacing preview renders DOM-only draft planting group copies
+ok 202 - spacing preview renders DOM-only draft planting group copies
+  ---
+  duration_ms: 2.1577
+  type: 'test'
+  ...
+# Subtest: spacing drafts survive view refresh but clear on affected graph edits
+ok 203 - spacing drafts survive view refresh but clear on affected graph edits
+  ---
+  duration_ms: 3.6294
+  type: 'test'
+  ...
+# Subtest: selected planting overlay clamps to cluster top instead of measuring occupancy navigator bounds
+ok 204 - selected planting overlay clamps to cluster top instead of measuring occupancy navigator bounds
+  ---
+  duration_ms: 3.1947
+  type: 'test'
+  ...
+# Subtest: schedule action button mirrors Trellis user planting permissions
+ok 205 - schedule action button mirrors Trellis user planting permissions
+  ---
+  duration_ms: 2.3387
+  type: 'test'
+  ...
+# Subtest: schedule action button label uses ordinary schedule wording for all plantings
+ok 206 - schedule action button label uses ordinary schedule wording for all plantings
+  ---
+  duration_ms: 2.38
+  type: 'test'
+  ...
+# Subtest: occupancy uses navigator API with selected-group fallback
+ok 207 - occupancy uses navigator API with selected-group fallback
+  ---
+  duration_ms: 1.5944
+  type: 'test'
+  ...
+# Subtest: occupancy interval prefers transplant date, then sow date, and requires harvest end
+ok 208 - occupancy interval prefers transplant date, then sow date, and requires harvest end
+  ---
+  duration_ms: 2.2381
+  type: 'test'
+  ...
+# Subtest: derived schedule actions are gated by schedule dates and annual turnover
+ok 209 - derived schedule actions are gated by schedule dates and annual turnover
+  ---
+  duration_ms: 1.5869
+  type: 'test'
+  ...
+# Subtest: occupancy relationship badges expose only explicit turnover gaps by tooltip
+ok 210 - occupancy relationship badges expose only explicit turnover gaps by tooltip
+  ---
+  duration_ms: 2.1228
+  type: 'test'
+  ...
+# Subtest: occupancy rows select and reveal their planting group
+ok 211 - occupancy rows select and reveal their planting group
+  ---
+  duration_ms: 1.9242
+  type: 'test'
+  ...
+# Subtest: role-card multi-selection dispatches to the multi-role link renderer
+ok 212 - role-card multi-selection dispatches to the multi-role link renderer
+  ---
+  duration_ms: 3.887
+  type: 'test'
+  ...
+# Subtest: selection visual refresh event rebuilds link and schedule overlays
+ok 213 - selection visual refresh event rebuilds link and schedule overlays
+  ---
+  duration_ms: 1.73
+  type: 'test'
+  ...
+# Subtest: multi-selected role cards draw links without opening task overlays
+ok 214 - multi-selected role cards draw links without opening task overlays
+  ---
+  duration_ms: 1.641
+  type: 'test'
+  ...
+# Subtest: linked task navigation delegates hidden-card paging to the task manager
+ok 215 - linked task navigation delegates hidden-card paging to the task manager
+  ---
+  duration_ms: 1.7928
+  type: 'test'
+  ...
+# Subtest: plant-tiler sibling task highlights use blue with ordinary blue outlines
+ok 216 - plant-tiler sibling task highlights use blue with ordinary blue outlines
+  ---
+  duration_ms: 2.6619
+  type: 'test'
+  ...
+# Subtest: standard link overlays use the native editor overlay pane
+ok 217 - standard link overlays use the native editor overlay pane
+  ---
+  duration_ms: 1.8202
+  type: 'test'
+  ...
+# Subtest: standard link overlays and ordinary outlines use blue fallback color with half-width link strokes
+ok 218 - standard link overlays and ordinary outlines use blue fallback color with half-width link strokes
+  ---
+  duration_ms: 1.7446
+  type: 'test'
+  ...
+# Subtest: standard link overlays skip reciprocal roadmap object dependencies
+ok 219 - standard link overlays skip reciprocal roadmap object dependencies
+  ---
+  duration_ms: 1.7671
+  type: 'test'
+  ...
+# Subtest: standard link overlays navigate on plain left click without a vertex shift fallback
+ok 220 - standard link overlays navigate on plain left click without a vertex shift fallback
+  ---
+  duration_ms: 2.772
+  type: 'test'
+  ...
+# Subtest: task overlay guide lines keep the custom connection layer
+ok 221 - task overlay guide lines keep the custom connection layer
+  ---
+  duration_ms: 1.4902
+  type: 'test'
+  ...
+# Subtest: selected linked vertices draw direct connections even when task overlay is active
+ok 222 - selected linked vertices draw direct connections even when task overlay is active
+  ---
+  duration_ms: 5.2766
+  type: 'test'
+  ...
+# Subtest: standard link endpoints use a five pixel center offset
+ok 223 - standard link endpoints use a five pixel center offset
+  ---
+  duration_ms: 2.9371
+  type: 'test'
+  ...
+# Subtest: standard link labels stagger visible same-side labels by fifteen pixels
+ok 224 - standard link labels stagger visible same-side labels by fifteen pixels
+  ---
+  duration_ms: 3.591
+  type: 'test'
+  ...
+# Subtest: task overlay guide lines keep centered anchors
+ok 225 - task overlay guide lines keep centered anchors
+  ---
+  duration_ms: 1.7919
+  type: 'test'
+  ...
+# Subtest: crop picker counts distinct plants and user varieties across all included stages
+ok 226 - crop picker counts distinct plants and user varieties across all included stages
+  ---
+  duration_ms: 1029.143
+  type: 'test'
+  ...
+# Subtest: crop picker tree counts retain explicit units and full totals during search
+ok 227 - crop picker tree counts retain explicit units and full totals during search
+  ---
+  duration_ms: 316.0161
+  type: 'test'
+  ...
+# Subtest: crop picker totals follow staged entries, filtered bulk actions, undo, apply and cancel
+ok 228 - crop picker totals follow staged entries, filtered bulk actions, undo, apply and cancel
+  ---
+  duration_ms: 922.8593
+  type: 'test'
+  ...
+# Subtest: crop picker excludes built-ins and action-only branches when all entries are included
+ok 229 - crop picker excludes built-ins and action-only branches when all entries are included
+  ---
+  duration_ms: 262.9464
+  type: 'test'
+  ...
+# Subtest: crop picker deduplicates garden and catalog entries using plant and variety identities
+ok 230 - crop picker deduplicates garden and catalog entries using plant and variety identities
+  ---
+  duration_ms: 263.8137
+  type: 'test'
+  ...
+# Subtest: crop picker classifies deleted varieties by saved name and known varieties by profile
+ok 231 - crop picker classifies deleted varieties by saved name and known varieties by profile
+  ---
+  duration_ms: 504.2514
+  type: 'test'
+  ...
+# Subtest: modal renders ordered strips with the expected defaults and crop tabs
+ok 232 - modal renders ordered strips with the expected defaults and crop tabs
+  ---
+  duration_ms: 248.9994
+  type: 'test'
+  ...
+# Subtest: Crop Plan Basics separates editable controls, derived totals, tooltips, and yield reset
+ok 233 - Crop Plan Basics separates editable controls, derived totals, tooltips, and yield reset
+  ---
+  duration_ms: 808.7405
+  type: 'test'
+  ...
+# Subtest: crop menu is searchable and renders compact status dots
+ok 234 - crop menu is searchable and renders compact status dots
+  ---
+  duration_ms: 324.1701
+  type: 'test'
+  ...
+# Subtest: every crop dot opens a summary and keyboard activation leaves crop selection unchanged
+ok 235 - every crop dot opens a summary and keyboard activation leaves crop selection unchanged
+  ---
+  duration_ms: 267.2868
+  type: 'test'
+  ...
+# Subtest: a single crop issue previews on hover and click pins instead of navigating
+ok 236 - a single crop issue previews on hover and click pins instead of navigating
+  ---
+  duration_ms: 459.5217
+  type: 'test'
+  ...
+# Subtest: crop dot groups linked diagnostics and navigates to their existing repair controls
+ok 237 - crop dot groups linked diagnostics and navigates to their existing repair controls
+  ---
+  duration_ms: 428.861
+  type: 'test'
+  ...
+# Subtest: crop dots refresh after repair and remove stale popovers after filtering
+ok 238 - crop dots refresh after repair and remove stale popovers after filtering
+  ---
+  duration_ms: 379.9474
+  type: 'test'
+  ...
+# Subtest: crop dots expose missing prices and navigate to the exact package row
+ok 239 - crop dots expose missing prices and navigate to the exact package row
+  ---
+  duration_ms: 224.3002
+  type: 'test'
+  ...
+# Subtest: Basics crop timeline renders diagram-backed harvest, demand, and inventory bars
+ok 240 - Basics crop timeline renders diagram-backed harvest, demand, and inventory bars
+  ---
+  duration_ms: 175.6895
+  type: 'test'
+  ...
+# Subtest: Basics crop timeline includes CSA demand and keeps carryover inventory visible
+ok 241 - Basics crop timeline includes CSA demand and keeps carryover inventory visible
+  ---
+  duration_ms: 159.6193
+  type: 'test'
+  ...
+# Subtest: Sowing window defaults on per crop when no actual harvest exists
+ok 242 - Sowing window defaults on per crop when no actual harvest exists
+  ---
+  duration_ms: 166.4519
+  type: 'test'
+  ...
+# Subtest: Unavailable sowing window is disabled and reports the scheduler reason
+ok 243 - Unavailable sowing window is disabled and reports the scheduler reason
+  ---
+  duration_ms: 169.9464
+  type: 'test'
+  ...
+# Subtest: Harvest date source selector switches markers without replacing actual harvest bars
+ok 244 - Harvest date source selector switches markers without replacing actual harvest bars
+  ---
+  duration_ms: 317.4525
+  type: 'test'
+  ...
+# Subtest: Packages render labeled compact package rows
+ok 245 - Packages render labeled compact package rows
+  ---
+  duration_ms: 267.5899
+  type: 'test'
+  ...
+# Subtest: Edit packages and Add package scroll to the package section
+ok 246 - Edit packages and Add package scroll to the package section
+  ---
+  duration_ms: 408.4861
+  type: 'test'
+  ...
+# Subtest: empty plans show Demand and Crop Plan guidance
+ok 247 - empty plans show Demand and Crop Plan guidance
+  ---
+  duration_ms: 101.0669
+  type: 'test'
+  ...
+# Subtest: empty year plans save as drafts until a crop exists
+ok 248 - empty year plans save as drafts until a crop exists
+  ---
+  duration_ms: 439.0528
+  type: 'test'
+  ...
+# Subtest: hero stays overview-only for clean and unsaved clean plans
+ok 249 - hero stays overview-only for clean and unsaved clean plans
+  ---
+  duration_ms: 260.9907
+  type: 'test'
+  ...
+# Subtest: Needs attention surfaces problems while the hero remains simple
+ok 250 - Needs attention surfaces problems while the hero remains simple
+  ---
+  duration_ms: 862.1985
+  type: 'test'
+  ...
+# Subtest: Demand invalid badge shows count, tooltip, and navigates to the first invalid demand line
+ok 251 - Demand invalid badge shows count, tooltip, and navigates to the first invalid demand line
+  ---
+  duration_ms: 293.3888
+  type: 'test'
+  ...
+# Subtest: Demand invalid unit diagnostics use crop and unit instead of demand ids
+ok 252 - Demand invalid unit diagnostics use crop and unit instead of demand ids
+  ---
+  duration_ms: 153.2113
+  type: 'test'
+  ...
+# Subtest: Self Sufficiency invalid badge shows count, tooltip, and navigates to the first invalid line
+ok 253 - Self Sufficiency invalid badge shows count, tooltip, and navigates to the first invalid line
+  ---
+  duration_ms: 319.575
+  type: 'test'
+  ...
+# Subtest: CSA setup badge shows count, tooltip, and navigates to the first invalid field
+ok 254 - CSA setup badge shows count, tooltip, and navigates to the first invalid field
+  ---
+  duration_ms: 172.3404
+  type: 'test'
+  ...
+# Subtest: crop metric warning badge selects crop, opens editor, and scrolls to Plan Check row
+ok 255 - crop metric warning badge selects crop, opens editor, and scrolls to Plan Check row
+  ---
+  duration_ms: 186.1599
+  type: 'test'
+  ...
+# Subtest: Expired attention badge opens Plan Check and highlights the expired summary chip
+ok 256 - Expired attention badge opens Plan Check and highlights the expired summary chip
+  ---
+  duration_ms: 145.8809
+  type: 'test'
+  ...
+# Subtest: Plan Check diagnostics badge opens and highlights diagnostics
+ok 257 - Plan Check diagnostics badge opens and highlights diagnostics
+  ---
+  duration_ms: 148.3262
+  type: 'test'
+  ...
+# Subtest: crop diagnostics popover navigates to invalid basics and package fields
+ok 258 - crop diagnostics popover navigates to invalid basics and package fields
+  ---
+  duration_ms: 175.0888
+  type: 'test'
+  ...
+# Subtest: multi-item crop row warning badge opens a chooser before row navigation
+ok 259 - multi-item crop row warning badge opens a chooser before row navigation
+  ---
+  duration_ms: 157.9698
+  type: 'test'
+  ...
+# Subtest: diagnostics popovers render in the modal layer and clamp inside the card
+ok 260 - diagnostics popovers render in the modal layer and clamp inside the card
+  ---
+  duration_ms: 129.0609
+  type: 'test'
+  ...
+# Subtest: duplicate crop identity diagnostics attach to the second crop and focus variety
+ok 261 - duplicate crop identity diagnostics attach to the second crop and focus variety
+  ---
+  duration_ms: 193.2982
+  type: 'test'
+  ...
+# Subtest: missing plant diagnostics fall back to the trigger instead of disabled Plant
+ok 262 - missing plant diagnostics fall back to the trigger instead of disabled Plant
+  ---
+  duration_ms: 141.5455
+  type: 'test'
+  ...
+# Subtest: CSA diagnostics popover navigates to global and component fields
+ok 263 - CSA diagnostics popover navigates to global and component fields
+  ---
+  duration_ms: 623.8757
+  type: 'test'
+  ...
+# Subtest: save failure focuses diagnostics trigger and unavailable actual harvest is disabled
+ok 264 - save failure focuses diagnostics trigger and unavailable actual harvest is disabled
+  ---
+  duration_ms: 214.2188
+  type: 'test'
+  ...
+# Subtest: strip expansion preferences are year scoped and survive template application and clearing
+ok 265 - strip expansion preferences are year scoped and survive template application and clearing
+  ---
+  duration_ms: 638.5453
+  type: 'test'
+  ...
+# Subtest: debounced Demand typing preserves the focused control
+ok 266 - debounced Demand typing preserves the focused control
+  ---
+  duration_ms: 308.4459
+  type: 'test'
+  ...
+# Subtest: Demand channels support editing, collapse state, safe removal, and labeled line controls
+ok 267 - Demand channels support editing, collapse state, safe removal, and labeled line controls
+  ---
+  duration_ms: 680.891
+  type: 'test'
+  ...
+# Subtest: Demand lines collapse to operational summaries without losing edits
+ok 268 - Demand lines collapse to operational summaries without losing edits
+  ---
+  duration_ms: 325.7836
+  type: 'test'
+  ...
+# Subtest: Year Planner collapse preferences persist by garden and year
+ok 269 - Year Planner collapse preferences persist by garden and year
+  ---
+  duration_ms: 462.8656
+  type: 'test'
+  ...
+# Subtest: Demand validation auto-expands saved-collapsed demand lines
+ok 270 - Demand validation auto-expands saved-collapsed demand lines
+  ---
+  duration_ms: 142.1728
+  type: 'test'
+  ...
+# Subtest: Demand line warning chips expand the line and highlight relevant fields
+ok 271 - Demand line warning chips expand the line and highlight relevant fields
+  ---
+  duration_ms: 204.5514
+  type: 'test'
+  ...
+# Subtest: quantity unit dropdowns show crop packages only and open Packages from the add option
+ok 272 - quantity unit dropdowns show crop packages only and open Packages from the add option
+  ---
+  duration_ms: 702.4234
+  type: 'test'
+  ...
+# Subtest: Add package fills missing standard weight packages before a custom blank row
+ok 273 - Add package fills missing standard weight packages before a custom blank row
+  ---
+  duration_ms: 567.2674
+  type: 'test'
+  ...
+# Subtest: unused package removal deletes without confirmation
+ok 274 - unused package removal deletes without confirmation
+  ---
+  duration_ms: 391.1676
+  type: 'test'
+  ...
+# Subtest: package removal confirms and deletes linked demand self-use and CSA rows
+ok 275 - package removal confirms and deletes linked demand self-use and CSA rows
+  ---
+  duration_ms: 528.8621
+  type: 'test'
+  ...
+# Subtest: canceling linked package removal preserves package and rows
+ok 276 - canceling linked package removal preserves package and rows
+  ---
+  duration_ms: 219.0155
+  type: 'test'
+  ...
+# Subtest: new crops without saved package defaults start with no demand unit choices
+ok 277 - new crops without saved package defaults start with no demand unit choices
+  ---
+  duration_ms: 277.7951
+  type: 'test'
+  ...
+# Subtest: planned crop selector shows package counts and a clickable needs-packages badge
+ok 278 - planned crop selector shows package counts and a clickable needs-packages badge
+  ---
+  duration_ms: 397.1342
+  type: 'test'
+  ...
+# Subtest: Demand package transfer manages included and available packages with staged apply
+ok 279 - Demand package transfer manages included and available packages with staged apply
+  ---
+  duration_ms: 438.2959
+  type: 'test'
+  ...
+# Subtest: Complete demand destinations can still open package management for removal
+ok 280 - Complete demand destinations can still open package management for removal
+  ---
+  duration_ms: 163.1907
+  type: 'test'
+  ...
+# Subtest: Demand row package controls hide units used by other rows and auto-pick the next missing package on crop change
+ok 281 - Demand row package controls hide units used by other rows and auto-pick the next missing package on crop change
+  ---
+  duration_ms: 370.7104
+  type: 'test'
+  ...
+# Subtest: no-package crop dropdown choices open package unit repair without changing rows
+ok 282 - no-package crop dropdown choices open package unit repair without changing rows
+  ---
+  duration_ms: 1130.9186
+  type: 'test'
+  ...
+# Subtest: disabled demand sections show disabled headers and grey inactive controls
+ok 283 - disabled demand sections show disabled headers and grey inactive controls
+  ---
+  duration_ms: 910.4294
+  type: 'test'
+  ...
+# Subtest: Tree picker dirty close guard covers cancel, escape, outside click, and close
+ok 284 - Tree picker dirty close guard covers cancel, escape, outside click, and close
+  ---
+  duration_ms: 319.2548
+  type: 'test'
+  ...
+# Subtest: Package transfer search filters rows without persisting between opens
+ok 285 - Package transfer search filters rows without persisting between opens
+  ---
+  duration_ms: 187.2896
+  type: 'test'
+  ...
+# Subtest: Self Sufficiency lines collapse, persist, expand, and prune on remove
+ok 286 - Self Sufficiency lines collapse, persist, expand, and prune on remove
+  ---
+  duration_ms: 313.75
+  type: 'test'
+  ...
+# Subtest: Self Sufficiency validation auto-expands saved-collapsed self-use lines
+ok 287 - Self Sufficiency validation auto-expands saved-collapsed self-use lines
+  ---
+  duration_ms: 227.944
+  type: 'test'
+  ...
+# Subtest: Self Sufficiency line warning chips expand the line and highlight relevant fields
+ok 288 - Self Sufficiency line warning chips expand the line and highlight relevant fields
+  ---
+  duration_ms: 222.8645
+  type: 'test'
+  ...
+# Subtest: Demand price is read-only and follows matching package price edits
+ok 289 - Demand price is read-only and follows matching package price edits
+  ---
+  duration_ms: 448.6457
+  type: 'test'
+  ...
+# Subtest: Demand with missing package price keeps the line listed and surfaces a warning
+ok 290 - Demand with missing package price keeps the line listed and surfaces a warning
+  ---
+  duration_ms: 193.7193
+  type: 'test'
+  ...
+# Subtest: Missing package price badge targets self-use before demand and CSA prices
+ok 291 - Missing package price badge targets self-use before demand and CSA prices
+  ---
+  duration_ms: 291.2445
+  type: 'test'
+  ...
+# Subtest: warning badge popovers bridge hover gaps and sticky close paths
+ok 292 - warning badge popovers bridge hover gaps and sticky close paths
+  ---
+  duration_ms: 664.5853
+  type: 'test'
+  ...
+# Subtest: Demand quantity edits update visible sales and total revenue
+ok 293 - Demand quantity edits update visible sales and total revenue
+  ---
+  duration_ms: 272.3436
+  type: 'test'
+  ...
+# Subtest: CSA box pricing updates component value, sale value, reset, and total revenue
+ok 294 - CSA box pricing updates component value, sale value, reset, and total revenue
+  ---
+  duration_ms: 1093.3306
+  type: 'test'
+  ...
+# Subtest: Add crop tree ignores legacy expansion and preserves other saved preferences
+ok 295 - Add crop tree ignores legacy expansion and preserves other saved preferences
+  ---
+  duration_ms: 152.0788
+  type: 'test'
+  ...
+# Subtest: Add crop tree remembers expansion and collapse across picker and planner opens
+ok 296 - Add crop tree remembers expansion and collapse across picker and planner opens
+  ---
+  duration_ms: 351.6398
+  type: 'test'
+  ...
+# Subtest: Add crop tree session expansion follows the active year
+ok 297 - Add crop tree session expansion follows the active year
+  ---
+  duration_ms: 406.8935
+  type: 'test'
+  ...
+# Subtest: Add crop tree session expansion is isolated by garden
+ok 298 - Add crop tree session expansion is isolated by garden
+  ---
+  duration_ms: 2022.3763
+  type: 'test'
+  ...
+# Subtest: Add crop tree resets in a fresh window with the same persistent preferences
+ok 299 - Add crop tree resets in a fresh window with the same persistent preferences
+  ---
+  duration_ms: 296.1049
+  type: 'test'
+  ...
+# Subtest: Add crop tree search reveals matches without remembering automatic expansion
+ok 300 - Add crop tree search reveals matches without remembering automatic expansion
+  ---
+  duration_ms: 121.8035
+  type: 'test'
+  ...
+# Subtest: Add crop prioritizes garden crops and groups remaining plants by lifecycle
+ok 301 - Add crop prioritizes garden crops and groups remaining plants by lifecycle
+  ---
+  duration_ms: 160.7781
+  type: 'test'
+  ...
+# Subtest: Add crop picker groups Trellis defaults and user varieties per plant
+ok 302 - Add crop picker groups Trellis defaults and user varieties per plant
+  ---
+  duration_ms: 162.3281
+  type: 'test'
+  ...
+# Subtest: Add crop picker shows user-only varieties flat and defaults-only add row
+ok 303 - Add crop picker shows user-only varieties flat and defaults-only add row
+  ---
+  duration_ms: 159.1491
+  type: 'test'
+  ...
+# Subtest: Add crop picker Add variety row requests the variety editor and is not counted
+ok 304 - Add crop picker Add variety row requests the variety editor and is not counted
+  ---
+  duration_ms: 129.1326
+  type: 'test'
+  ...
+# Subtest: Crop editor variety action opens add mode when no variety is selected
+ok 305 - Crop editor variety action opens add mode when no variety is selected
+  ---
+  duration_ms: 114.0121
+  type: 'test'
+  ...
+# Subtest: Crop editor variety action shows an edit icon and edits selected variety
+ok 306 - Crop editor variety action shows an edit icon and edits selected variety
+  ---
+  duration_ms: 121.1408
+  type: 'test'
+  ...
+# Subtest: Garden variety resolution preserves identity, applies yield override, and refreshes after add and remove
+ok 307 - Garden variety resolution preserves identity, applies yield override, and refreshes after add and remove
+  ---
+  duration_ms: 359.1088
+  type: 'test'
+  ...
+# Subtest: Add crops transfer stages additions and removals before applying
+ok 308 - Add crops transfer stages additions and removals before applying
+  ---
+  duration_ms: 924.437
+  type: 'test'
+  ...
+# Subtest: Crop change labels distinguish pending actions and remember the latest applied action
+ok 309 - Crop change labels distinguish pending actions and remember the latest applied action
+  ---
+  duration_ms: 801.8566
+  type: 'test'
+  ...
+# Subtest: Crop change history ignores canceled staging and declined deletion confirmations
+ok 310 - Crop change history ignores canceled staging and declined deletion confirmations
+  ---
+  duration_ms: 274.5881
+  type: 'test'
+  ...
+# Subtest: Added follows identity edits and individual deletion records the updated Removed identity
+ok 311 - Added follows identity edits and individual deletion records the updated Removed identity
+  ---
+  duration_ms: 592.9306
+  type: 'test'
+  ...
+# Subtest: Unmarked crop edits and automatic metadata refreshes do not create change labels
+ok 312 - Unmarked crop edits and automatic metadata refreshes do not create change labels
+  ---
+  duration_ms: 255.6659
+  type: 'test'
+  ...
+# Subtest: Crop labels survive Save and planner reopening but never enter persistence or a fresh window
+ok 313 - Crop labels survive Save and planner reopening but never enter persistence or a fresh window
+  ---
+  duration_ms: 1254.5086
+  type: 'test'
+  ...
+# Subtest: Crop change history is isolated by year and garden object even when cell IDs match
+ok 314 - Crop change history is isolated by year and garden object even when cell IDs match
+  ---
+  duration_ms: 2316.3778
+  type: 'test'
+  ...
+# Subtest: Template replacement and draft reset clear only the affected crop history
+ok 315 - Template replacement and draft reset clear only the affected crop history
+  ---
+  duration_ms: 847.5816
+  type: 'test'
+  ...
+# Subtest: Add crops transfer add and remove actions reset both pane scroll positions
+ok 316 - Add crops transfer add and remove actions reset both pane scroll positions
+  ---
+  duration_ms: 140.2406
+  type: 'test'
+  ...
+# Subtest: Add crops removal confirmation cancel keeps staged changes and linked rows intact
+ok 317 - Add crops removal confirmation cancel keeps staged changes and linked rows intact
+  ---
+  duration_ms: 226.087
+  type: 'test'
+  ...
+# Subtest: direct crop removal confirmation groups linked rows by crop variety
+ok 318 - direct crop removal confirmation groups linked rows by crop variety
+  ---
+  duration_ms: 2121.1543
+  type: 'test'
+  ...
+# Subtest: canceling direct crop removal preserves linked rows
+ok 319 - canceling direct crop removal preserves linked rows
+  ---
+  duration_ms: 297.8769
+  type: 'test'
+  ...
+# Subtest: direct crop removal without linked rows does not ask for confirmation
+ok 320 - direct crop removal without linked rows does not ask for confirmation
+  ---
+  duration_ms: 177.1333
+  type: 'test'
+  ...
+# Subtest: Centralized Demand remains visible and removes lines with their crop
+ok 321 - Centralized Demand remains visible and removes lines with their crop
+  ---
+  duration_ms: 271.2225
+  type: 'test'
+  ...
+# Subtest: crop selection syncs Crop Plan and Plan Check while preserving all-crop filter selection
+ok 322 - crop selection syncs Crop Plan and Plan Check while preserving all-crop filter selection
+  ---
+  duration_ms: 251.7572
+  type: 'test'
+  ...
+# Subtest: Needs attention crop clicks expand related strips and sync Plan Check
+ok 323 - Needs attention crop clicks expand related strips and sync Plan Check
+  ---
+  duration_ms: 324.0018
+  type: 'test'
+  ...
+# Subtest: crop add and remove paths keep Plan Check filter aligned with valid crop selection
+ok 324 - crop add and remove paths keep Plan Check filter aligned with valid crop selection
+  ---
+  duration_ms: 514.4613
+  type: 'test'
+  ...
+# Subtest: adding a crop selects it and syncs Plan Check filter
+ok 325 - adding a crop selects it and syncs Plan Check filter
+  ---
+  duration_ms: 731.0358
+  type: 'test'
+  ...
+# Subtest: Add crop stores planting method category from defaults and blank defaults use direct sow field
+ok 326 - Add crop stores planting method category from defaults and blank defaults use direct sow field
+  ---
+  duration_ms: 934.0642
+  type: 'test'
+  ...
+# Subtest: Unavailable garden records are skipped while deleted persisted varieties remain selectable
+ok 327 - Unavailable garden records are skipped while deleted persisted varieties remain selectable
+  ---
+  duration_ms: 549.5227
+  type: 'test'
+  ...
+# Subtest: Add crop options refresh after year changes, template application, and reset
+ok 328 - Add crop options refresh after year changes, template application, and reset
+  ---
+  duration_ms: 823.2978
+  type: 'test'
+  ...
+# Subtest: Footer and reset action follow the currently loaded year
+ok 329 - Footer and reset action follow the currently loaded year
+  ---
+  duration_ms: 868.5365
+  type: 'test'
+  ...
+# Subtest: Stale Add crop loads cannot replace newer grouped options
+ok 330 - Stale Add crop loads cannot replace newer grouped options
+  ---
+  duration_ms: 698.2019
+  type: 'test'
+  ...
+# Subtest: Plan Check summary follows the crop filter and chart hover shows inventory details
+ok 331 - Plan Check summary follows the crop filter and chart hover shows inventory details
+  ---
+  duration_ms: 409.582
+  type: 'test'
+  ...
+# Subtest: Plan Check status badges group crops by coverage thresholds and navigate to crop timeline
+ok 332 - Plan Check status badges group crops by coverage thresholds and navigate to crop timeline
+  ---
+  duration_ms: 425.644
+  type: 'test'
+  ...
+# Subtest: Plan Check chart summary revenue follows crop filter and CSA value attribution
+ok 333 - Plan Check chart summary revenue follows crop filter and CSA value attribution
+  ---
+  duration_ms: 267.602
+  type: 'test'
+  ...
+# Subtest: interactive chart legend controls drawing and hover details without changing Plan Check
+ok 334 - interactive chart legend controls drawing and hover details without changing Plan Check
+  ---
+  duration_ms: 820.9551
+  type: 'test'
+  ...
+# Subtest: question mark diagnostics badge sections collapse for the dialog session
+ok 335 - question mark diagnostics badge sections collapse for the dialog session
+  ---
+  duration_ms: 422.2278
+  type: 'test'
+  ...
+# Subtest: template input controls save state and saves without a native prompt
+ok 336 - template input controls save state and saves without a native prompt
+  ---
+  duration_ms: 118.8028
+  type: 'test'
+  ...
+# Subtest: invalid enabled CSA auto-expands CSA and Plan Check
+ok 337 - invalid enabled CSA auto-expands CSA and Plan Check
+  ---
+  duration_ms: 123.5525
+  type: 'test'
+  ...
+# Subtest: CSA summary updates as controls and components change
+ok 338 - CSA summary updates as controls and components change
+  ---
+  duration_ms: 980.3449
+  type: 'test'
+  ...
+# Subtest: Demand date controls reject reversed ranges and expose reciprocal picker constraints
+ok 339 - Demand date controls reject reversed ranges and expose reciprocal picker constraints
+  ---
+  duration_ms: 518.2096
+  type: 'test'
+  ...
+# Subtest: CSA date controls reject reversed ranges and retain harvest-window clamping
+ok 340 - CSA date controls reject reversed ranges and retain harvest-window clamping
+  ---
+  duration_ms: 582.1693
+  type: 'test'
+  ...
+# Subtest: Harvest date controls reject reversed ranges and allow same-day windows
+ok 341 - Harvest date controls reject reversed ranges and allow same-day windows
+  ---
+  duration_ms: 337.2855
+  type: 'test'
+  ...
+# Subtest: Existing reversed persisted dates remain visible, save as draft, and can be corrected
+ok 342 - Existing reversed persisted dates remain visible, save as draft, and can be corrected
+  ---
+  duration_ms: 241.2755
+  type: 'test'
+  ...
+# Subtest: Sync and harvest date changes keep expanded CSA and reopened Demand dates current
+ok 343 - Sync and harvest date changes keep expanded CSA and reopened Demand dates current
+  ---
+  duration_ms: 551.4421
+  type: 'test'
+  ...
+# Subtest: Harvest-window suggestions synchronize visible Demand and CSA date controls
+ok 344 - Harvest-window suggestions synchronize visible Demand and CSA date controls
+  ---
+  duration_ms: 224.3352
+  type: 'test'
+  ...
+# Subtest: Self Sufficiency strip edits household fields, lines, package repair flow, and nutrition warnings
+ok 345 - Self Sufficiency strip edits household fields, lines, package repair flow, and nutrition warnings
+  ---
+  duration_ms: 526.6278
+  type: 'test'
+  ...
+# Subtest: Self Sufficiency nutrition coverage rerenders when nutrition-affecting line fields change
+ok 346 - Self Sufficiency nutrition coverage rerenders when nutrition-affecting line fields change
+  ---
+  duration_ms: 1194.1684
+  type: 'test'
+  ...
+# Subtest: Plan Check scope selector filters combined, self, and sales demand
+ok 347 - Plan Check scope selector filters combined, self, and sales demand
+  ---
+  duration_ms: 215.8755
+  type: 'test'
+  ...
+# Subtest: dirty close auto-saves a draft that can be discarded
+ok 348 - dirty close auto-saves a draft that can be discarded
+  ---
+  duration_ms: 484.0551
+  type: 'test'
+  ...
+# Subtest: year changes auto-save dirty work as a draft without blocking
+ok 349 - year changes auto-save dirty work as a draft without blocking
+  ---
+  duration_ms: 330.8542
+  type: 'test'
+  ...
+# Subtest: crop timeline details popover rows navigate to demand rows and planting cells
+ok 350 - crop timeline details popover rows navigate to demand rows and planting cells
+  ---
+  duration_ms: 1098.4706
+  type: 'test'
+  ...
+# Subtest: crop timeline details popover includes grouped demand action rows and supports keyboard close behavior
+ok 351 - crop timeline details popover includes grouped demand action rows and supports keyboard close behavior
+  ---
+  duration_ms: 331.0597
+  type: 'test'
+  ...
+# Subtest: public plan request event opens one modal and replaces the active session
+ok 352 - public plan request event opens one modal and replaces the active session
+  ---
+  duration_ms: 194.0947
+  type: 'test'
+  ...
+# Subtest: Year Plan adds multiple stages, rejects duplicate edits and retains manual yield after defaults change
+ok 353 - Year Plan adds multiple stages, rejects duplicate edits and retains manual yield after defaults change
+  ---
+  duration_ms: 698.9563
+  type: 'test'
+  ...
+# Subtest: Year Plan reload refreshes stage-scaled plant defaults while preserving manual yield
+ok 354 - Year Plan reload refreshes stage-scaled plant defaults while preserving manual yield
+  ---
+  duration_ms: 281.8003
+  type: 'test'
+  ...
+# Subtest: Year Plan rejects growth-stage queries that finish after newer defaults are saved
+ok 355 - Year Plan rejects growth-stage queries that finish after newer defaults are saved
+  ---
+  duration_ms: 590.9007
+  type: 'test'
+  ...
+# Subtest: Year Plan ignores stale harvest suggestions after switching growth stage
+ok 356 - Year Plan ignores stale harvest suggestions after switching growth stage
+  ---
+  duration_ms: 443.4216
+  type: 'test'
+  ...
+# Subtest: PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields
+ok 357 - PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields
+  ---
+  duration_ms: 53.9825
+  type: 'test'
+  ...
+# Subtest: PlanningCore treats CSA components as committed demand
+ok 358 - PlanningCore treats CSA components as committed demand
+  ---
+  duration_ms: 25.9135
+  type: 'test'
+  ...
+# Subtest: PlanningCore coverage week summaries expose canonical week start dates
+ok 359 - PlanningCore coverage week summaries expose canonical week start dates
+  ---
+  duration_ms: 5.6621
+  type: 'test'
+  ...
+# Subtest: PlanningCore recommends the smallest whole plant count for reachable shortage
+ok 360 - PlanningCore recommends the smallest whole plant count for reachable shortage
+  ---
+  duration_ms: 14.1895
+  type: 'test'
+  ...
+# Subtest: PlanSchema normalizes weekStartDow to an integer from zero through six
+ok 361 - PlanSchema normalizes weekStartDow to an integer from zero through six
+  ---
+  duration_ms: 6.355
+  type: 'test'
+  ...
+# Subtest: PlanSchema adds default demand channels only when the collection is absent
+ok 362 - PlanSchema adds default demand channels only when the collection is absent
+  ---
+  duration_ms: 1.891
+  type: 'test'
+  ...
+# Subtest: Planting-method SQL starts directly with SQL text
+ok 363 - Planting-method SQL starts directly with SQL text
+  ---
+  duration_ms: 0.5418
+  type: 'test'
+  ...
+# Subtest: PlanSchema detects duplicate crop identities and validates invalid units
+ok 364 - PlanSchema detects duplicate crop identities and validates invalid units
+  ---
+  duration_ms: 3.5779
+  type: 'test'
+  ...
+# Subtest: PlanSchema rejects duplicate crop package units
+ok 365 - PlanSchema rejects duplicate crop package units
+  ---
+  duration_ms: 14.0345
+  type: 'test'
+  ...
+# Subtest: PlanSchema clears demand-like units that are not crop packages
+ok 366 - PlanSchema clears demand-like units that are not crop packages
+  ---
+  duration_ms: 2.6036
+  type: 'test'
+  ...
+# Subtest: PlanSchema strips legacy demand prices from persisted plans
+ok 367 - PlanSchema strips legacy demand prices from persisted plans
+  ---
+  duration_ms: 2.1229
+  type: 'test'
+  ...
+# Subtest: PlanSchema exposes CSA validation independently from the full plan
+ok 368 - PlanSchema exposes CSA validation independently from the full plan
+  ---
+  duration_ms: 2.836
+  type: 'test'
+  ...
+# Subtest: PlanSchema rejects reversed demand and effective CSA date ranges
+ok 369 - PlanSchema rejects reversed demand and effective CSA date ranges
+  ---
+  duration_ms: 1.9482
+  type: 'test'
+  ...
+# Subtest: PlanMath excludes reversed demand ranges while retaining explicit valid CSA components
+ok 370 - PlanMath excludes reversed demand ranges while retaining explicit valid CSA components
+  ---
+  duration_ms: 3.6823
+  type: 'test'
+  ...
+# Subtest: PlanMath ignores manual harvest windows for supply and validation still rejects reversed dates
+ok 371 - PlanMath ignores manual harvest windows for supply and validation still rejects reversed dates
+  ---
+  duration_ms: 3.26
+  type: 'test'
+  ...
+# Subtest: PlanRepository round-trips plans, templates, defaults, and leap-day shifts
+ok 372 - PlanRepository round-trips plans, templates, defaults, and leap-day shifts
+  ---
+  duration_ms: 8.1974
+  type: 'test'
+  ...
+# Subtest: PlanRepository migrates legacy root maps on the first diagram-level write
+ok 373 - PlanRepository migrates legacy root maps on the first diagram-level write
+  ---
+  duration_ms: 1.7829
+  type: 'test'
+  ...
+# Subtest: DiagramPlanReader aggregates perennial and cross-year tiler facts with one crop key
+ok 374 - DiagramPlanReader aggregates perennial and cross-year tiler facts with one crop key
+  ---
+  duration_ms: 9.6524
+  type: 'test'
+  ...
+# Subtest: DiagramPlanReader resolves legacy variety names and rejects malformed harvest ranges
+ok 375 - DiagramPlanReader resolves legacy variety names and rejects malformed harvest ranges
+  ---
+  duration_ms: 3.0988
+  type: 'test'
+  ...
+# Subtest: DiagramPlanReader reports ambiguous planned legacy variety matches
+ok 376 - DiagramPlanReader reports ambiguous planned legacy variety matches
+  ---
+  duration_ms: 2.6554
+  type: 'test'
+  ...
+# Subtest: DiagramPlanReader returns normalized garden crop candidates and ignores groups without plant identity
+ok 377 - DiagramPlanReader returns normalized garden crop candidates and ignores groups without plant identity
+  ---
+  duration_ms: 1.9577
+  type: 'test'
+  ...
+# Subtest: PlanRuntimeService recalculation is idempotent and preserves manual harvest dates
+ok 378 - PlanRuntimeService recalculation is idempotent and preserves manual harvest dates
+  ---
+  duration_ms: 12.8733
+  type: 'test'
+  ...
+# Subtest: PlanRuntimeService derives actual harvest windows and returns calculation warnings
+ok 379 - PlanRuntimeService derives actual harvest windows and returns calculation warnings
+  ---
+  duration_ms: 4.5089
+  type: 'test'
+  ...
+# Subtest: PlanRuntimeService defaults legacy crops to sowing-window estimate only without actual harvest records
+ok 380 - PlanRuntimeService defaults legacy crops to sowing-window estimate only without actual harvest records
+  ---
+  duration_ms: 4.4622
+  type: 'test'
+  ...
+# Subtest: PlanRuntimeService does not default sowing-window estimate when actual harvest records exist
+ok 381 - PlanRuntimeService does not default sowing-window estimate when actual harvest records exist
+  ---
+  duration_ms: 4.3058
+  type: 'test'
+  ...
+# Subtest: PlanRuntimeService keeps harvest windows independent from actual-only supply
+ok 382 - PlanRuntimeService keeps harvest windows independent from actual-only supply
+  ---
+  duration_ms: 16.5548
+  type: 'test'
+  ...
+# Subtest: PlanRuntimeService does not synthesize prior-year saved harvest windows as supply
+ok 383 - PlanRuntimeService does not synthesize prior-year saved harvest windows as supply
+  ---
+  duration_ms: 4.9826
+  type: 'test'
+  ...
+# Subtest: PlanMath inventory uses conservative weekly shelf-life buckets and FIFO consumption
+ok 384 - PlanMath inventory uses conservative weekly shelf-life buckets and FIFO consumption
+  ---
+  duration_ms: 2.5257
+  type: 'test'
+  ...
+# Subtest: PlanMath tracks planting source provenance through FIFO inventory
+ok 385 - PlanMath tracks planting source provenance through FIFO inventory
+  ---
+  duration_ms: 5.5508
+  type: 'test'
+  ...
+# Subtest: PlanningCore keeps diagram planting provenance JSON-safe after allocation refresh
+ok 386 - PlanningCore keeps diagram planting provenance JSON-safe after allocation refresh
+  ---
+  duration_ms: 18.2589
+  type: 'test'
+  ...
+# Subtest: PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors
+ok 387 - PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors
+  ---
+  duration_ms: 2.9189
+  type: 'test'
+  ...
+# Subtest: PlanMath allocates CSA first, then priority and channel order, with requested and fulfilled revenue
+ok 388 - PlanMath allocates CSA first, then priority and channel order, with requested and fulfilled revenue
+  ---
+  duration_ms: 16.9909
+  type: 'test'
+  ...
+# Subtest: PlanMath derives CSA box value and prorates CSA revenue by component fulfillment
+ok 389 - PlanMath derives CSA box value and prorates CSA revenue by component fulfillment
+  ---
+  duration_ms: 9.2606
+  type: 'test'
+  ...
+# Subtest: PlanMath counts missing CSA component prices as zero with a non-blocking warning
+ok 390 - PlanMath counts missing CSA component prices as zero with a non-blocking warning
+  ---
+  duration_ms: 3.8309
+  type: 'test'
+  ...
+# Subtest: PlanMath counts missing self-use and demand prices as zero with non-blocking warnings
+ok 391 - PlanMath counts missing self-use and demand prices as zero with non-blocking warnings
+  ---
+  duration_ms: 8.3782
+  type: 'test'
+  ...
+# Subtest: PlanMath requires explicit packages for built-in unit names
+ok 392 - PlanMath requires explicit packages for built-in unit names
+  ---
+  duration_ms: 3.4266
+  type: 'test'
+  ...
+# Subtest: PlanMath resolves standard package weight bases to kg
+ok 393 - PlanMath resolves standard package weight bases to kg
+  ---
+  duration_ms: 1.8611
+  type: 'test'
+  ...
+# Subtest: PlanMath still blocks demand-like rows when package quantity conversion is invalid
+ok 394 - PlanMath still blocks demand-like rows when package quantity conversion is invalid
+  ---
+  duration_ms: 4.0257
+  type: 'test'
+  ...
+# Subtest: PlanMath prices demand from package unit matches only
+ok 395 - PlanMath prices demand from package unit matches only
+  ---
+  duration_ms: 5.0241
+  type: 'test'
+  ...
+# Subtest: PlanMath breaks equal-priority shortages by stored channel order
+ok 396 - PlanMath breaks equal-priority shortages by stored channel order
+  ---
+  duration_ms: 5.7533
+  type: 'test'
+  ...
+# Subtest: PlanMath keeps raw harvest stable and never pools inventory across crops
+ok 397 - PlanMath keeps raw harvest stable and never pools inventory across crops
+  ---
+  duration_ms: 7.6414
+  type: 'test'
+  ...
+# Subtest: PlanMath builds filtered and aggregate chart models with additive flow summaries
+ok 398 - PlanMath builds filtered and aggregate chart models with additive flow summaries
+  ---
+  duration_ms: 1.9037
+  type: 'test'
+  ...
+# Subtest: CropTimeline orders solid bars by value and keeps raw harvest in front
+ok 399 - CropTimeline orders solid bars by value and keeps raw harvest in front
+  ---
+  duration_ms: 5.5549
+  type: 'test'
+  ...
+# Subtest: PlanRuntimeService syncs demand to harvest dates and collapses legacy shelf extensions
+ok 400 - PlanRuntimeService syncs demand to harvest dates and collapses legacy shelf extensions
+  ---
+  duration_ms: 5.4583
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard aggregates shortage and surplus without netting crops
+ok 401 - YearPlanDashboard aggregates shortage and surplus without netting crops
+  ---
+  duration_ms: 2.7307
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard classifies weekly timing and avoids inventory snapshot surplus double-counting
+ok 402 - YearPlanDashboard classifies weekly timing and avoids inventory snapshot surplus double-counting
+  ---
+  duration_ms: 3.3368
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard treats zero supply as a full shortage and validation errors as missing data
+ok 403 - YearPlanDashboard treats zero supply as a full shortage and validation errors as missing data
+  ---
+  duration_ms: 2.8229
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard promotes a missing harvest window to missing data when demand exists
+ok 404 - YearPlanDashboard promotes a missing harvest window to missing data when demand exists
+  ---
+  duration_ms: 2.4795
+  type: 'test'
+  ...
+# Subtest: crop dots attribute linked validation to exact rows and keep shared setup global
+ok 405 - crop dots attribute linked validation to exact rows and keep shared setup global
+  ---
+  duration_ms: 3.3022
+  type: 'test'
+  ...
+# Subtest: crop dot issues deduplicate validations but retain distinct repair destinations
+ok 406 - crop dot issues deduplicate validations but retain distinct repair destinations
+  ---
+  duration_ms: 3.6877
+  type: 'test'
+  ...
+# Subtest: crop dots collect active price and nutrition warnings by identity without persisting them
+ok 407 - crop dots collect active price and nutrition warnings by identity without persisting them
+  ---
+  duration_ms: 19.8227
+  type: 'test'
+  ...
+# Subtest: disabled demand sections contribute no linked validation or price warnings to crop dots
+ok 408 - disabled demand sections contribute no linked validation or price warnings to crop dots
+  ---
+  duration_ms: 6.9547
+  type: 'test'
+  ...
+# Subtest: crop stage and package warnings override no demand and disappear when repaired
+ok 409 - crop stage and package warnings override no demand and disappear when repaired
+  ---
+  duration_ms: 2.7907
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines
+ok 410 - YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines
+  ---
+  duration_ms: 4.617
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard builds compact status and CSA summaries without timezone parsing
+ok 411 - YearPlanDashboard builds compact status and CSA summaries without timezone parsing
+  ---
+  duration_ms: 1.8732
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard expands checks only when blocking errors first appear
+ok 412 - YearPlanDashboard expands checks only when blocking errors first appear
+  ---
+  duration_ms: 1.9105
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard resolves selection after crop removal and preserves unknown methods
+ok 413 - YearPlanDashboard resolves selection after crop removal and preserves unknown methods
+  ---
+  duration_ms: 1.7263
+  type: 'test'
+  ...
+# Subtest: PlanSchema infers method category for legacy dotted crop methods
+ok 414 - PlanSchema infers method category for legacy dotted crop methods
+  ---
+  duration_ms: 2.0438
+  type: 'test'
+  ...
+# Subtest: Self Sufficiency demand expands separately from sales demand
+ok 415 - Self Sufficiency demand expands separately from sales demand
+  ---
+  duration_ms: 3.8969
+  type: 'test'
+  ...
+# Subtest: disabled self-use, commercial channels, and CSA stay saved but leave demand totals
+ok 416 - disabled self-use, commercial channels, and CSA stay saved but leave demand totals
+  ---
+  duration_ms: 8.9015
+  type: 'test'
+  ...
+# Subtest: Harvest allocation satisfies Self Sufficiency before CSA and sales
+ok 417 - Harvest allocation satisfies Self Sufficiency before CSA and sales
+  ---
+  duration_ms: 4.7896
+  type: 'test'
+  ...
+# Subtest: Required plants and Plan Check default to combined demand
+ok 418 - Required plants and Plan Check default to combined demand
+  ---
+  duration_ms: 8.3144
+  type: 'test'
+  ...
+# Subtest: NutritionPlanner calculates requested and fulfilled self-use nutrition
+ok 419 - NutritionPlanner calculates requested and fulfilled self-use nutrition
+  ---
+  duration_ms: 5.473
+  type: 'test'
+  ...
+# Subtest: YearPlanDashboard opens Self Sufficiency strip on first self-use validation errors
+ok 420 - YearPlanDashboard opens Self Sufficiency strip on first self-use validation errors
+  ---
+  duration_ms: 1.6451
+  type: 'test'
+  ...
+# Subtest: growth stages allow the same variety while rejecting duplicate stage identities
+ok 421 - growth stages allow the same variety while rejecting duplicate stage identities
+  ---
+  duration_ms: 7.1303
+  type: 'test'
+  ...
+# Subtest: stage-specific diagram supply cannot cover another stage's demand
+ok 422 - stage-specific diagram supply cannot cover another stage's demand
+  ---
+  duration_ms: 28.606
+  type: 'test'
+  ...
+# Subtest: companion count overrides include lost supply and never mutate saved groups, including same-crop additions
+ok 423 - companion count overrides include lost supply and never mutate saved groups, including same-crop additions
+  ---
+  duration_ms: 33.6833
+  type: 'test'
+  ...
+1..423
+# tests 423
+# suites 0
+# pass 423
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 68494.7727

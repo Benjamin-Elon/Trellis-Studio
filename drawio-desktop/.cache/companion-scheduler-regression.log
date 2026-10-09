@@ -1,0 +1,25 @@
+TAP version 13
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [PlantModel.update] patch keys = [
+#   'default_planting_method',
+#   'default_planting_method_category',
+#   'days_transplant',
+#   'harvest_window_days'
+# ]
+# [PlantModel.update] default_planting_method = transplant.indoor
+# Subtest: allocation plant lifecycle defaults require first-time opt-in and variety methods preserve explicit selection and inheritance
+ok 1 - allocation plant lifecycle defaults require first-time opt-in and variety methods preserve explicit selection and inheritance
+  ---
+  duration_ms: 481.2682
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2561.1504

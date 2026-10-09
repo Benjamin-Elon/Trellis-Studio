@@ -1865,13 +1865,18 @@ Draw.loadPlugin(function (ui) {
 
     /** Resolves the virtual proposal's connected component without inserting an mxCell. Geometry is module-parent local. */ // CHANGE
     function getProposalClusterOccupancy(input = {}) { // CHANGE
-        const geometry = input.geometry || {};
+        const geometry = input.plantingRect || input.geometry || {}; // CHANGE: Allocate supplies a rotated, header-free planting footprint.
         const rect = { x: Number(geometry.x), y: Number(geometry.y), w: Number(geometry.width), h: Number(geometry.height) };
         if (![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite) || rect.w <= 0 || rect.h <= 0) return { items: [], reason: 'Missing proposed geometry.' };
         const center = rectCenterModel(rect);
         const angleDeg = Number(geometry.rotation) || 0;
         const proposedRect = Object.assign({}, rect, { center, angleDeg, angleRad: toRad(angleDeg) });
-        const remaining = getSiblingsInParent(input.moduleCell || model.getParent(input.bedCell)).map(cell => ({ cell, rect: getRotatedRectModel(cell) }));
+        const tiler = window.USL && window.USL.tiler; // CHANGE
+        const remaining = getSiblingsInParent(input.moduleCell || model.getParent(input.bedCell)).map(cell => { // CHANGE
+            const footprint = input.plantingRect && tiler && typeof tiler.readPlantingFootprint === 'function' ? tiler.readPlantingFootprint(cell) : null; // CHANGE
+            const rect = footprint ? { x: footprint.x, y: footprint.y, w: footprint.width, h: footprint.height, angleDeg: footprint.rotation || 0, angleRad: toRad(footprint.rotation || 0), center: { x: footprint.x + footprint.width / 2, y: footprint.y + footprint.height / 2 } } : getRotatedRectModel(cell); // CHANGE
+            return { cell, rect }; // CHANGE
+        }); // CHANGE
         const connected = [];
         const frontier = [proposedRect];
         while (frontier.length) {

@@ -1,0 +1,587 @@
+TAP version 13
+# Subtest: Allocate opportunity model groups actionable, unresolved, and satisfied crops
+ok 1 - Allocate opportunity model groups actionable, unresolved, and satisfied crops
+  ---
+  duration_ms: 13.9871
+  type: 'test'
+  ...
+# Subtest: Allocate opportunity model can narrow actionable crops to the selected week
+ok 2 - Allocate opportunity model can narrow actionable crops to the selected week
+  ---
+  duration_ms: 109.3698
+  type: 'test'
+  ...
+# Subtest: Allocate week option labels summarize date, shortage, and current status
+ok 3 - Allocate week option labels summarize date, shortage, and current status
+  ---
+  duration_ms: 5.1583
+  type: 'test'
+  ...
+# Subtest: Allocate sow-week schedule groups future demand by returned start date
+ok 4 - Allocate sow-week schedule groups future demand by returned start date
+  ---
+  duration_ms: 145.0129
+  type: 'test'
+  ...
+# Subtest: Allocate progress text reports row and action counts
+ok 5 - Allocate progress text reports row and action counts
+  ---
+  duration_ms: 2.2879
+  type: 'test'
+  ...
+# Subtest: Allocate open renders a progress state before sow-week scheduling completes
+ok 6 - Allocate open renders a progress state before sow-week scheduling completes
+  ---
+  duration_ms: 316.4716
+  type: 'test'
+  ...
+# Subtest: Allocate graph proposal coordinates convert directly to screen coordinates
+ok 7 - Allocate graph proposal coordinates convert directly to screen coordinates
+  ---
+  duration_ms: 2.1611
+  type: 'test'
+  ...
+# Subtest: Allocate graph overlay coordinates are relative to the graph container
+ok 8 - Allocate graph overlay coordinates are relative to the graph container
+  ---
+  duration_ms: 1.7564
+  type: 'test'
+  ...
+# Subtest: Allocate bed badges stay anchored to distinct rendered bed states after zoom
+ok 9 - Allocate bed badges stay anchored to distinct rendered bed states after zoom
+  ---
+  duration_ms: 38.4106
+  type: 'test'
+  ...
+# Subtest: Allocate close cancels a pending sow-week schedule job
+ok 10 - Allocate close cancels a pending sow-week schedule job
+  ---
+  duration_ms: 100.4208
+  type: 'test'
+  ...
+# Subtest: Allocate reuses lifecycle and bed-result checks for repeated crop and bed evaluations
+ok 11 - Allocate reuses lifecycle and bed-result checks for repeated crop and bed evaluations
+  ---
+  duration_ms: 3.522
+  type: 'test'
+  ...
+# Subtest: Allocate debug snapshot explains first demand and shortage weeks
+ok 12 - Allocate debug snapshot explains first demand and shortage weeks
+  ---
+  duration_ms: 2.8574
+  type: 'test'
+  ...
+# Subtest: Allocate debug snapshot tolerates empty demand collections
+ok 13 - Allocate debug snapshot tolerates empty demand collections
+  ---
+  duration_ms: 4.7546
+  type: 'test'
+  ...
+# Subtest: Allocate resolves crop method context from explicit and legacy dotted methods
+ok 14 - Allocate resolves crop method context from explicit and legacy dotted methods
+  ---
+  duration_ms: 1.8301
+  type: 'test'
+  ...
+# Subtest: Allocate bed result creates max-fit partial draft when full recommendation is oversized
+ok 15 - Allocate bed result creates max-fit partial draft when full recommendation is oversized
+  ---
+  duration_ms: 3.7375
+  type: 'test'
+  ...
+# Subtest: Allocate bed result keeps full-fit draft semantics
+ok 16 - Allocate bed result keeps full-fit draft semantics
+  ---
+  duration_ms: 2.6644
+  type: 'test'
+  ...
+# Subtest: Allocate repairs mismatched Year Plan method categories before lifecycle scheduling
+ok 17 - Allocate repairs mismatched Year Plan method categories before lifecycle scheduling
+  ---
+  duration_ms: 2.7137
+  type: 'test'
+  ...
+# Subtest: Allocate bed result reports category-only Year Plan methods before lifecycle scheduling
+ok 18 - Allocate bed result reports category-only Year Plan methods before lifecycle scheduling
+  ---
+  duration_ms: 1.9799
+  type: 'test'
+  ...
+# Subtest: Allocate bed result reports unsupported concrete methods before lifecycle scheduling
+ok 19 - Allocate bed result reports unsupported concrete methods before lifecycle scheduling
+  ---
+  duration_ms: 1.9372
+  type: 'test'
+  ...
+# Subtest: Allocate plugin owns launch, draft review, and one-transaction create contracts
+ok 20 - Allocate plugin owns launch, draft review, and one-transaction create contracts
+  ---
+  duration_ms: 2.3721
+  type: 'test'
+  ...
+# Subtest: coverage preview uses simulated fulfilled demand, including storage and expiry
+ok 21 - coverage preview uses simulated fulfilled demand, including storage and expiry
+  ---
+  duration_ms: 2949.6695
+  type: 'test'
+  ...
+# Subtest: coverage preview rejects missing series instead of reporting zero coverage
+ok 22 - coverage preview rejects missing series instead of reporting zero coverage
+  ---
+  duration_ms: 1.6892
+  type: 'test'
+  ...
+# Subtest: coverage preview includes household, CSA, and sales demand and caps fulfillment at demand
+ok 23 - coverage preview includes household, CSA, and sales demand and caps fulfillment at demand
+  ---
+  duration_ms: 91.2009
+  type: 'test'
+  ...
+# Subtest: allocation invalidates timing and geometry edits but ignores presentation-only changes
+ok 24 - allocation invalidates timing and geometry edits but ignores presentation-only changes
+  ---
+  duration_ms: 1.8943
+  type: 'test'
+  ...
+# Subtest: saving an edited schedule updates both previews without creating the planting
+ok 25 - saving an edited schedule updates both previews without creating the planting
+  ---
+  duration_ms: 197.3227
+  type: 'test'
+  ...
+# Subtest: crop selection requires a canvas bed or the explicit Find best bed action
+ok 26 - crop selection requires a canvas bed or the explicit Find best bed action
+  ---
+  duration_ms: 270.2418
+  type: 'test'
+  ...
+# Subtest: canvas groups resolve their bed, same-bed selections preserve edits, and bed switches reset schedules
+ok 27 - canvas groups resolve their bed, same-bed selections preserve edits, and bed switches reset schedules
+  ---
+  duration_ms: 191.924
+  type: 'test'
+  ...
+# Subtest: unrelated, multi-selected, and foreign-module cells clear allocation targets
+ok 28 - unrelated, multi-selected, and foreign-module cells clear allocation targets
+  ---
+  duration_ms: 511.6859
+  type: 'test'
+  ...
+# Subtest: an unavailable selected bed explains its failure without substituting a suitable bed
+ok 29 - an unavailable selected bed explains its failure without substituting a suitable bed
+  ---
+  duration_ms: 197.3058
+  type: 'test'
+  ...
+# Subtest: Find best bed reports no fit and a crop or week change reevaluates the selected bed
+ok 30 - Find best bed reports no fit and a crop or week change reevaluates the selected bed
+  ---
+  duration_ms: 267.5448
+  type: 'test'
+  ...
+# Subtest: pending bed evaluations and editor results cannot restore a cleared module selection
+ok 31 - pending bed evaluations and editor results cannot restore a cleared module selection
+  ---
+  duration_ms: 418.2325
+  type: 'test'
+  ...
+# Subtest: Edit delegates to the scheduler and creation commits the exact reviewed tasks before deferred defaults
+ok 32 - Edit delegates to the scheduler and creation commits the exact reviewed tasks before deferred defaults
+  ---
+  duration_ms: 641.6992
+  type: 'test'
+  ...
+# Subtest: scheduler cancellation and invalid edits retain the accepted proposal
+ok 33 - scheduler cancellation and invalid edits retain the accepted proposal
+  ---
+  duration_ms: 613.8748
+  type: 'test'
+  ...
+# Subtest: allocation revalidation preserves lifecycle preferences and supplies the created cell to deferred defaults
+ok 34 - allocation revalidation preserves lifecycle preferences and supplies the created cell to deferred defaults
+  ---
+  duration_ms: 382.4236
+  type: 'test'
+  ...
+# Subtest: allocation failed creation skips defaults and a post-creation default failure uses the existing notice
+ok 35 - allocation failed creation skips defaults and a post-creation default failure uses the existing notice
+  ---
+  duration_ms: 434.5531
+  type: 'test'
+  ...
+# Subtest: an accepted preview creates a planting and its tasks only after explicit review confirmation
+ok 36 - an accepted preview creates a planting and its tasks only after explicit review confirmation
+  ---
+  duration_ms: 389.4566
+  type: 'test'
+  ...
+# Subtest: pending scheduler results cannot restore a closed or changed allocation proposal
+ok 37 - pending scheduler results cannot restore a closed or changed allocation proposal
+  ---
+  duration_ms: 271.8102
+  type: 'test'
+  ...
+# Subtest: view changes preserve previews while meaningful model edits clear them immediately
+ok 38 - view changes preserve previews while meaningful model edits clear them immediately
+  ---
+  duration_ms: 153.7983
+  type: 'test'
+  ...
+# Subtest: partial allocation chart and demand-served summary use one simulation of the fitting plant count
+ok 39 - partial allocation chart and demand-served summary use one simulation of the fitting plant count
+  ---
+  duration_ms: 225.5551
+  type: 'test'
+  ...
+# Subtest: Year Planner no longer owns the Allocate launcher
+ok 40 - Year Planner no longer owns the Allocate launcher
+  ---
+  duration_ms: 4.2047
+  type: 'test'
+  ...
+# Subtest: Allocate keeps accepted badge, ghost and preview while unrelated loading progress updates
+ok 41 - Allocate keeps accepted badge, ghost and preview while unrelated loading progress updates
+  ---
+  duration_ms: 58.1166
+  type: 'test'
+  ...
+# Subtest: fitted allocation updates count and supply without cumulative rounding during rotation
+ok 42 - fitted allocation updates count and supply without cumulative rounding during rotation
+  ---
+  duration_ms: 61.1876
+  type: 'test'
+  ...
+# Subtest: partial fitted allocation uses complete-row capacity and recomputes it on the other axis
+ok 43 - partial fitted allocation uses complete-row capacity and recomputes it on the other axis
+  ---
+  duration_ms: 8.5729
+  type: 'test'
+  ...
+# Subtest: Allocate classifies every overlapping crop and lookup failures remain unknown
+ok 44 - Allocate classifies every overlapping crop and lookup failures remain unknown
+  ---
+  duration_ms: 126.3848
+  type: 'test'
+  ...
+# Subtest: rotated warned drafts update the HUD, ghost, timeline and reviewed creation metadata
+ok 45 - rotated warned drafts update the HUD, ghost, timeline and reviewed creation metadata
+  ---
+  duration_ms: 177.9516
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: aligned companion rows preserve tangency, counts, and one-step undo at 0 degrees
+ok 46 - aligned companion rows preserve tangency, counts, and one-step undo at 0 degrees
+  ---
+  duration_ms: 9032.9379
+  type: 'test'
+  ...
+# Subtest: aligned companion rows preserve tangency, counts, and one-step undo at 37 degrees
+ok 47 - aligned companion rows preserve tangency, counts, and one-step undo at 37 degrees
+  ---
+  duration_ms: 6911.2259
+  type: 'test'
+  ...
+# Subtest: staggered companion rows preserve tangency, counts, and one-step undo at 0 degrees
+ok 48 - staggered companion rows preserve tangency, counts, and one-step undo at 0 degrees
+  ---
+  duration_ms: 7175.1173
+  type: 'test'
+  ...
+# Subtest: staggered companion rows preserve tangency, counts, and one-step undo at 37 degrees
+ok 49 - staggered companion rows preserve tangency, counts, and one-step undo at 37 degrees
+  ---
+  duration_ms: 7045.1995
+  type: 'test'
+  ...
+# Subtest: unequal circles touch and impossible staggering is rejected
+ok 50 - unequal circles touch and impossible staggering is rejected
+  ---
+  duration_ms: 3059.4615
+  type: 'test'
+  ...
+# Subtest: shared spacing editor previews an unsaved row and toggles without graph or default writes
+ok 51 - shared spacing editor previews an unsaved row and toggles without graph or default writes
+  ---
+  duration_ms: 3706.5919
+  type: 'test'
+  ...
+# Subtest: saved companion layouts take precedence and invalid saved offsets never expand the footprint
+ok 52 - saved companion layouts take precedence and invalid saved offsets never expand the footprint
+  ---
+  duration_ms: 2318.483
+  type: 'test'
+  ...
+# Subtest: spacing Apply reverses all changes if retile fails, without publishing an undo edit
+ok 53 - spacing Apply reverses all changes if retile fails, without publishing an undo edit
+  ---
+  duration_ms: 2165.5492
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: Allocate companion preview cancels cleanly, then commits both groups and tasks in one undoable edit
+ok 54 - Allocate companion preview cancels cleanly, then commits both groups and tasks in one undoable edit
+  ---
+  duration_ms: 7712.5819
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: Allocate disables incompatible beds and requires a target chooser for repeated companions
+ok 55 - Allocate disables incompatible beds and requires a target chooser for repeated companions
+  ---
+  duration_ms: 8317.3645
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: companion allocation lifecycle Edit preserves the chosen layout and deferred-default choices through revalidation
+ok 56 - companion allocation lifecycle Edit preserves the chosen layout and deferred-default choices through revalidation
+  ---
+  duration_ms: 5902.3913
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: ordinary planting Spacing exposes both patterns and commits only the chosen pair with undo
+ok 57 - ordinary planting Spacing exposes both patterns and commits only the chosen pair with undo
+  ---
+  duration_ms: 8869.8138
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: unknown bed relationships always appear in companion review and do not suppress it
+ok 58 - unknown bed relationships always appear in companion review and do not suppress it
+  ---
+  duration_ms: 5251.2027
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: zero-capacity edits and model changes cannot commit a stale companion preview
+ok 59 - zero-capacity edits and model changes cannot commit a stale companion preview
+  ---
+  duration_ms: 3891.6966
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: failed task creation rolls back resized crops and the new planting
+ok 60 - failed task creation rolls back resized crops and the new planting
+  ---
+  duration_ms: 4714.3932
+  type: 'test'
+  ...
+# Subtest: plant-level saved companion layout is used when no variety-specific layout exists
+ok 61 - plant-level saved companion layout is used when no variety-specific layout exists
+  ---
+  duration_ms: 3440.8708
+  type: 'test'
+  ...
+# [Scheduler] file instance: Garden_Scheduler_Dialog.js STAMP=2026-06-24-split
+# Subtest: closing companion review clears the busy state without graph or default changes
+ok 62 - closing companion review clears the busy state without graph or default changes
+  ---
+  duration_ms: 3459.3102
+  type: 'test'
+  ...
+# Subtest: Allocate perennial badges include companion occupancy after the first harvest year
+ok 63 - Allocate perennial badges include companion occupancy after the first harvest year
+  ---
+  duration_ms: 2789.1079
+  type: 'test'
+  ...
+# Subtest: lane overlay headers do not use browser title tooltips
+ok 64 - lane overlay headers do not use browser title tooltips
+  ---
+  duration_ms: 5.0063
+  type: 'test'
+  ...
+# Subtest: planting overlay has Cards, Schedule, and Spacing modes
+ok 65 - planting overlay has Cards, Schedule, and Spacing modes
+  ---
+  duration_ms: 2.3057
+  type: 'test'
+  ...
+# Subtest: team permission mode suppresses only the planting schedule panel controls
+ok 66 - team permission mode suppresses only the planting schedule panel controls
+  ---
+  duration_ms: 4.9348
+  type: 'test'
+  ...
+# Subtest: schedule-only planting overlays expose Spacing without linked tasks
+ok 67 - schedule-only planting overlays expose Spacing without linked tasks
+  ---
+  duration_ms: 3.5216
+  type: 'test'
+  ...
+# Subtest: spacing editor isolates each plant in a fixed-width row and labels inactive rows
+ok 68 - spacing editor isolates each plant in a fixed-width row and labels inactive rows
+  ---
+  duration_ms: 4.0991
+  type: 'test'
+  ...
+# Subtest: spacing editor preserves active-window preview and reserved revert gating
+ok 69 - spacing editor preserves active-window preview and reserved revert gating
+  ---
+  duration_ms: 3.239
+  type: 'test'
+  ...
+# Subtest: spacing preview renders DOM-only draft planting group copies
+ok 70 - spacing preview renders DOM-only draft planting group copies
+  ---
+  duration_ms: 133.7984
+  type: 'test'
+  ...
+# Subtest: spacing drafts survive view refresh but clear on affected graph edits
+ok 71 - spacing drafts survive view refresh but clear on affected graph edits
+  ---
+  duration_ms: 3.3046
+  type: 'test'
+  ...
+# Subtest: selected planting overlay clamps to cluster top instead of measuring occupancy navigator bounds
+ok 72 - selected planting overlay clamps to cluster top instead of measuring occupancy navigator bounds
+  ---
+  duration_ms: 4.323
+  type: 'test'
+  ...
+# Subtest: schedule action button mirrors Trellis user planting permissions
+ok 73 - schedule action button mirrors Trellis user planting permissions
+  ---
+  duration_ms: 3.0642
+  type: 'test'
+  ...
+# Subtest: schedule action button label uses ordinary schedule wording for all plantings
+ok 74 - schedule action button label uses ordinary schedule wording for all plantings
+  ---
+  duration_ms: 2.8688
+  type: 'test'
+  ...
+# Subtest: occupancy uses navigator API with selected-group fallback
+ok 75 - occupancy uses navigator API with selected-group fallback
+  ---
+  duration_ms: 2.3137
+  type: 'test'
+  ...
+# Subtest: occupancy interval prefers transplant date, then sow date, and requires harvest end
+ok 76 - occupancy interval prefers transplant date, then sow date, and requires harvest end
+  ---
+  duration_ms: 3.2623
+  type: 'test'
+  ...
+# Subtest: derived schedule actions are gated by schedule dates and annual turnover
+ok 77 - derived schedule actions are gated by schedule dates and annual turnover
+  ---
+  duration_ms: 2.3575
+  type: 'test'
+  ...
+# Subtest: occupancy relationship badges expose only explicit turnover gaps by tooltip
+ok 78 - occupancy relationship badges expose only explicit turnover gaps by tooltip
+  ---
+  duration_ms: 2.3348
+  type: 'test'
+  ...
+# Subtest: occupancy rows select and reveal their planting group
+ok 79 - occupancy rows select and reveal their planting group
+  ---
+  duration_ms: 2.6821
+  type: 'test'
+  ...
+# Subtest: role-card multi-selection dispatches to the multi-role link renderer
+ok 80 - role-card multi-selection dispatches to the multi-role link renderer
+  ---
+  duration_ms: 3.7226
+  type: 'test'
+  ...
+# Subtest: selection visual refresh event rebuilds link and schedule overlays
+ok 81 - selection visual refresh event rebuilds link and schedule overlays
+  ---
+  duration_ms: 82.9447
+  type: 'test'
+  ...
+# Subtest: multi-selected role cards draw links without opening task overlays
+ok 82 - multi-selected role cards draw links without opening task overlays
+  ---
+  duration_ms: 2.306
+  type: 'test'
+  ...
+# Subtest: linked task navigation delegates hidden-card paging to the task manager
+ok 83 - linked task navigation delegates hidden-card paging to the task manager
+  ---
+  duration_ms: 2.5582
+  type: 'test'
+  ...
+# Subtest: plant-tiler sibling task highlights use blue with ordinary blue outlines
+ok 84 - plant-tiler sibling task highlights use blue with ordinary blue outlines
+  ---
+  duration_ms: 3.6929
+  type: 'test'
+  ...
+# Subtest: standard link overlays use the native editor overlay pane
+ok 85 - standard link overlays use the native editor overlay pane
+  ---
+  duration_ms: 2.3513
+  type: 'test'
+  ...
+# Subtest: standard link overlays and ordinary outlines use blue fallback color with half-width link strokes
+ok 86 - standard link overlays and ordinary outlines use blue fallback color with half-width link strokes
+  ---
+  duration_ms: 6.3073
+  type: 'test'
+  ...
+# Subtest: standard link overlays skip reciprocal roadmap object dependencies
+ok 87 - standard link overlays skip reciprocal roadmap object dependencies
+  ---
+  duration_ms: 2.9275
+  type: 'test'
+  ...
+# Subtest: standard link overlays navigate on plain left click without a vertex shift fallback
+ok 88 - standard link overlays navigate on plain left click without a vertex shift fallback
+  ---
+  duration_ms: 4.9407
+  type: 'test'
+  ...
+# Subtest: task overlay guide lines keep the custom connection layer
+ok 89 - task overlay guide lines keep the custom connection layer
+  ---
+  duration_ms: 2.0111
+  type: 'test'
+  ...
+# Subtest: selected linked vertices draw direct connections even when task overlay is active
+ok 90 - selected linked vertices draw direct connections even when task overlay is active
+  ---
+  duration_ms: 2.1078
+  type: 'test'
+  ...
+# Subtest: standard link endpoints use a five pixel center offset
+ok 91 - standard link endpoints use a five pixel center offset
+  ---
+  duration_ms: 2.0727
+  type: 'test'
+  ...
+# Subtest: standard link labels stagger visible same-side labels by fifteen pixels
+ok 92 - standard link labels stagger visible same-side labels by fifteen pixels
+  ---
+  duration_ms: 2.3158
+  type: 'test'
+  ...
+# Subtest: task overlay guide lines keep centered anchors
+ok 93 - task overlay guide lines keep centered anchors
+  ---
+  duration_ms: 44.8702
+  type: 'test'
+  ...
+1..93
+# tests 93
+# suites 0
+# pass 93
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 100735.8158

@@ -10,7 +10,7 @@ Draw.loadPlugin(function (ui) {
     const EPS = 0.0001;
     const STORE_PREFIX = "trellis.allocate.reviewSuppressed.";
     const DEBUG_STORAGE_KEY = "trellis.allocate.debug"; // CHANGE: gated diagnostics explain Allocate week selection without normal console noise.
-    const SCHEDULE_CACHE_VERSION = "sow-week-cache-v1"; // CHANGE: session cache invalidates when Allocate scheduling semantics change.
+    const SCHEDULE_CACHE_VERSION = "sow-week-cache-v2"; // CHANGE: fitted footprints and complete-row counts invalidate older allocation results.
     const BED_PROFILE_ATTRS = Object.freeze(["sun", "drainage", "fertility", "trellis", "season_extension", "protection", "wind", "bed_use"]); // CHANGE: cache signatures include only active bed conditions that affect lifecycle gates.
 
     function ensureInteractionModes() {
@@ -154,6 +154,7 @@ Draw.loadPlugin(function (ui) {
         if (!state) return;
         state.lifecycleCache = new Map();
         state.bedResultCache = new Map();
+        state.relationshipCache = new Map(); // CHANGE: refreshed planning inputs must not retain stale companion lookup results.
     }
 
     function selectedWeekHasActions(state) {
@@ -840,7 +841,20 @@ Draw.loadPlugin(function (ui) {
         const actionStartISO = lifecycle.startISO || lifecycle.primaryDateISO || "";
         const kgPerPlant = Number(crop.kgPerPlant || plantResolution.plant.yield_per_plant_kg || plantResolution.plant.yield_kg_per_plant || 0);
         if (!Number.isFinite(kgPerPlant) || kgPerPlant <= EPS) return { ok: false, status: "structural_failure", reason: "Missing yield data.", bed, crop, lifecycle, plantResolution, demandWeek };
-        return { ok: true, scheduler, tiler, planning, plantResolution, lifecycle, actionStartISO, demandWeek, targetStartISO, targetEndISO, harvestStart, harvestEnd, kgPerPlant };
+        const plantId = String(crop.plantId || plantResolution.plant.plant_id || ""); // CHANGE
+        if (!state.relationshipCache) state.relationshipCache = new Map(); // CHANGE
+        if (!state.relationshipCache.has(plantId)) { // CHANGE: concurrent bed checks share one read-only lookup.
+            const lookup = typeof scheduler.listAllocationOverlapRelationships === "function" // CHANGE
+                ? Promise.resolve().then(() => scheduler.listAllocationOverlapRelationships(plantId)).catch(() => []) : Promise.resolve([]); // CHANGE
+            state.relationshipCache.set(plantId, lookup); // CHANGE
+        } // CHANGE
+        const relationships = await state.relationshipCache.get(plantId); // CHANGE
+        const byPlantId = new Map((relationships || []).map(item => [String(item.companionPlantId), item])); // CHANGE
+        const occupancy = (state.occupancy || []).map(item => { // CHANGE
+            const relationship = byPlantId.get(String(item.plantId || item.plant_id || "")); // CHANGE
+            return Object.assign({}, item, { conflictKind: relationship && relationship.conflictKind || "unknown" }); // CHANGE
+        }); // CHANGE
+        return { ok: true, scheduler, tiler, planning, plantResolution, lifecycle, actionStartISO, demandWeek, targetStartISO, targetEndISO, harvestStart, harvestEnd, kgPerPlant, occupancy }; // CHANGE
     }
 
     function recommendFullPlantCount(state, crop, context) {
@@ -864,17 +878,19 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function proposeGeometryForPlantCount(state, crop, bed, context, plantCount, orientationOverride) {
+    function proposeGeometryForPlantCount(state, crop, bed, context, plantCount, fitAxisOverride) { // CHANGE
         return context.tiler.proposePlantingGeometry({
             bedCell: bed,
             plantCount,
             spacingXCm: context.plantResolution.plant.spacing_x_cm || context.plantResolution.plant.spacing_cm || 30,
             spacingYCm: context.plantResolution.plant.spacing_y_cm || context.plantResolution.plant.spacing_cm || 30,
             vegHeightCm: context.plantResolution.plant.veg_height_cm || null,
-            occupancy: state.occupancy || [],
+            vegDiameterCm: context.plantResolution.plant.veg_diameter_cm || null, // CHANGE
+            fillCompleteRows: true, overlapPolicy: "warn", // CHANGE: Allocate fits complete rows and reviews every relationship overlap.
+            occupancy: context.occupancy || state.occupancy || [], // CHANGE
             entryISO: context.lifecycle.primaryDateISO || context.actionStartISO,
             harvestEndISO: context.harvestEnd,
-            orientationOverride: orientationOverride != null ? orientationOverride : (crop.orientationOverride || "")
+            fitAxisOverride: fitAxisOverride != null ? fitAxisOverride : (crop.fitAxisOverride || "") // CHANGE
         });
     }
 
@@ -941,7 +957,28 @@ Draw.loadPlugin(function (ui) {
             : "The selected task rules generate no tasks. This planting will be created without tasks.";
     } // CHANGE
 
-    function buildBedResult(state, crop, bed, context, geometry, plantCount, fullPlantCount, partialWarning) {
+    /** Classify the whole bed over the crop's true occupancy; spatial warnings remain independent. */ // CHANGE
+    function allocationBedRelationships(context, bed) { // CHANGE
+        const summarize = context.scheduler?.layoutTools?.summarizeBedRelationships; // CHANGE
+        const attributes = context.lifecycle.attributePatch || {}; // CHANGE: perennial occupancy covers its lifespan rather than one harvest.
+        return summarize ? summarize(context.occupancy, cellId(bed), attributes.lifespan_start || context.lifecycle.primaryDateISO || context.actionStartISO, attributes.lifespan_end || context.harvestEnd) // CHANGE
+            : { companion: [], incompatible: [], unknown: [], unresolved: [] }; // CHANGE
+    } // CHANGE
+
+    function bedRelationshipLabels(summary, details = false) { // CHANGE
+        if (!summary) return []; // CHANGE
+        const labels = []; // CHANGE
+        for (const kind of ['incompatible', 'unknown', 'companion']) { // CHANGE
+            const items = summary[kind] || []; if (!items.length) continue; // CHANGE
+            const label = kind === 'unknown' ? 'Unknown relationship' : kind === 'companion' ? 'Companion' : 'Incompatible'; // CHANGE
+            if (details) items.forEach(item => labels.push(label + ': ' + (item.plantName || item.label || item.groupId) + ' [' + item.groupId + '] · ' + item.overlapStartISO + ' to ' + item.overlapEndISO)); // CHANGE
+            else labels.push(label + ': ' + items.length); // CHANGE
+        } // CHANGE
+        if (summary.unresolved?.length) labels.push('Undated occupancy: ' + summary.unresolved.length); // CHANGE
+        return labels; // CHANGE
+    } // CHANGE
+
+    function buildBedResult(state, crop, bed, context, geometry, plantCount, fullPlantCount, partialWarning, requestedPlantCount) { // CHANGE
         const warnings = allocationWarnings(context.lifecycle, geometry, partialWarning);
         const status = (context.lifecycle.status === "warning" || geometry.status === "warning" || warnings.length) ? "warning" : "compatible";
         const supply = simulateCandidateSupply(state, crop, context, plantCount); // CHANGE: summary and chart share one simulation.
@@ -955,6 +992,7 @@ Draw.loadPlugin(function (ui) {
             geometry,
             plantCount,
             fullPlantCount,
+            requestedPlantCount: requestedPlantCount == null ? fullPlantCount : requestedPlantCount, allocationContext: context, // CHANGE: rotation always rounds from original demand and reuses resolved relationship data.
             partialPlanting: !!partialWarning,
             partialWarning: partialWarning || "",
             kgPerPlant: context.kgPerPlant,
@@ -969,7 +1007,7 @@ Draw.loadPlugin(function (ui) {
             projectedKg: plantCount * context.kgPerPlant,
             taskPreview: context.lifecycle.taskPreview || [],
             warnings,
-            conflictGroupIds: geometry.conflictGroupIds || []
+            conflictGroupIds: geometry.conflictGroupIds || [], bedRelationships: allocationBedRelationships(context, bed) // CHANGE
         };
     }
 
@@ -990,19 +1028,35 @@ Draw.loadPlugin(function (ui) {
         if (!context || !context.ok) return cachedBedResult(state, cacheKey, Object.assign({ bed, crop }, context || {}), bed, crop);
         const need = recommendFullPlantCount(state, crop, context);
         if (!need.ok) return cachedBedResult(state, cacheKey, { ok: false, status: need.status, reason: need.reason, bed, crop, lifecycle: context.lifecycle, plantResolution: context.plantResolution, recommendation: need.recommendation }, bed, crop);
-        const fullPlantCount = need.fullPlantCount;
-        const fullGeometry = proposeGeometryForPlantCount(state, crop, bed, context, fullPlantCount);
-        if (fullGeometry && fullGeometry.ok) return cachedBedResult(state, cacheKey, buildBedResult(state, crop, bed, context, fullGeometry, fullPlantCount, fullPlantCount, ""), bed, crop);
-        const capacity = Math.max(0, Math.trunc(Number(fullGeometry && fullGeometry.capacity) || 0));
-        if (capacity > 0 && capacity < fullPlantCount) {
-            const partialPlantCount = Math.max(1, Math.min(fullPlantCount, capacity));
-            const partialGeometry = proposeGeometryForPlantCount(state, crop, bed, context, partialPlantCount);
-            if (partialGeometry && partialGeometry.ok) {
-                return cachedBedResult(state, cacheKey, buildBedResult(state, crop, bed, context, partialGeometry, partialPlantCount, fullPlantCount, partialAllocationWarning(partialPlantCount, fullPlantCount)), bed, crop);
-            }
-        }
-        return cachedBedResult(state, cacheKey, { ok: false, status: "unavailable", reason: capacity > 0 ? "Need " + fullPlantCount + " plants" : "No bed capacity", capacity, plantCount: fullPlantCount, fullPlantCount, lifecycle: context.lifecycle, plantResolution: context.plantResolution, geometry: fullGeometry, bed, crop }, bed, crop);
+        const result = computeFittedBedResult(state, crop, bed, context, need.fullPlantCount, crop.fitAxisOverride); // CHANGE
+        return cachedBedResult(state, cacheKey, Object.assign(result, { allocationContext: context, bedRelationships: allocationBedRelationships(context, bed) }), bed, crop); // CHANGE // CHANGE
     }
+
+    /** Resolves rounded/partial counts once so previews, rotation, supply, and creation share one result. */ // CHANGE
+    function computeFittedBedResult(state, crop, bed, context, requestedPlantCount, fitAxisOverride) { // CHANGE
+        const fullGeometry = proposeGeometryForPlantCount(state, crop, bed, context, requestedPlantCount, fitAxisOverride); // CHANGE
+        const fullPlantCount = Number(fullGeometry && fullGeometry.fullPlantCount) || requestedPlantCount; // CHANGE
+        if (fullGeometry && fullGeometry.ok) { // CHANGE
+            const count = fullGeometry.plantCount == null ? requestedPlantCount : fullGeometry.plantCount; // CHANGE
+            return buildBedResult(state, crop, bed, context, fullGeometry, count, fullPlantCount, "", requestedPlantCount); // CHANGE
+        } // CHANGE
+        const capacity = Math.max(0, Math.trunc(Number(fullGeometry && fullGeometry.capacity) || 0)); // CHANGE
+        if (capacity > 0 && capacity < fullPlantCount) { // CHANGE
+            const partialGeometry = proposeGeometryForPlantCount(state, crop, bed, context, capacity, fullGeometry.fitAxis || fitAxisOverride); // CHANGE
+            if (partialGeometry && partialGeometry.ok) { // CHANGE
+                const count = partialGeometry.plantCount == null ? capacity : partialGeometry.plantCount; // CHANGE
+                return buildBedResult(state, crop, bed, context, partialGeometry, count, fullPlantCount, partialAllocationWarning(count, fullPlantCount), requestedPlantCount); // CHANGE
+            } // CHANGE
+        } // CHANGE
+        const result = buildBedResult(state, crop, bed, context, fullGeometry || {}, 0, fullPlantCount, "", requestedPlantCount); // CHANGE
+        return Object.assign(result, { ok: false, status: "unavailable", reason: capacity > 0 ? "Need " + fullPlantCount + " plants" : "No bed capacity: no complete row fits on this axis.", capacity }); // CHANGE
+    } // CHANGE
+
+    /** Rotate means a different bed axis, never swapped spacing or cumulative count rounding. */ // CHANGE
+    function rotateAllocationResult(state, draft) { // CHANGE
+        const nextAxis = draft.geometry.fitAxis === "width" ? "height" : "width"; // CHANGE
+        return Object.assign({}, draft, computeFittedBedResult(state, draft.crop, draft.bed, draft.allocationContext, draft.requestedPlantCount, nextAxis)); // CHANGE
+    } // CHANGE
 
     function demandShortageRows(plan, coverage) {
         const rows = [];
@@ -1295,7 +1349,7 @@ Draw.loadPlugin(function (ui) {
             cancelSowWeekScheduleJob(state, "cancelled");
             const refreshId = (Number(state.refreshJobId) || 0) + 1;
             state.refreshJobId = refreshId;
-            state.draft = null;
+            state.draft = null; state.cancelCompanionPreview?.(); state.bedResults?.clear(); // CHANGE
             state.overlayEvaluationSignature = ""; state.overlayHost.innerHTML = ""; // CHANGE: actual model changes invalidate old badge actions immediately.
             state.overlayVersion += 1; // CHANGE: reject bed evaluations and scheduler edits based on the old model.
             state.selectedBedId = ""; // CHANGE
@@ -1328,7 +1382,7 @@ Draw.loadPlugin(function (ui) {
             session = null;
             cancelSowWeekScheduleJob(current, "cancelled");
             cancelDeferred(current.refreshTimer);
-            current.closed = true;
+            current.closed = true; current.cancelCompanionPreview?.(); // CHANGE
             clearTimelinePreview(current); // CHANGE
             removeNode(current.hud);
             removeNode(current.overlayHost);
@@ -1349,7 +1403,7 @@ Draw.loadPlugin(function (ui) {
                 plan: null,
                 coverage: null,
                 city: null,
-                beds: [],
+                beds: [], bedResults: new Map(), // CHANGE
                 occupancy: [],
                 actionSchedule: emptyActionSchedule(),
                 scheduleRows: [],
@@ -1430,7 +1484,7 @@ Draw.loadPlugin(function (ui) {
             const context = currentBedContext(state); // CHANGE: model edits can move a selected group into another bed or remove its target.
             state.targetBedId = context ? cellId(context.bed) : ""; // CHANGE
             state.targetFailure = ""; // CHANGE
-            state.occupancy = typeof tiler.listPlantingFootprints === "function" ? tiler.listPlantingFootprints(state.moduleCell, { year: state.year, includeUndatedOccupancy: false }) : [];
+            state.occupancy = typeof tiler.listPlantingFootprints === "function" ? tiler.listPlantingFootprints(state.moduleCell, { includeUndatedOccupancy: true }) : []; // CHANGE: badges report unresolved occupancy without inferring dates.
             state.scheduleCacheSignature = buildScheduleCacheSignature(state);
             resetScheduleCaches(state);
             state.scheduleRows = demandShortageRows(state.plan, state.coverage);
@@ -1646,6 +1700,9 @@ Draw.loadPlugin(function (ui) {
             findBest.addEventListener("click", () => { void findBestBed(state); }); // CHANGE
             const rotate = createButton("Rotate", "open");
             rotate.addEventListener("click", () => rotateDraft(state));
+            const companion = createButton("Add as companion", "add", "Preview this crop inside an existing companion planting."); // CHANGE
+            companion.setAttribute('data-allocate-companion', '1'); companion.addEventListener('click', () => { void beginCompanion(state); }); // CHANGE
+            actions.appendChild(companion); // CHANGE
             const create = createButton("Review Schedule", "add"); // CHANGE: HUD action opens review/configuration before committing.
             create.addEventListener("click", () => beginCreate(state));
             actions.appendChild(findBest); // CHANGE
@@ -1653,7 +1710,7 @@ Draw.loadPlugin(function (ui) {
             actions.appendChild(create);
             panel.appendChild(actions);
 
-            state.hudRefs = { title, status, progress, weekRow, prev, weekSelect, next, unresolvedBox, cropSelect, draftBox, actions, findBest, rotate, create }; // CHANGE
+            state.hudRefs = { title, status, progress, weekRow, prev, weekSelect, next, unresolvedBox, cropSelect, draftBox, actions, findBest, rotate, create, companion }; // CHANGE // CHANGE
             return state.hudRefs;
         }
 
@@ -1690,7 +1747,13 @@ Draw.loadPlugin(function (ui) {
             refs.findBest.disabled = !state.selectedCropId || state.findingBed || state.reviewing; // CHANGE
             refs.findBest.title = state.reviewing ? "Finish reviewing the current planting first." : state.findingBed ? "Searching for a suitable garden bed." : !state.selectedCropId ? "Select a crop before finding a bed." : "Find the best available garden bed for the selected crop and sow/start week."; // CHANGE
 
-            refs.rotate.disabled = !state.draft || !state.draft.geometry;
+            const bedResult = state.bedResults?.get(state.targetBedId); // CHANGE
+            const relations = bedResult?.bedRelationships; // CHANGE
+            showHudNode(refs.companion, !!relations?.companion.length); // CHANGE
+            refs.companion.disabled = state.reviewing || !relations?.companion.length || !!relations?.incompatible.length || !graph.__trellisPlantingSpacingEditor; // CHANGE
+            refs.companion.title = relations?.incompatible.length ? 'Incompatible crops share this bed during the proposed occupancy. Companion creation is blocked.' // CHANGE
+                : !graph.__trellisPlantingSpacingEditor ? 'The planting Spacing editor is unavailable.' : 'Choose a companion and preview spacing before creating.'; // CHANGE
+            refs.rotate.disabled = !state.draft || !state.draft.geometry || !!state.draft.companionLayout; // CHANGE: shared-footprint orientation follows its chosen target.
             refs.rotate.title = refs.rotate.disabled ? "Choose a planting placement before rotating it." : "Rotate the proposed planting by 90 degrees."; // CHANGE
             refs.create.disabled = state.reviewing || !state.draft || state.draft.status === "structural_failure" || state.draft.status === "unavailable"; // CHANGE
             refs.create.title = state.reviewing ? "Finish the current schedule review first." : !state.draft ? "Choose a planting placement before reviewing its schedule." : refs.create.disabled ? "Choose a valid, available planting placement before reviewing its schedule." : "Review and configure the proposed planting and tasks before creating them."; // CHANGE
@@ -1733,10 +1796,12 @@ Draw.loadPlugin(function (ui) {
                 d.lifecycle.primaryDateISO && d.lifecycle.primaryDateISO !== (d.actionStartISO || d.lifecycle.startISO || "") ? methodBedEntryLabel(d.crop.method) + " " + d.lifecycle.primaryDateISO : "",
                 d.targetDemandStartISO ? "Targets demand " + d.targetDemandStartISO + " to " + (d.targetDemandEndISO || d.targetDemandStartISO) : "",
                 String(d.plantCount || 0) + " plants - " + formatKg(d.projectedKg) + " projected",
+                d.requestedPlantCount < d.plantCount ? "Rounded from " + d.requestedPlantCount + " plants to complete rows" : "", // CHANGE
                 d.partialPlanting ? "Partial: " + d.plantCount + " of " + d.fullPlantCount + " plants" : "",
                 "Harvest " + (d.harvestStart || "n/a") + " to " + (d.harvestEnd || "n/a"),
                 "Serves " + formatKg(d.demandServedKg || 0) + " unmet demand",
                 !(d.taskPreview || []).length ? allocationTaskWarning(d) : "", // CHANGE
+                ...(d.warnings || []).map(warning => warning && warning.message || String(warning)), // CHANGE: overlap relationships remain visible before opening review.
                 d.status === "compatible" ? "Compatible" : (d.reason || d.status)
             ].filter(Boolean).forEach(text => {
                 const div = document.createElement("div");
@@ -1798,8 +1863,8 @@ Draw.loadPlugin(function (ui) {
                     if (state.closed || version !== state.overlayVersion) return; // CHANGE
                     const result = await computeBedResult(state, Object.assign({}, crop, { cropId: String(crop.cropId || crop.id || "") }), bed); // CHANGE
                     if (state.closed || version !== state.overlayVersion) return; // CHANGE
-                    results.push(result); // CHANGE
-                    if (result && result.ok) { currentBadgeIds.add(cellId(bed)); renderBedOverlay(state, bed, overlayModel(result)); } // CHANGE
+                    results.push(result); state.bedResults.set(cellId(bed), result); // CHANGE
+                    if (result && (result.ok || result.allocationContext)) { currentBadgeIds.add(cellId(bed)); renderBedOverlay(state, bed, overlayModel(result)); } // CHANGE
                 } // CHANGE
                 for (const node of state.overlayHost.querySelectorAll('[data-bed-id]')) if (!currentBadgeIds.has(node.getAttribute('data-bed-id'))) removeNode(node); // CHANGE
                 if (!state.draft) { // CHANGE
@@ -1820,10 +1885,10 @@ Draw.loadPlugin(function (ui) {
         }
 
         function overlayModel(result) { // CHANGE
-            if (!result || !result.ok) return { label: result && result.reason || "No current fit", tone: "bad" }; // CHANGE
+            if (!result || !result.ok) return { label: [result && result.reason || "No current fit", ...bedRelationshipLabels(result?.bedRelationships)].join("\n"), description: bedRelationshipLabels(result?.bedRelationships, true).join("\n"), tone: "bad", result }; // CHANGE // CHANGE
             const label = result.partialPlanting ? "Partial fit" : (result.status === "warning" ? "Needs review" : "Good fit"); // CHANGE
             const counts = result.partialPlanting ? `${result.plantCount} of ${result.fullPlantCount} plants fit` : `${result.plantCount} plants fit`; // CHANGE
-            return { label, description: [result.crop.label, counts, ...(result.warnings || [])].filter(Boolean).join("\n"), tone: result.status === "warning" ? "warn" : "good", result }; // CHANGE
+            return { label: [label, ...bedRelationshipLabels(result.bedRelationships)].join("\n"), description: [result.crop.label, counts, ...(result.warnings || []), ...bedRelationshipLabels(result.bedRelationships, true)].filter(Boolean).join("\n"), tone: result.status === "warning" ? "warn" : "good", result }; // CHANGE
         } // CHANGE
 
         function renderBedOverlay(state, bed, modelValue) {
@@ -1881,6 +1946,7 @@ Draw.loadPlugin(function (ui) {
             navigator.showAllocationPreview({ // CHANGE
                 ownerId: state.ownerId, moduleCell: state.moduleCell, bedCell: draft.bed, year: state.year, // CHANGE
                 geometry: draft.geometry.geometry, entryISO: draft.lifecycle.primaryDateISO || draft.actionStartISO, harvestEndISO: draft.harvestEnd, // CHANGE
+                plantingRect: draft.geometry.plantingRect, // CHANGE: virtual occupancy follows plants and bed rotation, excluding the header.
                 cropLabel: draft.crop.label, coveragePreview: draft.coveragePreview, // CHANGE
                 weekStarts: draft.coveragePreview && draft.coveragePreview.weekStarts || state.coverage.weekStarts || [], selectedWeekIndex: state.weekIndex // CHANGE
             }); // CHANGE
@@ -1947,41 +2013,28 @@ Draw.loadPlugin(function (ui) {
             renderTimelinePreview(state); // CHANGE
         }
 
-        function rotateDraft(state) {
-            if (!state.draft) return;
-            const tiler = window.USL && window.USL.tiler;
-            const d = state.draft;
-            const next = tiler.proposePlantingGeometry({
-                bedCell: d.bed,
-                plantCount: d.plantCount,
-                spacingXCm: d.geometry.spacingYCm,
-                spacingYCm: d.geometry.spacingXCm,
-                vegHeightCm: d.geometry.vegHeightCm || null,
-                occupancy: state.occupancy || [],
-                entryISO: d.lifecycle && d.lifecycle.primaryDateISO || "",
-                harvestEndISO: d.harvestEnd || "",
-                orientationOverride: d.geometry.orientation === "normal" ? "rotated_grid" : "normal"
-            });
-            d.geometry = next;
-            d.warnings = allocationWarnings(d.lifecycle, next, d.partialWarning);
-            d.status = !next || !next.ok ? "unavailable" : d.warnings.length ? "warning" : "compatible"; // CHANGE: failed rotation cannot be committed.
-            d.conflictGroupIds = next && next.conflictGroupIds || [];
-            renderGhost(state);
-            renderHud(state);
+        function rotateDraft(state) { // CHANGE
+            if (!state.draft || !state.draft.allocationContext || state.draft.companionLayout) return; // CHANGE: changing a shared frame requires a fresh pair preview.
+            state.draft = rotateAllocationResult(state, state.draft); // CHANGE
+            renderGhost(state); // CHANGE
+            renderHud(state); // CHANGE
             renderTimelinePreview(state); // CHANGE
-        }
+        } // CHANGE
 
         function renderGhost(state) {
             removeNode(state.ghost);
             const d = state.draft;
             if (!d || !d.geometry || !d.geometry.ok || !d.geometry.geometry) return; // CHANGE
             const geo = d.geometry.geometry;
-            const screen = graphPointToContainer(geo.x, geo.y); // CHANGE: proposal geometry is already in graph coordinates and rendered graph-locally.
+            const screen = graphPointToContainer(geo.x, geo.y); // CHANGE: fitted geometry is local to the garden module's child coordinate system.
+            const origin = graphOriginForCell(state.moduleCell); // CHANGE: offset the ghost exactly once when the garden is moved or nested.
+            screen.left += origin.x * screen.scale; screen.top += origin.y * screen.scale; // CHANGE
             const scale = screen.scale || 1;
             const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
             svg.setAttribute("class", "trellis-allocate-ghost");
             svg.style.cssText = "position:absolute;left:" + Math.round(screen.left) + "px;top:" + Math.round(screen.top) + "px;width:" + Math.round(geo.width * scale) + "px;height:" + Math.round(geo.height * scale) + "px;pointer-events:none;overflow:visible;";
             svg.setAttribute("viewBox", "0 0 " + geo.width + " " + geo.height);
+            svg.style.transformOrigin = "50% 50%"; svg.style.transform = "rotate(" + (d.geometry.rotation || 0) + "deg)"; // CHANGE: ghost and committed group use the bed rotation.
             const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
             rect.setAttribute("x", "0");
             rect.setAttribute("y", "0");
@@ -2016,12 +2069,136 @@ Draw.loadPlugin(function (ui) {
             state.ghost = svg;
         }
 
+        /** Convert the shared editor's slot previews into a planting proposal and a multi-crop supply simulation. */ // CHANGE
+        function companionDraftFromRows(state, base, context, rows, preview, saveDefaults = false) { // CHANGE
+            if (!preview || preview.status !== 'ok') throw new Error(preview?.warning || 'The companion layout is invalid.'); // CHANGE
+            const proposed = rows.find(row => row.proposed), proposedPreview = preview.rows.find(row => row.proposed)?.groupPreview; // CHANGE
+            if (!proposed || !proposedPreview?.actual) throw new Error('No companion plants fit this footprint.'); // CHANGE
+            const overrides = {}; // CHANGE
+            preview.rows.filter(row => !row.proposed && row.enabled !== false).forEach(row => { overrides[row.cellId] = row.groupPreview.actual; }); // CHANGE
+            const count = proposedPreview.actual; // CHANGE
+            const simulation = window.USL.planningCore.simulateCandidatePlanting({ moduleCell: state.moduleCell, year: state.year, plan: state.plan, plantingCountOverrides: overrides, // CHANGE
+                candidate: { cropId: base.crop.cropId || base.crop.id, harvestStart: base.harvestStart, harvestEnd: base.harvestEnd, kgPerPlant: base.kgPerPlant, plantCount: count } }); // CHANGE
+            const geometry = { ok: true, sharedFootprint: true, geometry: Object.assign({}, proposed.modelRect), rotation: proposed.rotationDeg || 0, // CHANGE
+                plantCount: count, spacingXCm: Number(proposed.spacingXCm), spacingYCm: Number(proposed.spacingYCm), vegDiameterCm: proposed.vegDiameterCm, // CHANGE
+                layoutOffsetXCm: Number(proposed.offsetXCm), layoutOffsetYCm: Number(proposed.offsetYCm), disabledSlots: proposedPreview.disabledSlots, // CHANGE
+                lodCollapsed: proposedPreview.capped, slots: proposedPreview.circles.map(circle => { // CHANGE: keep the accepted companion visible after closing Spacing.
+                    const radians = -(proposed.rotationDeg || 0) * Math.PI / 180; // CHANGE
+                    const dx = circle.x - proposed.rect.x - proposed.rect.width / 2, dy = circle.y - proposed.rect.y - proposed.rect.height / 2; // CHANGE
+                    return { x: proposed.rect.width / 2 + dx * Math.cos(radians) - dy * Math.sin(radians), y: proposed.rect.height / 2 + dx * Math.sin(radians) + dy * Math.cos(radians), r: circle.r }; // CHANGE
+                }), status: 'warning', warnings: [] }; // CHANGE
+            const countChanges = preview.rows.map(row => (row.label || row.cellId) + ': ' + row.groupPreview.committedCount + ' → ' + row.groupPreview.actual + ' plants, ' + formatKg(row.groupPreview.committedExpectedYield) + ' → ' + formatKg(row.groupPreview.draftExpectedYield) + ' expected'); // CHANGE
+            const warnings = [...(base.lifecycle.warnings || []), ...bedRelationshipLabels(base.bedRelationships, true), ...countChanges]; // CHANGE
+            const affected = new Set([String(base.crop.cropId || base.crop.id)]); // CHANGE
+            for (const crop of simulation.base.plan.crops || []) if (rows.some(row => !row.proposed && String(row.plantId) === String(crop.plantId) && String(row.varietyId || '') === String(crop.varietyId || ''))) affected.add(String(crop.id)); // CHANGE
+            const coverageChanges = Array.from(affected, id => { // CHANGE
+                const before = simulation.base.weekly.perCrop.get(id), after = simulation.coverage.weekly.perCrop.get(id); // CHANGE
+                const sum = values => (values || []).reduce((total, value) => total + Number(value || 0), 0); // CHANGE
+                const label = simulation.coverage.plan.crops.find(crop => String(crop.id) === id)?.label || simulation.coverage.plan.crops.find(crop => String(crop.id) === id)?.plant || id; // CHANGE
+                return label + ': shortage ' + formatKg(sum(before?.short)) + ' → ' + formatKg(sum(after?.short)); // CHANGE
+            }); // CHANGE
+            return Object.assign({}, base, { geometry, plantCount: count, projectedKg: count * base.kgPerPlant, status: 'warning', warnings, // CHANGE
+                demandServedKg: simulation.demandServedKg, coveragePreview: buildCoveragePreview(simulation, base.crop.cropId || base.crop.id), coverageChanges, // CHANGE
+                companionLayout: { rows, targetId: context.selectedId, saveDefaults, plantingCountOverrides: overrides } }); // CHANGE
+        } // CHANGE
+
+        async function beginCompanion(state) { // CHANGE
+            if (state.closed || state.reviewing) return; // CHANGE
+            const result = state.bedResults.get(state.targetBedId), summary = result?.bedRelationships; // CHANGE
+            if (!summary?.companion.length || summary.incompatible.length) return; // CHANGE
+            const tools = window.USL.scheduler?.layoutTools, editor = graph.__trellisPlantingSpacingEditor; // CHANGE
+            if (!tools || !editor) return; // CHANGE
+            const revision = state.refreshJobId, cropId = state.selectedCropId, bedId = state.targetBedId; // CHANGE
+            const isCurrent = () => !state.closed && state.refreshJobId === revision && state.selectedCropId === cropId && state.targetBedId === bedId; // CHANGE
+            state.reviewing = true; renderHud(state); // CHANGE
+            try { // CHANGE
+                let base = result.ok ? Object.assign({}, result) : buildBedResult(state, result.crop, result.bed, result.allocationContext, { ok: true }, 0, 0); // CHANGE
+                const scheduler = window.USL.scheduler, defaults = await scheduler.resolveAllocationDefaultStatus(base); // CHANGE
+                if (!isCurrent()) return; // CHANGE
+                if (!defaults.complete) { // CHANGE
+                    const configured = await scheduler.openAllocationScheduleDialog(ui, Object.assign({}, base, { city: state.city, moduleCell: state.moduleCell, allocationYear: state.year, bedOccupancy: state.occupancy, companionAllocation: true }), { defaultStatus: defaults, previewOnly: true, isCurrent, // CHANGE
+                        revalidateDraft: candidate => recomputeDraftForSameBed(state, candidate) }); // CHANGE: companion configuration revalidates dates and overlaps before choosing its footprint.
+                    if (!configured || configured.action === 'cancel' || !isCurrent()) return; // CHANGE
+                    const edited = Object.assign({}, base, configured.draft); // CHANGE
+                    const context = await resolveAllocationContext(state, Object.assign({}, edited.crop, { allocationLifecycle: edited.lifecycle, allocationPlantResolution: edited.plantResolution }), base.bed); // CHANGE
+                    if (!context.ok) throw new Error(context.reason); // CHANGE
+                    base = Object.assign({}, edited, buildBedResult(state, edited.crop, base.bed, context, { ok: true }, 0, 0)); // CHANGE: retain reviewed lifecycle/default choices for the spacing preview.
+                } // CHANGE
+                const draft = await showCompanionSpacing(state, base, isCurrent); // CHANGE
+                if (!draft || !isCurrent()) return; // CHANGE
+                state.draft = draft; // CHANGE
+                const reviewed = await showCreateReview(state, draft); // CHANGE
+                if (reviewed?.action === 'create' && isCurrent()) await createDraft(state, draft); // CHANGE
+                else if (reviewed?.action === 'scheduler' && isCurrent()) await openAllocationSchedulerAndPreview(state, draft); // CHANGE: companion edits retain their footprint through shared revalidation.
+                else if (reviewed?.action === 'scheduler' && isCurrent()) await openAllocationSchedulerAndPreview(state, draft); // CHANGE: companion review supports the same lifecycle Edit action as ordinary allocation.
+            } catch (error) { if (!state.closed) state.noticeMessage = error.message || 'Unable to preview companions.'; } // CHANGE
+            finally { state.reviewing = false; editor.clear(); if (!state.closed) { renderHud(state); renderGhost(state); } } // CHANGE
+        } // CHANGE
+
+        /** Modal host for the real planting Spacing editor; closing it removes only DOM preview state. */ // CHANGE
+        async function showCompanionSpacing(state, base, isCurrent) { // CHANGE
+            const editor = graph.__trellisPlantingSpacingEditor, tools = window.USL.scheduler.layoutTools; // CHANGE
+            const root = document.createElement('div'); root.style.cssText = 'padding:14px;font:12px Arial,sans-serif;display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto;'; // CHANGE
+            const title = document.createElement('strong'); title.textContent = 'Add ' + base.crop.label + ' as companion · Spacing'; root.appendChild(title); // CHANGE
+            const targets = document.createElement('select'); targets.setAttribute('aria-label', 'Companion footprint'); // CHANGE
+            const summary = base.bedRelationships; // CHANGE
+            if (summary.incompatible.length) throw new Error('Incompatible crops share this bed during the proposed occupancy.'); // CHANGE
+            if (summary.companion.length > 1) { const option = document.createElement('option'); option.value = ''; option.textContent = 'Choose a companion planting'; targets.appendChild(option); } // CHANGE
+            summary.companion.forEach(item => { const option = document.createElement('option'); option.value = item.groupId; option.textContent = (item.plantName || item.groupId) + ' [' + item.groupId + '] · ' + item.bedEntryISO + ' to ' + item.harvestEndISO; targets.appendChild(option); }); // CHANGE
+            root.appendChild(targets); // CHANGE
+            const relationships = document.createElement('div'); relationships.style.whiteSpace = 'pre-line'; relationships.textContent = bedRelationshipLabels(summary, true).join('\n'); root.appendChild(relationships); // CHANGE
+            const body = document.createElement('div'); root.appendChild(body); // CHANGE
+            const coverage = document.createElement('div'); coverage.style.whiteSpace = 'pre-line'; root.appendChild(coverage); // CHANGE
+            const cancel = createButton('Cancel'); root.appendChild(cancel); // CHANGE
+            removeNode(state.ghost); state.ghost = null; // CHANGE
+            return await new Promise(resolve => { // CHANGE
+                let settled = false, renderVersion = 0; // CHANGE
+                const finish = value => { if (settled) return; settled = true; renderVersion++; editor.clear(); state.cancelCompanionPreview = null; resolve(value); }; // CHANGE
+                state.cancelCompanionPreview = () => { finish(null); ui.hideDialog(); }; // CHANGE
+                cancel.addEventListener('click', () => { finish(null); ui.hideDialog(); }); // CHANGE
+                const render = async () => { // CHANGE
+                    const token = ++renderVersion; editor.clear(); body.textContent = targets.value ? 'Loading spacing...' : 'Choose a companion footprint.'; // CHANGE
+                    try { // CHANGE
+                        if (!targets.value || !isCurrent()) return; // CHANGE
+                        const source = model.getCell(targets.value); if (!source) throw new Error('The companion planting was removed.'); // CHANGE
+                        const plant = base.plantResolution.plant; // CHANGE
+                        const row = { cellId: 'proposed-companion', proposed: true, enabled: true, selected: false, label: base.crop.label, plant, // CHANGE
+                            plantId: String(base.crop.plantId), varietyId: base.crop.varietyId || null, plantName: plant.plant_name, varietyName: base.plantResolution.varietyName, // CHANGE
+                            spacingXCm: plant.spacing_x_cm || plant.spacing_cm || 30, spacingYCm: plant.spacing_y_cm || plant.spacing_cm || 30, offsetXCm: 0, offsetYCm: 0, // CHANGE
+                            vegDiameterCm: plant.veg_diameter_cm, bedId: cellId(base.bed), bedRect: null, // CHANGE
+                            attributes: { label: base.crop.label + ' group', plant_name: plant.plant_name, plant_abbr: plant.plant_abbr || '?', plant_yield: String(base.kgPerPlant), growth_stage_key: base.crop.growthStageKey === 'mature' ? '' : base.crop.growthStageKey || '' } }; // CHANGE
+                        const context = await tools.prepareCompanionPair(graph, source, row); // CHANGE
+                        if (settled || token !== renderVersion || !isCurrent()) return; // CHANGE
+                        editor.render(body, context, { proposed: true, applyLabel: 'Review companion', isCurrent, // CHANGE
+                            onChange: (rows, preview, valid) => { // CHANGE
+                                if (!valid) { coverage.textContent = preview?.warning || 'Adjust spacing to preview demand coverage.'; return; } // CHANGE
+                                try { const next = companionDraftFromRows(state, base, context, rows, preview); coverage.textContent = next.coverageChanges.join('\n'); } // CHANGE
+                                catch (error) { coverage.textContent = error.message; } // CHANGE
+                            }, // CHANGE
+                            onApply: async (rows, options) => { // CHANGE
+                                if (!isCurrent()) throw new Error('The garden changed. Reopen the companion preview.'); // CHANGE
+                                const preview = tools.buildSpacingPreviewModel(graph, rows); // CHANGE
+                                const next = companionDraftFromRows(state, base, context, rows, preview, options.saveDefaults); // CHANGE
+                                finish(next); ui.hideDialog(); // CHANGE
+                            } }); // CHANGE
+                    } catch (error) { if (token === renderVersion && !settled) body.textContent = error.message; } // CHANGE
+                }; // CHANGE
+                targets.addEventListener('change', () => { void render(); }); ui.showDialog(root, 620, 550, true, true, () => finish(null)); void render(); // CHANGE
+            }); // CHANGE
+        } // CHANGE
+
         async function beginCreate(state) {
             if (!state.draft || state.reviewing) return; // CHANGE
             const draft = state.draft; // CHANGE
             state.reviewing = true; // CHANGE
             renderHud(state); // CHANGE
             try { // CHANGE: only one review/configuration operation may run for this proposal.
+                if (draft.companionLayout) { // CHANGE: retain the reviewed footprint and lifecycle when reopening a cancelled review.
+                    const reviewed = await showCreateReview(state, draft); // CHANGE
+                    if (reviewed?.action === 'create' && state.draft === draft && !state.closed) await createDraft(state, draft); // CHANGE
+                    else if (reviewed?.action === 'scheduler' && state.draft === draft && !state.closed) await openAllocationSchedulerAndPreview(state, draft); // CHANGE
+                    return; // CHANGE
+                } // CHANGE
                 const scheduler = window.USL && window.USL.scheduler;
                 const defaults = scheduler && typeof scheduler.resolveAllocationDefaultStatus === "function"
                     ? await scheduler.resolveAllocationDefaultStatus(draft) // CHANGE
@@ -2060,7 +2237,9 @@ Draw.loadPlugin(function (ui) {
                 bedProfileSource: draft.bed ? (getAttr(draft.bed, "label") || "allocation bed") : "allocation bed"
             });
             schedulerDraft.moduleCell = state.moduleCell; // CHANGE: explicit garden context without a graph cell.
-            const edited = await scheduler.openAllocationScheduleDialog(ui, schedulerDraft, Object.assign({ defaultStatus: options.defaultStatus || null }, options, { previewOnly: true, isCurrent: () => !state.closed && state.draftVersion === version && state.draft === draft })); // CHANGE
+            schedulerDraft.bedOccupancy = state.occupancy || []; // CHANGE: the draft target has no graph identity, so supply the real bed occupancy.
+            const edited = await scheduler.openAllocationScheduleDialog(ui, schedulerDraft, Object.assign({ defaultStatus: options.defaultStatus || null }, options, { previewOnly: true, isCurrent: () => !state.closed && state.draftVersion === version && state.draft === draft,
+                revalidateDraft: candidate => recomputeDraftForSameBed(state, candidate) })); // CHANGE: lifecycle edits refresh capacity and coverage before Preview can be accepted.
             if (!edited || edited.action === "cancel") return;
             if (state.closed || state.draftVersion !== version || state.draft !== draft) return; // CHANGE
             const nextDraft = await recomputeDraftForSameBed(state, Object.assign({}, draft, edited.draft || edited));
@@ -2082,11 +2261,25 @@ Draw.loadPlugin(function (ui) {
                 method: draft.methodId || draft.crop && draft.crop.method || "",
                 methodCategoryId: draft.methodCategoryId || draft.crop && draft.crop.methodCategoryId || "",
                 allocationLifecycle: draft.lifecycle || null,
-                allocationPlantResolution: draft.plantResolution || null // CHANGE
+                allocationPlantResolution: draft.plantResolution || null, // CHANGE
+                fitAxisOverride: draft.geometry && draft.geometry.fitAxis || "" // CHANGE: reviewed edits retain the selected bed axis.
             });
+            if (draft.companionAllocation || draft.companionLayout) { // CHANGE: a reviewed companion shares its chosen footprint instead of requesting empty-bed geometry.
+                const context = await resolveAllocationContext(state, crop, bed); // CHANGE
+                if (!context.ok) return Object.assign({}, draft, { ok: false, reason: context.reason }); // CHANGE
+                const base = Object.assign({}, draft, buildBedResult(state, crop, bed, context, { ok: true }, 0, 0)); // CHANGE
+                if (base.bedRelationships.incompatible.length) return Object.assign(base, { ok: false, reason: 'Incompatible crops share the bed during the edited lifecycle.' }); // CHANGE
+                if (!base.bedRelationships.companion.length) return Object.assign(base, { ok: false, reason: 'No companion planting overlaps this lifecycle.' }); // CHANGE
+                if (!draft.companionLayout) return base; // CHANGE: capacity is calculated by the subsequent footprint/spacing choice.
+                if (!base.bedRelationships.companion.some(item => item.groupId === draft.companionLayout.targetId)) return Object.assign(base, { ok: false, reason: 'The chosen companion no longer overlaps this lifecycle. Reopen the companion preview.' }); // CHANGE
+                try { // CHANGE
+                    const preview = window.USL.scheduler.layoutTools.buildSpacingPreviewModel(graph, draft.companionLayout.rows); // CHANGE
+                    return companionDraftFromRows(state, base, { selectedId: draft.companionLayout.targetId }, draft.companionLayout.rows, preview, draft.companionLayout.saveDefaults); // CHANGE: refresh both crops' capacity and coverage using the retained layout.
+                } catch (error) { return Object.assign(base, { ok: false, reason: error.message }); } // CHANGE
+            } // CHANGE
             const result = await computeBedResult(state, crop, bed);
             if (!result || !result.ok) return Object.assign({}, draft, { ok: false, reason: result && result.reason || "Edited schedule no longer fits the selected bed." });
-            return Object.assign({}, result, {
+            return Object.assign({}, draft, result, { // CHANGE: retain lifecycle/default selections while replacing calculated capacity and coverage.
                 taskPreview: draft.taskPreview || result.taskPreview || [],
                 lifecycle: draft.lifecycle || result.lifecycle,
                 actionStartISO: draft.actionStartISO || result.actionStartISO,
@@ -2111,6 +2304,7 @@ Draw.loadPlugin(function (ui) {
                 draft.lifecycle.primaryDateISO && draft.lifecycle.primaryDateISO !== (draft.actionStartISO || draft.lifecycle.startISO || "") ? methodBedEntryLabel(draft.crop.method) + " " + draft.lifecycle.primaryDateISO : "",
                 draft.targetDemandStartISO ? "Targets demand " + draft.targetDemandStartISO + " to " + (draft.targetDemandEndISO || draft.targetDemandStartISO) : "",
                 String(draft.plantCount) + " plants",
+                draft.requestedPlantCount < draft.plantCount ? "Rounded from " + draft.requestedPlantCount + " plants to complete rows" : "", // CHANGE
                 draft.partialPlanting ? "Partial: " + draft.plantCount + " of " + draft.fullPlantCount + " plants fit in this bed" : "",
                 "Harvest " + draft.harvestStart + " to " + draft.harvestEnd,
                 "Serves " + formatKg(draft.demandServedKg),
@@ -2120,6 +2314,7 @@ Draw.loadPlugin(function (ui) {
                 row.textContent = text;
                 div.appendChild(row);
             });
+            if (draft.coverageChanges?.length) { const coverage = document.createElement('div'); coverage.style.whiteSpace = 'pre-line'; coverage.textContent = draft.coverageChanges.join('\n'); div.appendChild(coverage); } // CHANGE
             if ((draft.warnings || []).length) {
                 const warnings = document.createElement("div");
                 warnings.style.cssText = "border:1px solid #d97706;border-radius:6px;background:#fffbeb;color:#92400e;padding:8px;display:flex;flex-direction:column;gap:3px;";
@@ -2152,28 +2347,26 @@ Draw.loadPlugin(function (ui) {
             suppressInput.type = "checkbox";
             suppress.appendChild(suppressInput);
             suppress.appendChild(document.createTextNode("Don't show again for this plant"));
-            div.appendChild(suppress);
+            if (!draft.companionLayout) div.appendChild(suppress); // CHANGE: unknown companion relationships always require review.
             const buttons = document.createElement("div");
             buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
             const edit = createButton("Edit", "open", "Open the scheduler to edit this proposed planting before creating it."); // CHANGE
             const cancel = createButton("Cancel");
             const create = createButton(draft.status === "compatible" ? "Create" : "Create anyway", "add", draft.status === "compatible" ? "Create the reviewed planting and its scheduled tasks." : "Create the reviewed planting and tasks despite the compatibility warnings."); // CHANGE
-            buttons.appendChild(edit);
+            buttons.appendChild(edit); // CHANGE: every allocation can unlock lifecycle settings while preserving its reviewed layout.
             buttons.appendChild(cancel);
             buttons.appendChild(create);
             div.appendChild(buttons);
             return await new Promise(resolve => {
-                cancel.addEventListener("click", function () { ui.hideDialog(); resolve(null); });
+                cancel.addEventListener("click", function () { resolve(null); ui.hideDialog(); }); // CHANGE
                 edit.addEventListener("click", async function () {
-                    ui.hideDialog();
-                    resolve({ action: "scheduler", draft }); // CHANGE: Edit opens the allocation scheduler path.
+                    resolve({ action: "scheduler", draft }); ui.hideDialog(); // CHANGE: settle the action before the dialog close callback.
                 });
                 create.addEventListener("click", function () {
                     if (suppressInput.checked) setReviewSuppressed(draft);
-                    ui.hideDialog();
-                    resolve({ action: "create", draft });
+                    resolve({ action: "create", draft }); ui.hideDialog(); // CHANGE
                 });
-                ui.showDialog(div, 560, 520, true, true);
+                ui.showDialog(div, 560, 520, true, true, () => resolve(null)); // CHANGE: closing review must clear the pending operation.
             });
         }
 
@@ -2183,12 +2376,25 @@ Draw.loadPlugin(function (ui) {
             const tasks = window.USL && window.USL.tasks;
             if (!tiler || !tasks || typeof tasks.applySchedulerTaskReplacement !== "function") return;
             const history = window.Trellis && window.Trellis.history;
+            if (draft.companionLayout) { // CHANGE
+                const freshOccupancy = tiler.listPlantingFootprints(state.moduleCell, { includeUndatedOccupancy: true }); // CHANGE
+                const freshState = Object.assign({}, state, { occupancy: freshOccupancy, relationshipCache: new Map() }); // CHANGE
+                const context = await resolveAllocationContext(freshState, Object.assign({}, draft.crop, { allocationLifecycle: draft.lifecycle, allocationPlantResolution: draft.plantResolution }), draft.bed); // CHANGE
+                if (!context.ok || state.closed || state.draft !== draft) throw new Error('The companion preview is no longer current.'); // CHANGE
+                const summary = allocationBedRelationships(context, draft.bed); // CHANGE
+                if (summary.incompatible.length || !summary.companion.some(item => item.groupId === draft.companionLayout.targetId)) throw new Error('The bed relationships changed. Reopen the companion preview.'); // CHANGE
+                const preview = window.USL.scheduler.layoutTools.buildSpacingPreviewModel(graph, draft.companionLayout.rows); // CHANGE
+                if (preview.status !== 'ok' || preview.rows.some(row => row.groupPreview.actual !== (row.proposed ? draft.plantCount : draft.companionLayout.plantingCountOverrides[row.cellId]))) throw new Error('The planting capacity changed. Reopen the companion preview.'); // CHANGE
+            } // CHANGE
             state.committing = true; // CHANGE: graph notifications cannot replace a draft during its commit.
             state.noticeMessage = ""; // CHANGE: an editor's preview notice must not survive successful creation.
+            let createdGroup = null; // CHANGE: deferred defaults need the successfully committed group.
             const operation = function () {
                 let group = null;
-                model.beginUpdate();
+                model.beginUpdate(); // CHANGE
+                const edit = model.currentEdit, changeStart = edit?.changes?.length || 0; // CHANGE
                 try {
+                    if (draft.companionLayout) window.USL.scheduler.layoutTools.applyLayoutRowsToGraph(graph, draft.companionLayout.rows.filter(row => !row.proposed)); // CHANGE
                     const attrs = Object.assign({}, draft.lifecycle.attributePatch || {}, {
                         plant_id: String(draft.crop.plantId || ""),
                         plant_name: String(draft.plantResolution.plant.plant_name || draft.crop.plant || ""),
@@ -2222,19 +2428,26 @@ Draw.loadPlugin(function (ui) {
                         targetGroupId: cellId(group),
                         tasks: draft.taskPreview || []
                     }, { insideUpdate: true, focusCreated: false });
+                } catch (error) { // CHANGE: reverse only this commit's mutations before the undoable edit is published.
+                    if (edit?.changes) { const changes = edit.changes.splice(changeStart); for (let index = changes.length - 1; index >= 0; index--) changes[index].execute(); } // CHANGE
+                    throw error; // CHANGE
                 } finally {
                     model.endUpdate();
                 }
                 if (group && graph.setSelectionCell) graph.setSelectionCell(group);
-                return group;
+                createdGroup = group; return group; // CHANGE
             };
             const previousCropId = String(draft.crop && draft.crop.cropId || draft.crop && draft.crop.id || state.selectedCropId || "");
             try { // CHANGE
                 if (history && typeof history.run === "function" && !(history.isRestoring && history.isRestoring())) {
                     history.run({ category: "Garden scheduling", action: "allocateCreate", origin: "Allocate_Planner", title: "Create allocated planting", affectedCellIds: [cellId(state.moduleCell)], tags: ["Allocate", "Tasks"] }, operation);
                 } else { operation(); }
+                if (draft.companionLayout?.saveDefaults) { // CHANGE
+                    try { await window.USL.scheduler.layoutTools.saveSpacingDefaultsForRows(draft.companionLayout.rows, graph, model); } // CHANGE
+                    catch (error) { state.noticeMessage = 'Companion created, but its reusable layout could not be saved: ' + error.message; } // CHANGE
+                } // CHANGE
                 if (draft.commitAllocationDefaults) { // CHANGE: deferred defaults run only after successful planting/task creation.
-                    try { await draft.commitAllocationDefaults(); }
+                    try { await draft.commitAllocationDefaults(createdGroup); } // CHANGE: spacing defaults capture the successfully created planting and its active set.
                     catch (error) { state.noticeMessage = "Planting created, but reusable defaults could not be saved: " + (error.message || error); }
                 }
             } finally { state.committing = false; } // CHANGE
@@ -2347,8 +2560,8 @@ Draw.loadPlugin(function (ui) {
             graphPointToContainer,
             cellContainerRect,
             cellVisualBounds,
-            computeBedResult,
-            buildCoveragePreview, // CHANGE
+            computeBedResult, rotateAllocationResult, // CHANGE: behavioral tests cover row counts and repeated axis changes.
+            buildCoveragePreview, allocationBedRelationships, bedRelationshipLabels, // CHANGE
             allocationEditAffectsPlanning, // CHANGE
             partialAllocationWarning,
             buildScheduleCacheSignature,

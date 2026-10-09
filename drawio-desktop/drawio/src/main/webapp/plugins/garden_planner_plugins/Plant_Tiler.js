@@ -2939,6 +2939,13 @@ Draw.loadPlugin(function (ui) {
             return isGardenModule(cells[0]) ? cells[0] : null;
         }
 
+        /** Allocation suppresses bed controls while leaving module controls available. */ // CHANGE
+        function isAllocationModeActiveForOverlay() { // CHANGE
+            const modes = window.Trellis && window.Trellis.interactionModes; // CHANGE
+            const active = modes && typeof modes.getActive === "function" ? modes.getActive() : null; // CHANGE
+            return !!(active && active.mode === "allocate"); // CHANGE
+        } // CHANGE
+
         function isIrrigationModeActiveForOverlay() {
             const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner);
             return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive());
@@ -3034,6 +3041,7 @@ Draw.loadPlugin(function (ui) {
             if (gardenSettingsOverlaySuppressed) { hideToolbar(); return; }
             if (isIrrigationModeActiveForOverlay()) { hideToolbar(); return; }
             if (isTeamPermissionModeActiveForOverlay()) { hideToolbar(); return; } // NEW
+            if (activeOverlayMode === "bed" && isAllocationModeActiveForOverlay()) { hideToolbar(); return; } // CHANGE: repaint cannot reveal allocation-suppressed controls.
             if (!toolbar || !activeModuleCell || !anchorModelPoint) return;
             const host = ensureOverlayHost();
             if (host && toolbar.parentNode !== host) host.appendChild(toolbar);
@@ -3107,6 +3115,7 @@ Draw.loadPlugin(function (ui) {
             activeBedCell = target.bedCell || null;
             activeOverlayMode = target.mode;
             if (target.mode === "module" && target.moduleCell === manuallyHiddenModuleCell) { hideToolbar(); return; }
+            if (target.mode === "bed" && isAllocationModeActiveForOverlay()) { hideToolbar(); return; } // CHANGE: keep target state current before hiding bed controls.
             ensureToolbar();
             syncToolbarState();
             positionToolbar();
@@ -3157,6 +3166,7 @@ Draw.loadPlugin(function (ui) {
         graph.getModel().addListener(mxEvent.REDO, scheduleRefresh);
         mxEvent.addListener(window, "resize", scheduleRefresh);
         mxEvent.addListener(window, "trellisIrrigationModeChanged", scheduleRefresh);
+        mxEvent.addListener(window, "trellisInteractionModeChanged", scheduleRefresh); // CHANGE: mode exit restores controls without reselection.
         mxEvent.addListener(window, "trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) hideToolbar(); else scheduleRefresh(); }); // NEW
         setTimeout(scheduleRefresh, 0);
     }
@@ -5642,32 +5652,6 @@ Draw.loadPlugin(function (ui) {
         return !!(as && ae && bs && be && as <= be && bs <= ae);
     }
 
-    function rectsOverlap(a, b) {
-        if (!a || !b) return false;
-        const ax = Number(a.x) || 0;
-        const ay = Number(a.y) || 0;
-        const aw = Math.max(0, Number(a.width) || 0);
-        const ah = Math.max(0, Number(a.height) || 0);
-        const bx = Number(b.x) || 0;
-        const by = Number(b.y) || 0;
-        const bw = Math.max(0, Number(b.width) || 0);
-        const bh = Math.max(0, Number(b.height) || 0);
-        return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
-    }
-
-    function proposalConflictsForRect(input, rect) {
-        const entryISO = ymdValue(input.entryISO || input.bedEntryISO);
-        const harvestEndISO = ymdValue(input.harvestEndISO);
-        const bedId = input.bedCell && (input.bedCell.id || input.bedCell.getId && input.bedCell.getId()) || "";
-        if (!entryISO || !harvestEndISO || !Array.isArray(input.occupancy) || !rect) return [];
-        return input.occupancy.filter(function (item) {
-            if (!item || String(item.groupId || "") === String(input.excludeGroupId || "")) return false;
-            if (bedId && item.bedId && String(item.bedId) !== String(bedId)) return false;
-            if (!ymdIntervalsOverlap(entryISO, harvestEndISO, item.bedEntryISO, item.harvestEndISO)) return false;
-            return rectsOverlap(rect, item.rect || item.geometry);
-        });
-    }
-
     function plantingProposalConflictRank(conflicts) {
         if (!(conflicts || []).length) return 0; // CHANGE: bed-first scheduling prefers open space before shared companion space.
         if ((conflicts || []).some(function (item) { return String(item.conflictKind || item.relationshipKind || "") === "incompatible" || String(item.conflictSeverity || "") === "block"; })) return Infinity; // CHANGE: incompatible crop overlap is never an automatic placement candidate.
@@ -5675,133 +5659,233 @@ Draw.loadPlugin(function (ui) {
         return 1; // CHANGE: known non-negative companion overlap is allowed, but still trails clean space.
     }
 
-    function chooseProposalPlacement(input, base, spacingXpx, spacingYpx, maxW, maxH, originX, originY) {
-        if (!base || !base.complete) return Object.assign({}, base);
-        const stepX = Math.max(8, Math.min(spacingXpx, Math.max(8, base.geometry.width)));
-        const stepY = Math.max(8, Math.min(spacingYpx, Math.max(8, base.geometry.height)));
-        const maxX = Math.max(originX, originX + maxW - base.geometry.width);
-        const maxY = Math.max(originY, originY + maxH - base.geometry.height);
-        let warningCandidate = null;
-        let blockedCandidate = null;
-        const xs = [];
-        const ys = [];
-        for (let x = originX; x <= maxX + 0.1; x += stepX) xs.push(Math.min(x, maxX));
-        for (let y = originY; y <= maxY + 0.1; y += stepY) ys.push(Math.min(y, maxY));
-        if (!xs.includes(maxX)) xs.push(maxX);
-        if (!ys.includes(maxY)) ys.push(maxY);
-        for (const y of ys) {
-            for (const x of xs) {
-                const placed = Object.assign({}, base, { geometry: Object.assign({}, base.geometry, { x, y }) });
-                const conflicts = proposalConflictsForRect(input, placed.geometry);
-                if (!conflicts.length) return Object.assign(placed, { placementStatus: "compatible", conflicts: [] });
-                const rank = plantingProposalConflictRank(conflicts);
-                if (!Number.isFinite(rank)) {
-                    if (!blockedCandidate) blockedCandidate = Object.assign(placed, { placementStatus: "blocked", conflicts }); // CHANGE
-                    continue;
-                }
-                const candidate = Object.assign(placed, { placementStatus: "warning", placementRank: rank, conflicts }); // CHANGE
-                if (!warningCandidate || rank < Number(warningCandidate.placementRank || Infinity)) warningCandidate = candidate; // CHANGE
-            }
-        }
-        return warningCandidate || blockedCandidate || Object.assign({}, base, { placementStatus: "compatible", conflicts: [] });
-    }
+    /** Returns the corners of a planting footprint, including its model-space rotation. */ // CHANGE
+    function plantingFootprintPolygon(rect) { // CHANGE
+        const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; // CHANGE
+        return [[rect.x, rect.y], [rect.x + rect.width, rect.y], [rect.x + rect.width, rect.y + rect.height], [rect.x, rect.y + rect.height]] // CHANGE
+            .map(([x, y]) => rotatePointAround({ x, y }, center, Number(rect.rotation) || 0)); // CHANGE
+    } // CHANGE
 
-    function proposePlantingGeometry(input = {}) {
-        const fillAvailableBed = input.fillAvailableBed === true; // CHANGE: bed-first scheduling can request maximum fitted capacity instead of a preselected count.
-        const requestedPlantCount = Math.max(0, Math.trunc(Number(input.plantCount) || 0));
-        const spacingXCm = Number(input.spacingXCm ?? input.spacingCm ?? 30);
-        const spacingYCm = Number(input.spacingYCm ?? input.spacingCm ?? 30);
-        const vegHeightCm = Number(input.vegHeightCm ?? input.veg_height_cm);
-        const sx = toPx(Number.isFinite(spacingXCm) && spacingXCm > 0 ? spacingXCm : 30);
-        const sy = toPx(Number.isFinite(spacingYCm) && spacingYCm > 0 ? spacingYCm : 30);
-        const bedGeo = input.bedCell && input.bedCell.getGeometry ? input.bedCell.getGeometry() : null;
-        const maxW = Math.max(1, Number(input.maxWidthPx || bedGeo && bedGeo.width || 240));
-        const maxH = Math.max(1, Number(input.maxHeightPx || bedGeo && bedGeo.height || 240));
-        const originX = Number(input.xPx ?? (bedGeo && bedGeo.x) ?? 0) || 0;
-        const originY = Number(input.yPx ?? (bedGeo && bedGeo.y) ?? 0) || 0;
+    /** Clips a convex footprint against a bed-local rectangle without changing either input. */ // CHANGE
+    function clipPlantingFootprint(points, rect) { // CHANGE
+        let clipped = points; // CHANGE
+        [["x", rect.x, true], ["x", rect.x + rect.width, false], ["y", rect.y, true], ["y", rect.y + rect.height, false]].forEach(([axis, edge, lower]) => { // CHANGE
+            const result = []; // CHANGE
+            for (let i = 0; i < clipped.length; i++) { // CHANGE
+                const a = clipped[i], b = clipped[(i + 1) % clipped.length]; // CHANGE
+                const aInside = lower ? a[axis] >= edge : a[axis] <= edge; // CHANGE
+                const bInside = lower ? b[axis] >= edge : b[axis] <= edge; // CHANGE
+                if (aInside) result.push(a); // CHANGE
+                if (aInside !== bInside) { // CHANGE
+                    const t = (edge - a[axis]) / (b[axis] - a[axis]); // CHANGE
+                    result.push({ x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) }); // CHANGE
+                } // CHANGE
+            } // CHANGE
+            clipped = result; // CHANGE
+        }); // CHANGE
+        return clipped; // CHANGE
+    } // CHANGE
 
-        function candidate(spacingXpx, spacingYpx, orientation) {
-            const usableW = Math.max(spacingXpx, maxW - GROUP_PADDING_PX * 2);
-            const cols = Math.max(1, Math.floor(usableW / spacingXpx));
-            const maxRows = Math.max(1, Math.floor(Math.max(0, maxH - GROUP_PADDING_PX * 2 - GROUP_LABEL_BAND_PX) / spacingYpx));
-            const rows = fillAvailableBed ? maxRows : (requestedPlantCount > 0 ? Math.max(1, Math.ceil(requestedPlantCount / cols)) : 1); // CHANGE
-            const width = fillAvailableBed ? maxW : Math.min(maxW, Math.max(spacingXpx + GROUP_PADDING_PX * 2, Math.min(cols, Math.max(1, requestedPlantCount)) * spacingXpx + GROUP_PADDING_PX * 2)); // CHANGE
-            const height = fillAvailableBed ? maxH : Math.min(maxH, Math.max(spacingYpx + GROUP_PADDING_PX * 2 + GROUP_LABEL_BAND_PX, rows * spacingYpx + GROUP_PADDING_PX * 2 + GROUP_LABEL_BAND_PX)); // CHANGE
-            const capacityRows = Math.max(1, Math.floor(Math.max(0, height - GROUP_PADDING_PX * 2 - GROUP_LABEL_BAND_PX) / spacingYpx));
-            const capacityCols = Math.max(1, Math.floor(Math.max(0, width - GROUP_PADDING_PX * 2) / spacingXpx));
-            const capacity = capacityRows * capacityCols;
-            return {
-                orientation,
-                spacingXpx,
-                spacingYpx,
-                rows: capacityRows,
-                cols: capacityCols,
-                capacity,
-                complete: fillAvailableBed || capacity >= requestedPlantCount, // CHANGE
-                wastedSlots: Math.max(0, capacity - (fillAvailableBed ? capacity : requestedPlantCount)), // CHANGE
-                area: width * height,
-                geometry: { x: originX, y: originY, width, height }
-            };
-        }
+    /** Exact union area of convex polygons: sweep vertex/intersection slabs and integrate interval unions. */ // CHANGE
+    function plantingFootprintUnionArea(polygons) { // CHANGE
+        const edges = polygons.flatMap(points => points.map((a, i) => [a, points[(i + 1) % points.length]])); // CHANGE
+        const xs = edges.flatMap(([a, b]) => [a.x, b.x]); // CHANGE
+        for (let i = 0; i < edges.length; i++) { // CHANGE
+            const [a, b] = edges[i]; // CHANGE
+            for (let j = i + 1; j < edges.length; j++) { // CHANGE
+                const [c, d] = edges[j]; // CHANGE
+                const denominator = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x); // CHANGE
+                if (Math.abs(denominator) < 1e-9) continue; // CHANGE
+                const t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / denominator; // CHANGE
+                const u = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / denominator; // CHANGE
+                if (t > 0 && t < 1 && u > 0 && u < 1) xs.push(a.x + t * (b.x - a.x)); // CHANGE
+            } // CHANGE
+        } // CHANGE
+        const sorted = Array.from(new Set(xs)).sort((a, b) => a - b); // CHANGE
+        let area = 0; // CHANGE
+        for (let i = 1; i < sorted.length; i++) { // CHANGE
+            const width = sorted[i] - sorted[i - 1]; // CHANGE
+            if (width < 1e-9) continue; // CHANGE
+            const x = (sorted[i] + sorted[i - 1]) / 2; // CHANGE
+            const intervals = polygons.map(points => { // CHANGE
+                const ys = []; // CHANGE
+                points.forEach((a, index) => { // CHANGE
+                    const b = points[(index + 1) % points.length]; // CHANGE
+                    if (x > Math.min(a.x, b.x) && x < Math.max(a.x, b.x)) ys.push(a.y + (x - a.x) * (b.y - a.y) / (b.x - a.x)); // CHANGE
+                }); // CHANGE
+                return ys.length ? [Math.min(...ys), Math.max(...ys)] : null; // CHANGE
+            }).filter(Boolean).sort((a, b) => a[0] - b[0]); // CHANGE
+            let end = -Infinity, length = 0; // CHANGE
+            intervals.forEach(([start, stop]) => { length += Math.max(0, stop - Math.max(start, end)); end = Math.max(end, stop); }); // CHANGE
+            area += width * length; // CHANGE
+        } // CHANGE
+        return area; // CHANGE
+    } // CHANGE
 
-        const orientationOverride = String(input.orientationOverride || "").trim();
-        const candidates = [
-            candidate(sx, sy, "normal"),
-            candidate(sy, sx, "rotated_grid")
-        ].filter(function (item) {
-            return !orientationOverride || item.orientation === orientationOverride;
-        }).map(function (item) {
-            return chooseProposalPlacement(input, item, item.spacingXpx, item.spacingYpx, maxW, maxH, originX, originY);
-        }).sort((a, b) => {
-            if (a.complete !== b.complete) return a.complete ? -1 : 1;
-            if ((a.placementStatus || "compatible") !== (b.placementStatus || "compatible")) return (a.placementStatus === "compatible") ? -1 : (b.placementStatus === "compatible" ? 1 : String(a.placementStatus || "").localeCompare(String(b.placementStatus || ""))); // CHANGE
-            if (Number(a.placementRank || 0) !== Number(b.placementRank || 0)) return Number(a.placementRank || 0) - Number(b.placementRank || 0); // CHANGE
-            if (a.wastedSlots !== b.wastedSlots) return a.wastedSlots - b.wastedSlots;
-            if (a.area !== b.area) return a.area - b.area;
-            return a.orientation.localeCompare(b.orientation);
-        });
-        const best = candidates[0] || candidate(sx, sy, "normal");
-        const conflicts = best && Array.isArray(best.conflicts) ? best.conflicts : [];
-        const blocked = String(best && best.placementStatus || "") === "blocked"; // CHANGE
-        const resolvedPlantCount = fillAvailableBed ? Math.max(0, Number(best && best.capacity) || 0) : requestedPlantCount; // CHANGE
-        return {
-            ok: !blocked && (resolvedPlantCount === 0 || !!(best && best.complete)), // CHANGE
+    /** Expresses model-space occupancy in the bed's axes; headers never enter this calculation. */ // CHANGE
+    function plantingProposalOccupancy(input, bedRect, rotation) { // CHANGE
+        const center = { x: bedRect.x + bedRect.width / 2, y: bedRect.y + bedRect.height / 2 }; // CHANGE
+        const bedId = String(input.bedCell && (input.bedCell.id || input.bedCell.getId && input.bedCell.getId()) || ""); // CHANGE
+        return (input.occupancy || []).filter(item => item && String(item.groupId || "") !== String(input.excludeGroupId || "") // CHANGE
+            && (!bedId || !item.bedId || String(item.bedId) === bedId) // CHANGE
+            && ymdIntervalsOverlap(input.entryISO || input.bedEntryISO, input.harvestEndISO, item.bedEntryISO, item.harvestEndISO)) // CHANGE
+            .filter(item => item.plantingRect || item.rect || item.geometry) // CHANGE
+            .map(item => ({ item, points: plantingFootprintPolygon(item.plantingRect || item.rect || item.geometry).map(point => rotatePointAround(point, center, -rotation)) })); // CHANGE
+    } // CHANGE
+
+    /** Shared fitted-frame sizing. Slot counts are never forced to one when no physical row fits. */ // CHANGE
+    function plantingProposalFrame(maxW, maxH, sx, sy, diameter) { // CHANGE
+        const overhang = allowedOverhangForDiameter(diameter); // CHANGE
+        const width = maxW + overhang * 2, height = maxH + overhang * 2; // CHANGE
+        const count = (length, spacing) => Math.max(0, Math.min(Math.floor((length + 1e-7) / spacing), Math.floor((length - diameter + 1e-7) / spacing) + 1)); // CHANGE
+        return { width, height, overhang, cols: count(width, sx), rows: count(height, sy) }; // CHANGE
+    } // CHANGE
+
+    /** Creates a read-only fitted lattice; group bounds retain grid pitch while occupancy trims to circles. */ // CHANGE
+    function fittedPlantingProposalCandidate(input, axis, sx, sy, diameter, bedRect, rotation) { // CHANGE
+        const frame = plantingProposalFrame(bedRect.width, bedRect.height, sx, sy, diameter); // CHANGE
+        const requested = Math.max(0, Math.trunc(Number(input.plantCount) || 0)); // CHANGE
+        const fullBed = input.fillAvailableBed === true; // CHANGE
+        const perRow = axis === "width" ? frame.cols : frame.rows; // CHANGE
+        const maxRows = axis === "width" ? frame.rows : frame.cols; // CHANGE
+        const rowCount = perRow ? Math.min(maxRows, fullBed ? maxRows : Math.ceil(requested / perRow)) : 0; // CHANGE
+        const cols = axis === "width" || fullBed ? frame.cols : rowCount; // CHANGE
+        const rows = axis === "height" || fullBed ? frame.rows : rowCount; // CHANGE
+        const capacity = frame.cols * frame.rows; // CHANGE
+        const plantCount = fullBed || input.fillCompleteRows ? cols * rows : Math.min(requested, cols * rows); // CHANGE
+        const frameWidth = axis === "width" || fullBed ? frame.width : cols * sx; // CHANGE
+        const frameHeight = axis === "height" || fullBed ? frame.height : rows * sy; // CHANGE
+        const width = Math.max(1, frameWidth + GROUP_PADDING_PX * 2); // CHANGE
+        const solved = solveOuterHeightForPlantingFrame(Math.max(0, frameHeight), width, frameHeight + GROUP_LABEL_BAND_PX); // CHANGE
+        const bboxW = cols > 0 ? (cols - 1) * sx + diameter : 0; // CHANGE
+        const bboxH = rows > 0 ? (rows - 1) * sy + diameter : 0; // CHANGE
+        const offsetX = (frameWidth - cols * sx) / 2, offsetY = (frameHeight - rows * sy) / 2; // CHANGE
+        const localRect = { x: GROUP_PADDING_PX + (frameWidth - bboxW) / 2, y: GROUP_PADDING_PX + solved.bandPx + (frameHeight - bboxH) / 2, width: bboxW, height: bboxH }; // CHANGE
+        const fullRowCount = perRow ? Math.ceil(requested / perRow) * perRow : 0; // CHANGE
+        const base = { fitAxis: axis, fillAvailableBed: fullBed, rows, cols, capacity, plantCount, requestedPlantCount: requested, fullPlantCount: fullRowCount, // CHANGE
+            spacingXpx: sx, spacingYpx: sy, iconDiameterPx: diameter, labelBandPx: solved.bandPx, // CHANGE
+            layoutOffsetXCm: offsetX / toPx(1), layoutOffsetYCm: offsetY / toPx(1), rotation, // CHANGE
+            geometry: { x: bedRect.x, y: bedRect.y, width, height: solved.outerHeight }, complete: capacity > 0 && (fullBed || plantCount >= requested) }; // CHANGE
+        return chooseFittedPlantingProposalPlacement(input, base, frame, bedRect, rotation, localRect); // CHANGE
+    } // CHANGE
+
+    /** Ranks positions along the free bed axis by relationship policy and occupied union area. */ // CHANGE
+    function chooseFittedPlantingProposalPlacement(input, base, frame, bedRect, rotation, localRect) { // CHANGE
+        const { fitAxis: axis, fillAvailableBed: fullBed, spacingXpx: sx, spacingYpx: sy } = base; // CHANGE
+        const bboxW = localRect.width, bboxH = localRect.height; // CHANGE
+        const occupied = plantingProposalOccupancy(input, bedRect, rotation); // CHANGE
+        const spanWidth = axis === "width" || fullBed, spanHeight = axis === "height" || fullBed; // CHANGE
+        const startX = spanWidth ? bedRect.x + (bedRect.width - bboxW) / 2 : bedRect.x - frame.overhang; // CHANGE
+        const startY = spanHeight ? bedRect.y + (bedRect.height - bboxH) / 2 : bedRect.y - frame.overhang; // CHANGE
+        const endX = spanWidth ? startX : bedRect.x + bedRect.width + frame.overhang - bboxW; // CHANGE
+        const endY = spanHeight ? startY : bedRect.y + bedRect.height + frame.overhang - bboxH; // CHANGE
+        const positions = (start, end, step) => { // CHANGE
+            const out = []; // CHANGE
+            for (let value = start; value <= end + 1e-7; value += Math.max(8, step)) out.push(Math.min(value, end)); // CHANGE
+            if (!out.length || Math.abs(out[out.length - 1] - end) > 1e-7) out.push(end); // CHANGE
+            return out; // CHANGE
+        }; // CHANGE
+        let best = null; // CHANGE
+        for (const y of positions(startY, endY, sy)) { // CHANGE
+            for (const x of positions(startX, endX, sx)) { // CHANGE
+                const plantingRect = { x, y, width: bboxW, height: bboxH }; // CHANGE
+                const overlaps = occupied.map(entry => ({ item: entry.item, polygon: clipPlantingFootprint(entry.points, plantingRect) })) // CHANGE
+                    .filter(entry => plantingFootprintUnionArea([entry.polygon]) > 1e-7); // CHANGE
+                const conflicts = overlaps.map(entry => entry.item); // CHANGE
+                const area = plantingFootprintUnionArea(overlaps.map(entry => entry.polygon)); // CHANGE
+                const rank = input.overlapPolicy === "warn" ? 0 : plantingProposalConflictRank(conflicts); // CHANGE
+                if (best && (rank > best.rank || (rank === best.rank && area >= best.area - 1e-7))) continue; // CHANGE
+                const geometry = Object.assign({}, base.geometry); // CHANGE
+                const target = rotatePointAround({ x: x + bboxW / 2, y: y + bboxH / 2 }, { x: bedRect.x + bedRect.width / 2, y: bedRect.y + bedRect.height / 2 }, rotation); // CHANGE
+                positionGeometryForLocalPoint(geometry, { x: localRect.x + bboxW / 2, y: localRect.y + bboxH / 2 }, target, rotation); // CHANGE
+                best = { rank, area, conflicts, geometry, plantingRect: { x: target.x - bboxW / 2, y: target.y - bboxH / 2, width: bboxW, height: bboxH, rotation } }; // CHANGE
+                if (area < 1e-7) break; // CHANGE
+            } // CHANGE
+            if (best && best.area < 1e-7) break; // CHANGE
+        } // CHANGE
+        return Object.assign(base, best || { rank: 0, area: 0, conflicts: [] }); // CHANGE
+    } // CHANGE
+
+    /** // CHANGE
+     * Plans a bed-fitted planting without creating or changing graph cells. // CHANGE
+     * Coordinates are module-parent local; rotation is in degrees around each returned rectangle's center. // CHANGE
+     * fitAxisOverride selects width/height explicitly; otherwise use the shorter axis (width on ties). // CHANGE
+     * fillCompleteRows keeps spacing fixed and rounds demand upward. capacity is the physical whole-row // CHANGE
+     * maximum; an oversized request returns ok=false and its capped geometry for a partial-count retry. // CHANGE
+     * fillAvailableBed occupies both dimensions and retains the scheduler's spacing-orientation selection. // CHANGE
+     * overlapPolicy="warn" permits every temporal overlap; the default blocks incompatible relationships. // CHANGE
+     * plantingRect trims occupancy to plant circles; geometry includes the dynamic header and padding. // CHANGE
+     * Slots, offsets, diameter and count are authoritative inputs to createPlantingFromProposal. // CHANGE
+     */ // CHANGE
+    function proposePlantingGeometry(input = {}) { // CHANGE
+        const fillAvailableBed = input.fillAvailableBed === true; // CHANGE
+        const spacingXCm = Number(input.spacingXCm ?? input.spacingCm ?? 30); // CHANGE
+        const spacingYCm = Number(input.spacingYCm ?? input.spacingCm ?? 30); // CHANGE
+        const vegHeightCm = Number(input.vegHeightCm ?? input.veg_height_cm); // CHANGE
+        const vegDiameterCm = Number(input.vegDiameterCm ?? input.veg_diameter_cm); // CHANGE
+        const sx = toPx(Number.isFinite(spacingXCm) && spacingXCm > 0 ? spacingXCm : 30); // CHANGE
+        const sy = toPx(Number.isFinite(spacingYCm) && spacingYCm > 0 ? spacingYCm : 30); // CHANGE
+        const bedGeo = input.bedCell && input.bedCell.getGeometry ? input.bedCell.getGeometry() : null; // CHANGE
+        const bedRect = { x: Number(input.xPx ?? (bedGeo && bedGeo.x) ?? 0), y: Number(input.yPx ?? (bedGeo && bedGeo.y) ?? 0), // CHANGE
+            width: Math.max(0, Number(input.maxWidthPx ?? (bedGeo && bedGeo.width) ?? 240)), height: Math.max(0, Number(input.maxHeightPx ?? (bedGeo && bedGeo.height) ?? 240)) }; // CHANGE
+        const rotation = input.bedCell ? getTilerRotationDeg(input.bedCell) : 0; // CHANGE
+        const diameter = Math.max(6, Number.isFinite(vegDiameterCm) && vegDiameterCm > 0 ? toPx(vegDiameterCm) : clamp(DEFAULT_ICON_DIAM_RATIO * Math.min(sx, sy), MIN_ICON_DIAM_PX, MAX_ICON_DIAM_PX)); // CHANGE
+        if (!Object.values(bedRect).every(Number.isFinite) || bedRect.width <= 0 || bedRect.height <= 0) { // CHANGE
+            return { ok: false, status: "unavailable", reason: "invalid_bed_geometry", capacity: 0, plantCount: 0, slots: [], warnings: [], fitAxis: input.fitAxisOverride || "width" }; // CHANGE
+        } // CHANGE
+        const defaultAxis = bedRect.width <= bedRect.height ? "width" : "height"; // CHANGE
+        const axisOverride = input.fitAxisOverride === "width" || input.fitAxisOverride === "height" ? input.fitAxisOverride : ""; // CHANGE
+        const orientations = input.fillCompleteRows ? ["normal"] : ["normal", "rotated_grid"]; // CHANGE
+        const candidates = orientations.filter(orientation => !input.orientationOverride || orientation === input.orientationOverride).map(orientation => { // CHANGE
+            const xSpacing = orientation === "normal" ? sx : sy, ySpacing = orientation === "normal" ? sy : sx; // CHANGE
+            let candidate = fittedPlantingProposalCandidate(input, axisOverride || defaultAxis, xSpacing, ySpacing, diameter, bedRect, rotation); // CHANGE
+            if (!axisOverride && !candidate.capacity && !fillAvailableBed) { // CHANGE
+                candidate = fittedPlantingProposalCandidate(input, defaultAxis === "width" ? "height" : "width", xSpacing, ySpacing, diameter, bedRect, rotation); // CHANGE
+            } // CHANGE
+            return Object.assign(candidate, { orientation }); // CHANGE
+        }); // CHANGE
+        candidates.sort((a, b) => Number(b.complete) - Number(a.complete) || (a.rank === b.rank ? 0 : a.rank < b.rank ? -1 : 1) // CHANGE
+            || a.area - b.area || a.plantCount - b.plantCount || a.orientation.localeCompare(b.orientation)); // CHANGE
+        const best = candidates[0] || fittedPlantingProposalCandidate(input, axisOverride || defaultAxis, sx, sy, diameter, bedRect, rotation); // CHANGE
+        const conflicts = best.conflicts || []; // CHANGE
+        const blocked = !Number.isFinite(best.rank); // CHANGE
+        const resolvedPlantCount = best.plantCount; // CHANGE
+        const warnings = conflicts.map(item => { // CHANGE
+            const kind = String(item.conflictKind || item.relationshipKind || "unknown"); // CHANGE
+            const label = String(item.plantName || item.cropName || item.label || item.groupId || "existing planting"); // CHANGE
+            return (kind === "companion" ? "Companion" : kind === "incompatible" ? "Incompatible" : "Unknown relationship:") + " overlap with " + label + "."; // CHANGE
+        }); // CHANGE
+        return Object.assign({}, best, { // CHANGE
+            ok: !blocked && best.capacity > 0 && (fillAvailableBed || best.complete), // CHANGE
             status: blocked ? "blocked" : (conflicts.length ? "warning" : "compatible"), // CHANGE
-            reason: blocked ? "incompatible_overlap" : (resolvedPlantCount > 0 && !best.complete ? "insufficient_space" : ""), // CHANGE
-            warnings: conflicts.length ? ["Temporal overlap with " + conflicts.length + " dated planting" + (conflicts.length === 1 ? "" : "s") + "."] : [],
-            conflictGroupIds: conflicts.map(function (item) { return String(item.groupId || ""); }).filter(Boolean),
+            reason: blocked ? "incompatible_overlap" : !best.capacity ? "no_row_capacity" : !best.complete ? "insufficient_space" : "", // CHANGE
+            warnings, conflicts, conflictGroupIds: conflicts.map(item => String(item.groupId || item.cellId || "")).filter(Boolean), // CHANGE
             plantCount: resolvedPlantCount, // CHANGE
-            rows: best.rows,
-            cols: best.cols,
-            capacity: best.capacity,
-            lodCollapsed: best.capacity > LOD_TILE_THRESHOLD,
-            orientation: best.orientation,
-            spacingXCm: best.orientation === "normal" ? spacingXCm : spacingYCm,
-            spacingYCm: best.orientation === "normal" ? spacingYCm : spacingXCm,
-            vegHeightCm: Number.isFinite(vegHeightCm) && vegHeightCm > 0 ? vegHeightCm : null,
+            lodCollapsed: resolvedPlantCount > LOD_TILE_THRESHOLD, // CHANGE
+            spacingXCm: best.orientation === "rotated_grid" ? (spacingYCm > 0 && Number.isFinite(spacingYCm) ? spacingYCm : 30) : (spacingXCm > 0 && Number.isFinite(spacingXCm) ? spacingXCm : 30), // CHANGE
+            spacingYCm: best.orientation === "rotated_grid" ? (spacingXCm > 0 && Number.isFinite(spacingXCm) ? spacingXCm : 30) : (spacingYCm > 0 && Number.isFinite(spacingYCm) ? spacingYCm : 30), // CHANGE
+            vegDiameterCm: diameter / toPx(1), // CHANGE
+            vegHeightCm: Number.isFinite(vegHeightCm) && vegHeightCm > 0 ? vegHeightCm : null, // CHANGE
             slots: buildProposalSlots(best, resolvedPlantCount), // CHANGE
-            geometry: best.geometry
-        };
-    }
+            geometry: best.geometry // CHANGE
+        }); // CHANGE
+    } // CHANGE
 
-    function buildProposalSlots(best, plantCount) {
-        const limit = Math.min(Math.max(0, Math.trunc(Number(plantCount) || 0)), LOD_TILE_THRESHOLD);
-        const out = [];
-        if (!best || !best.geometry) return out;
-        const iconDiam = DEFAULT_ICON_DIAM_RATIO * Math.min(best.spacingXpx, best.spacingYpx);
-        for (let r = 0; r < best.rows && out.length < limit; r++) {
-            for (let c = 0; c < best.cols && out.length < limit; c++) {
-                out.push({
-                    row: r,
-                    col: c,
-                    x: GROUP_PADDING_PX + best.spacingXpx / 2 + c * best.spacingXpx,
-                    y: GROUP_PADDING_PX + GROUP_LABEL_BAND_PX + best.spacingYpx / 2 + r * best.spacingYpx,
-                    r: iconDiam / 2
-                });
-            }
-        }
-        return out;
-    }
+    /** Uses the committed tiler's band, diameter, and centered lattice offsets for ghost circles. */ // CHANGE
+    function buildProposalSlots(best, plantCount) { // CHANGE
+        const limit = Math.min(Math.max(0, Math.trunc(Number(plantCount) || 0)), LOD_TILE_THRESHOLD); // CHANGE
+        const out = []; // CHANGE
+        if (!best || !best.geometry) return out; // CHANGE
+        for (let r = 0; r < best.rows && out.length < limit; r++) { // CHANGE
+            for (let c = 0; c < best.cols && out.length < limit; c++) { // CHANGE
+                out.push({ row: r, col: c, // CHANGE
+                    x: GROUP_PADDING_PX + best.spacingXpx / 2 + c * best.spacingXpx + toPx(best.layoutOffsetXCm || 0), // CHANGE
+                    y: GROUP_PADDING_PX + best.labelBandPx + best.spacingYpx / 2 + r * best.spacingYpx + toPx(best.layoutOffsetYCm || 0), // CHANGE
+                    r: best.iconDiameterPx / 2 }); // CHANGE
+            } // CHANGE
+        } // CHANGE
+        return out; // CHANGE
+    } // CHANGE
 
     function previewDraftNumber(value, fallback) { // NEW: shared draft preview normalization without mutating cells.
         const n = Number(value);
@@ -5822,6 +5906,7 @@ Draw.loadPlugin(function (ui) {
             attrs.layout_offset_y_cm = String(draft.offsetYCm);
             attrs.companion_offset_y_cm = ""; // CHANGE: previewed planting offsets must override stale legacy companion offsets.
         }
+        if (draft.generatedPattern) { attrs.companion_layout_interplant = ''; attrs.companion_layout_template = ''; } // CHANGE: obsolete legacy staggering must not shift generated pair slots twice.
         if (draft && draft.label != null) attrs.label = String(draft.label);
         if (draft && draft.abbr != null) attrs.plant_abbr = String(draft.abbr);
         return attrs;
@@ -5865,7 +5950,7 @@ Draw.loadPlugin(function (ui) {
             width: Number(sourceGeo && sourceGeo.width) || 0,
             height: Number(sourceGeo && sourceGeo.height) || 0
         }, draft.rect || opts.rect || {});
-        const attrs = previewDraftAttrs(groupCell, draft);
+        const attrs = Object.assign({}, draft.attributes || {}, previewDraftAttrs(groupCell, draft)); // CHANGE
         const previewCell = makeDraftPreviewCell(groupCell, rect, attrs);
         const spacingXcm = previewDraftNumber(previewCell.getAttribute("spacing_x_cm") || previewCell.getAttribute("spacing_cm"), 30);
         const spacingYcm = previewDraftNumber(previewCell.getAttribute("spacing_y_cm") || previewCell.getAttribute("spacing_cm"), 30);
@@ -5877,7 +5962,19 @@ Draw.loadPlugin(function (ui) {
         const { fontPx, bandPx } = groupLabelMetrics(previewCell);
         const tileFont = tileFontPx(iconDiam);
         const grid = computeGridStatsXY(previewCell, spacingXpx, spacingYpx);
-        const disabledSet = readDisabledSet(groupCell);
+        const disabledSet = draft.resetDisabled ? new Set() : readDisabledSet(groupCell); // CHANGE
+        // Shared-footprint clipping is translated into disabled slots, also persisted at commit. // CHANGE
+        let clipped = 0; // CHANGE: intentional disabled plants do not make a saved layout invalid.
+        if (draft.clipBounds) { // CHANGE
+            const b = draft.clipBounds, radius = iconDiam / 2; // CHANGE
+            for (let r = 0; r < grid.rows; r++) for (let c = 0; c < grid.cols; c++) { // CHANGE
+                const point = shiftedSlotCenterLocal(previewCell, r, c, spacingXpx, spacingYpx, bandPx); // CHANGE
+                if (point.x - radius < b.minX - 1e-7 || point.x + radius > b.maxX + 1e-7 // CHANGE
+                    || point.y - radius < b.minY - 1e-7 || point.y + radius > b.maxY + 1e-7) { // CHANGE
+                    if (!disabledSet.has(`${r},${c}`)) clipped++; disabledSet.add(`${r},${c}`); // CHANGE
+                } // CHANGE
+            } // CHANGE
+        } // CHANGE
         const slotStats = classifyPlantingSlots(previewCell, spacingXpx, spacingYpx, bandPx, disabledSet);
         const maxCircles = Math.max(1, Math.trunc(previewDraftNumber(draft.maxCircles ?? opts.maxCircles, 1000)));
         const requestedRotationDeg = opts && Object.prototype.hasOwnProperty.call(opts, "rotationDeg") ? Number(opts.rotationDeg) : null;
@@ -5906,7 +6003,9 @@ Draw.loadPlugin(function (ui) {
             label,
             abbr,
             groupLabelFontPx: fontPx,
-            groupLabelBandPx: bandPx,
+            groupLabelBandPx: bandPx, iconDiameterPx: iconDiam, contentBounds: plantingContentBoundsLocal(previewCell, bandPx), // CHANGE
+            clipped, // CHANGE
+            disabledSlots: Array.from(disabledSet, key => key.split(",").map(Number)), // CHANGE
             circleFontPx: tileFont,
             rotationDeg,
             paddingPx: GROUP_PADDING_PX,
@@ -5926,6 +6025,15 @@ Draw.loadPlugin(function (ui) {
             lodCollapsed: false
         };
     }
+
+    /** Preview an unsaved planting using exactly the committed tiler's geometry and slot classifier. */ // CHANGE
+    function buildUnsavedTilerGroupPreview(activeGraph, descriptor, draft = {}, opts = {}) { // CHANGE
+        const attributes = Object.assign({ tiler_group: '1', plant_count: '0' }, descriptor.attributes || {}); // CHANGE
+        const cell = { id: descriptor.cellId || '', style: descriptor.style || '', // CHANGE
+            getAttribute: key => attributes[key] == null ? null : String(attributes[key]), // CHANGE
+            getGeometry: () => descriptor.rect, getStyle: () => descriptor.style || '' }; // CHANGE
+        return buildDraftTilerGroupPreview(activeGraph, cell, draft, opts); // CHANGE
+    } // CHANGE
 
     function listGardenBeds(moduleCell) {
         if (!moduleCell) return [];
@@ -5967,6 +6075,33 @@ Draw.loadPlugin(function (ui) {
         return out;
     }
 
+    /** Reads the actual circle footprint, including offsets and disabled slots, without retile or writes. */ // CHANGE
+    function readPlantingFootprint(group) { // CHANGE
+        const geometry = group && group.getGeometry && group.getGeometry(); // CHANGE
+        if (!geometry) return null; // CHANGE
+        const sx = toPx(Number(getXmlAttr(group, "spacing_x_cm", "") || getXmlAttr(group, "spacing_cm", "30"))); // CHANGE
+        const sy = toPx(Number(getXmlAttr(group, "spacing_y_cm", "") || getXmlAttr(group, "spacing_cm", "30"))); // CHANGE
+        if (!(sx > 0 && sy > 0)) return null; // CHANGE
+        const diameter = getPlantCircleDiameterPx(group) || Math.max(6, clamp(DEFAULT_ICON_DIAM_RATIO * Math.min(sx, sy), MIN_ICON_DIAM_PX, MAX_ICON_DIAM_PX)); // CHANGE
+        let bbox = isCollapsedLOD(group) ? null : getPlantCircleBBoxLogical(group); // CHANGE
+        if (!bbox) { // CHANGE
+            const bandPx = groupLabelMetrics(group).bandPx; // CHANGE
+            const stats = classifyPlantingSlots(group, sx, sy, bandPx, readDisabledSet(group)); // CHANGE
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; // CHANGE
+            stats.renderedKeys.forEach(key => { // CHANGE
+                const [r, c] = key.split(",").map(Number); // CHANGE
+                const point = shiftedSlotCenterLocal(group, r, c, sx, sy, bandPx); // CHANGE
+                minX = Math.min(minX, point.x - diameter / 2); minY = Math.min(minY, point.y - diameter / 2); // CHANGE
+                maxX = Math.max(maxX, point.x + diameter / 2); maxY = Math.max(maxY, point.y + diameter / 2); // CHANGE
+            }); // CHANGE
+            if (!Number.isFinite(minX)) return null; // CHANGE
+            bbox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY }; // CHANGE
+        } // CHANGE
+        const rotation = getTilerRotationDeg(group); // CHANGE
+        const center = modelPointForLocalPoint(geometry, { x: bbox.x + bbox.w / 2, y: bbox.y + bbox.h / 2 }, rotation); // CHANGE
+        return { x: center.x - bbox.w / 2, y: center.y - bbox.h / 2, width: bbox.w, height: bbox.h, rotation }; // CHANGE
+    } // CHANGE
+
     function listPlantingFootprints(moduleCell, options = {}) {
         const year = Number(options.year);
         const includeUndated = options.includeUndatedOccupancy === true;
@@ -5975,17 +6110,19 @@ Draw.loadPlugin(function (ui) {
         return allDescendantsOf(moduleCell).filter(isTilerGroup).map(function (group) {
             const geo = group.getGeometry && group.getGeometry();
             if (!geo) return null;
-            const center = { x: (Number(geo.x) || 0) + (Number(geo.width) || 0) / 2, y: (Number(geo.y) || 0) + (Number(geo.height) || 0) / 2 };
+            const plantingRect = readPlantingFootprint(group); // CHANGE: bed membership follows plants, not a header-shifted outer rectangle.
+            const center = plantingRect ? { x: plantingRect.x + plantingRect.width / 2, y: plantingRect.y + plantingRect.height / 2 } : { x: geo.x + geo.width / 2, y: geo.y + geo.height / 2 }; // CHANGE
             const bed = findSmallestContainingBedModel(moduleCell, center);
             if (!bed) return null;
-            const bedEntryISO = firstNonEmptyCellAttr(group, ["transplant_date", "bed_entry_date", "sow_date", "planting_date", "start"]);
-            const harvestEndISO = firstNonEmptyCellAttr(group, ["harvest_end", "harvest_end_date", "planting_harvest_end", "season_harvest_end", "end"]);
+            const bedEntryISO = firstNonEmptyCellAttr(group, ["lifespan_start", "transplant_date", "bed_entry_date", "sow_date", "planting_date", "start"]);
+            const harvestEndISO = firstNonEmptyCellAttr(group, ["lifespan_end", "harvest_end", "harvest_end_date", "planting_harvest_end", "season_harvest_end", "end"]);
             if ((!ymdValue(bedEntryISO) || !ymdValue(harvestEndISO)) && !includeUndated) return null;
             if (yearStart && ymdValue(bedEntryISO) && ymdValue(harvestEndISO) && !ymdIntervalsOverlap(yearStart, yearEnd, bedEntryISO, harvestEndISO)) return null;
             return {
                 groupId: String(group.id || group.getId && group.getId() || ""),
                 bedId: String(bed.id || bed.getId && bed.getId() || ""),
                 rect: { x: Number(geo.x) || 0, y: Number(geo.y) || 0, width: Math.max(0, Number(geo.width) || 0), height: Math.max(0, Number(geo.height) || 0) },
+                plantingRect, // CHANGE: preserve outer bounds for consumers while allocation uses crop occupancy only.
                 bedEntryISO,
                 harvestEndISO,
                 plantId: String(getXmlAttr(group, "plant_id", "") || ""),
@@ -5999,6 +6136,7 @@ Draw.loadPlugin(function (ui) {
     function createPlantingFromProposal(input = {}, opts = {}) {
         const activeGraphArg = input.graph || graph;
         const proposal = input.proposal || input;
+        if (proposal.ok === false) throw new Error("Cannot create a planting that does not physically fit."); // CHANGE
         const moduleCell = input.moduleCell || proposal.moduleCell || findGardenModuleAncestor(activeGraphArg, proposal.bedCell);
         if (!activeGraphArg || !moduleCell || !isGardenModule(moduleCell)) throw new Error("Planting creation requires a garden module.");
         const geometry = proposal.geometry || {};
@@ -6012,7 +6150,10 @@ Draw.loadPlugin(function (ui) {
             spacing_x_cm: String(proposal.spacingXCm || 30),
             spacing_y_cm: String(proposal.spacingYCm || 30),
             spacing_cm: String(proposal.spacingXCm === proposal.spacingYCm ? proposal.spacingXCm || 30 : getXmlAttr(group, "spacing_cm", "30")),
-            veg_height_cm: proposal.vegHeightCm == null ? String((input.attributes || proposal.attributes || {}).veg_height_cm || "") : String(proposal.vegHeightCm)
+            veg_height_cm: proposal.vegHeightCm == null ? String((input.attributes || proposal.attributes || {}).veg_height_cm || "") : String(proposal.vegHeightCm), // CHANGE
+            veg_diameter_cm: proposal.vegDiameterCm == null ? String((input.attributes || proposal.attributes || {}).veg_diameter_cm || "") : String(proposal.vegDiameterCm), // CHANGE
+            layout_offset_x_cm: String(proposal.layoutOffsetXCm || 0), layout_offset_y_cm: String(proposal.layoutOffsetYCm || 0), // CHANGE
+            ...(proposal.disabledSlots ? { disabled_plants: JSON.stringify(proposal.disabledSlots) } : {}) // CHANGE
         });
         if (model) {
             const insideUpdate = !!(input.insideUpdate || opts.insideUpdate);
@@ -6022,6 +6163,23 @@ Draw.loadPlugin(function (ui) {
                     model.setGeometry(group, new mxGeometry(Number(geometry.x) || 0, Number(geometry.y) || 0, Math.max(1, Number(geometry.width) || 1), Math.max(1, Number(geometry.height) || 1)));
                 }
                 setCellAttrsNoTxn(model, group, attrs);
+                if (proposal.sharedFootprint) { // CHANGE: companion frames must not auto-fit back to the entire bed.
+                    writeBedFitAxesNoTxn(model, group, false, false); // CHANGE
+                    setCellAttrsNoTxn(model, group, { bed_auto_fit: '0' }); // CHANGE
+                    setCellRotationDeg(group, proposal.rotation || 0); // CHANGE
+                } // CHANGE
+                if (proposal.fitAxis) { // CHANGE: resizing subsequently consumes the same persisted fitting-axis intent.
+                    writeBedFitAxesNoTxn(model, group, proposal.fitAxis === "width" || proposal.fillAvailableBed === true, proposal.fitAxis === "height" || proposal.fillAvailableBed === true); // CHANGE
+                    setCellRotationDeg(group, proposal.rotation || 0); // CHANGE
+                    const grid = computeGridStatsXY(group, toPx(proposal.spacingXCm), toPx(proposal.spacingYCm)); // CHANGE
+                    const disabled = new Set(); // CHANGE
+                    for (let r = 0; r < grid.rows; r++) { // CHANGE
+                        for (let c = 0; c < grid.cols; c++) { // CHANGE
+                            if (r >= proposal.rows || c >= proposal.cols || r * proposal.cols + c >= proposal.plantCount) disabled.add(`${r},${c}`); // CHANGE
+                        } // CHANGE
+                    } // CHANGE
+                    writeDisabledSet(model, group, disabled); // CHANGE
+                } // CHANGE
                 retileGroup(activeGraphArg, group, { inTransaction: true, forceExpand: proposal.lodCollapsed !== true });
                 if (proposal.lodCollapsed === true) retileGroup(activeGraphArg, group, { inTransaction: true, forceCollapse: true });
             } finally {
@@ -6037,8 +6195,8 @@ Draw.loadPlugin(function (ui) {
         const usableW = Math.max(0, g.width - GROUP_PADDING_PX * 2);
         const usableH = Math.max(0, g.height - GROUP_PADDING_PX * 2 - bandPx);
         if (usableW <= 0 || usableH <= 0) return { rows: 0, cols: 0, count: 0 };
-        const cols = Math.max(1, Math.floor(usableW / spacingXpx));
-        const rows = Math.max(1, Math.floor(usableH / spacingYpx));
+        const cols = Math.max(1, Math.floor((usableW + 1e-7) / spacingXpx)); // CHANGE: fitted dimensions must not lose a column to floating-point subtraction.
+        const rows = Math.max(1, Math.floor((usableH + 1e-7) / spacingYpx)); // CHANGE: solved dynamic header heights preserve exact whole-row counts.
         return { rows, cols, count: rows * cols };
     }
 
@@ -6854,7 +7012,8 @@ Draw.loadPlugin(function (ui) {
             if (!child || !isTilerGroup(child) || child.getAttribute(BED_AUTO_FIT_ATTR) === "0") continue;
             const axes = bedFitAxesForGroup(child);
             if (!axes.fitWidth && !axes.fitHeight) continue;
-            const center = rectCenterModel(getModelRect(child));
+            const footprint = readPlantingFootprint(child); // CHANGE: fitted headers can put the outer group center beyond a shallow bed.
+            const center = footprint ? { x: footprint.x + footprint.width / 2, y: footprint.y + footprint.height / 2 } : rectCenterModel(getModelRect(child)); // CHANGE
             if (!pointInRotatedRectModel(center, previousRotatedRect)) continue;
             targets.push({ tg: child, axes });
         }
@@ -7099,8 +7258,9 @@ Draw.loadPlugin(function (ui) {
         createSiblingTilerGroupFromSource,
         listGardenBeds,
         readBedProfile,
-        buildDraftTilerGroupPreview,
+        buildDraftTilerGroupPreview, buildUnsavedTilerGroupPreview, // CHANGE
         listPlantingFootprints,
+        readPlantingFootprint, // CHANGE: allocation timeline clustering can use the same header-free occupancy as placement.
         proposePlantingGeometry,
         createPlantingFromProposal,
         reorderModuleChildrenForLayering

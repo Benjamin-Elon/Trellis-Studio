@@ -1027,7 +1027,7 @@ test("Allocate plugin owns launch, draft review, and one-transaction create cont
     assert.match(SOURCE, /Review Schedule/);
     assert.match(SOURCE, /graphPointToContainer\(geo\.x, geo\.y\)/); // CHANGE: draft ghosts render in graph-local overlay coordinates.
     assert.match(SOURCE, /vegHeightCm: context\.plantResolution\.plant\.veg_height_cm \|\| null/);
-    assert.match(SOURCE, /vegHeightCm: d\.geometry\.vegHeightCm \|\| null/);
+    assert.match(SOURCE, /state\.draft = rotateAllocationResult\(state, state\.draft\)/); // CHANGE: rotation shares the authoritative fitting and supply calculation.
 });
 
 test('coverage preview uses simulated fulfilled demand, including storage and expiry', () => { // CHANGE
@@ -1277,7 +1277,7 @@ test('Edit delegates to the scheduler and creation commits the exact reviewed ta
     assert.match(collectText(api.__document.lastDialog).join(' '), /Reviewed sow task/);
     api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Create').click();
     await waitUntil(() => !state.reviewing);
-    assert.equal(persisted, 1);
+    assert.equal(persisted, 1, state.noticeMessage); // CHANGE: include deferred-default failure details in commit assertions.
     assert.equal(state.noticeMessage, ''); // CHANGE: creation clears the prior editor notice.
     api.__window.USL.allocate.close();
 });
@@ -1298,6 +1298,46 @@ test('scheduler cancellation and invalid edits retain the accepted proposal', as
     assert.equal(harness.getCreates(), 0);
     api.__window.USL.allocate.close();
 });
+
+test('allocation revalidation preserves lifecycle preferences and supplies the created cell to deferred defaults', async () => { // CHANGE
+    const { api, state } = await previewSession(); // CHANGE
+    let savedCell, revalidated; // CHANGE
+    api.__window.USL.scheduler.openAllocationScheduleDialog = async (ui, draft, options) => { // CHANGE
+        assert.equal(draft.bedOccupancy, state.occupancy); // CHANGE
+        const candidate = { ...draft, saveLifecycleDefaults: true, saveSpacingDefaults: true, lifecycleOverrides: { harvestWindowDays: 14 }, bedTimingComparisons: [{ cellId: 'other' }], commitAllocationDefaults: async cell => { savedCell = cell; } }; // CHANGE
+        revalidated = await options.revalidateDraft(candidate); // CHANGE
+        return { action: 'preview', draft: revalidated }; // CHANGE
+    }; // CHANGE
+    state.hudRefs.create.click(); await waitUntil(() => !state.reviewing); // CHANGE
+    assert.ok(revalidated.ok); assert.equal(savedCell, undefined); // CHANGE
+    assert.equal(state.draft.saveLifecycleDefaults, true); assert.equal(state.draft.saveSpacingDefaults, true); // CHANGE
+    assert.equal(state.draft.lifecycleOverrides.harvestWindowDays, 14); assert.equal(state.draft.bedTimingComparisons[0].cellId, 'other'); // CHANGE
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete: true, missing: [] }); // CHANGE
+    state.hudRefs.create.click(); await waitUntil(() => !!api.__document.lastDialog); // CHANGE
+    api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Create').click(); // CHANGE
+    await waitUntil(() => !state.reviewing); // CHANGE
+    assert.equal(savedCell.id, 'new'); // CHANGE
+    api.__window.USL.allocate.close(); // CHANGE
+}); // CHANGE
+
+test('allocation failed creation skips defaults and a post-creation default failure uses the existing notice', async () => { // CHANGE
+    const { api, state } = await previewSession(); // CHANGE
+    let writes = 0; // CHANGE
+    state.draft.commitAllocationDefaults = async () => { writes++; throw new Error('Default storage unavailable'); }; // CHANGE
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete: true, missing: [] }); // CHANGE
+    const create = api.__window.USL.tiler.createPlantingFromProposal; // CHANGE
+    api.__window.USL.tiler.createPlantingFromProposal = () => { throw new Error('Planting creation unavailable'); }; // CHANGE
+    state.hudRefs.create.click(); await waitUntil(() => !!api.__document.lastDialog); // CHANGE
+    api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Create').click(); // CHANGE
+    await waitUntil(() => !state.reviewing); // CHANGE
+    assert.equal(writes, 0); assert.match(state.noticeMessage, /Planting creation unavailable/); // CHANGE
+    api.__window.USL.tiler.createPlantingFromProposal = create; // CHANGE
+    state.hudRefs.create.click(); await waitUntil(() => !!api.__document.lastDialog); // CHANGE
+    api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Create').click(); // CHANGE
+    await waitUntil(() => !state.reviewing); // CHANGE
+    assert.equal(writes, 1); assert.match(state.noticeMessage, /Planting created, but reusable defaults could not be saved: Default storage unavailable/); // CHANGE
+    api.__window.USL.allocate.close(); // CHANGE
+}); // CHANGE
 
 test('an accepted preview creates a planting and its tasks only after explicit review confirmation', async () => { // CHANGE
     const harness = await previewSession();
@@ -1402,4 +1442,94 @@ test('Allocate keeps accepted badge, ghost and preview while unrelated loading p
     assert.equal(badge.textContent, 'Good fit');
     assert.match(badge.getAttribute('aria-label'), /Lettuce.*plants fit/s);
     api.__window.USL.allocate.close();
+}); // CHANGE
+
+/** Uses real tiler proposals with a deterministic supply simulation. */ // CHANGE
+function fittedAllocationFixture(requested = 7) { // CHANGE
+    const api = loadAllocatePlugin(); // CHANGE
+    const geometry = require('./helpers/fitted-planting-harness.cjs').loadFittedPlantingGeometry(); // CHANGE
+    const crop = { id: 'crop', cropId: 'crop', plantId: '1', label: 'Carrot', method: 'direct_sow.field', kgPerPlant: 0.1 }; // CHANGE
+    const bed = { id: 'bed', getAttribute: () => '', getGeometry: () => ({ x: 40, y: 60, width: 100, height: 500 }) }; // CHANGE
+    const counts = []; // CHANGE
+    api.__window.USL.scheduler = { // CHANGE
+        resolvePlantForPlanCrop: async () => ({ ok: true, plant: { plant_id: 1, plant_name: 'Carrot', spacing_x_cm: 20, spacing_y_cm: 30, veg_diameter_cm: 10 } }), // CHANGE
+        proposeLifecycle: async () => ({ ok: true, status: 'compatible', primaryDateISO: '2027-04-01', attributePatch: { harvest_start: '2027-06-01', harvest_end: '2027-07-01' }, warnings: [], taskPreview: [] }), // CHANGE
+        listAllocationOverlapRelationships: async () => [{ companionPlantId: '2', conflictKind: 'companion' }, { companionPlantId: '3', conflictKind: 'incompatible' }] // CHANGE
+    }; // CHANGE
+    api.__window.USL.tiler = { ...geometry, readBedProfile: () => ({}) }; // CHANGE
+    api.__window.USL.planningCore = { // CHANGE
+        recommendPlantCount: () => ({ plantCount: requested, reachableShortKg: requested * 0.1 }), // CHANGE
+        simulateCandidatePlanting: input => { counts.push(input.candidate.plantCount); return { demandServedKg: Math.min(requested, input.candidate.plantCount) * 0.1 }; } // CHANGE
+    }; // CHANGE
+    const state = { moduleCell: {}, year: 2027, plan: {}, city: {}, weekIndex: 0, occupancy: [], coverage: { weekSummaries: [{ weekIndex: 0, start: '2027-06-01' }] } }; // CHANGE
+    return { api, state, crop, bed, counts }; // CHANGE
+} // CHANGE
+
+test('fitted allocation updates count and supply without cumulative rounding during rotation', async () => { // CHANGE
+    const { api, state, crop, bed, counts } = fittedAllocationFixture(); // CHANGE
+    const initial = await api.computeBedResult(state, crop, bed); // CHANGE
+    assert.equal(initial.plantCount, 10); assert.equal(initial.requestedPlantCount, 7); // CHANGE
+    assert.equal(initial.projectedKg, 1); assert.ok(Math.abs(initial.demandServedKg - 0.7) < 1e-9); // CHANGE
+    const rotated = api.rotateAllocationResult(state, initial); // CHANGE
+    assert.equal(rotated.geometry.fitAxis, 'height'); assert.equal(rotated.plantCount, 18); // CHANGE
+    assert.equal(rotated.geometry.spacingXCm, 20); assert.equal(rotated.geometry.spacingYCm, 30); // CHANGE
+    const returned = api.rotateAllocationResult(state, rotated); // CHANGE
+    assert.equal(returned.plantCount, 10); assert.equal(returned.requestedPlantCount, 7); // CHANGE
+    assert.equal(returned.projectedKg, 1); assert.deepEqual(counts, [10, 18, 10]); // CHANGE
+}); // CHANGE
+
+test('partial fitted allocation uses complete-row capacity and recomputes it on the other axis', async () => { // CHANGE
+    const { api, state, crop, bed, counts } = fittedAllocationFixture(800); // CHANGE
+    const initial = await api.computeBedResult(state, crop, bed); // CHANGE
+    assert.equal(initial.partialPlanting, true); assert.equal(initial.plantCount, 90); // CHANGE
+    assert.equal(initial.fullPlantCount, 800); assert.equal(initial.requestedPlantCount, 800); // CHANGE
+    const rotated = api.rotateAllocationResult(state, initial); // CHANGE
+    assert.equal(rotated.plantCount, 90); assert.equal(rotated.fullPlantCount, 810); // CHANGE
+    assert.equal(rotated.projectedKg, 9); assert.deepEqual(counts, [90, 90]); // CHANGE
+}); // CHANGE
+
+test('Allocate classifies every overlapping crop and lookup failures remain unknown', async () => { // CHANGE
+    const { api, state, crop, bed } = fittedAllocationFixture(); // CHANGE
+    state.occupancy = ['2', '3', '4'].map(plantId => ({ groupId: 'group-' + plantId, plantId, plantName: 'Crop ' + plantId, bedId: bed.id, plantingRect: { x: 0, y: 0, width: 1000, height: 1000 }, bedEntryISO: '2027-04-01', harvestEndISO: '2027-07-01' })); // CHANGE
+    const result = await api.computeBedResult(state, crop, bed); // CHANGE
+    assert.equal(result.ok, true); assert.equal(result.status, 'warning'); // CHANGE
+    assert.match(result.warnings.join(' '), /Companion overlap with Crop 2/); // CHANGE
+    assert.match(result.warnings.join(' '), /Incompatible overlap with Crop 3/); // CHANGE
+    assert.match(result.warnings.join(' '), /Unknown relationship: overlap with Crop 4/); // CHANGE
+    state.relationshipCache.clear(); // CHANGE
+    api.__window.USL.scheduler.listAllocationOverlapRelationships = async () => { throw new Error('Database unavailable'); }; // CHANGE
+    const unknown = await api.computeBedResult(state, crop, bed); // CHANGE
+    assert.equal(unknown.ok, true); assert.equal(unknown.warnings.filter(item => /Unknown relationship/.test(item)).length, 3); // CHANGE
+}); // CHANGE
+
+test('rotated warned drafts update the HUD, ghost, timeline and reviewed creation metadata', async () => { // CHANGE
+    const { api, state, bed, crop, previews } = await previewSession(); // CHANGE
+    const geometry = require('./helpers/fitted-planting-harness.cjs').loadFittedPlantingGeometry(); // CHANGE
+    api.__window.USL.tiler.proposePlantingGeometry = geometry.proposePlantingGeometry; // CHANGE
+    api.__window.USL.scheduler.listAllocationOverlapRelationships = async () => [{ companionPlantId: '2', conflictKind: 'companion' }]; // CHANGE
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete: true, missing: [] }); // CHANGE
+    state.relationshipCache.clear(); state.bedResultCache.clear(); // CHANGE
+    state.occupancy = [{ groupId: 'existing', bedId: bed.id, plantId: '2', plantName: 'Carrot', plantingRect: { x: -1000, y: -1000, width: 3000, height: 3000 }, bedEntryISO: '2027-01-01', harvestEndISO: '2027-12-31' }]; // CHANGE
+    state.draft = await api.computeBedResult(state, crop, bed); // CHANGE
+    const originalCount = state.draft.plantCount; // CHANGE
+    state.moduleCell.getGeometry = () => ({ x: 300, y: 150, width: 1000, height: 1000 }); // CHANGE: moved gardens must not leave their preview at the origin.
+    api.__graph.view.scale = 1.75; api.__graph.view.translate = { x: 5, y: 10 }; // CHANGE
+    state.hudRefs.rotate.click(); // CHANGE
+    assert.notEqual(state.draft.plantCount, originalCount); // CHANGE
+    assert.match(collectText(state.hudRefs.draftBox).join(' '), /Companion overlap with Carrot/); // CHANGE
+    assert.equal(state.ghost.children.filter(node => node.getAttribute('cx') != null).length, state.draft.plantCount); // CHANGE
+    assert.equal(parseFloat(state.ghost.style.cssText.match(/left:([^;]+)px/)[1]), Math.round((state.draft.geometry.geometry.x + 300 + 5) * 1.75 + api.__graphContainer.scrollLeft)); // CHANGE
+    assert.equal(parseFloat(state.ghost.style.cssText.match(/top:([^;]+)px/)[1]), Math.round((state.draft.geometry.geometry.y + 150 + 10) * 1.75 + api.__graphContainer.scrollTop)); // CHANGE
+    assert.equal(previews.at(-1).plantingRect, state.draft.geometry.plantingRect); // CHANGE
+    state.hudRefs.rotate.click(); assert.equal(state.draft.plantCount, originalCount); // CHANGE
+    let created = null, transactions = 0; // CHANGE
+    api.__window.USL.tiler.createPlantingFromProposal = input => { created = input; return { id: 'created' }; }; // CHANGE
+    api.__window.Trellis.history = { run(metadata, operation) { transactions++; return operation(); } }; // CHANGE
+    state.hudRefs.create.click(); await waitUntil(() => !!api.__document.lastDialog); // CHANGE
+    const reviewed = state.draft; // CHANGE
+    const create = api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Create anyway'); // CHANGE
+    assert.ok(create); assert.equal(created, null); create.click(); await waitUntil(() => !state.reviewing); // CHANGE
+    assert.equal(created.proposal.plantCount, reviewed.plantCount); assert.equal(created.insideUpdate, true); // CHANGE
+    assert.match(created.attributes.allocation_override_json, /Companion overlap with Carrot/); assert.equal(transactions, 1); // CHANGE
+    api.__window.USL.allocate.close(); // CHANGE
 }); // CHANGE

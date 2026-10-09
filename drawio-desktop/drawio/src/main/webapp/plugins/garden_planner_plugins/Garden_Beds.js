@@ -1051,10 +1051,16 @@ Draw.loadPlugin(function (ui) {
 
     function renderSelectedBedOverlay(entry) {
         entry.div.innerHTML = "";
+        const nameInput = createBedNameInput(entry); // CHANGE: retain the existing editor in both overlay presentations.
+        entry.div.appendChild(nameInput); // CHANGE
+        if (isAllocationModeActiveForBedOverlay()) { // CHANGE: allocation needs bed identity without competing condition controls.
+            entry.div.style.width = OVERLAY_MIN_WIDTH + "px"; // CHANGE
+            nameInput.style.marginBottom = "0px"; // CHANGE
+            return; // CHANGE
+        } // CHANGE
         const rows = buildOverlayRows(getDisplayBedConditions(entry.cell));
         const layout = estimateSelectedBedOverlayLayout(rows);
         entry.div.style.width = layout.width + "px";
-        entry.div.appendChild(createBedNameInput(entry));
         const button = bedButton("Set Bed Conditions", function () { showConditionEditorDialog(entry.cell); }, "open", { title: "Edit the selected bed's growing conditions and season-extension effects." }); // CHANGE
         button.style.display = "block";
         button.style.width = "100%";
@@ -1170,6 +1176,13 @@ Draw.loadPlugin(function (ui) {
         try { updates.forEach(function (entry) { setCellAttrs(entry.cell, { label: entry.label }); }); }
         finally { if (model.endUpdate) model.endUpdate(); syncGeneratedBedLabels.running = false; }
     }
+
+    /** Read live mode state so replacement and reopening cannot retain a compact overlay. */ // CHANGE
+    function isAllocationModeActiveForBedOverlay() { // CHANGE
+        const modes = window.Trellis && window.Trellis.interactionModes; // CHANGE
+        const active = modes && typeof modes.getActive === "function" ? modes.getActive() : null; // CHANGE
+        return !!(active && active.mode === "allocate"); // CHANGE
+    } // CHANGE
 
     function isIrrigationModeActiveForBedOverlay() {
         const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner);
@@ -1289,6 +1302,7 @@ Draw.loadPlugin(function (ui) {
     }
     if (graph.container && graph.container.addEventListener) graph.container.addEventListener("scroll", refreshSelectedBedOverlaysSoon, { passive: true });
     if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisIrrigationModeChanged", refreshSelectedBedOverlaysSoon);
+    if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisInteractionModeChanged", refreshSelectedBedOverlaysSoon); // CHANGE: restore conditions even when selection does not change.
     if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) clearSelectedBedOverlays(); else refreshSelectedBedOverlaysSoon(); }); // NEW
     if (graph.addMouseListener) graph.addMouseListener({ mouseDown: function (_sender, evt) { beginSelectedBedOverlayDrag(evt); }, mouseMove: function (_sender, evt) { updateSelectedBedOverlayDrag(evt); }, mouseUp: function () { finishSelectedBedOverlayDrag(); } }); // NEW
     if (typeof window !== "undefined" && window.addEventListener) ["mouseup", "pointerup", "blur"].forEach(function (eventName) { window.addEventListener(eventName, finishSelectedBedOverlayDrag); }); // NEW

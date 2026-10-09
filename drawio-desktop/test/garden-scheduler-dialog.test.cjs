@@ -354,11 +354,12 @@ test('allocation reusable task defaults persist actual rules rather than dated t
 });
 
 /** Reference-data bridge exercises real template resolution and the complete scheduler, without Electron or a database write. */ // CHANGE
-function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = null } = {}) { // CHANGE
+function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = null, varietyOverrides = {}, relationships = [], neighbors = [], setDefault = null } = {}) { // CHANGE: allocation timing/default tests share the real scheduler fixture.
     let plant, city;
     const writes = [];
     const queries = [];
-    const method = { method_id: 'direct_sow.field', method_category_id: 'direct_sow', method_name: 'Field direct sow', tasks_required_json: '{"sow":true,"prep":true}' };
+    const method = { method_id: 'direct_sow.field', method_category_id: 'direct_sow', method_name: 'Field direct sow', tasks_required_json: '{"sow":true,"prep":true}' }; // CHANGE
+    const indoorMethod = { method_id: 'transplant.indoor', method_category_id: 'transplant', method_name: 'Indoor transplant', tasks_required_json: '{"sow":true,"transplant":true}' }; // CHANGE
     const dbBridge = { resolvePath: async () => ({ dbPath: 'allocation-fixture' }), open: async () => ({ dbId: 'fixture' }), close: async () => ({}),
         exec: async (id, sql, params) => { writes.push({ sql, params }); return {}; },
         query: async (id, sql, params = []) => {
@@ -366,9 +367,11 @@ function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = nu
             let rows = [];
             if (/FROM\s+Plants\b/i.test(sql)) rows = [plant];
             else if (/FROM\s+Cities\b/i.test(sql)) rows = [city];
-            else if (/FROM\s+PlantAllowedMethodCategories\b/i.test(sql)) rows = [{ plant_id: 1, method_category_id: 'direct_sow', method_category_name: 'Direct sow' }];
-            else if (/FROM\s+PlantingMethods\b/i.test(sql)) rows = [method];
-            else if (/FROM\s+PlantVarieties\b/i.test(sql)) rows = [{ plant_id: 1, variety_id: 7, variety_name: 'Test variety', overrides_json: '{}' }];
+            else if (/FROM\s+PlantAllowedMethodCategories\b/i.test(sql)) rows = [{ plant_id: 1, method_category_id: 'direct_sow', method_category_name: 'Direct sow' }, { plant_id: 1, method_category_id: 'transplant', method_category_name: 'Transplant' }]; // CHANGE
+            else if (/FROM\s+PlantingMethods\b/i.test(sql)) rows = params.includes('transplant') ? [indoorMethod] : [method]; // CHANGE
+            else if (/FROM\s+PlantVarieties\b/i.test(sql)) rows = [{ plant_id: 1, variety_id: 7, variety_name: 'Test variety', overrides_json: JSON.stringify(varietyOverrides) }]; // CHANGE
+            else if (/FROM Companions c/i.test(sql)) rows = relationships; // CHANGE
+            else if (/FROM CompanionSetLayoutDefaults/i.test(sql) && setDefault && params[0] === setDefault.crop_set_key) rows = [setDefault]; // CHANGE
             else if (/FROM\s+VarietyTaskTemplates\b/i.test(sql) && varietyTemplate && params[0] === 7) rows = [{ template_json: JSON.stringify(varietyTemplate) }];
             else if (/FROM\s+PlantTaskTemplates\b/i.test(sql) && plantTemplate) rows = [{ plant_id: 1, method_id: method.method_id, template_json: JSON.stringify(plantTemplate) }];
             return { rows };
@@ -380,13 +383,13 @@ function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = nu
     const moduleCell = { id: 'module', getAttribute: () => null };
     const bed = { id: 'bed', parent: moduleCell, getAttribute: key => key === 'garden_bed' ? '1' : null, getGeometry: () => ({ x: 0, y: 0, width: 200, height: 100 }) };
     let graphWrites = 0, dialog, onClose;
-    const model = { getParent: cell => cell?.parent || null, getRoot: () => ({ children: [] }), getCell: () => null,
+    const model = { getParent: cell => cell?.parent || null, getRoot: () => ({ children: [] }), getCell: id => neighbors.find(cell => cell.id === id) || null, // CHANGE
         getChildCount: cell => cell?.children?.length || 0, getChildAt: (cell, index) => cell.children[index], beginUpdate() { graphWrites++; }, endUpdate() {}, execute() { graphWrites++; } };
     const graph = { getModel: () => model, getSelectionCell: () => bed, __trellisBedSuccessionNavigator: { getSelectedClusterOccupancy: () => ({ items: [] }) } };
     const ui = { editor: { graph }, showDialog(node, width, height, modal, closable, close) { dialog = node; onClose = close; api.__testWindow.document.body.appendChild(node); }, hideDialog() { dialog?.remove(); onClose?.(); } };
     const draft = { allocationYear: 2026, moduleCell, bed, bedProfile: null, city,
         crop: { plantId: '1', varietyId: '7', label: 'Lettuce - Test variety', method: method.method_id },
-        plantResolution: { ok: true, plant, plantId: '1', varietyId: '7', varietyName: 'Test variety' }, actionStartISO: '2026-04-01' };
+        plantResolution: { ok: true, plant, plantId: '1', varietyId: '7', varietyName: 'Test variety' }, actionStartISO: '2026-04-01', targetDemandStartISO: '2026-05-01', targetDemandEndISO: '2026-05-08' }; // CHANGE
     return { api, plant, city, ui, draft, writes, queries, getDialog: () => dialog, getGraphWrites: () => graphWrites };
 } // CHANGE
 
@@ -415,17 +418,287 @@ test('allocation Edit opens the full scheduler with fixed crop identity and retu
     assert.ok(buttons.find(node => node.textContent === 'Schedule'));
     const date = Array.from(dialog.querySelectorAll('input[type="date"]')).find(node => node.value === '2026-04-01');
     assert.ok(date);
+    assert.equal(date.readOnly, true); // CHANGE: allocation dates remain demand-derived even if an input event is dispatched.
     date.value = '2026-04-02'; date.dispatchEvent(new api.__testWindow.document.defaultView.Event('input', { bubbles: true }));
     buttons.find(node => node.textContent === 'Preview Planting').click();
     const result = await Promise.race([pending, new Promise((resolve, reject) => setTimeout(() => reject(new Error(dialog.textContent.slice(0, 1400))), 1500))]); // CHANGE: failed submission reports the actual inline validation reason.
     assert.equal(result.action, 'preview');
     assert.equal(result.draft.lifecycle.ok, true);
-    assert.equal(result.draft.actionStartISO, '2026-04-02');
+    assert.equal(result.draft.actionStartISO, '2026-04-01'); // CHANGE: lifecycle unlock never enables arbitrary allocation date edits.
     assert.ok(result.draft.taskPreview.length > 0);
     assert.equal(result.draft.lifecycle.attributePatch.task_template_json, JSON.stringify(result.draft.lifecycle.taskTemplate));
     assert.equal(fixture.getGraphWrites(), 0);
     assert.equal(fixture.writes.some(write => /^(INSERT|UPDATE|DELETE)\b/i.test(write.sql.trim())), false);
 });
+
+/** Wait for observable async allocation state rather than relying on a fixed recomputation delay. */ // CHANGE
+async function waitForAllocationState(predicate) { // CHANGE
+    const deadline = Date.now() + 10000; // CHANGE
+    while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10)); // CHANGE
+    assert.ok(predicate(), 'allocation state should settle'); // CHANGE
+} // CHANGE
+
+test('allocation locks lifecycle by default, preserves edits when relocked, and keeps footer defaults on Tasks', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture(); // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const lock = dialog.querySelector('[data-allocation-lifecycle-lock]'); // CHANGE
+    const harvest = Array.from(dialog.querySelectorAll('input')).find(input => input.closest('.usl-scheduler-row')?.textContent.includes('Harvest window')); // CHANGE
+    const method = Array.from(dialog.querySelectorAll('select')).find(select => select.closest('.usl-scheduler-row')?.textContent.includes('Planting method')); // CHANGE
+    assert.ok(lock.checked && harvest.disabled && method.disabled); // CHANGE
+    const event = new fixture.api.__testWindow.document.defaultView.Event('change', { bubbles: true }); // CHANGE
+    lock.checked = false; lock.dispatchEvent(event); // CHANGE
+    assert.equal(harvest.disabled, false); assert.equal(method.disabled, false); // CHANGE
+    assert.equal(dialog.querySelector('[data-allocation-start-date]').readOnly, true); // CHANGE
+    harvest.value = '11'; lock.checked = true; lock.dispatchEvent(event); // CHANGE
+    assert.equal(harvest.value, '11'); assert.equal(harvest.disabled, true); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Tasks').click(); // CHANGE
+    await waitForAllocationState(() => dialog.querySelector('.usl-scheduler-tab[data-active="true"]')?.textContent === 'Tasks'); // CHANGE
+    assert.ok(dialog.querySelector('.usl-scheduler-footer [data-allocation-save-lifecycle]')); // CHANGE
+    assert.equal(dialog.querySelector('[data-allocation-save-lifecycle]').checked, false); // CHANGE
+    assert.equal(dialog.querySelector('[data-allocation-save-spacing]').disabled, true); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Cancel').click(); // CHANGE
+    assert.equal((await pending).action, 'cancel'); // CHANGE
+}); // CHANGE
+
+test('allocation lifecycle edits solve demand and wait for capacity revalidation before Preview', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture(); // CHANGE
+    let candidate, finishFit; // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, revalidateDraft: draft => { candidate = draft; return new Promise(resolve => { finishFit = resolve; }); } }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const view = fixture.api.__testWindow.document.defaultView; // CHANGE
+    const lock = dialog.querySelector('[data-allocation-lifecycle-lock]'); // CHANGE
+    lock.checked = false; lock.dispatchEvent(new view.Event('change')); // CHANGE
+    const harvest = Array.from(dialog.querySelectorAll('input')).find(input => input.closest('.usl-scheduler-row')?.textContent.includes('Harvest window')); // CHANGE
+    harvest.value = '14'; harvest.dispatchEvent(new view.Event('input')); // CHANGE
+    const preview = Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Preview Planting'); // CHANGE
+    assert.equal(preview.disabled, true); // CHANGE
+    await waitForAllocationState(() => finishFit); // CHANGE
+    assert.ok(candidate.lifecycle.attributePatch.harvest_start <= fixture.draft.targetDemandEndISO); // CHANGE
+    assert.ok(candidate.lifecycle.attributePatch.harvest_end >= fixture.draft.targetDemandStartISO); // CHANGE
+    finishFit({ ...candidate, ok: true, plantCount: 42, coveragePreview: { updated: true } }); // CHANGE
+    await waitForAllocationState(() => !preview.disabled); // CHANGE
+    assert.notEqual(dialog.querySelector('[data-allocation-start-date]').value, fixture.draft.actionStartISO); // CHANGE
+    preview.click(); // CHANGE
+    const result = await pending; // CHANGE
+    assert.equal(result.draft.plantCount, 42); assert.equal(result.draft.coveragePreview.updated, true); // CHANGE
+    assert.equal(result.draft.lifecycle.harvestWindowDays, 14); // CHANGE
+    assert.equal(fixture.getGraphWrites(), 0); // CHANGE
+    assert.equal(fixture.writes.some(write => /^(INSERT|UPDATE|DELETE)\b/i.test(write.sql.trim())), false); // CHANGE
+}); // CHANGE
+
+test('allocation discards older fits and blocks Preview when the latest bed fit fails', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture(); // CHANGE
+    const fits = []; // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, revalidateDraft: draft => new Promise(resolve => { fits.push({ draft, resolve }); }) }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const view = fixture.api.__testWindow.document.defaultView; // CHANGE
+    const lock = dialog.querySelector('[data-allocation-lifecycle-lock]'); // CHANGE
+    lock.checked = false; lock.dispatchEvent(new view.Event('change')); // CHANGE
+    const harvest = Array.from(dialog.querySelectorAll('input')).find(input => input.closest('.usl-scheduler-row')?.textContent.includes('Harvest window')); // CHANGE
+    const preview = Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Preview Planting'); // CHANGE
+    harvest.value = '14'; harvest.dispatchEvent(new view.Event('input')); // CHANGE
+    await waitForAllocationState(() => fits.length === 1); // CHANGE
+    harvest.value = '10'; harvest.dispatchEvent(new view.Event('input')); // CHANGE
+    await waitForAllocationState(() => fits.length === 2); // CHANGE
+    fits[1].resolve({ ...fits[1].draft, ok: false, reason: 'No capacity for this lifecycle' }); // CHANGE
+    await waitForAllocationState(() => dialog.textContent.includes('No capacity for this lifecycle')); // CHANGE
+    fits[0].resolve({ ...fits[0].draft, ok: true }); // CHANGE
+    await new Promise(resolve => setTimeout(resolve, 20)); // CHANGE
+    assert.equal(preview.disabled, true); // CHANGE
+    assert.equal(dialog.querySelector('[data-allocation-timing-comparisons]').children.length, 0); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Cancel').click(); // CHANGE
+    assert.equal((await pending).action, 'cancel'); // CHANGE
+}); // CHANGE
+
+test('allocation indoor method and lead-day edits refit demand and use transplant dates for offsets', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture({ neighbors: [allocationNeighbor('other', 2)] }); // CHANGE
+    fixture.plant.days_transplant = 14; // CHANGE
+    fixture.draft.harvestEnd = '2026-06-01'; // CHANGE
+    fixture.draft.bedOccupancy = [{ groupId: 'other', bedId: 'bed', plantId: 2, plantName: 'Carrot', bedEntryISO: '2026-04-01', harvestEndISO: '2026-06-01' }]; // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const view = fixture.api.__testWindow.document.defaultView; // CHANGE
+    const lock = dialog.querySelector('[data-allocation-lifecycle-lock]'); // CHANGE
+    lock.checked = false; lock.dispatchEvent(new view.Event('change')); // CHANGE
+    const method = Array.from(dialog.querySelectorAll('select')).find(select => Array.from(select.options).some(option => option.textContent === 'Indoor transplant')); // CHANGE
+    const indoor = Array.from(method.options).find(option => option.textContent === 'Indoor transplant'); // CHANGE
+    method.value = indoor.value; method.dispatchEvent(new view.Event('change')); // CHANGE
+    const preview = Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Preview Planting'); // CHANGE
+    await waitForAllocationState(() => !preview.disabled && dialog.textContent.includes('Transplant date:')); // CHANGE
+    const leadRow = Array.from(dialog.querySelectorAll('.usl-scheduler-row')).find(row => row.textContent.includes('Transplant lead')); // CHANGE
+    const override = leadRow.querySelector('input[type="checkbox"]'); // CHANGE
+    override.checked = true; override.dispatchEvent(new view.Event('change')); // CHANGE
+    const lead = leadRow.querySelector('input[type="number"]'); // CHANGE
+    lead.value = '21'; lead.dispatchEvent(new view.Event('input')); // CHANGE
+    await waitForAllocationState(() => !preview.disabled); // CHANGE
+    preview.click(); const result = (await pending).draft; // CHANGE
+    assert.equal(result.methodId, 'transplant.indoor'); assert.equal(result.lifecycle.effectiveTransplantDays, 21); // CHANGE
+    assert.equal(result.lifecycle.attributePatch.transplant_date, result.lifecycle.primaryDateISO); // CHANGE
+    const actual = (new Date(result.lifecycle.primaryDateISO) - new Date('2026-04-01')) / 86400000; // CHANGE
+    assert.equal(result.bedTimingComparisons[0].actualOffsetDays, actual); // CHANGE
+    assert.ok(result.lifecycle.attributePatch.harvest_start <= fixture.draft.targetDemandEndISO); // CHANGE
+    assert.ok(result.lifecycle.attributePatch.harvest_end >= fixture.draft.targetDemandStartISO); // CHANGE
+}); // CHANGE
+
+test('allocation no feasible demand fit clears harvest dates and blocks both Preview actions', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture(); // CHANGE
+    fixture.draft.targetDemandStartISO = '2026-01-01'; fixture.draft.targetDemandEndISO = '2026-01-07'; // CHANGE: there is no in-year start that can mature in the first demand week.
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const view = fixture.api.__testWindow.document.defaultView; // CHANGE
+    const lock = dialog.querySelector('[data-allocation-lifecycle-lock]'); // CHANGE
+    lock.checked = false; lock.dispatchEvent(new view.Event('change')); // CHANGE
+    const harvest = Array.from(dialog.querySelectorAll('input')).find(input => input.closest('.usl-scheduler-row')?.textContent.includes('Harvest window')); // CHANGE
+    harvest.value = '14'; harvest.dispatchEvent(new view.Event('input')); // CHANGE
+    await waitForAllocationState(() => dialog.textContent.includes('No allocation fit:')); // CHANGE
+    for (const name of ['Preview', 'Preview Planting']) assert.equal(Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === name).disabled, true); // CHANGE
+    assert.equal(dialog.querySelector('[data-allocation-timing-comparisons]').children.length, 0); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Cancel').click(); // CHANGE
+    await pending; // CHANGE
+    assert.equal(fixture.writes.some(write => /^(INSERT|UPDATE|DELETE)\b/i.test(write.sql.trim())), false); // CHANGE
+}); // CHANGE
+
+test('allocation compares bed entry against all overlapping crops and omits off-axis markers', () => { // CHANGE
+    const fixture = allocationSchedulerFixture(); // CHANGE
+    const draft = { ...fixture.draft, lifecycle: { result: { timelines: [{ sow: new Date('2026-04-01'), transplant: new Date('2026-04-15'), harvestEnd: new Date('2026-06-01') }] } }, bedOccupancy: [ // CHANGE
+        { groupId: 'a', bedId: 'bed', plantId: 2, plantName: 'Carrot', varietyName: 'Early', bedEntryISO: '2026-04-01', harvestEndISO: '2026-05-01' }, // CHANGE
+        { groupId: 'b', bedId: 'bed', plantId: 2, plantName: 'Carrot', bedEntryISO: '2026-04-15', harvestEndISO: '2026-06-01' }, // CHANGE
+        { groupId: 'old', bedId: 'bed', plantId: 3, plantName: 'Rosemary', bedEntryISO: '2020-01-01', harvestEndISO: '2030-01-01' }, // CHANGE
+        { groupId: 'elsewhere', bedId: 'other', plantId: 2, bedEntryISO: '2026-04-01', harvestEndISO: '2026-06-01' }, // CHANGE
+        { groupId: 'later', bedId: 'bed', plantId: 2, bedEntryISO: '2026-07-01', harvestEndISO: '2026-08-01' }, // CHANGE
+        { groupId: 'bad', bedId: 'bed', plantId: 2, bedEntryISO: 'invalid', harvestEndISO: '2026-08-01' }, // CHANGE
+        { groupId: 'bad-calendar', bedId: 'bed', plantId: 2, bedEntryISO: '2026-02-30', harvestEndISO: '2026-08-01' }, null, 'malformed' // CHANGE
+    ] }; // CHANGE
+    const rows = fixture.api.buildAllocationTimingComparisons(draft, [{ companionPlantId: 2, relationship: { recommendedStartOffsetDays: -7 } }]); // CHANGE
+    assert.deepEqual(Array.from(rows, row => row.cellId), ['old', 'a', 'b']); // CHANGE
+    assert.equal(rows[1].actualOffsetDays, 14); assert.equal(rows[1].recommendedOffsetDays, 7); assert.equal(rows[1].differenceDays, 7); // CHANGE
+    assert.equal(rows[2].actualOffsetDays, 0); assert.equal(rows[0].recommendedOffsetDays, null); // CHANGE
+    assert.equal(fixture.api.buildAllocationTimingComparisons({ ...draft, bedOccupancy: {} }).length, 0); // CHANGE
+    assert.equal(fixture.api.buildAllocationTimingComparisons(draft, [null]).length, 3); // CHANGE
+    const timeline = fixture.api.buildLifecycleTimelineViewModel({ seasonStartYear: 2026, overlappingPlantings: rows }); // CHANGE
+    assert.deepEqual(Array.from(timeline.overlappingStarts, row => row.cellId), ['a', 'b']); // CHANGE
+    assert.equal(timeline.bounds.startISO, '2026-01-01'); // CHANGE
+    const direct = fixture.api.buildAllocationTimingComparisons({ ...draft, lifecycle: { result: { timelines: [{ sow: new Date('2026-04-01'), harvestEnd: new Date('2026-06-01') }] } } }); // CHANGE
+    assert.equal(direct.find(row => row.cellId === 'a').actualOffsetDays, 0); // CHANGE
+}); // CHANGE
+
+test('allocation lifecycle defaults are opt-in and merge selected-variety overrides without timing writes', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture({ varietyOverrides: { days_maturity: 50, yield_per_plant_kg: 2 } }); // CHANGE
+    const draft = { ...fixture.draft, methodId: 'transplant.indoor', methodCategoryId: 'transplant', lifecycle: { effectiveTransplantDays: 21, harvestWindowDays: 14 } }; // CHANGE
+    await fixture.api.persistAllocationReusableDefaults(draft, { defaultStatus: { missing: [] } }); // CHANGE
+    assert.equal(fixture.writes.some(write => /UPDATE\s+(Plants|PlantVarieties)/i.test(write.sql)), false); // CHANGE
+    await fixture.api.persistAllocationReusableDefaults({ ...draft, saveLifecycleDefaults: true }, { defaultStatus: { missing: [] } }); // CHANGE
+    const update = fixture.writes.find(write => /UPDATE\s+PlantVarieties/i.test(write.sql)); // CHANGE
+    const saved = JSON.parse(update.params[0]); // CHANGE
+    assert.deepEqual(saved, { days_maturity: 50, yield_per_plant_kg: 2, default_planting_method: 'transplant.indoor', default_planting_method_category: 'transplant', days_transplant: 21, harvest_window_days: 14 }); // CHANGE
+    assert.equal(fixture.writes.some(write => /UPDATE\s+Plants\b|(?:UPDATE|INSERT INTO)\s+Companions\b/i.test(write.sql)), false); // CHANGE
+    const merged = fixture.api.applyPlantOverrides({ default_planting_method: 'direct_sow.field', default_planting_method_category: 'direct_sow' }, { default_planting_method: 'transplant.indoor' }); // CHANGE
+    assert.equal(merged.default_planting_method_category, 'transplant'); // CHANGE
+    assert.equal(fixture.api.applyPlantOverrides(merged, { default_planting_method: '' }).default_planting_method, 'transplant.indoor'); // CHANGE
+}); // CHANGE
+
+test('allocation plant lifecycle defaults require first-time opt-in and variety methods preserve explicit selection and inheritance', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture({ varietyOverrides: { default_planting_method: 'transplant.indoor', default_planting_method_category: 'transplant', days_transplant: 21 } }); // CHANGE
+    const draft = { ...fixture.draft, crop: { ...fixture.draft.crop, varietyId: '' }, plantResolution: { ...fixture.draft.plantResolution, varietyId: null }, methodId: 'transplant.indoor', methodCategoryId: 'transplant', lifecycle: { effectiveTransplantDays: 21, harvestWindowDays: 14 } }; // CHANGE
+    await fixture.api.persistAllocationReusableDefaults(draft, { defaultStatus: { missing: ['method'] } }); // CHANGE
+    assert.equal(fixture.writes.some(write => /UPDATE\s+Plants\b/i.test(write.sql)), false); // CHANGE
+    await fixture.api.persistAllocationReusableDefaults({ ...draft, saveLifecycleDefaults: true }, { defaultStatus: { missing: ['method'] } }); // CHANGE
+    const update = fixture.writes.find(write => /UPDATE\s+Plants\b/i.test(write.sql)); // CHANGE
+    assert.ok(update); assert.ok(update.params.includes('transplant.indoor')); assert.ok(update.params.includes(14)); // CHANGE
+    const effective = (await fixture.api.resolvePlantForPlanCrop({ plantId: 1, varietyId: 7 })).plant; // CHANGE
+    assert.equal(effective.default_planting_method, 'transplant.indoor'); assert.equal(effective.days_transplant, 21); // CHANGE
+    const base = (await fixture.api.resolvePlantForPlanCrop({ plantId: 1, varietyId: null })).plant; // CHANGE
+    assert.equal(base.default_planting_method, 'direct_sow.field'); // CHANGE
+    const explicit = await fixture.api.proposeLifecycle({ plant: effective, city: fixture.city, methodId: 'direct_sow.field', methodCategoryId: 'direct_sow', primaryDateISO: '2026-04-01', seasonStartYear: 2026, harvestWindowDays: 7 }); // CHANGE
+    assert.equal(explicit.ok, true); assert.equal(explicit.methodId, 'direct_sow.field'); // CHANGE: an explicit allocation/Year Plan method takes priority over variety defaults.
+}); // CHANGE
+
+/** Minimal planted cell with actual spacing, for defaults captured after successful creation. */ // CHANGE
+function allocationNeighbor(id, plantId, varietyId = '') { // CHANGE
+    const attrs = { plant_id: String(plantId), variety_id: String(varietyId), plant_name: 'Carrot', spacing_x_cm: '20', spacing_y_cm: '25', layout_offset_x_cm: '3', layout_offset_y_cm: '4' }; // CHANGE
+    return { id, getAttribute: key => attrs[key] ?? null, getGeometry: () => ({ x: 0, y: 0, width: 100, height: 100 }) }; // CHANGE
+} // CHANGE
+
+test('allocation spacing default starts checked for new active sets and persists only after creation', async () => { // CHANGE
+    const neighbor = allocationNeighbor('carrot', 2); // CHANGE
+    const fixture = allocationSchedulerFixture({ neighbors: [neighbor] }); // CHANGE
+    fixture.draft.bedOccupancy = [{ groupId: 'carrot', bedId: 'bed', plantId: 2, plantName: 'Carrot', bedEntryISO: '2026-04-01', harvestEndISO: '2026-06-01' }]; // CHANGE
+    fixture.draft.lifecycle = await fixture.api.proposeLifecycle({ plant: fixture.plant, city: fixture.city, primaryDateISO: fixture.draft.actionStartISO, methodId: 'direct_sow.field', methodCategoryId: 'direct_sow', seasonStartYear: 2026 }); // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, defaultStatus: { missing: [] } }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const spacing = dialog.querySelector('[data-allocation-save-spacing]'); // CHANGE
+    assert.ok(spacing.checked && !spacing.disabled); // CHANGE
+    assert.equal(dialog.querySelectorAll('[data-allocation-timing-row]').length, 1); // CHANGE
+    assert.equal(dialog.querySelectorAll('[data-allocation-overlap-start]').length, 1); // CHANGE
+    assert.match(dialog.querySelector('[data-allocation-timing-comparisons]').textContent, /No recommended offset/); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Preview Planting').click(); // CHANGE
+    const result = await pending; // CHANGE
+    assert.equal(result.draft.saveSpacingDefaults, true); // CHANGE
+    assert.equal(fixture.writes.some(write => /INSERT INTO CompanionSetLayoutDefaults/i.test(write.sql)), false); // CHANGE
+    await assert.rejects(result.draft.commitAllocationDefaults(), /created planting/); // CHANGE
+    const created = allocationNeighbor('created', 1, 7); // CHANGE
+    await result.draft.commitAllocationDefaults(created); // CHANGE
+    const insert = fixture.writes.find(write => /INSERT INTO CompanionSetLayoutDefaults/i.test(write.sql)); // CHANGE
+    assert.ok(insert); // CHANGE
+    const saved = insert.params.map(param => { try { return JSON.parse(param); } catch { return null; } }).find(value => value?.rows); // CHANGE
+    assert.equal(saved.rows.length, 2); // CHANGE
+    const proposed = saved.rows.find(row => row.varietyId === 7); // CHANGE
+    assert.equal(proposed.spacingXCm, 20); assert.equal(proposed.offsetXCm, 3); // CHANGE
+    assert.equal(fixture.writes.some(write => /(?:UPDATE|INSERT INTO)\s+Companions\b/i.test(write.sql)), false); // CHANGE
+}); // CHANGE
+
+test('allocation spacing default starts unchecked for existing exact and broad defaults and preserves explicit choice on reopen', async () => { // CHANGE
+    for (const broad of [false, true]) { // CHANGE
+        const fixture = allocationSchedulerFixture({ neighbors: [allocationNeighbor('carrot', 2)], setDefault: { crop_set_key: broad ? 'p:1+p:2' : 'p:2+v:7', layout_json: '{"rows":[]}' } }); // CHANGE
+        fixture.draft.bedOccupancy = [{ groupId: 'carrot', bedId: 'bed', plantId: 2, bedEntryISO: '2026-04-01', harvestEndISO: '2026-06-01' }]; // CHANGE
+        fixture.draft.lifecycle = await fixture.api.proposeLifecycle({ plant: fixture.plant, city: fixture.city, primaryDateISO: fixture.draft.actionStartISO, methodId: 'direct_sow.field', methodCategoryId: 'direct_sow', seasonStartYear: 2026 }); // CHANGE
+        let pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true }); // CHANGE
+        let dialog = await waitForSchedulerDialog(fixture); // CHANGE
+        const spacing = dialog.querySelector('[data-allocation-save-spacing]'); // CHANGE
+        assert.equal(spacing.checked, false); assert.equal(spacing.disabled, false); // CHANGE
+        Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Cancel').click(); // CHANGE
+        await pending; // CHANGE
+        fixture.draft.saveSpacingDefaults = true; // CHANGE
+        pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true }); // CHANGE
+        await waitForAllocationState(() => fixture.getDialog() !== dialog); // CHANGE
+        dialog = fixture.getDialog(); // CHANGE
+        assert.equal(dialog.querySelector('[data-allocation-save-spacing]').checked, true); // CHANGE
+        Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Cancel').click(); // CHANGE
+        await pending; // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('allocation recommendation lookup preserves missing timing and normalizes both stored relationship directions', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture({ relationships: [ // CHANGE
+        { relation_id: 1, source_plant_id: 1, companion_plant_id: 2, start_offset_days: 7, rating: 1 }, // CHANGE
+        { relation_id: 2, source_plant_id: 3, companion_plant_id: 1, start_offset_days: 10, rating: 1 }, // CHANGE
+        { relation_id: 3, source_plant_id: 1, companion_plant_id: 4, start_offset_days: null, rating: 1 } // CHANGE
+    ] }); // CHANGE
+    const relationships = await fixture.api.__testWindow.USL.scheduler.listAllocationOverlapRelationships(1); // CHANGE
+    const draft = { ...fixture.draft, harvestEnd: '2026-06-01', bedOccupancy: [2, 3, 4].map(plantId => ({ groupId: String(plantId), bedId: 'bed', plantId, bedEntryISO: '2026-04-01', harvestEndISO: '2026-06-01' })) }; // CHANGE
+    const comparisons = fixture.api.buildAllocationTimingComparisons(draft, relationships); // CHANGE
+    assert.deepEqual(Array.from(comparisons, row => row.recommendedOffsetDays), [-7, 10, null]); // CHANGE
+}); // CHANGE
+
+test('allocation cancellation during revalidation cannot publish a fitted result', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture(); // CHANGE
+    let fit; // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, revalidateDraft: draft => new Promise(resolve => { fit = () => resolve({ ...draft, ok: true }); }) }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const view = fixture.api.__testWindow.document.defaultView; // CHANGE
+    const lock = dialog.querySelector('[data-allocation-lifecycle-lock]'); // CHANGE
+    lock.checked = false; lock.dispatchEvent(new view.Event('change')); // CHANGE
+    const harvest = Array.from(dialog.querySelectorAll('input')).find(input => input.closest('.usl-scheduler-row')?.textContent.includes('Harvest window')); // CHANGE
+    harvest.value = '12'; harvest.dispatchEvent(new view.Event('input')); // CHANGE
+    await waitForAllocationState(() => fit); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Cancel').click(); // CHANGE
+    assert.equal((await pending).action, 'cancel'); // CHANGE
+    const date = dialog.querySelector('[data-allocation-start-date]').value; // CHANGE
+    fit(); await new Promise(resolve => setTimeout(resolve, 30)); // CHANGE
+    assert.equal(dialog.querySelector('[data-allocation-start-date]').value, date); // CHANGE
+    assert.equal(fixture.getGraphWrites(), 0); // CHANGE
+}); // CHANGE
 
 test('lifecycle proposals resolve variety, plant, and method task defaults and respect explicit empty rules', async () => { // CHANGE
     const template = title => ({ version: 2, rules: [{ id: 'sow', title, startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 0, repeatMode: 'none' }] });
@@ -1463,7 +1736,7 @@ test('schedule summary renders warnings as bullet list in double-wide feasibilit
 test('scheduler hides duplicate harvest and context fields from main sections', () => {
     assert.match(schedulerSource, /appendFieldRows\(contextSection\.body, fieldRows, \['seasonStartYear', 'methodSelection', 'growthStage'\]\)/);
     assert.doesNotMatch(schedulerSource, /appendFieldRows\(contextSection\.body, fieldRows, \[[^\]]*'cityName'/);
-    assert.match(schedulerSource, /inputsSection\.body\.appendChild\(firstSowRowObj\.row\);\s*inputsSection\.body\.appendChild\(transplantDaysRowObj\.row\);/);
+    assert.match(schedulerSource, /inputsSection\.body\.appendChild\(firstSowRowObj\.row\);[\s\S]*inputsSection\.body\.appendChild\(transplantDaysRowObj\.row\);/); // CHANGE: allocation comparison and lock rows sit between date and transplant controls.
     assert.doesNotMatch(schedulerSource, /contextSection\.body\.appendChild\(transplantDaysRowObj\.row\)/);
     assert.match(schedulerSource, /endRow\.row\.style\.display = 'none';/);
     assert.doesNotMatch(schedulerSource, /harvestSection\.body\.appendChild\(harvestStartRowObj\.row\)/);

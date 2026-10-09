@@ -2355,7 +2355,7 @@ Draw.loadPlugin(function (ui) {
             const input = document.createElement('input');
             input.type = 'number';
             input.step = '1'; // CHANGE: native spacing-tab steppers move in whole-centimeter intervals while typed decimals remain valid.
-            input.value = value == null ? '' : String(Math.round(Number(value) * 10) / 10);
+            input.value = value == null ? '' : String(Number(value)); // CHANGE: retain computed tangency precision instead of rounding generated layouts.
             input.disabled = !enabled;
             input.style.width = '100%'; // CHANGE: fit all spacing fields inside the fixed overlay width.
             input.style.minWidth = '0';
@@ -2417,6 +2417,7 @@ Draw.loadPlugin(function (ui) {
                 if (!key || state.row.enabled === false) return;
                 if (spacingRowChanged(state)) {
                     entry.spacingDraftByCellId.set(key, {
+                        layoutMetadata: { rect: state.row.rect, modelRect: state.row.modelRect, rotationDeg: state.row.rotationDeg, vegDiameterCm: state.row.vegDiameterCm, clipBounds: state.row.clipBounds, resetDisabled: state.row.resetDisabled, generatedPattern: state.row.generatedPattern, strictFootprint: state.row.strictFootprint }, // CHANGE
                         spacingXCm: state.spacingX.value,
                         spacingYCm: state.spacingY.value,
                         offsetXCm: state.offsetX.value,
@@ -2434,10 +2435,10 @@ Draw.loadPlugin(function (ui) {
 
         function spacingRowChanged(state) {
             const row = state.row;
-            return String(state.spacingX.value) !== String(row.spacingXCm == null ? '' : Math.round(Number(row.spacingXCm) * 10) / 10) ||
-                String(state.spacingY.value) !== String(row.spacingYCm == null ? '' : Math.round(Number(row.spacingYCm) * 10) / 10) ||
-                String(state.offsetX.value) !== String(row.offsetXCm == null ? '' : Math.round(Number(row.offsetXCm) * 10) / 10) ||
-                String(state.offsetY.value) !== String(row.offsetYCm == null ? '' : Math.round(Number(row.offsetYCm) * 10) / 10);
+            return Number(state.spacingX.value) !== Number(row.spacingXCm) ||
+                Number(state.spacingY.value) !== Number(row.spacingYCm) ||
+                Number(state.offsetX.value) !== Number(row.offsetXCm) ||
+                Number(state.offsetY.value) !== Number(row.offsetYCm) || !!row.generatedPattern; // CHANGE: generated patterns also update the shared planting frame.
         }
 
         function revertSpacingRowState(state) {
@@ -2462,7 +2463,7 @@ Draw.loadPlugin(function (ui) {
             return row; // CHANGE: each plant owns one grid row instead of relying on global CSS grid auto-placement.
         }
 
-        function renderSpacingEditor(entry, body, context, tools) {
+        function renderSpacingEditor(entry, body, context, tools, options = {}) { // CHANGE: Allocate and saved groups share one spacing editor.
             body.innerHTML = '';
             entry.spacingRows = context.rows || [];
             const wrap = document.createElement('div');
@@ -2471,6 +2472,22 @@ Draw.loadPlugin(function (ui) {
             wrap.style.flexDirection = 'column';
             wrap.style.gap = '6px';
 
+            const patternBar = document.createElement('div'); // CHANGE
+            patternBar.className = 'manual-link-spacing-pattern'; patternBar.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;'; // CHANGE
+            const patternLabel = document.createElement('span'); patternLabel.textContent = 'Row layout:'; patternBar.appendChild(patternLabel); // CHANGE
+            const targetSelect = document.createElement('select'); targetSelect.setAttribute('aria-label', 'Companion planting'); // CHANGE
+            const targets = context.companionTargets || []; // CHANGE
+            if (targets.length > 1) { const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Choose companion'; targetSelect.appendChild(placeholder); } // CHANGE
+            targets.forEach(row => { const option = document.createElement('option'); option.value = row.cellId; option.textContent = row.label || row.cellId; targetSelect.appendChild(option); }); // CHANGE
+            targetSelect.value = context.pairTargetId || entry.pairTargetId || (targets.length === 1 ? targets[0].cellId : ''); // CHANGE
+            if (targets.length > 1) patternBar.appendChild(targetSelect); // CHANGE
+            const patternSource = document.createElement('span'); patternSource.className = 'manual-link-spacing-pattern-source'; patternSource.textContent = context.layoutSource || 'Custom'; // CHANGE
+            const patternButtons = ['aligned', 'staggered'].map(pattern => { // CHANGE
+                const button = document.createElement('button'); button.type = 'button'; button.textContent = pattern === 'aligned' ? 'Aligned' : 'Staggered'; // CHANGE
+                button.dataset.spacingPattern = pattern; applyVertexButtonStyle(button, 'neutral', { compact: true }); // CHANGE
+                button.disabled = !targetSelect.value || !tools.generateCompanionPairLayout; patternBar.appendChild(button); return button; // CHANGE
+            }); // CHANGE
+            patternBar.appendChild(patternSource); patternBar.style.display = targets.length ? 'flex' : 'none'; wrap.appendChild(patternBar); // CHANGE
             const rowsWrap = document.createElement('div');
             rowsWrap.className = 'manual-link-spacing-rows';
             rowsWrap.style.display = 'flex';
@@ -2492,7 +2509,9 @@ Draw.loadPlugin(function (ui) {
             rowsWrap.appendChild(headerRow);
 
             const rowStates = [];
-            (context.rows || []).forEach(row => {
+            (context.rows || []).forEach(initialRow => { // CHANGE
+                const metadata = readStoredSpacingDraft(entry, initialRow)?.layoutMetadata || {}; // CHANGE
+                const row = Object.assign({}, initialRow, metadata); // CHANGE
                 const enabled = row.enabled !== false;
                 const storedDraft = readStoredSpacingDraft(entry, row);
                 const displayRow = storedDraft ? Object.assign({}, row, storedDraft) : row;
@@ -2554,7 +2573,7 @@ Draw.loadPlugin(function (ui) {
             const saveDefaults = document.createElement('input');
             saveDefaults.type = 'checkbox';
             defaultLabel.appendChild(saveDefaults);
-            defaultLabel.appendChild(document.createTextNode('Save active rows as set default')); // CHANGE: defaults are anchorless active companion-set layouts.
+            defaultLabel.appendChild(document.createTextNode('Save as companion default')); // CHANGE // CHANGE: defaults are anchorless active companion-set layouts.
             wrap.appendChild(defaultLabel);
 
             const status = document.createElement('div');
@@ -2594,20 +2613,20 @@ Draw.loadPlugin(function (ui) {
                     state.revert.style.visibility = showRevert ? 'visible' : 'hidden'; // CHANGE: keep row layout stable while toggling the revert affordance.
                     state.revert.style.pointerEvents = showRevert ? 'auto' : 'none'; // CHANGE: hidden revert controls are not interactive.
                 });
-                defaultLabel.style.display = changed.length ? 'flex' : 'none';
+                defaultLabel.style.display = changed.length || targets.length ? 'flex' : 'none'; // CHANGE
                 const draft = spacingDraftFromRowStates(rowStates);
                 const validation = tools.validateSpacingDraft(draft);
-                apply.disabled = !changed.length || !validation.ok;
+                apply.disabled = (!changed.length && !options.proposed) || !validation.ok || (options.isCurrent && !options.isCurrent()); // CHANGE
                 apply.title = !changed.length ? 'Change an active row\'s spacing or offset before applying.' : !validation.ok ? validation.errors.join(' ') : 'Apply the spacing and offsets to the changed active plantings.'; // CHANGE
                 status.textContent = validation.ok ? idleStatus : validation.errors.join(' '); // CHANGE: preserve active-window explanation while editing.
-                if (!changed.length || !validation.ok) {
-                    clearSpacingPreview();
+                if ((!changed.length && !options.proposed) || !validation.ok) { // CHANGE
+                    clearSpacingPreview(); options.onChange?.(draft, null, false); // CHANGE
                     return;
                 }
                 const changedCellIds = new Set(changed.map(state => String(state.row.cellId || '')));
                 const bedScopedPreview = context && context.scope === 'bed' && draft.some(row => row.bedId); // CHANGE: bed spacing previews replace the whole rotated bed unit.
                 const previewRows = draft.map(row => {
-                    const isChanged = changedCellIds.has(String(row.cellId || ''));
+                    const isChanged = changedCellIds.has(String(row.cellId || '')) || !!options.proposed && row.enabled !== false; // CHANGE
                     const includeBedContext = !!(bedScopedPreview && row.bedId);
                     return Object.assign({}, row, {
                         enabled: isChanged,
@@ -2621,33 +2640,83 @@ Draw.loadPlugin(function (ui) {
                     apply.title = preview.warning || 'No plants remain inside the planting area.'; // CHANGE
                     clearSpacingPreview();
                     status.textContent = preview.warning || 'No plants remain inside the planting area.';
-                    return;
+                    options.onChange?.(draft, preview, false); return; // CHANGE
                 }
                 renderSpacingPreview(preview);
                 if (preview.warning) status.textContent = preview.warning;
+                options.onChange?.(draft, preview, !apply.disabled); // CHANGE
             }
 
             rowStates.forEach(state => {
                 [state.spacingX, state.spacingY, state.offsetX, state.offsetY].filter(Boolean).forEach(control => {
-                    control.addEventListener('input', refreshDraftState);
-                    control.addEventListener('change', refreshDraftState);
+                    const edit = () => { refreshPatternSource(); refreshDraftState(); refreshPatterns(); }; // CHANGE
+                    control.addEventListener('input', edit); control.addEventListener('change', edit); // CHANGE
                 });
                 state.revert.addEventListener('click', function (evt) {
                     consumeOverlayControlEvent(evt);
-                    revertSpacingRowState(state);
+                    revertSpacingRowState(state); refreshPatternSource(); // CHANGE
                     refreshDraftState();
                 });
             });
 
+            /** Regenerate only the selected pair; unrelated bed rows remain unchanged. */ // CHANGE
+            function pairRows() { // CHANGE
+                const draft = spacingDraftFromRowStates(rowStates); // CHANGE
+                const source = draft.find(row => row.cellId === String(context.selectedId)) || draft.find(row => row.selected); // CHANGE
+                const target = draft.find(row => row.cellId === targetSelect.value); // CHANGE
+                return source && target ? [source, target] : []; // CHANGE
+            } // CHANGE
+            /** A manual edit is Custom only while the chosen pair differs from both generated layouts. */ // CHANGE
+            function refreshPatternSource() { // CHANGE
+                patternSource.textContent = 'Custom'; // CHANGE
+                const rows = pairRows(), fields = ['spacingXCm', 'spacingYCm', 'offsetXCm', 'offsetYCm']; // CHANGE
+                if (rows.length !== 2) return; // CHANGE
+                for (const pattern of ['aligned', 'staggered']) { // CHANGE
+                    try { // CHANGE
+                        const generated = tools.generateCompanionPairLayout(graph, rows, pattern); // CHANGE
+                        const matches = rows.every((row, index) => fields.every(field => Math.abs(Number(row[field]) - Number(generated[index][field])) < 1e-7) && // CHANGE
+                            ['x', 'y', 'width', 'height'].every(field => Math.abs(Number(row.rect[field]) - Number(generated[index].rect[field])) < 1e-7) && // CHANGE
+                            Math.abs(Number(row.rotationDeg || 0) - Number(generated[index].rotationDeg || 0)) < 1e-7); // CHANGE
+                        if (matches) { patternSource.textContent = pattern === 'aligned' ? 'Aligned' : 'Staggered'; return; } // CHANGE
+                    } catch (_) { /* An impossible generated pattern cannot describe the edited layout. */ } // CHANGE
+                } // CHANGE
+            } // CHANGE
+            function refreshPatterns() { // CHANGE
+                entry.pairTargetId = targetSelect.value; // CHANGE
+                patternButtons.forEach((button, index) => { // CHANGE
+                    try { if (pairRows().length !== 2) throw new Error('Choose a companion planting.'); tools.generateCompanionPairLayout(graph, pairRows(), index ? 'staggered' : 'aligned'); button.disabled = false; button.title = 'Preview ' + button.textContent.toLowerCase() + ' touching rows.'; } // CHANGE
+                    catch (error) { button.disabled = true; button.title = error.message; } // CHANGE
+                }); // CHANGE
+            } // CHANGE
+            targetSelect.addEventListener('change', refreshPatterns); // CHANGE
+            patternButtons.forEach((button, index) => button.addEventListener('click', evt => { // CHANGE
+                consumeOverlayControlEvent(evt); // CHANGE
+                try { // CHANGE
+                    const generated = tools.generateCompanionPairLayout(graph, pairRows(), index ? 'staggered' : 'aligned'); // CHANGE
+                    generated.forEach(row => { const state = rowStates.find(item => item.row.cellId === row.cellId); // CHANGE
+                        state.row = Object.assign({}, state.row, { rect: row.rect, modelRect: row.modelRect, rotationDeg: row.rotationDeg, vegDiameterCm: row.vegDiameterCm, clipBounds: row.clipBounds, resetDisabled: true, generatedPattern: row.generatedPattern, strictFootprint: false }); // CHANGE
+                        state.spacingX.value = String(row.spacingXCm); state.spacingY.value = String(row.spacingYCm); state.offsetX.value = String(row.offsetXCm); state.offsetY.value = String(row.offsetYCm); // CHANGE
+                    }); // CHANGE
+                    patternSource.textContent = button.textContent; refreshDraftState(); refreshPatterns(); // CHANGE
+                } catch (error) { status.textContent = error.message; } // CHANGE
+            })); // CHANGE
+            refreshPatterns(); // CHANGE
+            apply.textContent = options.applyLabel || 'Apply'; // CHANGE
             apply.addEventListener('click', async function (evt) {
                 consumeOverlayControlEvent(evt);
                 if (apply.disabled) return;
                 try {
-                    await tools.applySpacingDraft(graph, spacingDraftFromRowStates(rowStates), { saveDefaults: saveDefaults.checked });
+                    const allRows = spacingDraftFromRowStates(rowStates); // CHANGE
+                    const changedRows = allRows.filter(row => row.enabled !== false && (options.proposed || spacingRowChanged(rowStates.find(state => state.row.cellId === row.cellId)))); // CHANGE
+                    if (options.onApply) await options.onApply(allRows, { saveDefaults: saveDefaults.checked }); // CHANGE
+                    else { // CHANGE
+                        await tools.applySpacingDraft(graph, changedRows, { saveDefaults: false }); // CHANGE
+                        if (saveDefaults.checked) await tools.saveSpacingDefaultsForRows(pairRows().length === 2 ? pairRows() : changedRows, graph, model); // CHANGE
+                    } // CHANGE
                     clearStoredSpacingDrafts(entry);
                     clearSpacingPreview();
                     status.textContent = 'Spacing applied.';
-                    setTimeout(refresh, 0);
+                    if (!options.onApply) setTimeout(refresh, 0); // CHANGE
                 } catch (e) {
                     status.textContent = e && e.message ? e.message : String(e);
                 }
@@ -2656,11 +2725,12 @@ Draw.loadPlugin(function (ui) {
                 consumeOverlayControlEvent(evt);
                 if (!context.hasSetDefault || !tools || typeof tools.applySetDefault !== 'function') return;
                 try {
-                    await tools.applySetDefault(graph, context);
-                    clearStoredSpacingDrafts(entry);
-                    clearSpacingPreview();
-                    status.textContent = 'Set default applied.';
-                    setTimeout(refresh, 0);
+                    rowStates.forEach(state => { // CHANGE
+                        const layout = tools.setDefaultRowForSpacingRow(context.setDefault, state.row); // CHANGE
+                        if (!layout || state.row.enabled === false) return; // CHANGE
+                        state.spacingX.value = String(layout.spacingXCm); state.spacingY.value = String(layout.spacingYCm); state.offsetX.value = String(layout.offsetXCm); state.offsetY.value = String(layout.offsetYCm); // CHANGE
+                    }); // CHANGE
+                    patternSource.textContent = 'Saved layout'; refreshDraftState(); // CHANGE
                 } catch (e) {
                     status.textContent = e && e.message ? e.message : String(e);
                 }
@@ -3563,6 +3633,10 @@ Draw.loadPlugin(function (ui) {
             refresh();
         }
 
+        graph.__trellisPlantingSpacingEditor = { // CHANGE: public UI bridge lets Allocate reuse the actual planting overlay editor.
+            render: (body, context, options) => renderSpacingEditor({ sourceId: context.selectedId, spacingDraftByCellId: new Map() }, body, context, getLayoutTools(), options), // CHANGE
+            clear: clearSpacingPreview // CHANGE
+        }; // CHANGE
         return {
             show,
             showScheduleOnly,

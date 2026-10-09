@@ -1,0 +1,122 @@
+const assert = require('node:assert/strict'); // CHANGE
+const test = require('node:test'); // CHANGE
+const { loadFittedPlantingGeometry } = require('./helpers/fitted-planting-harness.cjs'); // CHANGE
+
+function bed(width = 100, height = 500, rotation = 0) { // CHANGE
+    return { id: 'bed', rotation, getGeometry: () => ({ x: 40, y: 60, width, height }) }; // CHANGE
+} // CHANGE
+function input(overrides = {}) { // CHANGE
+    return { bedCell: bed(), spacingXCm: 20, spacingYCm: 30, plantCount: 7, fillCompleteRows: true, overlapPolicy: 'warn', entryISO: '2027-04-01', harvestEndISO: '2027-07-01', ...overrides }; // CHANGE
+} // CHANGE
+function occupancy(rect, overrides = {}) { // CHANGE
+    return { groupId: 'existing', plantName: 'Carrot', bedId: 'bed', rect, plantingRect: rect, bedEntryISO: '2027-05-01', harvestEndISO: '2027-06-01', ...overrides }; // CHANGE
+} // CHANGE
+function close(actual, expected, tolerance = 1e-6) { assert.ok(Math.abs(actual - expected) < tolerance, `${actual} != ${expected}`); } // CHANGE
+
+test('short-axis defaults, square ties, and explicit rotation preserve unequal spacing', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    for (const [width, height, axis] of [[100, 500, 'width'], [500, 100, 'height'], [100, 100, 'width']]) { // CHANGE
+        const proposal = api.proposePlantingGeometry(input({ bedCell: bed(width, height) })); // CHANGE
+        assert.equal(proposal.fitAxis, axis); assert.equal(proposal.ok, true); // CHANGE
+        const rotated = api.proposePlantingGeometry(input({ bedCell: bed(width, height), fitAxisOverride: axis === 'width' ? 'height' : 'width' })); // CHANGE
+        assert.notEqual(rotated.fitAxis, axis); close(rotated.spacingXCm, 20); close(rotated.spacingYCm, 30); // CHANGE
+        const perRow = proposal.fitAxis === 'width' ? proposal.cols : proposal.rows; // CHANGE
+        assert.equal(proposal.plantCount % perRow, 0); assert.ok(proposal.plantCount >= 7); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('physical row capacity excludes header and never forces a plant into a narrow bed', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    const proposal = api.proposePlantingGeometry(input({ bedCell: bed(100, 27), fitAxisOverride: 'width', plantCount: 5 })); // CHANGE
+    assert.equal(proposal.ok, true); assert.equal(proposal.rows, 1); // CHANGE
+    assert.ok(proposal.geometry.height > 27); assert.ok(proposal.geometry.y < 60); // CHANGE
+    const impossible = api.proposePlantingGeometry(input({ bedCell: bed(1, 1) })); // CHANGE
+    assert.equal(impossible.ok, false); assert.equal(impossible.capacity, 0); assert.equal(impossible.plantCount, 0); // CHANGE
+    assert.equal(impossible.reason, 'no_row_capacity'); // CHANGE
+    assert.throws(() => api.createPlantingFromProposal({ moduleCell: {}, proposal: impossible }), /physically fit/); // CHANGE
+    for (const width of [0, -1, NaN, Infinity]) { // CHANGE
+        const invalid = api.proposePlantingGeometry(input({ bedCell: bed(width, 100) })); // CHANGE
+        assert.equal(invalid.ok, false); assert.equal(invalid.reason, 'invalid_bed_geometry'); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('oversized demand reports complete-row capacity and fitting demand remains rounded up', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    const oversized = api.proposePlantingGeometry(input({ bedCell: bed(100, 100), plantCount: 800 })); // CHANGE
+    assert.equal(oversized.ok, false); assert.equal(oversized.plantCount, oversized.capacity); // CHANGE
+    const partial = api.proposePlantingGeometry(input({ bedCell: bed(100, 100), plantCount: oversized.capacity })); // CHANGE
+    assert.equal(partial.ok, true); assert.equal(partial.plantCount, oversized.capacity); // CHANGE
+    assert.equal(api.proposePlantingGeometry(input()).plantCount, 10); // CHANGE
+}); // CHANGE
+
+test('dynamic headers, fitted diameter, and committed slot counts agree in detail and LOD', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    for (const options of [input(), input({ bedCell: bed(2000, 2000), plantCount: 1200 }), input({ vegDiameterCm: 40 }), input({ bedCell: bed(100, 500, 37) })]) { // CHANGE
+        const proposal = api.proposePlantingGeometry(options); // CHANGE
+        const group = api.createPlantingFromProposal({ moduleCell: {}, proposal }); // CHANGE
+        assert.equal(Number(group.attrs.plant_count_actual), proposal.plantCount); // CHANGE
+        assert.equal(Number(group.attrs.plant_count), proposal.plantCount); // CHANGE
+        assert.equal(group.attrs.lod_collapsed, proposal.lodCollapsed ? '1' : '0'); // CHANGE
+        assert.equal(group.attrs.bed_fit_width, proposal.fitAxis === 'width' ? '1' : '0'); // CHANGE
+        assert.equal(group.attrs.bed_fit_height, proposal.fitAxis === 'height' ? '1' : '0'); // CHANGE
+        close(api.groupLabelMetrics(group).bandPx, proposal.labelBandPx); // CHANGE
+        const stats = api.classifyPlantingSlots(group, api.toPx(proposal.spacingXCm), api.toPx(proposal.spacingYCm), proposal.labelBandPx, api.readDisabledSet(group)); // CHANGE
+        assert.equal(stats.actual, proposal.plantCount); // CHANGE
+        proposal.slots.forEach(slot => { // CHANGE
+            const center = api.shiftedSlotCenterLocal(group, slot.row, slot.col, api.toPx(proposal.spacingXCm), api.toPx(proposal.spacingYCm), proposal.labelBandPx); // CHANGE
+            close(slot.x, center.x); close(slot.y, center.y); close(slot.r, api.toPx(Number(group.attrs.veg_diameter_cm)) / 2); // CHANGE
+        }); // CHANGE
+        const footprint = api.readPlantingFootprint(group); // CHANGE
+        for (const key of ['x', 'y', 'width', 'height', 'rotation']) close(footprint[key], proposal.plantingRect[key]); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('headers do not cause conflicts and separated dates do not occupy planting space', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    const base = api.proposePlantingGeometry(input()); // CHANGE
+    const header = { x: base.geometry.x, y: base.geometry.y, width: base.geometry.width, height: base.labelBandPx }; // CHANGE
+    const actualPlants = { x: 40, y: 400, width: 100, height: 50 }; // CHANGE
+    const headerOnly = api.proposePlantingGeometry(input({ occupancy: [occupancy(header, { plantingRect: actualPlants })] })); // CHANGE
+    assert.equal(headerOnly.warnings.length, 0); close(headerOnly.geometry.y, base.geometry.y); // CHANGE
+    const expired = api.proposePlantingGeometry(input({ occupancy: [occupancy({ x: 0, y: 0, width: 1000, height: 1000 }, { bedEntryISO: '2026-01-01', harvestEndISO: '2026-12-31' })] })); // CHANGE
+    assert.equal(expired.warnings.length, 0); // CHANGE
+}); // CHANGE
+
+test('least occupied placement minimizes union area and keeps the first position on ties', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    const all = occupancy({ x: 0, y: 0, width: 1000, height: 1000 }); // CHANGE
+    const single = api.proposePlantingGeometry(input({ occupancy: [all] })); // CHANGE
+    const duplicate = api.proposePlantingGeometry(input({ occupancy: [all, { ...all, groupId: 'duplicate' }] })); // CHANGE
+    close(single.area, duplicate.area); close(single.geometry.y, duplicate.geometry.y); // CHANGE
+    const blockedTop = occupancy({ x: 40, y: 50, width: 100, height: 100 }); // CHANGE
+    const moved = api.proposePlantingGeometry(input({ occupancy: [blockedTop] })); // CHANGE
+    assert.equal(moved.warnings.length, 0); assert.ok(moved.plantingRect.y >= 150); // CHANGE
+    const [a, b] = [{ x: 0, y: 0, width: 10, height: 10 }, { x: 5, y: 0, width: 10, height: 10 }]; // CHANGE
+    close(api.plantingFootprintUnionArea([api.plantingFootprintPolygon(a), api.plantingFootprintPolygon(b)]), 150); // CHANGE
+}); // CHANGE
+
+test('Allocate permits warned incompatible overlap and bed scheduling retains its block', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    for (const conflictKind of ['companion', 'incompatible', 'unknown']) { // CHANGE
+        const existing = occupancy({ x: 0, y: 0, width: 1000, height: 1000 }, { conflictKind }); // CHANGE
+        const allocation = api.proposePlantingGeometry(input({ occupancy: [existing] })); // CHANGE
+        assert.equal(allocation.ok, true); assert.equal(allocation.status, 'warning'); // CHANGE
+        assert.match(allocation.warnings[0], new RegExp(conflictKind === 'unknown' ? 'Unknown relationship' : conflictKind, 'i')); // CHANGE
+        assert.match(allocation.warnings[0], /Carrot/); // CHANGE
+        const scheduled = api.proposePlantingGeometry(input({ occupancy: [existing], fillCompleteRows: false, fillAvailableBed: true, overlapPolicy: undefined })); // CHANGE
+        assert.equal(scheduled.ok, conflictKind !== 'incompatible'); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('rotated footprints use actual intersections rather than overlapping bounding boxes', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    const square = { x: 0, y: 0, width: 10, height: 10, rotation: 45 }; // CHANGE
+    close(api.plantingFootprintUnionArea([api.plantingFootprintPolygon(square)]), 100); // CHANGE
+    const corner = { x: -2, y: -2, width: 1, height: 1 }; // CHANGE
+    close(api.plantingFootprintUnionArea([api.clipPlantingFootprint(api.plantingFootprintPolygon(square), corner)]), 0); // CHANGE
+    const rotatedBed = bed(100, 500, 37); // CHANGE
+    const existing = occupancy({ x: -1000, y: -1000, width: 4000, height: 4000 }, { conflictKind: 'companion' }); // CHANGE
+    const proposal = api.proposePlantingGeometry(input({ bedCell: rotatedBed, occupancy: [existing] })); // CHANGE
+    close(proposal.area, proposal.plantingRect.width * proposal.plantingRect.height); // CHANGE
+    assert.equal(proposal.rotation, 37); assert.equal(proposal.warnings.length, 1); // CHANGE
+}); // CHANGE
