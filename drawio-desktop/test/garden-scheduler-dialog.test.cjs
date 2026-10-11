@@ -354,14 +354,27 @@ test('allocation reusable task defaults persist actual rules rather than dated t
 });
 
 /** Reference-data bridge exercises real template resolution and the complete scheduler, without Electron or a database write. */ // CHANGE
-function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = null, varietyOverrides = {}, relationships = [], neighbors = [], setDefault = null } = {}) { // CHANGE: allocation timing/default tests share the real scheduler fixture.
+function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = null, varietyOverrides = {}, relationships = [], neighbors = [], setDefault = null, trackDefaultWrites = false, missingMethod = false, growthStages = [] } = {}) { // CHANGE: stateful defaults exercise the required-save/readiness loop through real model services.
     let plant, city;
     const writes = [];
     const queries = [];
+    const defaultFailure = { key: '' }; // CHANGE: inject one storage failure without replacing production persistence.
     const method = { method_id: 'direct_sow.field', method_category_id: 'direct_sow', method_name: 'Field direct sow', tasks_required_json: '{"sow":true,"prep":true}' }; // CHANGE
     const indoorMethod = { method_id: 'transplant.indoor', method_category_id: 'transplant', method_name: 'Indoor transplant', tasks_required_json: '{"sow":true,"transplant":true}' }; // CHANGE
     const dbBridge = { resolvePath: async () => ({ dbPath: 'allocation-fixture' }), open: async () => ({ dbId: 'fixture' }), close: async () => ({}),
-        exec: async (id, sql, params) => { writes.push({ sql, params }); return {}; },
+        exec: async (id, sql, params = []) => { // CHANGE
+            writes.push({ sql, params }); // CHANGE
+            if (defaultFailure.key === 'tasks' && /INSERT INTO VarietyTaskTemplates/.test(sql)) throw new Error('Task default storage failed'); // CHANGE
+            if (defaultFailure.key === 'grownFor' && /INSERT INTO PlantGrowthStages/.test(sql)) throw new Error('Grown-for default storage failed'); // CHANGE
+            if (trackDefaultWrites) { // CHANGE
+                if (/UPDATE PlantVarieties/.test(sql)) varietyOverrides = JSON.parse(params[0]); // CHANGE
+                if (/INSERT INTO VarietyTaskTemplates/.test(sql)) varietyTemplate = JSON.parse(params[2]); // CHANGE
+                if (/INSERT INTO PlantTaskTemplates/.test(sql)) plantTemplate = JSON.parse(params[2]); // CHANGE
+                if (/DELETE FROM PlantGrowthStages/.test(sql)) growthStages = []; // CHANGE
+                if (/INSERT INTO PlantGrowthStages/.test(sql)) growthStages.push({ plant_id: params[0], stage_key: params[1], stage_label: params[2], gdd_ratio: params[3], yield_ratio: params[4], active: params[9], is_default: params[10] }); // CHANGE
+            } // CHANGE
+            return {}; // CHANGE
+        }, // CHANGE
         query: async (id, sql, params = []) => {
             queries.push({ sql, params });
             let rows = [];
@@ -374,11 +387,12 @@ function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = nu
             else if (/FROM CompanionSetLayoutDefaults/i.test(sql) && setDefault && params[0] === setDefault.crop_set_key) rows = [setDefault]; // CHANGE
             else if (/FROM\s+VarietyTaskTemplates\b/i.test(sql) && varietyTemplate && params[0] === 7) rows = [{ template_json: JSON.stringify(varietyTemplate) }];
             else if (/FROM\s+PlantTaskTemplates\b/i.test(sql) && plantTemplate) rows = [{ plant_id: 1, method_id: method.method_id, template_json: JSON.stringify(plantTemplate) }];
+            else if (/FROM\s+PlantGrowthStages\b/i.test(sql)) rows = growthStages; // CHANGE
             return { rows };
         }
     };
     const api = loadSchedulerHooks({ dbBridge });
-    plant = makePlant(api, { plant_name: 'Lettuce', default_planting_method: method.method_id, default_planting_method_category: method.method_category_id, spacing_cm: 30 });
+    plant = makePlant(api, { plant_name: 'Lettuce', default_planting_method: missingMethod ? null : method.method_id, default_planting_method_category: method.method_category_id, spacing_cm: 30 }); // CHANGE
     city = makeCity(api); city.city_id = 1;
     const moduleCell = { id: 'module', getAttribute: () => null };
     const bed = { id: 'bed', parent: moduleCell, getAttribute: key => key === 'garden_bed' ? '1' : null, getGeometry: () => ({ x: 0, y: 0, width: 200, height: 100 }) };
@@ -390,7 +404,7 @@ function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = nu
     const draft = { allocationYear: 2026, moduleCell, bed, bedProfile: null, city,
         crop: { plantId: '1', varietyId: '7', label: 'Lettuce - Test variety', method: method.method_id },
         plantResolution: { ok: true, plant, plantId: '1', varietyId: '7', varietyName: 'Test variety' }, actionStartISO: '2026-04-01', targetDemandStartISO: '2026-05-01', targetDemandEndISO: '2026-05-08' }; // CHANGE
-    return { api, plant, city, ui, draft, writes, queries, getDialog: () => dialog, getGraphWrites: () => graphWrites };
+    return { api, plant, city, ui, draft, writes, queries, defaultFailure, getOverrides: () => varietyOverrides, getDialog: () => dialog, getGraphWrites: () => graphWrites }; // CHANGE
 } // CHANGE
 
 async function waitForSchedulerDialog(fixture) { // CHANGE
@@ -399,6 +413,59 @@ async function waitForSchedulerDialog(fixture) { // CHANGE
     assert.ok(fixture.getDialog(), 'the full scheduler should open');
     return fixture.getDialog();
 } // CHANGE
+
+/** Open explicit required-default setup with the same demand-derived lifecycle used by allocation. */ // CHANGE
+async function requiredDefaultsDialog(fixture, focusMissingDefault = null) { // CHANGE
+    fixture.draft.lifecycle = await fixture.api.proposeLifecycle({ plant: fixture.plant, city: fixture.city, primaryDateISO: fixture.draft.actionStartISO, methodId: 'direct_sow.field', methodCategoryId: 'direct_sow', seasonStartYear: 2026 }); // CHANGE
+    const status = await fixture.api.resolveAllocationDefaultStatus(fixture.draft); // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, defaultStatus: status, requiredDefaults: status.missing, focusMissingDefault }); // CHANGE
+    return { pending, dialog: await waitForSchedulerDialog(fixture), status }; // CHANGE
+} // CHANGE
+
+for (const key of ['method', 'tasks', 'grownFor']) test(`required ${key} default is highlighted, checked and locked without writes on cancellation`, async () => { // CHANGE
+    const template = { version: 2, rules: [] }; // CHANGE
+    const fixture = allocationSchedulerFixture({ missingMethod: key === 'method', varietyTemplate: key === 'tasks' ? null : template, growthStages: key === 'grownFor' ? [] : [{ stage_key: 'mature', stage_label: 'Mature', active: 1 }] }); // CHANGE
+    const { pending, dialog, status } = await requiredDefaultsDialog(fixture, key); // CHANGE
+    assert.deepEqual(Array.from(status.missing), [key]); // CHANGE
+    const selector = { method: '[data-allocation-save-lifecycle]', tasks: '[data-allocation-save-tasks]', grownFor: '[data-allocation-save-grown-for]' }[key]; // CHANGE
+    const checkbox = dialog.querySelector(selector); assert.ok(checkbox.checked && checkbox.disabled); // CHANGE
+    const note = dialog.querySelector(`[data-allocation-required-field="${key}"]`); assert.match(note.textContent, /Required default not saved/); assert.ok(note.parentElement.style.outline.includes('d97706')); // CHANGE
+    assert.ok(Array.from(dialog.querySelectorAll('button')).some(button => button.textContent === 'Save defaults & preview')); // CHANGE
+    if (key === 'tasks') assert.match(Array.from(dialog.querySelectorAll('button')).find(button => button.textContent.startsWith('Tasks')).textContent, /default required/); // CHANGE
+    if (key === 'method') assert.equal(fixture.api.__testWindow.document.activeElement.disabled, false); else assert.equal(fixture.api.__testWindow.document.activeElement, note); // CHANGE
+    if (key === 'tasks') Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Schedule').click(); // CHANGE: inspect the fixed dates on their own tab.
+    assert.equal(dialog.querySelector('[data-allocation-start-date]').readOnly, true); // CHANGE
+    assert.equal(fixture.writes.some(write => /^\s*(INSERT|UPDATE|DELETE)\b/.test(write.sql)), false); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Cancel').click(); await pending; // CHANGE
+    assert.equal(fixture.getGraphWrites(), 0); assert.equal(fixture.writes.some(write => /^\s*(INSERT|UPDATE|DELETE)\b/.test(write.sql)), false); // CHANGE
+}); // CHANGE
+
+test('required defaults save before creation, preserve variety overrides, return a preview, and do not save twice after Create', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture({ trackDefaultWrites: true, missingMethod: true, varietyOverrides: { spacing_cm: 17, notes: 'preserve' } }); // CHANGE
+    const { pending, dialog, status } = await requiredDefaultsDialog(fixture, 'method'); assert.equal(status.missing.length, 3); // CHANGE
+    const submit = Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Save defaults & preview'); // CHANGE
+    submit.click(); submit.dispatchEvent(new dialog.ownerDocument.defaultView.Event('click')); // CHANGE: even queued repeated submission cannot duplicate default writes.
+    const result = await pending; assert.equal(result.action, 'preview'); assert.equal(fixture.getGraphWrites(), 0); // CHANGE
+    assert.equal((await fixture.api.resolveAllocationDefaultStatus(result.draft)).complete, true); // CHANGE
+    assert.equal(fixture.getOverrides().spacing_cm, 17); assert.equal(fixture.getOverrides().notes, 'preserve'); // CHANGE
+    const defaultWrites = () => fixture.writes.filter(write => /UPDATE PlantVarieties|INSERT INTO VarietyTaskTemplates|INSERT INTO PlantGrowthStages/.test(write.sql)).length; // CHANGE
+    assert.equal(defaultWrites(), 3); assert.equal(result.draft.saveLifecycleDefaults, false); // CHANGE
+    await result.draft.commitAllocationDefaults(allocationNeighbor('created', 1, 7)); assert.equal(defaultWrites(), 3); // CHANGE
+}); // CHANGE
+
+test('a partial required-default save leaves setup open, lists remaining records, and retries without overwriting the saved method', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture({ trackDefaultWrites: true, missingMethod: true, varietyOverrides: { notes: 'preserve' } }); fixture.defaultFailure.key = 'tasks'; // CHANGE
+    const { pending, dialog } = await requiredDefaultsDialog(fixture, 'tasks'); // CHANGE
+    const submit = Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Save defaults & preview'); submit.click(); // CHANGE
+    await waitForAllocationState(() => dialog.textContent.includes('Task default storage failed')); // CHANGE
+    assert.equal(fixture.getGraphWrites(), 0); assert.equal((await fixture.api.resolveAllocationDefaultStatus(fixture.draft)).complete, false); // CHANGE
+    assert.match(dialog.querySelector('[data-allocation-required-summary]').textContent, /Task recipe, Grown-for stage/); // CHANGE
+    assert.equal(dialog.querySelector('[data-allocation-save-lifecycle]').disabled, false); // CHANGE
+    fixture.defaultFailure.key = ''; submit.click(); const result = await pending; // CHANGE
+    assert.equal(result.action, 'preview'); assert.equal((await fixture.api.resolveAllocationDefaultStatus(result.draft)).complete, true); // CHANGE
+    assert.equal(fixture.writes.filter(write => /UPDATE PlantVarieties/.test(write.sql)).length, 1); // CHANGE
+    assert.equal(fixture.getOverrides().notes, 'preserve'); // CHANGE
+}); // CHANGE
 
 test('allocation Edit opens the full scheduler with fixed crop identity and returns preview without graph writes', async () => { // CHANGE
     const fixture = allocationSchedulerFixture();
@@ -620,7 +687,7 @@ function allocationNeighbor(id, plantId, varietyId = '') { // CHANGE
     return { id, getAttribute: key => attrs[key] ?? null, getGeometry: () => ({ x: 0, y: 0, width: 100, height: 100 }) }; // CHANGE
 } // CHANGE
 
-test('allocation spacing default starts checked for new active sets and persists only after creation', async () => { // CHANGE
+test('allocation spacing default starts unchecked for new active sets and explicit opt-in persists only after creation', async () => { // CHANGE
     const neighbor = allocationNeighbor('carrot', 2); // CHANGE
     const fixture = allocationSchedulerFixture({ neighbors: [neighbor] }); // CHANGE
     fixture.draft.bedOccupancy = [{ groupId: 'carrot', bedId: 'bed', plantId: 2, plantName: 'Carrot', bedEntryISO: '2026-04-01', harvestEndISO: '2026-06-01' }]; // CHANGE
@@ -628,10 +695,11 @@ test('allocation spacing default starts checked for new active sets and persists
     const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, defaultStatus: { missing: [] } }); // CHANGE
     const dialog = await waitForSchedulerDialog(fixture); // CHANGE
     const spacing = dialog.querySelector('[data-allocation-save-spacing]'); // CHANGE
-    assert.ok(spacing.checked && !spacing.disabled); // CHANGE
+    assert.equal(spacing.checked, false); assert.equal(spacing.disabled, false); // CHANGE: new sets also require explicit permission to save reusable spacing defaults.
     assert.equal(dialog.querySelectorAll('[data-allocation-timing-row]').length, 1); // CHANGE
     assert.equal(dialog.querySelectorAll('[data-allocation-overlap-start]').length, 1); // CHANGE
     assert.match(dialog.querySelector('[data-allocation-timing-comparisons]').textContent, /No recommended offset/); // CHANGE
+    spacing.checked = true; // CHANGE: persistence is authorized by the user's explicit checkbox choice, read when Preview is requested.
     Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Preview Planting').click(); // CHANGE
     const result = await pending; // CHANGE
     assert.equal(result.draft.saveSpacingDefaults, true); // CHANGE

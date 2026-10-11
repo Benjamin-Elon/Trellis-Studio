@@ -17,6 +17,7 @@
         close: { border: '#b91c1c', color: '#b91c1c', background: '#fff', hoverBackground: '#fef2f2' }, // NEW
         danger: { border: '#b91c1c', color: '#fff', background: '#b91c1c', hoverBackground: '#991b1b' }, // CHANGE: destructive actions are red filled
         neutral: { border: '#6b7280', color: '#111827', background: '#fff', hoverBackground: '#f9fafb' },
+        mode: { color: '#374151', background: '#fff', hoverBackground: '#ecfeff', activeColor: '#155e75' }, // CHANGE: joined view selectors share the irrigation Build/Analysis palette.
         focus: 'rgba(37, 99, 235, 0.28)',
         disabledOpacity: '0.55'
     });
@@ -53,11 +54,15 @@
             '.trellis-button-neutral:hover{background:#f9fafb}',
             '.trellis-button-compact{padding:3px 6px;font-size:12px}',
             '.trellis-button:disabled,.trellis-button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}',
-            '.trellis-button:focus-visible{outline:2px solid #2563eb;outline-offset:2px;box-shadow:0 0 0 3px rgba(37,99,235,.28)}'
+            '.trellis-button:focus-visible{outline:2px solid #2563eb;outline-offset:2px;box-shadow:0 0 0 3px rgba(37,99,235,.28)}', // CHANGE: mode selectors override the external focus ring below.
+            '.trellis-button-mode{border:0;border-radius:0;color:#374151;white-space:nowrap}', // CHANGE: the containing selector owns the rounded border.
+            '.trellis-button-mode.trellis-button-active{background:#ecfeff;color:#155e75;font-weight:700}', // CHANGE: match the irrigation analysis selector.
+            '.trellis-button-mode:focus-visible{outline:2px solid #155e75;outline-offset:-2px;box-shadow:none}' // CHANGE: keep keyboard focus visible inside the selector's clipped border.
         ].join('\n');
         (owner.head || owner.documentElement || owner.body).appendChild(style);
     }
 
+    /** Style semantic buttons; the mode variant uses borderless segments inside a joined selector, with options.active marking the selected view. */ // CHANGE
     function applyButtonStyle(button, variant, options) {
         if (!button || !button.style) return button;
         const opts = options || {};
@@ -65,25 +70,25 @@
         const tokens = BUTTON_TOKENS[normalized];
         ensureButtonStyles(button.ownerDocument);
 
-        const activeOpen = opts.active === true && normalized === 'open'; // CHANGE: only open buttons support the shared active state
-        ['trellis-button', 'trellis-button-open', 'trellis-button-add', 'trellis-button-close', 'trellis-button-danger', 'trellis-button-neutral', 'trellis-button-compact', 'trellis-button-filled', 'trellis-button-active'].forEach(function (className) { // CHANGE: clear prior active and semantic state when restyling
+        const active = opts.active === true && (normalized === 'open' || normalized === 'mode'); // CHANGE: open buttons and joined mode selectors support active styling.
+        ['trellis-button', 'trellis-button-open', 'trellis-button-add', 'trellis-button-close', 'trellis-button-danger', 'trellis-button-neutral', 'trellis-button-mode', 'trellis-button-compact', 'trellis-button-filled', 'trellis-button-active'].forEach(function (className) { // CHANGE: clear prior active and semantic state when restyling.
             if (button.classList) button.classList.remove(className);
         });
         if (button.classList) {
             button.classList.add('trellis-button', 'trellis-button-' + normalized);
             if (opts.compact) button.classList.add('trellis-button-compact');
             if (opts.filled) button.classList.add('trellis-button-filled');
-            if (activeOpen) button.classList.add('trellis-button-active'); // CHANGE: expose active state to shared CSS
+            if (active) button.classList.add('trellis-button-active'); // CHANGE: expose active state to shared CSS.
         }
         button.setAttribute('data-trellis-button-variant', normalized);
         button.type = button.type || 'button';
-        button.style.border = '1px solid ' + tokens.border;
-        button.style.borderRadius = opts.radius || '6px';
-        button.style.background = activeOpen ? tokens.hoverBackground : (opts.filled && normalized === 'add' ? tokens.border : tokens.background); // CHANGE: light-blue active fill
-        button.style.color = activeOpen ? '#1e3a8a' : (opts.filled && normalized === 'add' ? '#fff' : tokens.color); // CHANGE: dark-blue active text
+        button.style.border = normalized === 'mode' ? '0' : '1px solid ' + tokens.border; // CHANGE: joined mode buttons use their group's border.
+        button.style.borderRadius = normalized === 'mode' ? '0' : opts.radius || '6px'; // CHANGE: keep segment edges joined.
+        button.style.background = active ? tokens.hoverBackground : (opts.filled && normalized === 'add' ? tokens.border : tokens.background); // CHANGE: use the selected variant's active fill.
+        button.style.color = active ? tokens.activeColor || '#1e3a8a' : (opts.filled && normalized === 'add' ? '#fff' : tokens.color); // CHANGE: mode selectors use the irrigation active text color.
         button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
         button.style.font = opts.font || '12px Arial, sans-serif';
-        button.style.fontWeight = activeOpen ? '700' : (opts.fontWeight || ''); // CHANGE: match the existing Enter Irrigation Design Mode emphasis
+        button.style.fontWeight = active ? '700' : (opts.fontWeight || ''); // CHANGE: emphasize the selected view.
         button.style.padding = opts.compact ? '3px 6px' : (opts.padding || '6px 10px');
         button.style.boxSizing = 'border-box';
         return button;

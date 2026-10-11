@@ -431,7 +431,7 @@ Draw.loadPlugin(function (ui) {
         const cancel = document.createElement("button");
         cancel.type = "button";
         cancel.textContent = "Cancel";
-        applyTrellisButtonStyle(cancel, "neutral", { compact: true });
+        applyTrellisButtonStyle(cancel, "close", { compact: true }); // CHANGE: margin cancellation uses the red outline.
         mxEvent.addListener(cancel, "click", function () { if (ui.hideDialog) ui.hideDialog(); });
         const save = document.createElement("button");
         save.type = "button";

@@ -1958,6 +1958,12 @@ Draw.loadPlugin(function (ui) {
         const close = document.createElement('button');
         close.type = 'button';
         close.textContent = 'Close details';
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // CHANGE: detail dismissal uses the shared red outline.
+            window.Trellis.ui.applyButtonStyle(close, 'close'); // CHANGE
+        } else { // CHANGE: keep the dismissal contract when the shared UI plugin is unavailable.
+            close.setAttribute('data-trellis-button-variant', 'close'); // CHANGE
+            close.style.cssText = 'box-sizing:border-box;border:1px solid #b91c1c;color:#b91c1c;background:#fff;border-radius:6px;padding:6px 10px;cursor:pointer;font:12px Arial,sans-serif;'; // CHANGE
+        } // CHANGE
         close.addEventListener('click', () => closeAllocationWeekDetails(preview, button));
         details.appendChild(close);
         positionAllocationPreview(preview);
@@ -2115,7 +2121,13 @@ Draw.loadPlugin(function (ui) {
         const width = Math.max(160, Math.min(MINI_RAIL_MAX_W, viewportWidth - 24));
         panel.style.width = width + 'px';
         const occupancy = getProposalClusterOccupancy(input); // CHANGE
-        const signature = JSON.stringify({ width, year: input.year, crop: input.cropLabel, weeks: input.weekStarts, selected: input.selectedWeekIndex, coverage: input.coveragePreview, occupancy: occupancy.items.map(item => ({ cellId: item.cellId, label: item.label, proposed: item.proposed, active: item.active, trueRange: item.trueRange })) }); // CHANGE: render data contains no graph cells.
+        const signature = JSON.stringify({ width, spacingAvailable: input.spacingAvailable, view: input.view || 'occupancy', message: input.message, year: input.year, crop: input.cropLabel, weeks: input.weekStarts, selected: input.selectedWeekIndex, coverage: input.coveragePreview, occupancy: occupancy.items.map(item => ({ cellId: item.cellId, label: item.label, proposed: item.proposed, active: item.active, trueRange: item.trueRange })) }); // CHANGE: presentation state invalidates occupancy without replacing live spacing inputs.
+        if (previous && previous.input.view === 'spacing' && input.view === 'spacing') { // CHANGE: calculations and view transforms preserve focus and partially typed values.
+            previous.input = input; previous.width = width; previous.occupancy = occupancy; // CHANGE
+            const host = panel.querySelector('[data-allocation-spacing-host]'); // CHANGE
+            if (host && input.spacingContent && input.spacingContent.parentNode !== host) { host.innerHTML = ''; host.appendChild(input.spacingContent); } // CHANGE
+            positionAllocationPreview(previous); return panel; // CHANGE
+        } // CHANGE
         if (previous && previous.signature === signature) { previous.input = input; positionAllocationPreview(previous); return panel; } // CHANGE
         const oldScroll = previous && panel.querySelector('[data-allocation-timeline-scroll]'); // CHANGE
         const scrollLeft = oldScroll ? oldScroll.scrollLeft : 0; // CHANGE
@@ -2123,6 +2135,7 @@ Draw.loadPlugin(function (ui) {
         const scrollTop = oldRows ? oldRows.scrollTop : 0; // CHANGE
         const active = document.activeElement; // CHANGE
         const focusedWeek = previous && active && active.dataset ? active.dataset.allocationWeek : null; // CHANGE
+        const focusedView = previous && active && active.dataset ? active.dataset.allocationView : null; // CHANGE: keyboard navigation survives replacing one view with the other.
         const inspectedWeek = previous && !previous.details.hidden ? previous.detailsWeekIndex : null; // CHANGE
         panel.innerHTML = ''; // CHANGE: replace only changed content, without exposing regular occupancy between renders.
         const details = document.createElement('div');
@@ -2134,8 +2147,33 @@ Draw.loadPlugin(function (ui) {
         const preview = { input, panel, details, width, axis: allocationDateAxis(input.weekStarts, input.year), occupancy, signature }; // CHANGE
         allocationPreview = preview;
         const title = document.createElement('strong');
-        title.textContent = (input.cropLabel || 'Crop') + ' · Coverage and occupancy · ' + input.year;
+        title.textContent = (input.cropLabel || 'Crop') + ' · Allocation · ' + input.year; // CHANGE
+        title.style.display = 'block'; // CHANGE: the allocation view controls start below the crop title.
         panel.appendChild(title);
+        if (input.onViewChange) { // CHANGE: callers without editing support retain the existing timeline contract.
+            const toggleRow = document.createElement('div'); toggleRow.style.cssText = 'display:flex;flex-wrap:wrap;margin:6px 0;'; // CHANGE: keep the joined view selector below the crop title.
+            const toggle = document.createElement('div'); toggle.style.cssText = 'display:inline-flex;align-items:center;gap:0;border:1px solid #c7c7cc;border-radius:4px;overflow:hidden;box-sizing:border-box;'; // CHANGE: match the irrigation Build/Analysis selector.
+            ['occupancy', 'spacing'].forEach(view => { // CHANGE
+                const button = document.createElement('button'); button.type = 'button'; button.textContent = view === 'spacing' ? 'Spacing' : 'Occupancy'; // CHANGE
+                button.dataset.allocationView = view; button.setAttribute('aria-pressed', String((input.view || 'occupancy') === view)); // CHANGE
+                const selected = (input.view || 'occupancy') === view; // CHANGE: preserve the view state while using the shared mode styling.
+                button.disabled = view === 'spacing' && !input.spacingAvailable; button.title = view === 'spacing' ? input.spacingUnavailableReason || 'Edit spacing and offsets (cm).' : 'Show demand coverage and planting occupancy.'; // CHANGE
+                if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // CHANGE: share the irrigation mode styling.
+                    window.Trellis.ui.applyButtonStyle(button, 'mode', { compact: true, active: selected }); // CHANGE
+                } else { // CHANGE: preserve active and disabled appearance before shared UI styling is available.
+                    button.style.cssText = 'box-sizing:border-box;border:0;border-radius:0;padding:3px 6px;font:12px Arial,sans-serif;white-space:nowrap;outline-offset:-2px;background:' + (selected ? '#ecfeff' : '#fff') + ';color:' + (selected ? '#155e75' : '#374151') + ';font-weight:' + (selected ? '700' : '400') + ';opacity:' + (button.disabled ? '.55' : '1') + ';cursor:' + (button.disabled ? 'not-allowed' : 'pointer') + ';'; // CHANGE: local fallback matches the joined irrigation segments.
+                } // CHANGE
+                button.addEventListener('click', event => { consumeEvt(event); if (!button.disabled && allocationPreview) allocationPreview.input.onViewChange(view); }); // CHANGE
+                toggle.appendChild(button); // CHANGE
+            }); // CHANGE
+            toggleRow.appendChild(toggle); panel.appendChild(toggleRow); // CHANGE: preserve a dedicated row below the title.
+        } // CHANGE
+        if (input.view === 'spacing') { // CHANGE: the controller owns the persistent editor node and draft state.
+            const host = document.createElement('div'); host.dataset.allocationSpacingHost = '1'; host.style.cssText = 'max-height:320px;overflow:auto;'; // CHANGE
+            if (input.spacingContent) host.appendChild(input.spacingContent); // CHANGE
+            panel.appendChild(host); // CHANGE
+        } else { // CHANGE
+        if (input.message) { const message = document.createElement('div'); message.textContent = input.message; panel.appendChild(message); } // CHANGE
         const legend = document.createElement('div');
         legend.textContent = 'Demand (yellow) · Covered before (green) · With proposed planting (dashed outline)';
         legend.style.cssText = 'font-size:10px;margin:5px 0;';
@@ -2162,6 +2200,7 @@ Draw.loadPlugin(function (ui) {
             panel.appendChild(message);
         }
         panel.appendChild(details);
+        } // CHANGE: spacing replaces timeline content while allocation HUD actions remain available.
         if (!previous) panel.addEventListener('pointerdown', event => event.stopPropagation()); // CHANGE
         if (!previous) panel.addEventListener('mousedown', event => event.stopPropagation()); // CHANGE
         if (!previous) panel.addEventListener('keydown', event => { // CHANGE
@@ -2176,6 +2215,7 @@ Draw.loadPlugin(function (ui) {
             if (row && button) showAllocationWeekDetails(preview, row, button); // CHANGE
         } // CHANGE
         if (focusedWeek != null) { const button = panel.querySelector('[data-allocation-week="' + focusedWeek + '"]'); if (button) button.focus(); } // CHANGE
+        if (focusedView != null) { const button = panel.querySelector('[data-allocation-view="' + focusedView + '"]'); if (button) button.focus(); } // CHANGE
         for (const st of clusterStates.values()) if (st.miniRail) st.miniRail.style.display = 'none';
         positionAllocationPreview(preview);
         return panel;

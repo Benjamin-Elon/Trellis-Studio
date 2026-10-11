@@ -222,6 +222,32 @@ function allocationInput(harness, overrides = {}) { // CHANGE
     return { ownerId: 'allocate:test', moduleCell: harness.layer, bedCell: harness.bed, geometry: { x: 10, y: 10, width: 20, height: 20 }, entryISO: year + '-04-01', harvestEndISO: year + '-07-01', cropLabel: 'Tomato', year, weekStarts, coveragePreview: { rows }, selectedWeekIndex: 13, ...overrides };
 } // CHANGE
 
+test('allocation spacing remains mounted and focused through live results, no fit, and view switches', () => { // CHANGE
+    const harness = makeHarness(), api = harness.graph.__trellisBedSuccessionNavigator; // CHANGE
+    const body = harness.document.createElement('div'), field = harness.document.createElement('input'); // CHANGE
+    body.appendChild(field); field.value = '12.'; // CHANGE
+    let view = 'spacing'; // CHANGE
+    const props = () => allocationInput(harness, { view, spacingAvailable: true, spacingContent: body, onViewChange: next => { view = next; api.showAllocationPreview(props()); } }); // CHANGE
+    const panel = api.showAllocationPreview(props()); field.focus(); // CHANGE
+    assert.equal(panel.querySelector('[data-allocation-timeline-scroll]'), null); // CHANGE
+    api.showAllocationPreview({ ...props(), geometry: null, plantingRect: null, coveragePreview: null, message: 'No plants fit.' }); // CHANGE
+    assert.equal(harness.document.activeElement, field); assert.equal(field.value, '12.'); // CHANGE
+    assert.equal(panel.querySelector('[data-allocation-spacing-host]').firstChild, body); // CHANGE
+    panel.querySelector('[data-allocation-view="occupancy"]').click(); // CHANGE
+    assert.ok(panel.querySelector('[data-allocation-timeline-scroll]')); // CHANGE
+    panel.querySelector('[data-allocation-view="spacing"]').click(); // CHANGE
+    assert.equal(panel.querySelector('[data-allocation-spacing-host]').firstChild, body); assert.equal(field.value, '12.'); // CHANGE
+}); // CHANGE
+
+test('allocation offers spacing on an empty no-fit bed and disables it when the editor is missing', () => { // CHANGE
+    const harness = makeHarness(), api = harness.graph.__trellisBedSuccessionNavigator; // CHANGE
+    const props = allocationInput(harness, { geometry: null, coveragePreview: null, spacingAvailable: true, message: 'No plants fit. Adjust spacing.', onViewChange() {} }); // CHANGE
+    const panel = api.showAllocationPreview(props); // CHANGE
+    assert.equal(panel.querySelector('[data-allocation-view="spacing"]').disabled, false); assert.match(panel.textContent, /Adjust spacing/); // CHANGE
+    api.showAllocationPreview({ ...props, spacingAvailable: false, message: 'Editor unavailable' }); // CHANGE
+    assert.equal(panel.querySelector('[data-allocation-view="spacing"]').disabled, true); // CHANGE
+}); // CHANGE
+
 test('allocation proposal renders alone on an empty bed without creating graph cells', () => { // CHANGE
     const harness = makeHarness();
     harness.layer.children = [harness.bed];
@@ -266,11 +292,21 @@ test('weekly coverage details show fulfillment without changing graph selection 
     week.click();
     const details = panel.querySelector('[role="region"]');
     assert.equal(details.hidden, false);
+    const close = Array.from(details.querySelectorAll('button')).find(node => node.textContent === 'Close details'); // CHANGE
+    assert.equal(close.getAttribute('data-trellis-button-variant'), 'close'); assert.equal(close.style.borderColor, 'rgb(185, 28, 28)'); // CHANGE
+    assert.equal(close.style.background, 'rgb(255, 255, 255)'); // CHANGE: standalone details use an outlined dismissal.
     for (const metric of ['Demand: 10.00 kg', 'Covered before: 3.00 kg', 'With proposed planting: 8.00 kg', 'Added coverage: 5.00 kg', 'Remaining shortfall: 2.00 kg']) assert.ok(details.textContent.includes(metric));
     assert.deepEqual(harness.getSelected(), selection);
     week.dispatchEvent(new harness.document.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     assert.equal(details.hidden, true);
     assert.equal(week.getAttribute('aria-expanded'), 'false');
+    const sharedSource = fs.readFileSync(path.join(path.dirname(PLUGIN_PATH), 'Trellis_UI_Cleanup.js'), 'utf8'); // CHANGE
+    vm.runInNewContext(sharedSource.slice(0, sharedSource.indexOf('Draw.loadPlugin')), { window: harness.document.defaultView, document: harness.document }); // CHANGE
+    week.click(); // CHANGE: repeat the real details interaction with the shared contract installed.
+    const sharedClose = Array.from(details.querySelectorAll('button')).find(node => node.textContent === 'Close details'); // CHANGE
+    assert.ok(sharedClose.classList.contains('trellis-button-close')); assert.equal(sharedClose.style.background, 'rgb(255, 255, 255)'); // CHANGE
+    sharedClose.click(); assert.equal(details.hidden, true); assert.equal(harness.document.activeElement, week); // CHANGE
+    assert.deepEqual(harness.getSelected(), selection); // CHANGE: styling preserves selection and focus return.
 });
 
 test('a leap year with 54 canonical weeks renders every week without a fixed-column assumption', () => { // CHANGE

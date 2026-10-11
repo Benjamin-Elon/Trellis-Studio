@@ -19,7 +19,7 @@ const trellisDefaultPluginIds = [
     "trellisUsers",
     "trellisContextMenu",
     "gardenSuccession",
-    "plantTiler",
+    "plantingGroup",
     "gardenTasks",
     "gardenRoadmapCore", // NEW
     "gardenRoadmaps", // NEW
@@ -46,7 +46,7 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Trellis_Users.js",
     "plugins/garden_planner_plugins/Trellis_Context_Menu.js",
     "plugins/garden_planner_plugins/Bed_Succession_Navigator.js",
-    "plugins/garden_planner_plugins/Plant_Tiler.js",
+    "plugins/garden_planner_plugins/Planting_Group.js",
     "plugins/garden_planner_plugins/Garden_Task_Manager.js",
     "plugins/garden_planner_plugins/Garden_Roadmap_Core.js", // NEW
     "plugins/garden_planner_plugins/Garden_Roadmap_Manager.js", // NEW
@@ -292,3 +292,18 @@ for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // NEW
         requests[2].done(); context.App.loadPlugins(['gardenRoadmapCore', 'gardenRoadmaps']); assert.equal(requests.length, 3); // CHANGE
     }); // NEW
 } // NEW
+
+for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // CHANGE
+    test(path.basename(filePath) + ' canonical and legacy planting plugins normalize and load once', () => { // CHANGE
+        const source = readProjectFile(filePath), requests = []; // CHANGE
+        const context = { App: { pluginsLoaded: {}, embedModePluginsCount: 0 }, PLUGINS_BASE_PATH: '', window: { console }, EditorUi: { debug() {} }, mxscript: url => requests.push(url) }; // CHANGE
+        for (const field of ['pluginRegistry', 'normalizePlantingPluginPath', 'loadPlugins']) vm.runInNewContext(runtimeAssignment(source, field), context); // CHANGE
+        const canonical = context.App.pluginRegistry.plantingGroup; // CHANGE
+        assert.equal(context.App.pluginRegistry.plantTiler, canonical); // CHANGE
+        for (const value of ['plugins/garden_planner_plugins/Plant_Tiler.js', '/plugins/garden_planner_plugins/Plant_Tiler.js', './plugins/garden_planner_plugins/Plant_Tiler.js', './' + canonical, '/' + canonical]) assert.equal(context.App.normalizePlantingPluginPath(value), canonical); // CHANGE
+        assert.equal(context.App.normalizePlantingPluginPath('https://example.com/plugins/garden_planner_plugins/Plant_Tiler.js'), 'https://example.com/plugins/garden_planner_plugins/Plant_Tiler.js'); // CHANGE: do not rewrite unrelated custom plugin URLs.
+        context.App.loadPlugins(['plantingGroup', 'plantTiler', 'plantingGroup']); // CHANGE
+        assert.deepEqual(requests, [canonical]); assert.equal(context.App.embedModePluginsCount, 1); // CHANGE
+        assert.equal(context.App.pluginsLoaded[context.App.normalizePlantingPluginPath('plugins/garden_planner_plugins/Plant_Tiler.js')], true); // CHANGE
+    }); // CHANGE
+} // CHANGE

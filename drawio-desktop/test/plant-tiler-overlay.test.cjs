@@ -13,7 +13,7 @@ const plantTilerPath = path.join(
     'webapp',
     'plugins',
     'garden_planner_plugins',
-    'Plant_Tiler.js'
+    'Planting_Group.js'
 );
 
 function readPlantTilerSource() {
@@ -440,7 +440,7 @@ test('plant tiler exposes a read-only draft group preview helper', () => {
     const source = readPlantTilerSource();
     const attrsSource = sourceSlice(source, 'function previewDraftAttrs', 'function previewStyleRotationDeg');
     const helperSource = sourceSlice(source, 'function buildDraftTilerGroupPreview', 'function listGardenBeds');
-    const exportSource = sourceSlice(source, 'window.USL.tiler = Object.assign', 'installTrellisDebugSurface');
+    const exportSource = sourceSlice(source, 'window.USL.plantingGroup = Object.assign', 'installTrellisDebugSurface');
 
     assert.match(attrsSource, /attrs\.companion_offset_x_cm = "";/);
     assert.match(attrsSource, /attrs\.companion_offset_y_cm = "";/);

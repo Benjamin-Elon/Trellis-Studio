@@ -885,7 +885,7 @@ Draw.loadPlugin(function (ui) {
         buttonRow.style.justifyContent = "flex-end";
         buttonRow.style.gap = "8px";
         buttonRow.style.marginTop = "12px";
-        buttonRow.appendChild(bedButton("Cancel", function () { ui.hideDialog(); }, "neutral"));
+        buttonRow.appendChild(bedButton("Cancel", function () { ui.hideDialog(); }, "close")); // CHANGE: bed-condition cancellation uses the red outline.
         buttonRow.appendChild(bedButton("Save", function () {
             if (String(controls.bedHeight.value || "").trim() && displayHeightToCm(controls.bedHeight.value, identityUnits) == null) { ui.alert("Bed height must be greater than 0."); controls.bedHeight.focus(); return; }
             model.beginUpdate();

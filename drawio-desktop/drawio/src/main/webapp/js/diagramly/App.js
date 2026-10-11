@@ -290,7 +290,8 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'trellisUsers': 'plugins/garden_planner_plugins/Trellis_Users.js',                            // NEW
     'trellisContextMenu': 'plugins/garden_planner_plugins/Trellis_Context_Menu.js',              // NEW
     'gardenSuccession': 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js',           // CHANGE
-    'plantTiler': 'plugins/garden_planner_plugins/Plant_Tiler.js',                               // CHANGE
+    'plantingGroup': 'plugins/garden_planner_plugins/Planting_Group.js', // CHANGE: canonical plugin name.
+    'plantTiler': 'plugins/garden_planner_plugins/Planting_Group.js',                               // CHANGE
     'gardenTasks': 'plugins/garden_planner_plugins/Garden_Task_Manager.js',                     // CHANGE
     'gardenRoadmapCore': 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', // NEW
     'gardenRoadmaps': 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', // NEW
@@ -316,7 +317,7 @@ App.publicPlugin = [
     'trellisUsers',                                          // NEW
     'trellisContextMenu',                                    // NEW
     'gardenSuccession',                                       // CHANGE
-    'plantTiler',                                             // CHANGE
+    'plantingGroup',                                             // CHANGE
     'gardenTasks',                                            // CHANGE
     'gardenRoadmapCore', // NEW
     'gardenRoadmaps', // NEW
@@ -830,6 +831,7 @@ App.main = function(callback, createUi)
 					{
 						try
 						{
+							plugins[i] = App.normalizePlantingPluginPath(plugins[i]); // CHANGE: legacy settings share canonical loading and deduplication.
 							if (plugins[i].charAt(0) == '/')
 							{
 								plugins[i] = PLUGINS_BASE_PATH + plugins[i];
@@ -1392,6 +1394,16 @@ App.initPluginCallback = function()
 /**
  * 
  */
+/** Normalize only the built-in legacy plugin path before validation and loading. */ // CHANGE
+App.normalizePlantingPluginPath = function(value) { // CHANGE
+    var legacy = 'plugins/garden_planner_plugins/Plant_Tiler.js'; // CHANGE
+    var canonical = App.pluginRegistry.plantingGroup; // CHANGE
+    for (var i = 0, paths = [legacy, canonical]; i < paths.length; i++) { // CHANGE
+        var script = paths[i]; // CHANGE
+        if (value === script || value === PLUGINS_BASE_PATH + script || value === '/' + script || value === './' + script) return PLUGINS_BASE_PATH + canonical; // CHANGE
+    } // CHANGE
+    return value; // CHANGE
+}; // CHANGE
 App.pluginsLoaded = {};
 App.embedModePluginsCount = 0;
 

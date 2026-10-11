@@ -3231,7 +3231,7 @@ Draw.loadPlugin(function (ui) {
         header.appendChild(makeButton(blocking ? "Close Diagram" : "Cancel", function () {
             if (blocking) closeCurrentDiagramFromAuth();
             else closeAuthOverlay(true);
-        }, "add", blocking ? 'Close this diagram without logging in.' : 'Close the login prompt.')); // CHANGE: explicit action tooltip.
+        }, "close", blocking ? 'Close this diagram without logging in.' : 'Close the login prompt.')); // CHANGE: explicit action tooltip.
         card.appendChild(header);
         authStatusNode = document.createElement("div");
         authStatusNode.style.cssText = "min-height:16px;color:#4B5563;margin-bottom:8px;";
@@ -3575,7 +3575,7 @@ Draw.loadPlugin(function (ui) {
         resetRow.appendChild(makeButton("Cancel", function () {
             resetPinUserId = "";
             refreshPanel();
-        }, "neutral"));
+        }, "close")); // CHANGE: PIN-reset cancellation uses the red outline.
         parent.appendChild(resetRow);
         setTimeout(function () { if (pinInput && typeof pinInput.focus === "function") pinInput.focus(); }, 0);
     }
@@ -3973,7 +3973,7 @@ Draw.loadPlugin(function (ui) {
         status.style.cssText = "min-height:18px;color:#4B5563;margin:8px 0;";
         const actions = document.createElement("div");
         actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
-        actions.appendChild(makeButton("Cancel", function () { closeAccessDialog(shell.overlay); }, "neutral"));
+        actions.appendChild(makeButton("Cancel", function () { closeAccessDialog(shell.overlay); }, "close")); // CHANGE: access-request cancellation uses the red outline.
         actions.appendChild(makeButton("Send Request", function () {
             const result = requestAccess(cell, { requestedPreset: preset.value, note: note.value });
             if (!result.ok) { status.textContent = result.reason; return; }

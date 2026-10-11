@@ -393,7 +393,7 @@ test("bed dialog exposes copy, paste, and clear actions", () => {
     assert.deepEqual(getDialogButtonLabels(ui), ["Set as defaults", "Copy", "Paste", "Clear", "Cancel", "Save"]);
     assert.equal(getDialogButton(ui, "Clear").getAttribute("data-trellis-button-variant"), "danger"); // NEW
     assert.match(getDialogButton(ui, "Clear").getAttribute("style") || "", /background:\s*(?:#b91c1c|rgb\(185,\s*28,\s*28\))/); // NEW
-    assert.equal(getDialogButton(ui, "Cancel").getAttribute("data-trellis-button-variant"), "neutral"); // NEW
+    assert.equal(getDialogButton(ui, "Cancel").getAttribute("data-trellis-button-variant"), "close"); // CHANGE: Cancel now uses the dismissal contract.
     getDialogButton(ui, "Copy").click();
 
     setup.graph.getSelectionCells = () => [bed, bed2];

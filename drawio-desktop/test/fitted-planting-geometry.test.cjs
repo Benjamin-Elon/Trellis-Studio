@@ -13,6 +13,48 @@ function occupancy(rect, overrides = {}) { // CHANGE
 } // CHANGE
 function close(actual, expected, tolerance = 1e-6) { assert.ok(Math.abs(actual - expected) < tolerance, `${actual} != ${expected}`); } // CHANGE
 
+test('offset-aware demand fitting agrees with committed circles on both axes and rotated beds', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    for (const axis of ['width', 'height']) for (const rotation of [0, 37, 90]) for (const [x, y] of [[0, 0], [-25, 12], [35, -40], [2.5, 7.25]]) { // CHANGE
+        const proposal = api.proposePlantingGeometry(input({ bedCell: bed(300, 300, rotation), plantCount: 17, fitAxisOverride: axis, offsetXCm: x, offsetYCm: y })); // CHANGE
+        assert.equal(proposal.ok, true, JSON.stringify({ axis, rotation, x, y })); // CHANGE
+        assert.ok(proposal.plantCount >= 17); assert.equal(proposal.slots.length, proposal.plantCount); // CHANGE
+        close(proposal.layoutOffsetXCm, x); close(proposal.layoutOffsetYCm, y); // CHANGE
+        const group = api.createPlantingFromProposal({ moduleCell: {}, proposal }); // CHANGE
+        const stats = api.classifyPlantingSlots(group, api.toPx(20), api.toPx(30), api.groupLabelMetrics(group).bandPx, api.readDisabledSet(group)); // CHANGE
+        assert.equal(stats.actual, proposal.plantCount); assert.equal(Number(group.attrs.plant_count), proposal.plantCount); // CHANGE
+        for (const slot of proposal.slots) { // CHANGE
+            assert.ok(stats.renderedKeys.has(`${slot.row},${slot.col}`)); // CHANGE
+            const center = api.shiftedSlotCenterLocal(group, slot.row, slot.col, api.toPx(20), api.toPx(30), api.groupLabelMetrics(group).bandPx); // CHANGE
+            close(center.x, slot.x); close(center.y, slot.y); // CHANGE
+        } // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('offset-aware fitting reports reduced capacity, grows to demand, and recovers from extreme offsets', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    const request = input({ bedCell: bed(300, 300), fitAxisOverride: 'width', offsetXCm: -25, offsetYCm: 12 }); // CHANGE
+    const small = api.proposePlantingGeometry({ ...request, plantCount: 7 }); // CHANGE
+    const larger = api.proposePlantingGeometry({ ...request, plantCount: 27 }); // CHANGE
+    assert.ok(larger.geometry.height > small.geometry.height); // CHANGE
+    const tooMany = api.proposePlantingGeometry({ ...request, plantCount: 10000 }); // CHANGE
+    assert.equal(tooMany.ok, false); assert.ok(tooMany.capacity > 0); // CHANGE
+    const partial = api.proposePlantingGeometry({ ...request, plantCount: tooMany.capacity }); // CHANGE
+    assert.equal(partial.ok, true); assert.equal(partial.plantCount, tooMany.capacity); // CHANGE
+    for (const offset of [-100000, 100000]) { // CHANGE
+        const none = api.proposePlantingGeometry({ ...request, offsetXCm: offset }); // CHANGE
+        assert.equal(none.ok, false); assert.equal(none.capacity, 0); assert.equal(none.slots.length, 0); // CHANGE
+    } // CHANGE
+    assert.equal(api.proposePlantingGeometry({ ...request, offsetXCm: 0, offsetYCm: 0 }).ok, true); // CHANGE
+}); // CHANGE
+
+test('small offsets move circles within the bed-fitted frame instead of being cancelled by placement', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(), request = input({ bedCell: bed(300, 300), fitAxisOverride: 'width', offsetXCm: 0, offsetYCm: 0 }); // CHANGE
+    const before = api.proposePlantingGeometry(request), after = api.proposePlantingGeometry({ ...request, offsetXCm: 2 }); // CHANGE
+    close(before.geometry.x, after.geometry.x); assert.equal(before.plantCount, after.plantCount); // CHANGE
+    close(after.slots[0].x - before.slots[0].x, api.toPx(2)); // CHANGE
+}); // CHANGE
+
 test('short-axis defaults, square ties, and explicit rotation preserve unequal spacing', () => { // CHANGE
     const api = loadFittedPlantingGeometry(); // CHANGE
     for (const [width, height, axis] of [[100, 500, 'width'], [500, 100, 'height'], [100, 100, 'width']]) { // CHANGE

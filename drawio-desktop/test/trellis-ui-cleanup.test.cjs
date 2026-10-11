@@ -321,6 +321,29 @@ test("shared Trellis button helper applies semantic variants and preserves butto
     assert.equal(made.getAttribute("data-trellis-button-variant"), "add");
 });
 
+test("joined mode segments preserve control behavior and clear their style when reused", () => { // CHANGE
+    const { document } = createHarness(); // CHANGE
+    const shared = document.defaultView.Trellis.ui, button = document.createElement("button"); // CHANGE
+    let clicks = 0; button.addEventListener("click", () => clicks++); // CHANGE
+    button.title = "Show spacing"; button.setAttribute("aria-pressed", "true"); // CHANGE
+    shared.applyButtonStyle(button, "mode", { compact: true, active: true }); // CHANGE
+    assert.equal(button.style.background, "rgb(236, 254, 255)"); // CHANGE
+    assert.equal(button.style.color, "rgb(21, 94, 117)"); // CHANGE
+    assert.equal(parseFloat(button.style.borderRadius), 0); // CHANGE: DOM engines may serialize a zero radius with or without units.
+    assert.equal(button.style.fontWeight, "700"); // CHANGE
+    button.click(); assert.equal(clicks, 1); // CHANGE
+    assert.equal(button.title, "Show spacing"); assert.equal(button.getAttribute("aria-pressed"), "true"); // CHANGE
+    button.disabled = true; shared.applyButtonStyle(button, "mode", { compact: true }); // CHANGE
+    button.click(); assert.equal(clicks, 1); assert.equal(button.disabled, true); // CHANGE
+    assert.equal(button.classList.contains("trellis-button-active"), false); // CHANGE
+    assert.equal(button.style.background, "rgb(255, 255, 255)"); // CHANGE
+    assert.equal(button.style.color, "rgb(55, 65, 81)"); // CHANGE
+    shared.applyButtonStyle(button, "open", { compact: true, active: true }); // CHANGE
+    assert.equal(button.classList.contains("trellis-button-mode"), false); // CHANGE
+    assert.equal(button.style.borderRadius, "6px"); // CHANGE
+    assert.equal(button.style.background, "rgb(239, 246, 255)"); // CHANGE
+}); // CHANGE
+
 test("File keeps normal entries and moves only named editor entries to overflow", () => { // CHANGE
     const { document, menuEntries } = createHarness();
     const menu = new TestMenu(document);

@@ -17,7 +17,7 @@ function loadPlantTilerMxGraph() { // CHANGE
     const undoManager = new window.mxUndoManager(); // CHANGE
     graph.getModel().addListener(window.mxEvent.UNDO, (sender, event) => undoManager.undoableEditHappened(event.getProperty('edit'))); // CHANGE
     window.Draw = { loadPlugin(callback) { callback({ editor: { graph, undoManager }, actions: { get: () => null }, hideDialog() {} }); } }; // CHANGE
-    window.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Plant_Tiler.js'), 'utf8')); // CHANGE
+    window.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Planting_Group.js'), 'utf8')); // CHANGE
     function value(attrs) { // CHANGE
         const node = window.mxUtils.createXmlDocument().createElement('object'); // CHANGE
         Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value)); // CHANGE

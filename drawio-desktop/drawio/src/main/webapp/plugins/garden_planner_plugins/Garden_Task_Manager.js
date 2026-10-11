@@ -5228,7 +5228,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const cancelButton = mxUtils.button('Cancel', function () {
             ui.hideDialog();
         });
-        applyTaskButtonStyle(cancelButton, 'neutral');
+        applyTaskButtonStyle(cancelButton, 'close'); // CHANGE: card-edit cancellation uses the red outline.
         const saveButton = mxUtils.button('Save', async function () {
             const attributes = {};
             const notePatch = buildCardNotePatch(card.value, noteInput.value);
@@ -5543,7 +5543,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             ui.hideDialog();
         });
         save.title = "Save this task board's weekly work hours."; // CHANGE: explicit action tooltip.
-        applyTaskButtonStyle(cancel, 'neutral');
+        applyTaskButtonStyle(cancel, 'close'); // CHANGE: work-hours cancellation uses the red outline.
         applyTaskButtonStyle(save, 'add');
         buttons.appendChild(cancel);
         buttons.appendChild(save);
@@ -5607,7 +5607,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             ui.hideDialog();
         });
         save.title = "Save work hours for the selected day."; // CHANGE: explicit action tooltip.
-        applyTaskButtonStyle(cancel, 'neutral');
+        applyTaskButtonStyle(cancel, 'close'); // CHANGE: work-hours cancellation uses the red outline.
         applyTaskButtonStyle(save, 'add');
         buttons.appendChild(cancel);
         buttons.appendChild(save);
@@ -7226,7 +7226,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             ui.hideDialog();
         });
         saveButton.title = "Apply the enabled edits to all selected task cards."; // CHANGE: explicit action tooltip.
-        applyTaskButtonStyle(cancelButton, 'neutral');
+        applyTaskButtonStyle(cancelButton, 'close'); // CHANGE: card-edit cancellation uses the red outline.
         applyTaskButtonStyle(saveButton, 'add');
         buttons.appendChild(cancelButton);
         buttons.appendChild(saveButton);
@@ -7791,7 +7791,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
             const footer = document.createElement('div');
             footer.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:6px;padding-top:5px;border-top:1px solid #D1D5DB;';
-            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; applyTaskButtonStyle(cancel, 'neutral', { compact: true });
+            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; applyTaskButtonStyle(cancel, 'close', { compact: true }); // CHANGE: assignment cancellation uses the red outline.
             const apply = document.createElement('button'); apply.type = 'button'; apply.textContent = 'Apply'; applyTaskButtonStyle(apply, 'neutral', { compact: true });
             apply.title = "Apply the chosen role assignments to the selected task cards."; // CHANGE: explicit action tooltip.
             cancel.addEventListener('click', function (evt) { consumeDomEvent(evt); closeAssignmentPicker(); });

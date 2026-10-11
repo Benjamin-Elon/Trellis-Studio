@@ -84,7 +84,7 @@ function assertLayerContract(name) {
 
 test("graph overlay plugins share a dialog-safe layer contract", () => {
     [
-        "Plant_Tiler.js",
+        "Planting_Group.js",
         "Modules_Standalone.js",
         "Garden_Beds.js",
         "Garden_Dashboard.js",
@@ -156,7 +156,7 @@ test("irrigation controls render above irrigation annotations and connection ove
 });
 
 test("graph-local Trellis controls use control layers", () => {
-    assert.match(readPlugin("Plant_Tiler.js"), /toolbar\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
+    assert.match(readPlugin("Planting_Group.js"), /toolbar\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
     assert.match(readPlugin("Modules_Standalone.js"), /trellis-root-module-overlay[\s\S]*overlay\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
     assert.match(readPlugin("Modules_Standalone.js"), /trellis-team-role-overlay[\s\S]*overlay\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
     assert.doesNotMatch(readPlugin("Modules_Standalone.js"), /trellis-role-image-overlay/); // CHANGE
@@ -167,14 +167,15 @@ test("graph-local Trellis controls use control layers", () => {
     assert.match(readPlugin("Garden_Task_Manager.js"), /trellis-task-board-header-controls[\s\S]*bar\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
     assert.match(readPlugin("Garden_Task_Manager.js"), /trellis-task-selected-card-actions[\s\S]*overlay\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
     assert.match(readPlugin("Allocate_Planner.js"), /ensureGraphOverlayHtmlLayer\("control"\)[\s\S]*trellis-allocate-overlay-layer/); // CHANGE: Allocate bed badges use graph-local control overlays.
-    assert.match(readPlugin("Allocate_Planner.js"), /trellis-allocate-ghost[\s\S]*ensureGraphOverlayHtmlLayer\("annotation"\)/); // CHANGE: Allocate draft ghosts use graph-local annotation overlays.
+    assert.match(readPlugin("Allocate_Planner.js"), /renderer\.render\(state\.ownerId/); // CHANGE
+    assert.match(readPlugin("Planting_Group.js"), /function createPlantingPreviewRenderer[\s\S]*ensureGraphOverlayHtmlLayer\('annotation'\)/); // CHANGE: Allocate draft ghosts use graph-local annotation overlays.
     assert.match(readPlugin("Garden_Task_Manager.js"), /const paneIsSvg = !!\(pane && pane\.namespaceURI === 'http:\/\/www\.w3\.org\/2000\/svg'\)/);
     assert.match(readPlugin("Garden_Task_Manager.js"), /const baseHost = pane && !paneIsSvg \? pane : \(graph\.container \|\| pane \|\| null\)/);
     assert.match(readPlugin("Garden_Task_Manager.js"), /trellis-task-control-layer/);
     assert.match(readPlugin("Garden_Dashboard.js"), /trellis-graph-control-layer/);
     assert.match(readPlugin("Garden_Dashboard.js"), /trellis-body-control-layer/);
     assert.match(readPlugin("Garden_Dashboard.js"), /document\.body\.appendChild\(layer\)/);
-    const vertexLinking = readPlugin("Vertex_Linking_Standalone.js");
+    const vertexLinking = readPlugin("Planting_Group.js"); // CHANGE: planting panels and their guide lines have moved.
     assert.match(vertexLinking, /trellis-graph-connection-layer/);
     assert.match(vertexLinking, /trellis-graph-control-layer/);
     assert.match(vertexLinking, /ensureGraphOverlaySvgLayer\('connection'\)/);
@@ -219,7 +220,7 @@ test("custom Trellis dialogs render at the editor dialog layer", () => { // CHAN
     assert.match(gardenBeds, /dlg\.container\.style\.zIndex = String\(TRELLIS_DIALOG_Z\)/);
     assert.match(gardenBeds, /dlg\.bg\.style\.zIndex = String\(TRELLIS_DIALOG_Z - 1\)/);
     assert.equal((gardenBeds.match(/ui\.showDialog\(/g) || []).length, (gardenBeds.match(/elevateBedConditionsDialog\(\)/g) || []).length - 1);
-    const plantTiler = readPlugin("Plant_Tiler.js");
+    const plantTiler = readPlugin("Planting_Group.js");
     assert.match(plantTiler, /const TRELLIS_DIALOG_Z = 2000000000;/);
     assert.match(plantTiler, /function elevateTrellisDialog\(\)/);
     assert.match(plantTiler, /dlg\.container\.style\.zIndex = String\(TRELLIS_DIALOG_Z\)/);

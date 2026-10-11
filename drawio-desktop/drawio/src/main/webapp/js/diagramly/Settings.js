@@ -22,7 +22,7 @@ var mxSettings =
 		'trellisUsers', // NEW
 		'trellisContextMenu', // NEW
 		'gardenSuccession', // NEW
-		'plantTiler', // NEW
+		'plantingGroup', // NEW
 		'gardenTasks', // NEW
 		'gardenRoadmapCore', // NEW
 		'gardenRoadmaps', // NEW
@@ -48,7 +48,8 @@ var mxSettings =
 		trellisUsers: 'plugins/garden_planner_plugins/Trellis_Users.js', // NEW
 		trellisContextMenu: 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', // NEW
 		gardenSuccession: 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js', // NEW
-		plantTiler: 'plugins/garden_planner_plugins/Plant_Tiler.js', // NEW
+		plantingGroup: 'plugins/garden_planner_plugins/Planting_Group.js', // CHANGE
+		plantTiler: 'plugins/garden_planner_plugins/Planting_Group.js', // NEW
 		gardenTasks: 'plugins/garden_planner_plugins/Garden_Task_Manager.js', // NEW
 		gardenRoadmapCore: 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', // NEW
 		gardenRoadmaps: 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', // NEW

@@ -1026,7 +1026,7 @@ Draw.loadPlugin(function (ui) {
         const shared = graph.__trellisTaskUi; // NEW
         if (shared) shared.applyButtonStyle(node, variant, { compact: true, active: opts.active === true }); // CHANGE
         else if (window.Trellis && window.Trellis.ui && window.Trellis.ui.applyButtonStyle) window.Trellis.ui.applyButtonStyle(node, variant, { compact: true, active: opts.active === true }); // CHANGE
-        else { node.style.border = '1px solid #6b7280'; node.style.color = '#111827'; node.style.background = '#fff'; } // NEW
+        else { node.style.border = '1px solid ' + (variant === 'close' ? '#b91c1c' : '#6b7280'); node.style.color = variant === 'close' ? '#b91c1c' : '#111827'; node.style.background = '#fff'; } // CHANGE: fallback dismissal retains the red outline.
         if (!node.getAttribute('data-trellis-button-variant')) node.setAttribute('data-trellis-button-variant', variant); // CHANGE
         if (opts.active) { node.setAttribute('aria-pressed', 'true'); node.style.fontWeight = '700'; node.style.borderColor = '#2563eb'; node.style.background = '#eff6ff'; node.style.color = '#1e3a8a'; } // NEW
         else if (opts.pressed === false) node.setAttribute('aria-pressed', 'false'); // NEW
@@ -1062,7 +1062,7 @@ Draw.loadPlugin(function (ui) {
     function closeDialog() { dialogError = null; if (ui.hideDialog) ui.hideDialog(); }
     function dialogActions(body, save, saveLabel) {
         const actions = element('div'); actions.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:14px;';
-        button('Cancel', closeDialog, actions); button(saveLabel || 'Save', save, actions, null, { title: "Save the changes in this roadmap dialog." }); body.appendChild(actions); // CHANGE: explicit action tooltip.
+        button('Cancel', closeDialog, actions, null, { variant: 'close' }); button(saveLabel || 'Save', save, actions, null, { title: "Save the changes in this roadmap dialog." }); body.appendChild(actions); // CHANGE: explicit action tooltip.
     }
 
     function showEditDialog(cell) {
@@ -1148,7 +1148,7 @@ Draw.loadPlugin(function (ui) {
         amount.addEventListener('input', updatePreview); updatePreview(); // NEW
         const actions = element('div'); actions.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:8px;flex-wrap:wrap;'; picker.appendChild(actions); // CHANGE
         if (hasCost(cell)) button('Remove Cost', () => { if (removeObjectCost(cell)) closeCostPicker(); }, actions, !allowed(cell), { variant: 'danger', title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Remove the saved cost from this roadmap object." }); // NEW // CHANGE: explicit action tooltip.
-        button('Cancel', closeCostPicker, actions); button('Apply', () => { if (setObjectCost(cell, { mode: mode.value, amount: Number(amount.value) })) closeCostPicker(); }, actions, !allowed(cell), { title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Save this roadmap object's cost settings." }); // NEW // CHANGE: explicit action tooltip.
+        button('Cancel', closeCostPicker, actions, null, { variant: 'close' }); button('Apply', () => { if (setObjectCost(cell, { mode: mode.value, amount: Number(amount.value) })) closeCostPicker(); }, actions, !allowed(cell), { title: !allowed(cell) ? 'You do not have permission to change this roadmap.' : "Save this roadmap object's cost settings." }); // NEW // CHANGE: explicit action tooltip.
         const state = graph.view.getState(cell), bounds = shared ? shared.getCellVisualBounds(cell, host) : state; // NEW
         if (bounds) { picker.style.left = Math.max(0, bounds.x + 20) + 'px'; picker.style.top = Math.max(0, bounds.y + bounds.height + 9) + 'px'; } // NEW
         amount.focus(); if (amount.select) amount.select(); // CHANGE
@@ -1176,7 +1176,7 @@ Draw.loadPlugin(function (ui) {
         search.addEventListener('input', () => checks.forEach(item => { item.row.style.display = item.row.textContent.toLowerCase().includes(search.value.toLowerCase()) ? 'grid' : 'none'; })); // NEW
         const error = element('div'); error.style.color = '#b91c1c'; error.setAttribute('role', 'alert'); picker.appendChild(error); // NEW
         const actions = element('div'); actions.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:8px;'; picker.appendChild(actions); // NEW
-        button('Cancel', closeAssignmentPicker, actions); button('Apply', () => { // NEW
+        button('Cancel', closeAssignmentPicker, actions, null, { variant: 'close' }); button('Apply', () => { // CHANGE: assignment cancellation uses the red outline.
             if (signature !== selectionSignature(cells) || rosterSignature !== roleRoster(board).map(role => role.id).sort().join(',')) { error.textContent = 'Assignments or membership changed. Close and reopen the picker.'; return; } // NEW
             const result = command(() => { cells.forEach((cell, index) => { const next = new Set(initial[index]); checks.filter(item => item.changed).forEach(item => { if (item.check.checked) next.add(item.id); else next.delete(item.id); }); setAssignments(cell, Array.from(next)); }); return cells; }); // NEW
             if (result) { closeAssignmentPicker(); refresh(); } // NEW
@@ -1184,7 +1184,7 @@ Draw.loadPlugin(function (ui) {
         const state = graph.view.getState(cells[0]), bounds = shared ? shared.getCellVisualBounds(cells[0], host) : state; // NEW
         if (bounds) { picker.style.left = Math.max(0, bounds.x + 20) + 'px'; picker.style.top = Math.max(0, bounds.y + bounds.height + 9) + 'px'; } // NEW
     } // NEW
-    function showStatusDialog(cells) { dialog('Change Status', body => { renderStatusButtons(cells, body); button('Close', closeDialog, body); }, 220); } // CHANGE
+    function showStatusDialog(cells) { dialog('Change Status', body => { renderStatusButtons(cells, body); button('Close', closeDialog, body, null, { variant: 'close' }); }, 220); } // CHANGE
 
     function taskBoards(moduleCell) {
         const taskModule = taskModuleFor(moduleCell), api = graph.__trellisTaskManager;
@@ -1238,7 +1238,7 @@ Draw.loadPlugin(function (ui) {
     function openTask(task) { const api = graph.__trellisTaskManager; if (api && api.openTaskCard) return api.openTaskCard(task); graph.setSelectionCell(task); if (graph.scrollCellToVisible) graph.scrollCellToVisible(task); return task; }
     function showTasks(cell) {
         const tasks = linkedTasks(cell); if (tasks.length === 1) return openTask(tasks[0]);
-        dialog('Linked Tasks', body => { tasks.forEach(task => button(attr(task, 'title') || label(task), () => { closeDialog(); openTask(task); }, body, null, { title: 'Open linked task: ' + (attr(task, 'title') || label(task)) })); button('Close', closeDialog, body); }, 320); // CHANGE: explicit action tooltip.
+        dialog('Linked Tasks', body => { tasks.forEach(task => button(attr(task, 'title') || label(task), () => { closeDialog(); openTask(task); }, body, null, { title: 'Open linked task: ' + (attr(task, 'title') || label(task)) })); button('Close', closeDialog, body, null, { variant: 'close' }); }, 320); // CHANGE: explicit action tooltip.
     }
     function showDeletionDialog(cells, tasks) {
         dialog('Delete Roadmap Content', body => {
@@ -1682,7 +1682,7 @@ Draw.loadPlugin(function (ui) {
             body.appendChild(element('p', 'Moving without them removes their assignments from the moved objects. Existing tasks keep their assignments.')); // NEW
             const submit = linkMissingAssignees => { if (performNativeMove(cells, target, Object.assign({}, options, { linkMissingAssignees, expectedSignature: plan.signature }))) closeDialog(); }; // NEW
             button('Link and move', () => submit(true), body, !allowed(plan.destinationBoard, 'canManageAccess'), { title: !allowed(plan.destinationBoard, 'canManageAccess') ? 'You do not have permission to link assignments on the destination board.' : 'Link missing assignments to the destination board and move the selected objects.' }); // NEW // CHANGE: explicit action tooltip.
-            button('Move without missing assignments', () => submit(false), body, null, { title: "Move the selected objects and drop assignments missing from the destination board." }); button('Cancel', closeDialog, body); // NEW // CHANGE: explicit action tooltip.
+            button('Move without missing assignments', () => submit(false), body, null, { title: "Move the selected objects and drop assignments missing from the destination board." }); button('Cancel', closeDialog, body, null, { variant: 'close' }); // NEW // CHANGE: explicit action tooltip.
         }, 260); return []; // NEW
     } // NEW
 

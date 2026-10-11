@@ -5677,7 +5677,7 @@ Draw.loadPlugin(function (ui) {
         controls.className = "trellis-irrigation-bom-controls"; // CHANGE: anchor in-place result replacement ahead of footer controls
         controls.style.cssText = "display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;justify-content:flex-end;";
         controls.appendChild(button("Export CSV", function () { downloadBomCsv(moduleCell, buildBomDialogViewData(moduleCell, state).visibleRows, state); }, null, "Export the currently filtered bill of materials as CSV.")); // CHANGE: export current in-place search results
-        controls.appendChild(button("Close", function () { closeBomDialog(state); }));
+        controls.appendChild(button("Close", function () { closeBomDialog(state); }, "close")); // CHANGE: BOM dismissal uses the shared red outline.
         container.appendChild(controls);
     }
 
@@ -6437,7 +6437,7 @@ Draw.loadPlugin(function (ui) {
             state.selectedId = "";
             renderCatalogManager(container, moduleCell, state);
         }, null, "Delete this part definition from the garden's irrigation catalog.")); // CHANGE: explicit action tooltip.
-        controls.appendChild(button("Close", hideDialog));
+        controls.appendChild(button("Close", hideDialog, "close")); // CHANGE: catalog dismissal uses the shared red outline.
         form.node.appendChild(controls);
         return form.node; // NEW
     } // NEW
@@ -11211,11 +11211,16 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function styleAnalysisModeSegment(buttonNode, active) { // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // CHANGE: keep the reference selector and other mode controls on one shared style.
+            window.Trellis.ui.applyButtonStyle(buttonNode, 'mode', { compact: true, active }); // CHANGE
+            return; // CHANGE
+        } // CHANGE
         buttonNode.style.border = "0"; // NEW
         buttonNode.style.borderRadius = "0"; // NEW
         buttonNode.style.background = active ? "#ecfeff" : "#fff"; // NEW
         buttonNode.style.color = active ? "#155e75" : "#374151"; // NEW
         buttonNode.style.fontWeight = active ? "700" : "400"; // NEW
+        buttonNode.style.outlineOffset = "-2px"; // CHANGE: keep native focus outlines inside the joined selector in fallback mode.
     } // NEW
 
     function compactHudButton(label, fn, variant) {
@@ -12982,7 +12987,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function exitIrrigationButton() {
-        const b = button("Exit", closeIrrigationMode, null, "Exit irrigation design mode and return to the garden workspace."); // CHANGE: explicit action tooltip.
+        const b = button("Exit", closeIrrigationMode, "close", "Exit irrigation design mode and return to the garden workspace."); // CHANGE: explicit action tooltip.
         const earlyClose = function (ev) {
             if (ev && ev.stopPropagation) ev.stopPropagation();
             closeIrrigationMode();

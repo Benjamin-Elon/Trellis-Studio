@@ -1,7 +1,7 @@
 const fs = require('node:fs'); // CHANGE
 const path = require('node:path'); // CHANGE
 const vm = require('node:vm'); // CHANGE
-const pluginPath = path.join(__dirname, '../../drawio/src/main/webapp/plugins/garden_planner_plugins/Plant_Tiler.js'); // CHANGE
+const pluginPath = path.join(__dirname, '../../drawio/src/main/webapp/plugins/garden_planner_plugins/Planting_Group.js'); // CHANGE
 const source = fs.readFileSync(pluginPath, 'utf8'); // CHANGE
 
 /** Evaluate production geometry without booting unrelated draw.io controls. */ // CHANGE

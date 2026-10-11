@@ -9257,6 +9257,14 @@ Draw.loadPlugin(function (ui) {
         let allocationFitError = ''; // CHANGE
         let allocationSpacingKey = ''; // CHANGE: preserve checkbox intent until the active crop set changes.
         let allocationDialogClosed = false; // CHANGE
+        const allocationRequiredMode = Array.isArray(allocationDraftContext?.requiredDefaults); // CHANGE: callers explicitly opt into saving required records before a planting exists.
+        let allocationRequiredStatus = allocationDraftContext?.defaultStatus || { missing: allocationDraftContext?.requiredDefaults || [] }; // CHANGE
+        const allocationOptionalLifecycle = allocationSaveLifecycle.checked; // CHANGE
+        let allocationLifecycleForced = false, allocationTaskDefaultForced = false; // CHANGE: mandatory saves cannot erase separate optional checkbox intent during method refits.
+        let allocationRequiredSaving = false; // CHANGE: required-default persistence is single-flight even for rapid repeated submission.
+        const allocationSaveGrowthStage = makeCheckbox(false); allocationSaveGrowthStage.setAttribute('data-allocation-save-grown-for', '1'); // CHANGE
+        const allocationRequiredSummary = document.createElement('div'); allocationRequiredSummary.setAttribute('data-allocation-required-summary', '1'); allocationRequiredSummary.setAttribute('aria-live', 'polite'); // CHANGE
+        const allocationRequiredNotes = {}; // CHANGE: note elements stay mounted while readiness changes.
 
         // Auto-computed season end constraint (read-only for annuals, editable for perennials)
         const seasonEndInput = makeDate(initialLatestHarvestEndISO, true);
@@ -10906,15 +10914,49 @@ Draw.loadPlugin(function (ui) {
             if (!allocationDraftContext) return; // CHANGE
             const rows = await allocationSpacingRows(ui.editor.graph, allocationCurrentDraft); // CHANGE
             const key = rows.length > 1 ? CompanionSetLayoutDefaultModel.cropSetKey(rows) : ''; // CHANGE
-            const saved = key ? await CompanionSetLayoutDefaultModel.loadForRows(rows) : null; // CHANGE
             if (!allocationRequestIsCurrent(version)) return; // CHANGE
             if (key !== allocationSpacingKey) { // CHANGE: preserve explicit checkbox intent while the same set remains active.
-                allocationSaveSpacing.checked = !!key && !saved?.default; // CHANGE
+                allocationSaveSpacing.checked = false; // CHANGE: saving allocation spacing defaults always requires explicit opt-in.
                 if (!allocationSpacingKey && allocationCurrentDraft.saveSpacingDefaults != null) allocationSaveSpacing.checked = !!key && allocationCurrentDraft.saveSpacingDefaults; // CHANGE
                 allocationSpacingKey = key; // CHANGE
             } // CHANGE
             allocationSaveSpacing.disabled = !key; // CHANGE
             allocationCurrentDraft.spacingDefaultRows = rows; // CHANGE
+        } // CHANGE
+
+        /** Saved-record gaps are visibly distinct from invalid input, including fixed Year Plan fields. */ // CHANGE
+        function renderAllocationRequiredDefaults() { // CHANGE
+            if (!allocationRequiredMode) return; // CHANGE
+            const missing = new Set(allocationRequiredStatus.missing || []); // CHANGE
+            const targets = { method: fieldRows.methodSelection.row, grownFor: fieldRows.growthStage.row, tasks: taskDefaultsActions }; // CHANGE
+            for (const [key, target] of Object.entries(targets)) { // CHANGE
+                if (!allocationRequiredNotes[key]) { // CHANGE
+                    const note = document.createElement('div'); note.style.cssText = 'width:100%;font-size:12px;color:#92400e;'; note.tabIndex = -1; // CHANGE
+                    note.setAttribute('data-allocation-required-field', key); target.appendChild(note); allocationRequiredNotes[key] = note; // CHANGE
+                } // CHANGE
+                allocationRequiredNotes[key].textContent = missing.has(key) ? 'Required default not saved — ' + ALLOCATION_DEFAULT_LABELS[key] : ''; // CHANGE
+                allocationRequiredNotes[key].style.display = missing.has(key) ? '' : 'none'; // CHANGE
+                target.style.outline = missing.has(key) ? '2px solid #d97706' : ''; target.style.outlineOffset = '3px'; // CHANGE
+            } // CHANGE
+            allocationRequiredSummary.textContent = missing.size ? 'Save required defaults: ' + [...missing].map(key => ALLOCATION_DEFAULT_LABELS[key]).join(', ') + '. These defaults remain saved if you later cancel allocation.' : 'Required defaults are saved.'; // CHANGE
+            if (missing.has('method')) allocationSaveLifecycle.checked = true; else if (allocationLifecycleForced) allocationSaveLifecycle.checked = allocationOptionalLifecycle; // CHANGE
+            allocationLifecycleForced = missing.has('method'); allocationSaveLifecycle.disabled = allocationLifecycleForced; // CHANGE
+            allocationSaveLifecycle.title = missing.has('method') ? 'Saving the missing planting-method default is required.' : ''; // CHANGE
+            if (missing.has('tasks')) saveDefaultChk.checked = true; else if (allocationTaskDefaultForced) saveDefaultChk.checked = false; // CHANGE
+            allocationTaskDefaultForced = missing.has('tasks'); saveDefaultChk.disabled = allocationTaskDefaultForced; // CHANGE: missing task rules save through the plant/variety-aware required-default path.
+            saveDefaultChk.setAttribute('data-allocation-save-tasks', '1'); saveDefaultChk.title = missing.has('tasks') ? 'Saving the missing task-recipe default is required.' : ''; // CHANGE
+            allocationSaveGrowthStage.checked = missing.has('grownFor'); allocationSaveGrowthStage.disabled = true; // CHANGE
+            allocationSaveGrowthStage.parentElement.style.display = missing.has('grownFor') ? 'flex' : 'none'; // CHANGE
+            tasksTabBtn.textContent = missing.has('tasks') ? 'Tasks — default required' : 'Tasks'; // CHANGE
+            okBtn.textContent = 'Save defaults & preview'; // CHANGE
+            okBtn.title = 'Save missing required crop defaults and return to allocation without creating a planting.'; // CHANGE
+        } // CHANGE
+
+        async function refreshAllocationRequiredDefaults(version = allocationFitVersion) { // CHANGE
+            if (!allocationRequiredMode) return; // CHANGE
+            const status = await resolveAllocationDefaultStatus(Object.assign({}, allocationCurrentDraft, { methodId: formState.methodId })); // CHANGE
+            if (!allocationRequestIsCurrent(version)) return; // CHANGE
+            allocationRequiredStatus = status; renderAllocationRequiredDefaults(); // CHANGE
         } // CHANGE
 
         /** Solve timing first, then revalidate bed capacity/coverage, and publish only the newest complete result. */ // CHANGE
@@ -10976,6 +11018,7 @@ Draw.loadPlugin(function (ui) {
                 syncScheduleWarningState(proposal.warnings || []); // CHANGE
                 syncControlsFromState({ start: true, harvest: true }); // CHANGE
                 await refreshAllocationSpacingChoice(version); // CHANGE
+                await refreshAllocationRequiredDefaults(version); // CHANGE: changing method can require a different saved task template.
                 if (!allocationRequestIsCurrent(version)) return false; // CHANGE
                 generatedPreviewTasks = proposal.taskPreview; // CHANGE
                 taskPreviewScheduleRange = resolveTaskPreviewScheduleRange(proposal.result); // CHANGE
@@ -10991,8 +11034,8 @@ Draw.loadPlugin(function (ui) {
             } finally { // CHANGE
                 if (allocationRequestIsCurrent(version)) { // CHANGE
                     allocationFitPending = false; // CHANGE
-                    okBtn.disabled = !!allocationFitError; // CHANGE
-                    previewBtn.disabled = !!allocationFitError; // CHANGE
+                    okBtn.disabled = !!allocationFitError || allocationRequiredSaving; // CHANGE
+                    previewBtn.disabled = okBtn.disabled; // CHANGE
                     applyModeToUI(); // CHANGE
                     updateTimeline(); // CHANGE
                 } // CHANGE
@@ -11977,6 +12020,8 @@ Draw.loadPlugin(function (ui) {
         applySharedButtonStyle(previewBtn, 'neutral');
 
         const okBtn = mxUtils.button('Save', async () => {
+            if (allocationRequiredMode && allocationRequiredSaving) return; // CHANGE
+            if (allocationRequiredMode) { allocationRequiredSaving = true; okBtn.disabled = true; previewBtn.disabled = true; } // CHANGE
             const allocationVersion = allocationFitVersion; // CHANGE: reject edits or cancellation while submission is resolving inputs.
             try {
                 if (allocationDraftContext && (allocationFitPending || allocationFitError)) throw new Error(allocationFitError || 'Allocation recalculation is still running.'); // CHANGE: never accept stale fit data.
@@ -12086,14 +12131,22 @@ Draw.loadPlugin(function (ui) {
                         taskTemplateSource
                     });
                     if (!allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
-                    next.saveLifecycleDefaults = allocationSaveLifecycle.checked; // CHANGE
+                    const requiredBeforeSave = new Set(allocationRequiredMode ? allocationRequiredStatus.missing : []); // CHANGE
+                    next.saveLifecycleDefaults = allocationSaveLifecycle.checked && !requiredBeforeSave.has('method'); // CHANGE: mandatory method settings are saved now, optional updates remain deferred.
                     next.saveSpacingDefaults = !allocationSaveSpacing.disabled && allocationSaveSpacing.checked; // CHANGE
                     next.lifecycleOverrides = { methodId: inputs.methodId, methodCategoryId: inputs.methodCategoryId, effectiveTransplantDays: inputs.plant.days_transplant, harvestWindowDays: inputs.harvestWindowDays }; // CHANGE
                     next.bedTimingComparisons = buildAllocationTimingComparisons(next, allocationDraftContext.relationships); // CHANGE
+                    if (allocationRequiredMode) { // CHANGE
+                        try { // CHANGE
+                            next.requiredDefaultsSaved = await persistAllocationRequiredDefaults(next, { isCurrent: () => allocationRequestIsCurrent(allocationVersion) }); // CHANGE
+                        } finally { await refreshAllocationRequiredDefaults(allocationVersion); } // CHANGE: partial failures show only records that still need saving.
+                        if (!allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
+                        if (!allocationRequiredStatus.complete) throw new Error('Required defaults are still missing. Resolve the highlighted items and try again.'); // CHANGE
+                    } // CHANGE
                     next.commitAllocationDefaults = async function (createdCell) { // CHANGE: reusable defaults are committed only after successful planting creation.
                         if (!createdCell) throw new Error('A created planting is required before saving allocation defaults.'); // CHANGE
                         await persistPlantTaskDefault();
-                        await persistAllocationReusableDefaults(next, { defaultStatus: allocationDraftContext.defaultStatus });
+                        await persistAllocationReusableDefaults(next, { defaultStatus: allocationRequiredMode ? allocationRequiredStatus : allocationDraftContext.defaultStatus }); // CHANGE: already-saved required records are not written again after Create.
                         if (next.saveSpacingDefaults) await persistAllocationSpacingDefaults(ui.editor.graph, next, createdCell); // CHANGE
                     };
                     if (allocationDraftContext.isCurrent && !allocationDraftContext.isCurrent()) throw new Error('Allocation selection changed. Close this scheduler and review the current proposal.');
@@ -12154,7 +12207,10 @@ Draw.loadPlugin(function (ui) {
                 ui.hideDialog();
             } catch (e) {
                 clearScheduleWarningState();
+                if (allocationRequiredMode && !allocationDialogClosed) { allocationRequiredSummary.textContent += ' Save failed: ' + e.message; allocationRequiredSummary.setAttribute('role', 'alert'); } // CHANGE: save failures remain visible from Tasks as well as Schedule.
                 showErrorInline('Scheduling error: ' + e.message);
+            } finally { // CHANGE
+                if (allocationRequiredMode) { allocationRequiredSaving = false; if (!allocationDialogClosed) { okBtn.disabled = allocationFitPending || !!allocationFitError; previewBtn.disabled = okBtn.disabled; } } // CHANGE
             }
         });
         okBtn.title = allocationDraftContext ? 'Preview the allocation planting with these schedule settings before creating it.' : 'Save this planting schedule and apply its task rules.'; // CHANGE: explicit action tooltip.
@@ -12173,12 +12229,14 @@ Draw.loadPlugin(function (ui) {
             spacingLabel.appendChild(allocationSaveSpacing); // CHANGE
             spacingLabel.appendChild(document.createTextNode('Save companion-set spacing as default')); // CHANGE
             defaultActions.appendChild(lifecycleLabel); // CHANGE
+            const growthLabel = document.createElement('label'); growthLabel.style.cssText = 'display:none;gap:5px;align-items:center;'; // CHANGE
+            growthLabel.appendChild(allocationSaveGrowthStage); growthLabel.appendChild(document.createTextNode('Save grown-for stage as default — required')); defaultActions.appendChild(growthLabel); // CHANGE
             defaultActions.appendChild(spacingLabel); // CHANGE
             btns.appendChild(defaultActions); // CHANGE
         } // CHANGE
 
         const cancelBtn = mxUtils.button('Cancel', () => { allocationDialogClosed = true; if (allocationDraftContext) allocationDraftContext.onCancel(); ui.hideDialog(); }); // CHANGE: cancel invalidates in-flight lifecycle fits.
-        applySharedButtonStyle(cancelBtn, 'neutral');
+        applySharedButtonStyle(cancelBtn, 'close'); // CHANGE: cancellation uses the shared red outline.
         [previewBtn, okBtn, cancelBtn].forEach(b => rightBtns.appendChild(b));
         btns.appendChild(rightBtns);
 
@@ -12786,7 +12844,8 @@ Draw.loadPlugin(function (ui) {
                         deleteBtn.type = "button"; // NEW
                         deleteBtn.textContent = "Delete"; // NEW
                         deleteBtn.title = "Delete selected task recipe"; // NEW
-                        deleteBtn.style.cssText = "flex:0 0 auto;padding:2px 6px;border:1px solid #b91c1c;color:#b91c1c;background:#fff;border-radius:4px;font-size:11px;"; // NEW
+                        deleteBtn.style.flex = "0 0 auto"; // CHANGE: keep the recipe-row layout while sharing destructive styling.
+                        applySharedButtonStyle(deleteBtn, 'danger', { compact: true }); // CHANGE: deleting a saved recipe uses red fill.
                         deleteBtn.addEventListener("click", function (event) { event.preventDefault(); event.stopPropagation(); void deleteSelectedTaskRecipe(); }); // NEW
                         rowWrap.appendChild(deleteBtn); // NEW
                     }
@@ -13258,7 +13317,7 @@ Draw.loadPlugin(function (ui) {
                 taskEditorDiv.innerHTML = "";
             });
             applySharedButtonStyle(saveBtn, 'add');
-            applySharedButtonStyle(cancelBtn, 'neutral');
+            applySharedButtonStyle(cancelBtn, 'close'); // CHANGE: cancellation uses the shared red outline.
 
             btnWrap.appendChild(saveBtn);
             btnWrap.appendChild(cancelBtn);
@@ -13509,6 +13568,7 @@ Draw.loadPlugin(function (ui) {
         dialogFooter.appendChild(btns);
 
         tabsContainer.appendChild(dialogHeader);
+        if (allocationRequiredMode) { allocationRequiredSummary.style.cssText = 'padding:10px 14px;color:#92400e;overflow-wrap:anywhere;'; tabsContainer.appendChild(allocationRequiredSummary); } // CHANGE
         tabsContainer.appendChild(tabsHeader);
         tabsContainer.appendChild(tabsBody);
         tabsContainer.appendChild(dialogFooter);
@@ -13530,6 +13590,10 @@ Draw.loadPlugin(function (ui) {
             varietySel.disabled = true;
             growthStageSel.disabled = true; // CHANGE: stage belongs to the Year Plan demand identity.
             growthStageSel.title = 'Grown for is fixed by the selected Year Plan row.'; // CHANGE
+            if (allocationRequiredMode) { // CHANGE
+                if (allocationRequiredStatus.missing?.includes('method')) allocationLifecycleLock.checked = false; // CHANGE: required method setup starts editable while sow/entry dates remain demand-derived.
+                applyAllocationLifecycleLock(); renderAllocationRequiredDefaults(); // CHANGE
+            } // CHANGE
             citySel.querySelectorAll('button, input').forEach(control => { control.disabled = true; if (control.tagName === 'BUTTON') control.title = 'Allocation uses the city from the active garden settings.'; }); // CHANGE: explain the fixed city on the disabled picker.
             citySel.tabIndex = -1; // CHANGE
             climateSection.body.querySelectorAll('input, select, button').forEach(control => { control.disabled = true; if (control.tagName === 'BUTTON') control.title = 'Allocation uses the climate from the active garden settings.'; }); // CHANGE: explain the fixed climate on disabled actions.
@@ -13538,6 +13602,12 @@ Draw.loadPlugin(function (ui) {
 
         ui.showDialog(tabsContainer, 1120, 720, true, true, () => { allocationDialogClosed = true; if (allocationDraftContext) allocationDraftContext.onCancel(); }); // CHANGE: close/Escape also invalidates pending lifecycle fits.
         elevateTrellisDialog(ui);
+        if (allocationRequiredMode) { // CHANGE
+            const key = allocationDraftContext.focusMissingDefault || allocationRequiredStatus.missing?.[0]; // CHANGE
+            if (key === 'tasks') { tabsBody.replaceChildren(tasksTab); setActiveTabButton(tasksTabBtn); } // CHANGE: focus does not reload or discard the draft's task edits.
+            const target = key === 'method' ? combinedMethodSel : allocationRequiredNotes[key]; // CHANGE
+            target?.scrollIntoView?.({ block: 'nearest' }); target?.focus?.(); // CHANGE: fixed grown-for identity is explained by a focusable note.
+        } // CHANGE
 
     }
 
@@ -16840,7 +16910,7 @@ Draw.loadPlugin(function (ui) {
                 const remove = document.createElement("button");
                 remove.type = "button";
                 remove.textContent = "Remove";
-                remove.style.cssText = "border:1px solid #b91c1c;color:#b91c1c;background:#fff;border-radius:4px;padding:4px 7px;cursor:pointer;";
+                applySharedButtonStyle(remove, 'danger', { compact: true }); // CHANGE: task removal uses shared destructive styling.
                 remove.addEventListener("click", function () {
                     tasks.splice(index, 1);
                     renderTaskRows();
@@ -16856,7 +16926,8 @@ Draw.loadPlugin(function (ui) {
         const addTask = document.createElement("button");
         addTask.type = "button";
         addTask.textContent = "Add task";
-        addTask.style.cssText = "align-self:flex-start;border:1px solid #2563eb;color:#1d4ed8;background:#fff;border-radius:4px;padding:5px 10px;cursor:pointer;";
+        addTask.style.alignSelf = "flex-start"; // CHANGE: preserve review layout while using shared creation styling.
+        applySharedButtonStyle(addTask, 'add'); // CHANGE: adding a task uses green.
         addTask.addEventListener("click", function () {
             tasks.push({ startISO: "", title: "New task" });
             renderTaskRows();
@@ -16876,8 +16947,8 @@ Draw.loadPlugin(function (ui) {
         cancel.textContent = "Cancel";
         const save = document.createElement("button");
         save.textContent = "Save";
-        save.style.cssText = "border:1px solid #188038;color:#166534;background:#fff;border-radius:4px;padding:5px 10px;cursor:pointer;";
-        cancel.style.cssText = "border:1px solid #6b7280;color:#111827;background:#fff;border-radius:4px;padding:5px 10px;cursor:pointer;";
+        applySharedButtonStyle(save, 'add'); // CHANGE: retain green save styling through the existing helper.
+        applySharedButtonStyle(cancel, 'close'); // CHANGE: draft-task cancellation uses the shared red outline.
         buttons.appendChild(cancel);
         buttons.appendChild(save);
         div.appendChild(buttons);
@@ -16932,6 +17003,8 @@ Draw.loadPlugin(function (ui) {
         });
     } // CHANGE: allocation scheduler reads reusable scheduling choices from draft objects.
 
+    const ALLOCATION_DEFAULT_LABELS = { method: 'Planting method', tasks: 'Task recipe', grownFor: 'Grown-for stage' }; // CHANGE
+
     async function resolveAllocationDefaultStatus(draft = {}) {
         const plantId = draftPlantId(draft);
         const varietyId = draftVarietyId(draft);
@@ -16953,6 +17026,33 @@ Draw.loadPlugin(function (ui) {
             taskTemplate: taskTemplate && taskTemplate.template || null
         };
     } // CHANGE: Allocate can decide whether to show review or first-time scheduler defaults.
+
+    /** Save only absent required records, checking selection between writes; retries preserve prior successful saves. */ // CHANGE
+    async function persistAllocationRequiredDefaults(draft, { isCurrent = () => true } = {}) { // CHANGE
+        const plantId = draftPlantId(draft), varietyId = draftVarietyId(draft), methodId = draftMethodId(draft); // CHANGE
+        const status = await resolveAllocationDefaultStatus(draft), saved = []; // CHANGE
+        for (const key of status.missing) { // CHANGE
+            if (!isCurrent()) throw new Error('Allocation selection changed before defaults could be saved.'); // CHANGE
+            if (key === 'method') { // CHANGE
+                if (!methodId) throw new Error('Select a planting method before saving its default.'); // CHANGE
+                const patch = { default_planting_method: methodId, default_planting_method_category: draftMethodCategoryId(draft, methodId), days_transplant: draft.lifecycle.effectiveTransplantDays, harvest_window_days: draft.lifecycle.harvestWindowDays }; // CHANGE
+                if (varietyId != null) { // CHANGE
+                    const variety = await PlantVarietyModel.loadById(varietyId); // CHANGE
+                    if (!variety || Number(variety.plant_id) !== plantId) throw new Error('The selected variety is no longer available.'); // CHANGE
+                    if (!isCurrent()) throw new Error('Allocation selection changed before defaults could be saved.'); // CHANGE
+                    await PlantVarietyModel.update({ varietyId, overrides: { ...variety.overridesObject(), ...patch } }); // CHANGE
+                } else await PlantModel.update(plantId, patch); // CHANGE
+            } else if (key === 'tasks') { // CHANGE
+                await TaskTemplateModel.saveForSelection({ plantId, varietyId, methodId, template: draft.lifecycle?.taskTemplate || draft.taskTemplate || { version: 2, rules: [] } }); // CHANGE
+            } else if (key === 'grownFor') { // CHANGE
+                const stages = await PlantGrowthStageModel.listByPlantId(plantId, { includeInactive: true }); // CHANGE
+                if (!isCurrent()) throw new Error('Allocation selection changed before defaults could be saved.'); // CHANGE
+                if (!stages.length) await PlantGrowthStageModel.saveForPlant(plantId, [draftGrowthStage(draft)]); // CHANGE: never replace an existing stage set created during setup.
+            } // CHANGE
+            saved.push(key); // CHANGE
+        } // CHANGE
+        return saved; // CHANGE
+    } // CHANGE
 
     async function persistAllocationReusableDefaults(draft, options = {}) {
         const plantId = draftPlantId(draft);
@@ -17032,7 +17132,7 @@ Draw.loadPlugin(function (ui) {
         return await new Promise((resolve, reject) => {
             let settled = false;
             const finish = value => { if (!settled) { settled = true; resolve(value); } };
-            const draftContext = { draft: current, defaultStatus: options.defaultStatus, isCurrent: options.isCurrent, revalidateDraft: options.revalidateDraft, // CHANGE
+            const draftContext = { draft: current, defaultStatus: options.defaultStatus, requiredDefaults: options.requiredDefaults, focusMissingDefault: options.focusMissingDefault, isCurrent: options.isCurrent, revalidateDraft: options.revalidateDraft, // CHANGE
                 relationships, // CHANGE: reuse direction-aware scheduler timing metadata.
                 onPreview: next => finish({ action: options.previewOnly ? 'preview' : 'create', draft: next }), onCancel: () => finish({ action: 'cancel' }) };
             buildScheduleDialog(ui, target, [plant], [city], null, {
@@ -17543,7 +17643,7 @@ Draw.loadPlugin(function (ui) {
 
     async function openSetPlantDialog(ui, cell) {
         if (!ui || !ui.editor || !ui.editor.graph) throw new Error('Trellis editor UI is unavailable.'); // CHANGE
-        if (!isTilerGroup(cell)) throw new Error('Set Plant requires a tiler group.');
+        if (!isTilerGroup(cell)) throw new Error('Set Plant requires a planting group.'); // CHANGE: canonical planting terminology.
 
         const graph = ui.editor.graph;
         const model = graph.getModel();
@@ -17646,7 +17746,7 @@ Draw.loadPlugin(function (ui) {
         ok.title = "Assign the selected plant and its default spacing to this planting group."; // CHANGE: explicit action tooltip.
         const cancel = mxUtils.button('Cancel', () => ui.hideDialog());
         applySharedButtonStyle(ok, 'add');
-        applySharedButtonStyle(cancel, 'neutral');
+        applySharedButtonStyle(cancel, 'close'); // CHANGE: Select Plant cancellation uses the red outline.
         btns.appendChild(ok);
         btns.appendChild(cancel);
         div.appendChild(btns);

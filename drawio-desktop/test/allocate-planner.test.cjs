@@ -19,7 +19,7 @@ function makeNode(ownerDocument) {
         return false;
     }
     const node = {
-        style: {},
+        style: {}, dataset: {}, // CHANGE: shared HTML previews use owner metadata.
         children: [],
         attributes: new Map(),
         listeners: new Map(),
@@ -28,6 +28,7 @@ function makeNode(ownerDocument) {
         parentNode: null,
         appendChild(child) { this.children.push(child); child.parentNode = this; if (!child.ownerDocument) child.ownerDocument = this.ownerDocument; return child; },
         removeChild(child) { this.children = this.children.filter(item => item !== child); child.parentNode = null; if (this.ownerDocument && this.ownerDocument.activeElement === child) this.ownerDocument.activeElement = null; },
+        replaceChildren(...children) { this.innerHTML = ''; children.forEach(child => this.appendChild(child)); }, // CHANGE: required-default guidance uses the standard DOM replacement operation.
         setAttribute(key, value) { this.attributes.set(String(key), String(value)); if (String(key) === "class") this.className = String(value); },
         getAttribute(key) { return this.attributes.get(String(key)) || null; },
         addEventListener(type, fn) { const key = String(type || ""); this.listeners.set(key, (this.listeners.get(key) || []).concat(fn)); },
@@ -107,12 +108,14 @@ function loadAllocatePlugin() {
         addListener: graphEvents.addListener,
         removeListener: graphEvents.removeListener
     };
+    const windowEvents = new Map(); // CHANGE: required-default saves use the same browser notifications as the real scheduler.
     const window = {
         USL: {},
         Trellis: {},
         getComputedStyle(node) { return { position: node && node.style && node.style.position || "static" }; },
-        addEventListener() {},
-        removeEventListener() {},
+        addEventListener(type, listener) { windowEvents.set(type, (windowEvents.get(type) || []).concat(listener)); }, // CHANGE
+        removeEventListener(type, listener) { windowEvents.set(type, (windowEvents.get(type) || []).filter(item => item !== listener)); }, // CHANGE
+        dispatchEvent(event) { (windowEvents.get(event.type) || []).forEach(listener => listener(event)); }, // CHANGE
         localStorage: {
             getItem() { return null; },
             setItem() {}
@@ -144,6 +147,10 @@ function loadAllocatePlugin() {
         },
         Draw: { loadPlugin(callback) { callback({ editor: { graph }, showDialog(node) { document.lastDialog = node; root.appendChild(node); }, hideDialog() { if (document.lastDialog) root.removeChild(document.lastDialog); document.lastDialog = null; } }); } } // CHANGE: exercise the explicit review/create action.
     });
+    const plantingSource = fs.readFileSync(path.join(path.dirname(PLUGIN_PATH), 'Planting_Group.js'), 'utf8'); // CHANGE
+    const sharedDrawing = plantingSource.slice(plantingSource.indexOf('const GRAPH_OVERLAY_LAYER_CLASS'), plantingSource.indexOf('    const plantingPreview =')); // CHANGE
+    context.previewGraph = graph; // CHANGE
+    vm.runInContext('(function(graph){ const GRAPH_OVERLAY_Z={ANNOTATION:10000,CONNECTION:10010,CONTROL:10020,CONTROL_TOP:10030}; ' + sharedDrawing + '; graph.__trellisPlantingGroup={preview:createPlantingPreviewRenderer()}; })(previewGraph);', context); // CHANGE: run the production shared renderer in this focused harness.
     vm.runInContext(SOURCE, context, { filename: PLUGIN_PATH });
     const api = window.USL.allocate.__test;
     api.__window = window;
@@ -417,7 +424,7 @@ test("Allocate open renders a progress state before sow-week scheduling complete
     assert.equal(state.scheduleProgress.foundActions, 2);
     assert.deepEqual(Array.from(state.actionSchedule.actionableWeekIndices), [17]);
     assert.equal(lifecycleCalls, 2);
-    assert.ok(collectText(api.__root).includes("Review Schedule"));
+    assert.ok(collectText(api.__root).includes("Create planting")); // CHANGE
 
     cropSelect.value = "cilantro";
     cropSelect.dispatchEvent({ type: "change", target: cropSelect });
@@ -438,8 +445,8 @@ test("Allocate open renders a progress state before sow-week scheduling complete
     assert.equal(badge.style.top, "6px"); // CHANGE
     assert.equal(ghost.parentNode, annotationLayer); // CHANGE: draft ghost sits below controls on the graph annotation layer.
     assert.match(ghost.style.cssText, /position:absolute/); // CHANGE
-    assert.match(ghost.style.cssText, /left:7px/); // CHANGE
-    assert.match(ghost.style.cssText, /top:11px/); // CHANGE
+    assert.match(ghost.style.cssText, /left:0/); // CHANGE
+    assert.match(ghost.style.cssText, /top:0/); // CHANGE
 
     api.__window.USL.allocate.close("cache-test");
     const reopened = await api.__window.USL.allocate.open(moduleCell, 2027);
@@ -463,8 +470,8 @@ test("Allocate graph overlay coordinates are relative to the graph container", (
     const api = loadAllocatePlugin();
     const point = api.graphPointToContainer(50, 80);
 
-    assert.equal(point.left, 57); // CHANGE: graph-local overlays include container scroll, not viewport origin.
-    assert.equal(point.top, 91); // CHANGE
+    assert.equal(point.left, 50); // CHANGE // CHANGE: graph-local overlays include container scroll, not viewport origin.
+    assert.equal(point.top, 80); // CHANGE: graph content scrolls without added offsets. // CHANGE
     assert.equal(point.scale, 1);
 });
 
@@ -1024,8 +1031,8 @@ test("Allocate plugin owns launch, draft review, and one-transaction create cont
     assert.match(SOURCE, /buildWeekOpportunityModel/);
     assert.match(SOURCE, /listPlantingFootprints/);
     assert.match(SOURCE, /currentBedContext/);
-    assert.match(SOURCE, /Review Schedule/);
-    assert.match(SOURCE, /graphPointToContainer\(geo\.x, geo\.y\)/); // CHANGE: draft ghosts render in graph-local overlay coordinates.
+    assert.match(SOURCE, /Create planting/); // CHANGE
+    assert.match(SOURCE, /renderer\.render\(state\.ownerId/); // CHANGE: draft ghosts render in graph-local overlay coordinates.
     assert.match(SOURCE, /vegHeightCm: context\.plantResolution\.plant\.veg_height_cm \|\| null/);
     assert.match(SOURCE, /state\.draft = rotateAllocationResult\(state, state\.draft\)/); // CHANGE: rotation shares the authoritative fitting and supply calculation.
 });
@@ -1089,8 +1096,13 @@ test('allocation invalidates timing and geometry edits but ignores presentation-
 });
 
 /** Opens a real Allocate controller with deterministic scheduling and navigator spies. */ // CHANGE
-async function previewSession({ selectBed = true } = {}) { // CHANGE
+async function previewSession({ selectBed = true, sharedButtons = false } = {}) { // CHANGE: exercise both normal and standalone button rendering.
     const api = loadAllocatePlugin();
+    if (sharedButtons) { // CHANGE: load the production contract into the existing controller harness.
+        api.__document.getElementById = id => api.__root.children.find(node => node.id === id) || null; // CHANGE
+        const sharedSource = fs.readFileSync(path.join(path.dirname(PLUGIN_PATH), 'Trellis_UI_Cleanup.js'), 'utf8'); // CHANGE
+        vm.runInNewContext(sharedSource.slice(0, sharedSource.indexOf('Draw.loadPlugin')), { window: api.__window, document: api.__document }); // CHANGE
+    } // CHANGE
     const bed = { id: 'bed-preview', getAttribute: () => 'Bed', getGeometry: () => ({ x: 0, y: 0, width: 100, height: 40 }) };
     const crop = { id: 'crop', cropId: 'crop', plantId: '1', plant: 'Lettuce', label: 'Lettuce', method: 'direct_sow.field', kgPerPlant: 1 };
     const coverage = { totals: { targetKg: 4, shortKg: 4 }, cropSummaries: [{ cropId: 'crop', targetKg: 4, shortKg: 4 }], weekStarts: [{ iso: '2027-01-04' }, { iso: '2027-01-11' }], weekSummaries: [{ weekIndex: 0, start: '2027-01-04', targetKg: 0, shortKg: 0, cropShortages: [] }, { weekIndex: 1, start: '2027-01-11', targetKg: 4, shortKg: 4, cropShortages: [{ cropId: 'crop', shortKg: 4 }] }] };
@@ -1124,13 +1136,17 @@ async function previewSession({ selectBed = true } = {}) { // CHANGE
 } // CHANGE
 
 test('saving an edited schedule updates both previews without creating the planting', async () => { // CHANGE
-    const harness = await previewSession();
+    const harness = await previewSession({ sharedButtons: true }); // CHANGE: also verify shared styling preserves controller actions.
     const { api, state, lifecycle, previews } = harness;
+    const close = state.hud.children[0].children.find(node => node.textContent === 'Close'); // CHANGE
+    assert.equal(close.getAttribute('data-trellis-button-variant'), 'close'); assert.equal(close.style.border, '1px solid #b91c1c'); // CHANGE
+    assert.equal(close.style.background, '#fff'); assert.equal(close.style.borderRadius, '6px'); assert.equal(close.style.padding, '6px 10px'); // CHANGE
+    assert.equal(state.hudRefs.findBest.getAttribute('data-trellis-button-variant'), 'open'); assert.equal(state.hudRefs.create.getAttribute('data-trellis-button-variant'), 'add'); // CHANGE
     api.__window.USL.scheduler.openAllocationScheduleDialog = async (ui, draft, options) => {
         assert.equal(options.previewOnly, true);
         return { action: 'preview', draft: { ...draft, actionStartISO: '2027-01-05', lifecycle: { ...lifecycle, startISO: '2027-01-05', primaryDateISO: '2027-01-05' } } };
     };
-    state.hudRefs.create.click();
+    state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]').click(); // CHANGE: missing defaults have a separate setup link while Create stays disabled.
     await waitUntil(() => state.draft.actionStartISO === '2027-01-05' && !state.reviewing);
     assert.equal(state.draft.actionStartISO, '2027-01-05');
     assert.equal(previews.at(-1).entryISO, '2027-01-05');
@@ -1139,6 +1155,66 @@ test('saving an edited schedule updates both previews without creating the plant
     api.__window.USL.allocate.close();
     assert.equal(harness.cleared.at(-1), state.ownerId);
 });
+
+test('required-default checklist stays mounted through resize and its setup save enables direct creation without a scheduler loop', async () => { // CHANGE
+    const h = await previewSession(), { api, state } = h; // CHANGE
+    const link = state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]'); link.focus(); // CHANGE
+    assert.equal(state.hudRefs.create.textContent, 'Create planting'); assert.equal(state.hudRefs.create.disabled, true); // CHANGE
+    api.__window.dispatchEvent({ type: 'resize' }); assert.equal(state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]'), link); assert.equal(api.__document.activeElement, link); // CHANGE
+    let saved = false, opened = 0; const tasks = [{ title: 'Saved recipe sow', startISO: '2027-01-04' }]; // CHANGE
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete: saved, missing: saved ? [] : ['tasks'] }); // CHANGE
+    api.__window.USL.scheduler.openAllocationScheduleDialog = async (ui, draft, options) => { // CHANGE
+        opened++; assert.deepEqual(Array.from(options.requiredDefaults), ['tasks']); assert.equal(options.focusMissingDefault, 'tasks'); // CHANGE
+        api.__window.dispatchEvent({ type: 'usl:growthStagesSaved', detail: { plantId: '1' } }); assert.equal(options.isCurrent(), true); // CHANGE: a setup's save notification must not cancel its own draft.
+        saved = true; return { action: 'preview', draft: { ...draft, taskPreview: tasks, lifecycle: { ...draft.lifecycle, taskPreview: tasks } } }; // CHANGE
+    }; // CHANGE
+    link.click(); await waitUntil(() => !state.reviewing); assert.equal(h.getCreates(), 0); assert.equal(state.hudRefs.create.disabled, false); // CHANGE
+    state.hudRefs.create.click(); await waitUntil(() => !state.reviewing); assert.equal(h.getCreates(), 1); assert.equal(opened, 1); assert.equal(api.__document.lastDialog, undefined); // CHANGE
+    api.__window.USL.allocate.close(); // CHANGE
+}); // CHANGE
+
+test('a failed default lookup is separate from missing records and retry restores readiness without replacing the draft', async () => { // CHANGE
+    const { api, state } = await previewSession(); const draft = state.draft; // CHANGE
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => { throw new Error('Default database unavailable'); }; // CHANGE
+    state.defaultsLookup = null; api.__window.dispatchEvent({ type: 'resize' }); await waitUntil(() => !state.defaultsLookup.pending); // CHANGE
+    assert.match(collectText(state.hudRefs.defaultsBox).join(' '), /Could not check required defaults.*Default database unavailable/); // CHANGE
+    assert.equal(state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default]'), null); assert.equal(state.hudRefs.create.disabled, true); // CHANGE
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete: true, missing: [] }); // CHANGE
+    state.hudRefs.defaultsBox.children.find(node => node.textContent === 'Retry defaults check').click(); await waitUntil(() => !state.defaultsLookup.pending); // CHANGE
+    assert.equal(state.hudRefs.create.disabled, false); assert.equal(state.draft, draft); api.__window.USL.allocate.close(); // CHANGE
+}); // CHANGE
+
+test('a late default lookup cannot enable creation for a newly selected method', async () => { // CHANGE
+    const { api, state } = await previewSession(); let release; // CHANGE
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = draft => draft.lifecycle?.methodId === 'transplant.indoor' ? Promise.resolve({ complete: false, missing: ['tasks'] }) : new Promise(resolve => { release = resolve; }); // CHANGE
+    state.defaultsLookup = null; api.__window.dispatchEvent({ type: 'resize' }); await waitUntil(() => !!release); assert.equal(state.hudRefs.create.disabled, true); // CHANGE
+    state.draft.lifecycle = { ...state.draft.lifecycle, methodId: 'transplant.indoor' }; api.__window.dispatchEvent({ type: 'resize' }); await waitUntil(() => !state.defaultsLookup.pending); // CHANGE
+    release({ complete: true, missing: [] }); await new Promise(resolve => setTimeout(resolve, 10)); // CHANGE
+    assert.equal(state.defaultsLookup.status.complete, false); assert.equal(state.hudRefs.create.disabled, true); api.__window.USL.allocate.close(); // CHANGE
+}); // CHANGE
+
+test('Create rereads saved defaults and rejects a formerly ready crop without opening setup or mutating the graph', async () => { // CHANGE
+    const h = await previewSession(), { api, state } = h; let complete = true, setupCalls = 0; // CHANGE
+    api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete, missing: complete ? [] : ['method'] }); // CHANGE
+    api.__window.USL.scheduler.openAllocationScheduleDialog = async () => { setupCalls++; }; // CHANGE
+    state.defaultsLookup = null; api.__window.dispatchEvent({ type: 'resize' }); await waitUntil(() => !state.defaultsLookup.pending); assert.equal(state.hudRefs.create.disabled, false); // CHANGE
+    complete = false; state.hudRefs.create.click(); await waitUntil(() => !state.reviewing); // CHANGE
+    assert.equal(h.getCreates(), 0); assert.equal(setupCalls, 0); assert.equal(state.hudRefs.create.disabled, true); // CHANGE
+    assert.ok(state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="method"]')); api.__window.USL.allocate.close(); // CHANGE
+}); // CHANGE
+
+test('compatibility warnings always require confirmation even when a stored suppression preference exists', async () => { // CHANGE
+    const h = await previewSession(), { api, state } = h; // CHANGE
+    api.__window.localStorage.getItem = () => '1'; api.__window.USL.scheduler.resolveAllocationDefaultStatus = async () => ({ complete: true, missing: [] }); // CHANGE
+    state.draft.taskPreview = [{ title: 'Sow' }]; state.draft.warnings = ['Unknown crop relationship']; // CHANGE
+    state.hudRefs.create.click(); await waitUntil(() => !!api.__document.lastDialog); // CHANGE
+    assert.match(collectText(api.__document.lastDialog).join(' '), /Unknown crop relationship/); assert.equal(h.getCreates(), 0); // CHANGE
+    const cancel = api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Cancel'); // CHANGE
+    assert.equal(cancel.getAttribute('data-trellis-button-variant'), 'close'); assert.match(cancel.style.cssText, /border:1px solid #b91c1c;.*background:#fff/); // CHANGE: standalone review retains outlined dismissal.
+    assert.match(cancel.style.cssText, /border-radius:6px;padding:6px 10px/); // CHANGE
+    assert.equal(collectText(api.__document.lastDialog).some(text => text.includes("Don't show again")), false); // CHANGE
+    api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Cancel').click(); await waitUntil(() => !state.reviewing); api.__window.USL.allocate.close(); // CHANGE
+}); // CHANGE
 
 test('crop selection requires a canvas bed or the explicit Find best bed action', async () => { // CHANGE
     const { api, state, bed } = await previewSession({ selectBed: false });
@@ -1234,7 +1310,7 @@ test('pending bed evaluations and editor results cannot restore a cleared module
     const { api, state, bed, lifecycle } = await previewSession();
     let resolveEdit;
     api.__window.USL.scheduler.openAllocationScheduleDialog = () => new Promise(resolve => { resolveEdit = resolve; });
-    state.hudRefs.create.click();
+    state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]').click(); // CHANGE
     await waitUntil(() => !!resolveEdit);
     const draft = state.draft;
     api.__graph.setSelectionCell(state.moduleCell);
@@ -1273,10 +1349,8 @@ test('Edit delegates to the scheduler and creation commits the exact reviewed ta
     assert.equal(state.draft.taskPreview, tasks);
     assert.match(state.noticeMessage, /Schedule updated/); // CHANGE
     state.hudRefs.create.click();
-    await waitUntil(() => !!api.__document.lastDialog);
-    assert.match(collectText(api.__document.lastDialog).join(' '), /Reviewed sow task/);
-    api.__document.lastDialog.children.at(-1).children.find(node => node.textContent === 'Create').click();
     await waitUntil(() => !state.reviewing);
+    assert.equal(api.__document.lastDialog, null); // CHANGE: the accepted task-bearing clean preview creates directly.
     assert.equal(persisted, 1, state.noticeMessage); // CHANGE: include deferred-default failure details in commit assertions.
     assert.equal(state.noticeMessage, ''); // CHANGE: creation clears the prior editor notice.
     api.__window.USL.allocate.close();
@@ -1287,11 +1361,11 @@ test('scheduler cancellation and invalid edits retain the accepted proposal', as
     const { api, state } = harness;
     const original = state.draft;
     api.__window.USL.scheduler.openAllocationScheduleDialog = async () => ({ action: 'cancel' });
-    state.hudRefs.create.click();
+    state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]').click(); // CHANGE
     await waitUntil(() => !state.reviewing);
     assert.equal(state.draft, original);
     api.__window.USL.scheduler.openAllocationScheduleDialog = async () => ({ action: 'preview', draft: { lifecycle: { ok: false, reason: 'Invalid edited timing' } } });
-    state.hudRefs.create.click();
+    state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]').click(); // CHANGE
     await waitUntil(() => !state.reviewing);
     assert.equal(state.draft, original);
     assert.match(state.noticeMessage, /Invalid edited timing/);
@@ -1308,7 +1382,7 @@ test('allocation revalidation preserves lifecycle preferences and supplies the c
         revalidated = await options.revalidateDraft(candidate); // CHANGE
         return { action: 'preview', draft: revalidated }; // CHANGE
     }; // CHANGE
-    state.hudRefs.create.click(); await waitUntil(() => !state.reviewing); // CHANGE
+    state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]').click(); await waitUntil(() => !state.reviewing); // CHANGE
     assert.ok(revalidated.ok); assert.equal(savedCell, undefined); // CHANGE
     assert.equal(state.draft.saveLifecycleDefaults, true); assert.equal(state.draft.saveSpacingDefaults, true); // CHANGE
     assert.equal(state.draft.lifecycleOverrides.harvestWindowDays, 14); assert.equal(state.draft.bedTimingComparisons[0].cellId, 'other'); // CHANGE
@@ -1370,7 +1444,7 @@ test('pending scheduler results cannot restore a closed or changed allocation pr
     const { api, state } = harness;
     let resolveEdit;
     api.__window.USL.scheduler.openAllocationScheduleDialog = () => new Promise(resolve => { resolveEdit = resolve; });
-    state.hudRefs.create.click();
+    state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]').click(); // CHANGE
     await waitUntil(() => !!resolveEdit);
     const previewCount = harness.previews.length;
     api.__window.USL.allocate.close();
@@ -1517,9 +1591,9 @@ test('rotated warned drafts update the HUD, ghost, timeline and reviewed creatio
     state.hudRefs.rotate.click(); // CHANGE
     assert.notEqual(state.draft.plantCount, originalCount); // CHANGE
     assert.match(collectText(state.hudRefs.draftBox).join(' '), /Companion overlap with Carrot/); // CHANGE
-    assert.equal(state.ghost.children.filter(node => node.getAttribute('cx') != null).length, state.draft.plantCount); // CHANGE
-    assert.equal(parseFloat(state.ghost.style.cssText.match(/left:([^;]+)px/)[1]), Math.round((state.draft.geometry.geometry.x + 300 + 5) * 1.75 + api.__graphContainer.scrollLeft)); // CHANGE
-    assert.equal(parseFloat(state.ghost.style.cssText.match(/top:([^;]+)px/)[1]), Math.round((state.draft.geometry.geometry.y + 150 + 10) * 1.75 + api.__graphContainer.scrollTop)); // CHANGE
+    assert.equal(state.ghost.querySelectorAll('.manual-link-spacing-preview-plant').length, state.draft.plantCount); // CHANGE
+    assert.equal(parseFloat(state.ghost.querySelector('.manual-link-spacing-preview-group-frame').style.left), Math.round((state.draft.geometry.geometry.x + 300 + 5) * 1.75)); // CHANGE
+    assert.equal(parseFloat(state.ghost.querySelector('.manual-link-spacing-preview-group-frame').style.top), Math.round((state.draft.geometry.geometry.y + 150 + 10) * 1.75)); // CHANGE
     assert.equal(previews.at(-1).plantingRect, state.draft.geometry.plantingRect); // CHANGE
     state.hudRefs.rotate.click(); assert.equal(state.draft.plantCount, originalCount); // CHANGE
     let created = null, transactions = 0; // CHANGE
@@ -1532,4 +1606,18 @@ test('rotated warned drafts update the HUD, ghost, timeline and reviewed creatio
     assert.equal(created.proposal.plantCount, reviewed.plantCount); assert.equal(created.insideUpdate, true); // CHANGE
     assert.match(created.attributes.allocation_override_json, /Companion overlap with Carrot/); assert.equal(transactions, 1); // CHANGE
     api.__window.USL.allocate.close(); // CHANGE
+}); // CHANGE
+
+test('Allocate recovers its preview notice when Planting Group becomes available', async () => { // CHANGE
+    const { api, state } = await previewSession(); // CHANGE
+    const owner = api.__graph.__trellisPlantingGroup; // CHANGE
+    try { // CHANGE
+        delete api.__graph.__trellisPlantingGroup; // CHANGE
+        state.hudRefs.rotate.click(); // CHANGE
+        assert.match(state.noticeMessage, /Planting preview unavailable/); // CHANGE
+        api.__graph.__trellisPlantingGroup = owner; // CHANGE
+        state.hudRefs.rotate.click(); // CHANGE
+        assert.doesNotMatch(state.noticeMessage || '', /Planting preview unavailable/); // CHANGE
+        assert.ok(api.__graphContainer.querySelector('.trellis-allocate-ghost')); // CHANGE
+    } finally { api.__graph.__trellisPlantingGroup = owner; api.__window.USL.allocate.close(); } // CHANGE
 }); // CHANGE

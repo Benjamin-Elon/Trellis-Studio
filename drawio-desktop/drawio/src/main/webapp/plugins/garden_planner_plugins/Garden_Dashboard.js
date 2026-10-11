@@ -723,7 +723,7 @@ Draw.loadPlugin(function (ui) {
       <tr>
         <td style="border:1px solid #999; padding:4px; font-weight:700;">Selected year</td>
         <td style="border:1px solid #999; padding:4px;">${esc(year)}</td>
-        <td style="border:1px solid #999; padding:4px; font-weight:700;">Total tiler groups</td>
+        <td style="border:1px solid #999; padding:4px; font-weight:700;">Total planting groups</td> <!-- CHANGE: canonical planting terminology. -->
         <td style="border:1px solid #999; padding:4px; text-align:right;">${esc(metrics.tilerGroupsTotal)}</td>
       </tr>
       <tr>
@@ -811,7 +811,7 @@ Draw.loadPlugin(function (ui) {
         push(["Garden module", metrics.moduleName || ""]);
         push(["Location (city)", metrics.city || ""]);
         push(["Selected year", String(year)]);
-        push(["Total tiler groups", String(metrics.tilerGroupsTotal ?? 0)]);
+        push(["Total planting groups", String(metrics.tilerGroupsTotal ?? 0)]); // CHANGE: preserve the persisted metric key.
         push(["Tiler groups in year", String(metrics.tilerGroupsInYear ?? 0)]);
         push(["Filter", `perennial OR season_start_year == ${year} OR harvest overlaps ${year}`]);
 
@@ -1828,7 +1828,7 @@ Draw.loadPlugin(function (ui) {
         status.style.cssText = "min-height:18px;color:#4B5563;margin-bottom:8px;";
         const buttons = document.createElement("div");
         buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
-        const cancel = createToolbarButton("Cancel", "Close share dialog", "neutral");
+        const cancel = createToolbarButton("Cancel", "Close share dialog", "close"); // CHANGE: share cancellation uses the red outline.
         const send = createToolbarButton("Create Email", "Create invite and open an email draft", "open");
         cancel.addEventListener("click", function () { closeShareDialog(overlay); });
         send.addEventListener("click", function () {
@@ -1877,7 +1877,7 @@ Draw.loadPlugin(function (ui) {
         status.style.cssText = "min-height:18px;color:#4B5563;margin-bottom:8px;";
         const buttons = document.createElement("div");
         buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
-        const cancel = createToolbarButton("Cancel", "Close", "neutral");
+        const cancel = createToolbarButton("Cancel", "Close", "close"); // CHANGE: enable-users cancellation uses the red outline.
         const enable = createToolbarButton("Enable", "Enable users and continue sharing", "add");
         cancel.addEventListener("click", function () { closeShareDialog(overlay); });
         enable.addEventListener("click", function () {

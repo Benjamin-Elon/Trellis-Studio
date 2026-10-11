@@ -1,9 +1,12 @@
 /**
- * Trellis plugin: Drag Circle → Auto Group → Resize to Tile (Square Grid, SQLite-backed)
+ * Trellis plugin: Planting Group — Drag Circle → Auto Group → Resize to Tile (Square Grid, SQLite-backed)
  * With debug logs, re-entrancy guard, resize debounce, and max-tile cap.
  */
 Draw.loadPlugin(function (ui) {
-    const graph = ui.editor.graph;
+    const graph = ui.editor.graph; // CHANGE
+    if (graph.__trellisPlantingGroupInstalled) return; // CHANGE: legacy and canonical plugin names install once.
+    graph.__trellisPlantingGroupInstalled = true; // CHANGE
+    const model = graph.getModel(); // CHANGE
 
     // -------------------- Config --------------------
     const PX_PER_CM = 5;
@@ -96,7 +99,7 @@ Draw.loadPlugin(function (ui) {
     const ATTR_PLANT_COUNT_ACT = "plant_count_actual";
     const ATTR_DISABLED_PLANTS = "disabled_plants";
 
-    // --------------- Tiler group scaling font size -----------------
+    // --------------- Planting group scaling font size -----------------
     const GROUP_BASE_AREA_PX2 = 240 * 240;
     const GROUP_LABEL_FONT_MIN_PX = 10;
     const GROUP_LABEL_FONT_MAX_PX = 18;
@@ -169,7 +172,7 @@ Draw.loadPlugin(function (ui) {
         const win = typeof window !== "undefined" ? window : null;
         const flags = debugFlagSnapshot();
         return {
-            plugin: "Plant_Tiler.js",
+            plugin: "Planting_Group.js",
             loaded: true,
             debugEnabled: bedFitDebugEnabled(),
             url: win && win.location ? String(win.location.href || "") : "",
@@ -693,7 +696,7 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
-    // ------------------- Layering (garden beds, bed assemblies, other, tiler groups) ----------------
+    // ------------------- Layering (garden beds, bed assemblies, other, planting groups) ----------------
 
     let __REORDERING = false;
 
@@ -757,7 +760,7 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    // ----------------- Tiler group helpers ----------------------
+    // ----------------- Planting group helpers ----------------------
 
 
     function isValidGardenYear(value) {
@@ -2509,7 +2512,7 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.gap = "8px";
         btnRow.style.marginTop = "12px";
 
-        const cancelBtn = tilerButton("Cancel", () => ui.hideDialog(), "neutral");
+        const cancelBtn = tilerButton("Cancel", () => ui.hideDialog(), "close"); // CHANGE: garden settings cancellation uses the red outline.
         const okBtn = tilerButton("OK", () => {
             err.style.display = "none";
             const chosenGardenName = String(gardenNameInput.value || "").trim() || "Garden";
@@ -3662,7 +3665,7 @@ Draw.loadPlugin(function (ui) {
             if (bed && bed.id) bedIds.add(bed.id);
         }
 
-        // Ignore tiler groups that are over multiple beds (or no bed).
+        // Ignore planting groups that are over multiple beds (or no bed).
         if (bedIds.size !== 1) {
             return { removed: 0, skipped: true, reason: bedIds.size === 0 ? "no_bed" : "multiple_beds" };
         }
@@ -4819,7 +4822,7 @@ Draw.loadPlugin(function (ui) {
 
 
     /**
-     * Creates an empty tiler group inside the given garden module.
+     * Creates an empty planting group inside the given garden module.
      * - No plant is preselected.
      * - Defaults spacing to 30 cm (both axes).
      * - Centers a 240x240 group within the module bounds.
@@ -4972,7 +4975,7 @@ Draw.loadPlugin(function (ui) {
         }, "neutral", { title: "Apply this horizontal and vertical spacing to the planting." }); // CHANGE: explicit action tooltip.
         const cancelBtn = tilerButton("Cancel", function () {
             ui.hideDialog();
-        }, "neutral");
+        }, "close"); // CHANGE: spacing cancellation uses the red outline.
         btnRow.appendChild(cancelBtn);
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
@@ -4994,7 +4997,7 @@ Draw.loadPlugin(function (ui) {
 
     function runSetGroupSpacingOn(graph, groupCell) {
         if (!groupCell || !isTilerGroup(groupCell)) {
-            log("[spacing] not a tiler group");
+            log("[spacing] not a planting group");
             return;
         }
         const curX = Number(
@@ -5246,7 +5249,7 @@ Draw.loadPlugin(function (ui) {
             addItems: function (menu, cell, evt) {
                 log("[popup] start " + JSON.stringify({ orderedContributor: true }));
 
-                // ----- Tiler group item -----
+                // ----- Planting group item -----
                 const target = resolveTarget(cell, evt);
                 if (target && isTilerGroup(target)) {
                     const curX = Number(
@@ -5280,7 +5283,7 @@ Draw.loadPlugin(function (ui) {
                         }
                     });
                 } else {
-                    log("[popup] no tiler group under cursor");
+                    log("[popup] no planting group under cursor");
                 }
 
                 // ----- MODULE CONTEXT MENU -----
@@ -5431,7 +5434,7 @@ Draw.loadPlugin(function (ui) {
                         }
                     }
 
-                    // Restore: if any selected/target tiler groups have disabled tiles                   
+                    // Restore: if any selected/target planting groups have disabled tiles                   
                     const groupsForRestore = collectSelectedTilerGroups(graph, target);
                     const restorable = groupsForRestore.filter(g => groupHasDisabled(g));
                     if (restorable.length) {
@@ -5741,8 +5744,51 @@ Draw.loadPlugin(function (ui) {
         return { width, height, overhang, cols: count(width, sx), rows: count(height, sy) }; // CHANGE
     } // CHANGE
 
+    /** Count a shifted lattice analytically, trimming to the bed's allowed circle overhang as well as content centers. */ // CHANGE
+    function fittedOffsetAxisRange(length, pitch, offset, gridCount, diameter) { // CHANGE
+        const radius = diameter / 2; // CHANGE: the expanded fitted frame already includes the allowed bed overhang.
+        const first = Math.max(0, Math.ceil((radius - pitch / 2 - offset - 0.01) / pitch)); // CHANGE
+        const last = Math.min(gridCount - 1, Math.floor((length - radius - pitch / 2 - offset + 0.01) / pitch)); // CHANGE
+        return { first, last, count: Math.max(0, last - first + 1) }; // CHANGE
+    } // CHANGE
+
+    /** Fit demand in complete surviving rows without normalizing away the user's grid offsets. */ // CHANGE
+    function fittedOffsetPlantingProposalCandidate(input, axis, sx, sy, diameter, bedRect, rotation) { // CHANGE
+        const frame = plantingProposalFrame(bedRect.width, bedRect.height, sx, sy, diameter); // CHANGE
+        const ox = toPx(Number(input.offsetXCm) || 0), oy = toPx(Number(input.offsetYCm) || 0); // CHANGE
+        const maxX = fittedOffsetAxisRange(frame.width, sx, ox, frame.cols, diameter); // CHANGE
+        const maxY = fittedOffsetAxisRange(frame.height, sy, oy, frame.rows, diameter); // CHANGE
+        const requested = Math.max(0, Math.trunc(Number(input.plantCount) || 0)); // CHANGE
+        const perRow = axis === 'width' ? maxX.count : maxY.count; // CHANGE
+        const capacity = maxX.count * maxY.count; // CHANGE
+        const requiredRows = perRow ? Math.min(axis === 'width' ? maxY.count : maxX.count, Math.ceil(requested / perRow)) : 0; // CHANGE
+        const pitch = axis === 'width' ? sy : sx, offset = axis === 'width' ? oy : ox; // CHANGE
+        const maxGrid = axis === 'width' ? frame.rows : frame.cols, maxLength = axis === 'width' ? frame.height : frame.width; // CHANGE
+        let low = 0, high = maxGrid; // CHANGE
+        while (low < high) { // CHANGE: binary search avoids scanning huge beds or tiny spacing.
+            const mid = Math.floor((low + high) / 2); // CHANGE
+            const length = mid === maxGrid ? maxLength : mid * pitch; // CHANGE: a capacity-sized partial allocation retains the bed's residual edge space.
+            if (fittedOffsetAxisRange(length, pitch, offset, mid, diameter).count >= requiredRows) high = mid; else low = mid + 1; // CHANGE
+        } // CHANGE
+        const cols = axis === 'width' ? frame.cols : low, rows = axis === 'width' ? low : frame.rows; // CHANGE
+        const fw = axis === 'width' || cols === frame.cols ? frame.width : cols * sx, fh = axis === 'height' || rows === frame.rows ? frame.height : rows * sy; // CHANGE
+        const activeColumns = fittedOffsetAxisRange(fw, sx, ox, cols, diameter), activeRows = fittedOffsetAxisRange(fh, sy, oy, rows, diameter); // CHANGE
+        const plantCount = activeColumns.count * activeRows.count; // CHANGE
+        const width = Math.max(1, fw + GROUP_PADDING_PX * 2); // CHANGE
+        const solved = solveOuterHeightForPlantingFrame(fh, width, fh + GROUP_LABEL_BAND_PX); // CHANGE
+        const localRect = { x: GROUP_PADDING_PX + sx / 2 + activeColumns.first * sx + ox - diameter / 2, // CHANGE
+            y: GROUP_PADDING_PX + solved.bandPx + sy / 2 + activeRows.first * sy + oy - diameter / 2, // CHANGE
+            width: activeColumns.count ? (activeColumns.count - 1) * sx + diameter : 0, height: activeRows.count ? (activeRows.count - 1) * sy + diameter : 0 }; // CHANGE
+        const base = { fitAxis: axis, rows, cols, capacity, plantCount, requestedPlantCount: requested, activeColumns, activeRows, // CHANGE
+            fullPlantCount: perRow ? Math.ceil(requested / perRow) * perRow : 0, spacingXpx: sx, spacingYpx: sy, iconDiameterPx: diameter, labelBandPx: solved.bandPx, // CHANGE
+            layoutOffsetXCm: Number(input.offsetXCm) || 0, layoutOffsetYCm: Number(input.offsetYCm) || 0, rotation, // CHANGE: retain the entered centimeter values without conversion roundoff.
+            geometry: { x: bedRect.x, y: bedRect.y, width, height: solved.outerHeight }, complete: capacity > 0 && plantCount >= requested }; // CHANGE
+        return chooseFittedPlantingProposalPlacement(input, base, frame, bedRect, rotation, localRect); // CHANGE
+    } // CHANGE
+
     /** Creates a read-only fitted lattice; group bounds retain grid pitch while occupancy trims to circles. */ // CHANGE
     function fittedPlantingProposalCandidate(input, axis, sx, sy, diameter, bedRect, rotation) { // CHANGE
+        if (input.offsetXCm != null || input.offsetYCm != null) return fittedOffsetPlantingProposalCandidate(input, axis, sx, sy, diameter, bedRect, rotation); // CHANGE: explicit offsets use the committed tiler's center-in-bounds rule.
         const frame = plantingProposalFrame(bedRect.width, bedRect.height, sx, sy, diameter); // CHANGE
         const requested = Math.max(0, Math.trunc(Number(input.plantCount) || 0)); // CHANGE
         const fullBed = input.fillAvailableBed === true; // CHANGE
@@ -5775,8 +5821,8 @@ Draw.loadPlugin(function (ui) {
         const bboxW = localRect.width, bboxH = localRect.height; // CHANGE
         const occupied = plantingProposalOccupancy(input, bedRect, rotation); // CHANGE
         const spanWidth = axis === "width" || fullBed, spanHeight = axis === "height" || fullBed; // CHANGE
-        const startX = spanWidth ? bedRect.x + (bedRect.width - bboxW) / 2 : bedRect.x - frame.overhang; // CHANGE
-        const startY = spanHeight ? bedRect.y + (bedRect.height - bboxH) / 2 : bedRect.y - frame.overhang; // CHANGE
+        const startX = spanWidth ? (base.activeColumns ? bedRect.x - frame.overhang + localRect.x - GROUP_PADDING_PX : bedRect.x + (bedRect.width - bboxW) / 2) : bedRect.x - frame.overhang; // CHANGE: pin the fitted frame so explicit offsets visibly shift the grid on its bed axis.
+        const startY = spanHeight ? (base.activeRows ? bedRect.y - frame.overhang + localRect.y - GROUP_PADDING_PX - base.labelBandPx : bedRect.y + (bedRect.height - bboxH) / 2) : bedRect.y - frame.overhang; // CHANGE
         const endX = spanWidth ? startX : bedRect.x + bedRect.width + frame.overhang - bboxW; // CHANGE
         const endY = spanHeight ? startY : bedRect.y + bedRect.height + frame.overhang - bboxH; // CHANGE
         const positions = (start, end, step) => { // CHANGE
@@ -5878,6 +5924,7 @@ Draw.loadPlugin(function (ui) {
         if (!best || !best.geometry) return out; // CHANGE
         for (let r = 0; r < best.rows && out.length < limit; r++) { // CHANGE
             for (let c = 0; c < best.cols && out.length < limit; c++) { // CHANGE
+                if (best.activeColumns && (c < best.activeColumns.first || c > best.activeColumns.last) || best.activeRows && (r < best.activeRows.first || r > best.activeRows.last)) continue; // CHANGE: omit shifted-out slots rather than drawing them at the edge.
                 out.push({ row: r, col: c, // CHANGE
                     x: GROUP_PADDING_PX + best.spacingXpx / 2 + c * best.spacingXpx + toPx(best.layoutOffsetXCm || 0), // CHANGE
                     y: GROUP_PADDING_PX + best.labelBandPx + best.spacingYpx / 2 + r * best.spacingYpx + toPx(best.layoutOffsetYCm || 0), // CHANGE
@@ -6143,7 +6190,7 @@ Draw.loadPlugin(function (ui) {
         const centerX = Number(geometry.x || 0) + Number(geometry.width || 240) / 2;
         const centerY = Number(geometry.y || 0) + Number(geometry.height || 240) / 2;
         const moduleGeo = moduleCell.getGeometry && moduleCell.getGeometry();
-        const group = createEmptyTilerGroup(activeGraphArg, moduleCell, (moduleGeo ? Number(moduleGeo.x) || 0 : 0) + centerX, (moduleGeo ? Number(moduleGeo.y) || 0 : 0) + centerY, { source: input.source || "allocate-create" });
+        const group = createEmptyTilerGroup(activeGraphArg, moduleCell, (moduleGeo ? Number(moduleGeo.x) || 0 : 0) + centerX, (moduleGeo ? Number(moduleGeo.y) || 0 : 0) + centerY, { source: input.source || "allocate-create", select: opts.select !== false }); // CHANGE: transactional callers can defer selection until the planting and tasks succeed.
         const model = activeGraphArg.getModel && activeGraphArg.getModel();
         const attrs = Object.assign({}, input.attributes || proposal.attributes || {}, {
             plant_count: String(Math.max(0, Math.trunc(Number(proposal.plantCount) || 0))),
@@ -6175,7 +6222,8 @@ Draw.loadPlugin(function (ui) {
                     const disabled = new Set(); // CHANGE
                     for (let r = 0; r < grid.rows; r++) { // CHANGE
                         for (let c = 0; c < grid.cols; c++) { // CHANGE
-                            if (r >= proposal.rows || c >= proposal.cols || r * proposal.cols + c >= proposal.plantCount) disabled.add(`${r},${c}`); // CHANGE
+                            const outsideOffsetRange = proposal.activeColumns && (c < proposal.activeColumns.first || c > proposal.activeColumns.last) || proposal.activeRows && (r < proposal.activeRows.first || r > proposal.activeRows.last); // CHANGE
+                            if (outsideOffsetRange || r >= proposal.rows || c >= proposal.cols || !proposal.activeRows && r * proposal.cols + c >= proposal.plantCount) disabled.add(`${r},${c}`); // CHANGE: shifted rows retain their original grid keys at commit.
                         } // CHANGE
                     } // CHANGE
                     writeDisabledSet(model, group, disabled); // CHANGE
@@ -6273,7 +6321,7 @@ Draw.loadPlugin(function (ui) {
 
                 const parent = model.getParent(cell);
                 if (isTilerGroup(parent)) {
-                    log("Already inside tiler group; skip");
+                    log("Already inside planting group; skip");
                     continue;
                 }
 
@@ -7122,7 +7170,7 @@ Draw.loadPlugin(function (ui) {
             const model = graph.getModel();
             const duringResize = !!graph.isMouseDown;
 
-            // Collect affected tiler groups and snapshot BEFORE resize
+            // Collect affected planting groups and snapshot BEFORE resize
             const groups = new Map();
             for (const c of (cells || [])) {
                 const g = isTilerGroup(c) ? c : findTilerGroupAncestor(graph, c);
@@ -7138,7 +7186,7 @@ Draw.loadPlugin(function (ui) {
                 snapshots.set(g.id, buildResizeSnapshot(graph, g, !duringResize));
             }
 
-            // Clamp tiler group bounds to minimum 1×1 capacity
+            // Clamp planting group bounds to minimum 1×1 capacity
             if (hasTiler) {
                 bounds = clampTilerBounds(cells, bounds, snapshots);
             }
@@ -7250,9 +7298,2986 @@ Draw.loadPlugin(function (ui) {
 
 
 
+    const GRAPH_OVERLAY_LAYER_CLASS = Object.freeze({ annotation: 'trellis-graph-annotation-layer', connection: 'trellis-graph-connection-layer', control: 'trellis-graph-control-layer', controlTop: 'trellis-graph-control-top-layer' }); // CHANGE: migrated planting overlay.
+
+    const GRAPH_OVERLAY_LAYER_Z = Object.freeze({ annotation: GRAPH_OVERLAY_Z.ANNOTATION, connection: GRAPH_OVERLAY_Z.CONNECTION, control: GRAPH_OVERLAY_Z.CONTROL, controlTop: GRAPH_OVERLAY_Z.CONTROL_TOP }); // CHANGE: migrated planting overlay.
+
+    function ensureGraphOverlayContainer() { // CHANGE: migrated planting overlay.
+        const host = graph.container; // CHANGE: migrated planting overlay.
+        if (!host) return null; // CHANGE: migrated planting overlay.
+        try { // CHANGE: migrated planting overlay.
+            if (window.getComputedStyle && window.getComputedStyle(host).position === 'static') host.style.position = 'relative'; // CHANGE: migrated planting overlay.
+        } catch (_) { } // CHANGE: migrated planting overlay.
+        return host; // CHANGE: migrated planting overlay.
+    } // CHANGE: migrated planting overlay.
+
+    function ensureGraphOverlayHtmlLayer(layerKey) { // CHANGE: migrated planting overlay.
+        const host = ensureGraphOverlayContainer(); // CHANGE: migrated planting overlay.
+        const key = GRAPH_OVERLAY_LAYER_CLASS[layerKey] ? layerKey : 'control'; // CHANGE: migrated planting overlay.
+        const className = GRAPH_OVERLAY_LAYER_CLASS[key]; // CHANGE: migrated planting overlay.
+        if (!host || !className) return null; // CHANGE: migrated planting overlay.
+        let layer = host.querySelector('.' + className); // CHANGE: migrated planting overlay.
+        if (!layer) { // CHANGE: migrated planting overlay.
+            layer = document.createElement('div'); // CHANGE: migrated planting overlay.
+            layer.className = className; // CHANGE: migrated planting overlay.
+            layer.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:' + GRAPH_OVERLAY_LAYER_Z[key] + ';'; // CHANGE: migrated planting overlay.
+            host.appendChild(layer); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+        return layer; // CHANGE: migrated planting overlay.
+    } // CHANGE: migrated planting overlay.
+
+    function ensureGraphOverlaySvgLayer(layerKey) { // CHANGE: migrated planting overlay.
+        const layer = ensureGraphOverlayHtmlLayer(layerKey || 'connection'); // CHANGE: migrated planting overlay.
+        if (!layer) return null; // CHANGE: migrated planting overlay.
+        layer.style.width = '100%'; // CHANGE: migrated planting overlay.
+        layer.style.height = '100%'; // CHANGE: migrated planting overlay.
+        let svg = layer.querySelector('svg.trellis-graph-connection-svg'); // CHANGE: migrated planting overlay.
+        if (!svg) { // CHANGE: migrated planting overlay.
+            svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('class', 'trellis-graph-connection-svg'); // CHANGE: migrated planting overlay.
+            svg.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:auto;'; // CHANGE: migrated planting overlay.
+            layer.appendChild(svg); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+        return svg; // CHANGE: migrated planting overlay.
+    } // CHANGE: migrated planting overlay.
+
+    /** Draw transient planting copies. Inputs use current-view model coordinates; circles are already rotated. */ // CHANGE
+    function createPlantingPreviewRenderer() { // CHANGE
+        const owners = new Map(); // CHANGE: cleanup belongs to one graph and one workflow.
+
+        function modelRectToViewRect(rect) { // CHANGE
+            const view = graph.getView(); // CHANGE
+            const scale = Number(view.scale) || 1, translate = view.translate || { x: 0, y: 0 }; // CHANGE
+            return { x: (Number(rect.x) + translate.x) * scale, y: (Number(rect.y) + translate.y) * scale, width: rect.width * scale, height: rect.height * scale, scale }; // CHANGE
+        } // CHANGE
+
+        function appendFrame(host, row, bedFrame = false) { // CHANGE
+            const rect = modelRectToViewRect(row.rect); // CHANGE
+            const color = bedFrame ? '#15803d' : row.tone === 'warning' ? '#d97706' : '#2563eb'; // CHANGE
+            const frame = document.createElement('div'); // CHANGE
+            frame.className = bedFrame ? 'manual-link-spacing-preview-bed-frame' : 'manual-link-spacing-preview-group-frame'; // CHANGE: preserve existing CSS hooks.
+            frame.dataset.spacingPreviewCell = row.cellId || ''; // CHANGE
+            Object.assign(frame.style, { // CHANGE
+                position: 'absolute', // CHANGE
+                left: Math.round(rect.x) + 'px', // CHANGE
+                top: Math.round(rect.y) + 'px', // CHANGE
+                width: Math.round(rect.width) + 'px', // CHANGE
+                height: Math.round(rect.height) + 'px', // CHANGE
+                boxSizing: 'border-box', // CHANGE
+                border: '2px ' + (bedFrame ? 'solid ' : 'dashed ') + color, // CHANGE
+                background: bedFrame ? 'rgba(22,163,74,0.035)' : 'rgba(37,99,235,0.04)', // CHANGE
+                boxShadow: '0 0 0 3px rgba(37,99,235,0.16)', // CHANGE
+                color: '#111827', // CHANGE
+                fontFamily: 'Arial, sans-serif', // CHANGE
+                fontWeight: '700', // CHANGE
+                fontSize: Math.max(8, Math.round(Number(row.groupLabelFontPx || 12) * rect.scale)) + 'px', // CHANGE
+                lineHeight: '1.2', // CHANGE
+                textAlign: 'center', // CHANGE
+                overflow: 'hidden', // CHANGE
+                transformOrigin: '50% 50%', // CHANGE
+                transform: row.rotationDeg ? 'rotate(' + row.rotationDeg + 'deg)' : '', // CHANGE
+                pointerEvents: 'none', // CHANGE
+            }); // CHANGE
+            if (!bedFrame) { // CHANGE
+                const label = document.createElement('div'); // CHANGE
+                label.textContent = row.label || row.abbr || ''; // CHANGE
+                Object.assign(label.style, { padding: Math.max(1, Math.round(2 * rect.scale)) + 'px ' + Math.max(2, Math.round(4 * rect.scale)) + 'px', background: 'rgba(255,255,255,0.88)', borderBottom: '1px solid ' + color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }); // CHANGE
+                frame.appendChild(label); // CHANGE
+                if (row.summaryText) { // CHANGE
+                    const summary = document.createElement('div'); // CHANGE
+                    summary.className = 'planting-preview-summary'; summary.textContent = row.summaryText; // CHANGE
+                    Object.assign(summary.style, { position: 'absolute', left: '0', top: '50%', width: '100%', transform: 'translateY(-50%)' }); // CHANGE
+                    frame.appendChild(summary); // CHANGE
+                } // CHANGE
+            } // CHANGE
+            host.appendChild(frame); // CHANGE
+        } // CHANGE
+
+        function appendCircle(host, dot, tone) { // CHANGE
+            const rect = modelRectToViewRect({ x: dot.x, y: dot.y, width: 0, height: 0 }); // CHANGE
+            const radius = Math.max(2, Number(dot.r || 2.5) * rect.scale); // CHANGE
+            const circle = document.createElement('div'); // CHANGE
+            circle.className = 'manual-link-spacing-preview-plant'; // CHANGE
+            Object.assign(circle.style, { // CHANGE
+                position: 'absolute', // CHANGE
+                left: Math.round(rect.x - radius) + 'px', // CHANGE
+                top: Math.round(rect.y - radius) + 'px', // CHANGE
+                width: Math.round(radius * 2) + 'px', // CHANGE
+                height: Math.round(radius * 2) + 'px', // CHANGE
+                borderRadius: '50%', // CHANGE
+                boxSizing: 'border-box', // CHANGE
+                border: '2px solid ' + (tone === 'warning' ? '#d97706' : '#2563eb'), // CHANGE
+                background: 'rgba(255,255,255,0.72)', // CHANGE
+                boxShadow: '0 0 0 2px rgba(37,99,235,0.14)', // CHANGE
+                color: '#1d4ed8', // CHANGE
+                display: 'flex', // CHANGE
+                alignItems: 'center', // CHANGE
+                justifyContent: 'center', // CHANGE
+                fontFamily: 'Arial, sans-serif', // CHANGE
+                fontWeight: '700', // CHANGE
+                fontSize: Math.max(6, Math.round(Number(dot.fontPx || 10) * rect.scale)) + 'px', // CHANGE
+                lineHeight: '1', // CHANGE
+                pointerEvents: 'none', // CHANGE
+            }); // CHANGE
+            circle.textContent = dot.label || ''; // CHANGE
+            host.appendChild(circle); // CHANGE
+        } // CHANGE
+
+        /** Removes only this owner's DOM. Saved-shape visibility remains the editor's responsibility. */ // CHANGE
+        function clear(ownerId) { // CHANGE
+            const entry = owners.get(ownerId); // CHANGE
+            if (entry && entry.node && entry.node.parentNode) entry.node.parentNode.removeChild(entry.node); // CHANGE: suspended owners retain input without a DOM node.
+            owners.delete(ownerId); // CHANGE
+        } // CHANGE
+
+        /** An optional resolveInput callback produces current-view model coordinates on every draw or refresh. */ // CHANGE
+        function draw(ownerId, input) { // CHANGE
+            clear(ownerId); // CHANGE
+            if (!input) return null; // CHANGE: ordinary clear-by-null calls do not retain an owner.
+            const resolved = input && typeof input.resolveInput === 'function' ? input.resolveInput() : input; // CHANGE: resolve display coordinates afresh without modifying the retained canonical input.
+            if (typeof input.resolveInput === 'function') owners.set(ownerId, { node: null, input }); // CHANGE: only dynamic owners retain suspended redraw registration.
+            const layer = ensureGraphOverlayHtmlLayer('annotation'); // CHANGE
+            if (!layer || !resolved || !Array.isArray(resolved.rows) || !resolved.rows.length) return null; // CHANGE
+            const host = document.createElement('div'); // CHANGE
+            host.className = resolved.className || 'planting-group-preview'; // CHANGE
+            host.dataset.plantingPreviewOwner = ownerId; // CHANGE
+            host.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;'; // CHANGE
+            if (resolved.bedPreview) appendFrame(host, resolved.bedPreview, true); // CHANGE
+            for (const row of resolved.rows) { // CHANGE
+                appendFrame(host, row); // CHANGE
+                if (!row.summaryText) (row.circles || []).forEach(dot => appendCircle(host, dot, row.tone)); // CHANGE
+            } // CHANGE
+            layer.appendChild(host); owners.set(ownerId, { node: host, input }); // CHANGE
+            return host; // CHANGE
+        } // CHANGE
+
+        /** Own redraws independently of overlay panels so a view refresh cannot clear another workflow. */ // CHANGE
+        function refresh() { // CHANGE
+            for (const [ownerId, entry] of Array.from(owners)) draw(ownerId, entry.input); // CHANGE
+        } // CHANGE
+
+        return { render: draw, clear, refresh }; // CHANGE
+    } // CHANGE
+
+    const plantingPreview = createPlantingPreviewRenderer(); // CHANGE
+
+    const taskScheduleOverlay = (function () { // CHANGE: planting-group owner of Cards, Schedule and Spacing.
+        const LINK_ATTR = 'linkedTo'; // CHANGE: migrated planting overlay.
+
+        const DEBUG_VERTEX_LINKING_CONSOLE = false; // CHANGE: migrated planting overlay.
+
+        function applyPlantingOverlayButtonStyle(button, variant, options) { // CHANGE: migrated planting overlay.
+            if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // CHANGE: migrated planting overlay.
+                window.Trellis.ui.applyButtonStyle(button, variant, options); // CHANGE: migrated planting overlay.
+            } else if (button) { // CHANGE: migrated planting overlay.
+                const normalized = variant || 'neutral'; // CHANGE
+                const activeOpen = normalized === 'open' && options && options.active === true; // NEW
+                const style = { open: ['#2563eb', activeOpen ? '#1e3a8a' : '#1d4ed8', activeOpen ? '#eff6ff' : '#fff'], add: ['#188038', '#166534', '#fff'], close: ['#b91c1c', '#b91c1c', '#fff'], danger: ['#b91c1c', '#fff', '#b91c1c'], neutral: ['#6b7280', '#111827', '#fff'] }[normalized] || ['#6b7280', '#111827', '#fff']; // NEW
+                button.setAttribute('data-trellis-button-variant', normalized); // CHANGE
+                button.style.border = '1px solid ' + style[0]; // NEW
+                button.style.color = style[1]; // NEW
+                button.style.background = style[2]; // NEW
+                if (activeOpen) button.style.fontWeight = '700'; // NEW
+            } // CHANGE: migrated planting overlay.
+            return button; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function vertexLinkLog() { // CHANGE: migrated planting overlay.
+            if (!DEBUG_VERTEX_LINKING_CONSOLE) return; // CHANGE: migrated planting overlay.
+            try { console.log.apply(console, arguments); } catch (_) { } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function ensureValueIsElementUndoable(cell) { // CHANGE: migrated planting overlay.
+            if (!cell) return null; // CHANGE: migrated planting overlay.
+            const v = cell.value; // CHANGE: migrated planting overlay.
+            if (v && typeof v !== 'string' && v.getAttribute) return v; // CHANGE: migrated planting overlay.
+
+            const doc = mxUtils.createXmlDocument(); // CHANGE: migrated planting overlay.
+            const obj = doc.createElement('object'); // CHANGE: migrated planting overlay.
+            if (typeof v === 'string') obj.setAttribute('label', v); // CHANGE: migrated planting overlay.
+            else obj.setAttribute('label', ''); // CHANGE: migrated planting overlay.
+
+            // Make this change undoable                                                   
+            model.setValue(cell, obj); // CHANGE: migrated planting overlay.
+            return cell.value; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function setCellAttrUndoable(cell, attr, value) { // CHANGE: migrated planting overlay.
+            ensureValueIsElementUndoable(cell); // CHANGE: migrated planting overlay.
+            const change = new mxCellAttributeChange(cell, attr, value); // CHANGE: migrated planting overlay.
+            model.execute(change); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getAttr(cell, key) { // CHANGE: migrated planting overlay.
+            const v = cell && cell.value; // CHANGE: migrated planting overlay.
+            return (v && v.getAttribute) ? v.getAttribute(key) : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isKanbanCard(cell) { // CHANGE: migrated planting overlay.
+            return !!cell && getAttr(cell, 'kanban_card') === '1'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isKanbanBoard(cell) { // CHANGE: migrated planting overlay.
+            return !!cell && (getAttr(cell, 'board_key') === 'KANBAN_BOARD'); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function findKanbanBoardAncestor(cell) { // CHANGE: migrated planting overlay.
+            const m = graph.getModel(); // CHANGE: migrated planting overlay.
+            let cur = cell; // CHANGE: migrated planting overlay.
+            while (cur) { // CHANGE: migrated planting overlay.
+                if (isKanbanBoard(cur)) return cur; // CHANGE: migrated planting overlay.
+                cur = m.getParent(cur); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isGardenModuleCell(cell) { // CHANGE: migrated planting overlay.
+            return !!cell && getAttr(cell, 'garden_module') === '1'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isGardenDashboardCell(cell) { // CHANGE: migrated planting overlay.
+            return !!cell && getAttr(cell, 'garden_dashboard') === '1'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function findGardenModuleAncestor(cell) { // CHANGE: migrated planting overlay.
+            let cur = cell; // CHANGE: migrated planting overlay.
+            while (cur) { // CHANGE: migrated planting overlay.
+                if (isGardenModuleCell(cur)) return cur; // CHANGE: migrated planting overlay.
+                cur = model.getParent(cur); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function findDashboardCellInModule(moduleCell) { // CHANGE: migrated planting overlay.
+            if (!moduleCell) return null; // CHANGE: migrated planting overlay.
+            const stack = [moduleCell]; // CHANGE: migrated planting overlay.
+            while (stack.length) { // CHANGE: migrated planting overlay.
+                const cur = stack.pop(); // CHANGE: migrated planting overlay.
+                const count = model.getChildCount(cur); // CHANGE: migrated planting overlay.
+                for (let i = 0; i < count; i++) { // CHANGE: migrated planting overlay.
+                    const child = model.getChildAt(cur, i); // CHANGE: migrated planting overlay.
+                    if (!child) continue; // CHANGE: migrated planting overlay.
+                    if (isGardenDashboardCell(child)) return child; // CHANGE: migrated planting overlay.
+                    stack.push(child); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getDashboardYearForCell(cell) { // CHANGE: migrated planting overlay.
+            const moduleCell = findGardenModuleAncestor(cell); // CHANGE: migrated planting overlay.
+            const dashboard = findDashboardCellInModule(moduleCell); // CHANGE: migrated planting overlay.
+            const year = Number(getAttr(dashboard, 'dashboard_year')); // CHANGE: migrated planting overlay.
+            return Number.isFinite(year) && year > 1900 && year < 3000 ? year : new Date().getFullYear(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function compareTaskCardsByStartDate(a, b) { // CHANGE: migrated planting overlay.
+            const aRange = getTaskDateRange(a); // CHANGE: migrated planting overlay.
+            const bRange = getTaskDateRange(b); // CHANGE: migrated planting overlay.
+            const aHasDate = !!aRange; // CHANGE: migrated planting overlay.
+            const bHasDate = !!bRange; // CHANGE: migrated planting overlay.
+
+            if (aHasDate !== bHasDate) return aHasDate ? -1 : 1; // CHANGE: migrated planting overlay.
+            if (aHasDate && bHasDate && aRange.startDay !== bRange.startDay) return aRange.startDay - bRange.startDay; // CHANGE: migrated planting overlay.
+
+            const aLabel = (getRawTextLabel(a) || getAttr(a, 'title') || a.id || '').toLowerCase(); // CHANGE: migrated planting overlay.
+            const bLabel = (getRawTextLabel(b) || getAttr(b, 'title') || b.id || '').toLowerCase(); // CHANGE: migrated planting overlay.
+            if (aLabel < bLabel) return -1; // CHANGE: migrated planting overlay.
+            if (aLabel > bLabel) return 1; // CHANGE: migrated planting overlay.
+
+            return String(a.id || '').localeCompare(String(b.id || '')); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function parseTaskOverlayDate(raw) { // CHANGE: migrated planting overlay.
+            if (!raw) return null; // CHANGE: migrated planting overlay.
+            const match = String(raw).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); // CHANGE: migrated planting overlay.
+            if (!match) return null; // CHANGE: migrated planting overlay.
+            const year = Number(match[1]); // CHANGE: migrated planting overlay.
+            const month = Number(match[2]); // CHANGE: migrated planting overlay.
+            const day = Number(match[3]); // CHANGE: migrated planting overlay.
+            if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null; // CHANGE: migrated planting overlay.
+            const utc = Date.UTC(year, month - 1, day); // CHANGE: migrated planting overlay.
+            const date = new Date(utc); // CHANGE: migrated planting overlay.
+            if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null; // CHANGE: migrated planting overlay.
+            return { // CHANGE: migrated planting overlay.
+                iso: match[0], // CHANGE: migrated planting overlay.
+                date, // CHANGE: migrated planting overlay.
+                dayNumber: Math.floor(utc / 86400000) // CHANGE: migrated planting overlay.
+            }; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getTaskDateRange(card) { // CHANGE: migrated planting overlay.
+            const start = parseTaskOverlayDate(getAttr(card, 'start')); // CHANGE: migrated planting overlay.
+            if (!start) return null; // CHANGE: migrated planting overlay.
+            const rawEnd = getAttr(card, 'end'); // CHANGE: migrated planting overlay.
+            const end = rawEnd ? parseTaskOverlayDate(rawEnd) : start; // CHANGE: migrated planting overlay.
+            if (!end || end.dayNumber < start.dayNumber) return null; // CHANGE: migrated planting overlay.
+            return { // CHANGE: migrated planting overlay.
+                start, // CHANGE: migrated planting overlay.
+                end, // CHANGE: migrated planting overlay.
+                startDay: start.dayNumber, // CHANGE: migrated planting overlay.
+                endDay: end.dayNumber, // CHANGE: migrated planting overlay.
+                durationDays: end.dayNumber - start.dayNumber + 1 // CHANGE: migrated planting overlay.
+            }; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function taskDateRangeOverlapsYear(card, year) { // CHANGE: migrated planting overlay.
+            const range = getTaskDateRange(card); // CHANGE: migrated planting overlay.
+            const selectedYear = Number(year); // CHANGE: migrated planting overlay.
+            if (!range || !Number.isFinite(selectedYear)) return false; // CHANGE: migrated planting overlay.
+            const startDay = Math.floor(Date.UTC(selectedYear, 0, 1) / 86400000); // CHANGE: migrated planting overlay.
+            const endDay = Math.floor(Date.UTC(selectedYear, 11, 31) / 86400000); // CHANGE: migrated planting overlay.
+            return range.startDay <= endDay && range.endDay >= startDay; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getTaskOverlayYears(cards) { // CHANGE: migrated planting overlay.
+            const years = new Set(); // CHANGE: migrated planting overlay.
+            for (const card of cards || []) { // CHANGE: migrated planting overlay.
+                const range = getTaskDateRange(card); // CHANGE: migrated planting overlay.
+                if (!range) continue; // CHANGE: migrated planting overlay.
+                for (let year = range.start.date.getUTCFullYear(); year <= range.end.date.getUTCFullYear(); year++) { // CHANGE: migrated planting overlay.
+                    if (year > 1900 && year < 3000) years.add(year); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return Array.from(years).sort((a, b) => a - b); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function chooseDefaultOverlayYear(years) { // CHANGE: migrated planting overlay.
+            const list = Array.isArray(years) ? years : []; // CHANGE: migrated planting overlay.
+            if (!list.length) return null; // CHANGE: migrated planting overlay.
+            const currentYear = new Date().getFullYear(); // CHANGE: migrated planting overlay.
+            return list.indexOf(currentYear) >= 0 ? currentYear : list[0]; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function formatTaskOverlayDate(dateInfo) { // CHANGE: migrated planting overlay.
+            if (!dateInfo || !dateInfo.date) return ''; // CHANGE: migrated planting overlay.
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; // CHANGE: migrated planting overlay.
+            return months[dateInfo.date.getUTCMonth()] + ' ' + String(dateInfo.date.getUTCDate()).padStart(2, '0'); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function formatTaskDateRange(card) { // CHANGE: migrated planting overlay.
+            const range = getTaskDateRange(card); // CHANGE: migrated planting overlay.
+            if (!range) return 'Unscheduled'; // CHANGE: migrated planting overlay.
+            const startLabel = formatTaskOverlayDate(range.start); // CHANGE: migrated planting overlay.
+            const endLabel = formatTaskOverlayDate(range.end); // CHANGE: migrated planting overlay.
+            return range.startDay === range.endDay ? startLabel : (startLabel + ' - ' + endLabel); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function stripTaskBadgeText(raw) { // CHANGE: migrated planting overlay.
+            const text = stripHtmlAndPlaceholders(String(raw || '')); // CHANGE: migrated planting overlay.
+            return text.length > 36 ? text.slice(0, 33) + '...' : text; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getTaskLaneColor(card) { // CHANGE: migrated planting overlay.
+            return getLaneColorForCard(card) || '#9aa0a6'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getTaskOverlayBadges(card) { // CHANGE: migrated planting overlay.
+            const badges = []; // CHANGE: migrated planting overlay.
+            const rawBadges = stripTaskBadgeText(getAttr(card, 'badges_html')); // CHANGE: migrated planting overlay.
+            if (rawBadges) badges.push(rawBadges); // CHANGE: migrated planting overlay.
+            const repeatBadge = getAttr(card, 'repeat_badge'); // CHANGE: migrated planting overlay.
+            if (repeatBadge) badges.push('Repeat ' + repeatBadge); // CHANGE: migrated planting overlay.
+            const note = stripTaskBadgeText(getAttr(card, 'card_note')); // CHANGE: migrated planting overlay.
+            if (note) badges.push('Note ' + note); // CHANGE: migrated planting overlay.
+            if (getAttr(card, 'date_override') === '1') badges.push('Dates edited'); // CHANGE: migrated planting overlay.
+            const linkCount = getLinkSet(card).size; // CHANGE: migrated planting overlay.
+            if (linkCount > 1) badges.push('Links ' + linkCount); // CHANGE: migrated planting overlay.
+            return badges; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function normalizeRepeatIdentityText(value) { // CHANGE: migrated planting overlay.
+            return String(value == null ? '' : value).trim().toLowerCase(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function normalizeRepeatLinkedIds(value) { // CHANGE: migrated planting overlay.
+            return Array.from(new Set(String(value == null ? '' : value) // CHANGE: migrated planting overlay.
+                .split(',') // CHANGE: migrated planting overlay.
+                .map(id => id.trim()) // CHANGE: migrated planting overlay.
+                .filter(Boolean))) // CHANGE: migrated planting overlay.
+                .sort(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function buildRepeatSeriesKeyForOverlay(card) { // CHANGE: migrated planting overlay.
+            const linkedIds = normalizeRepeatLinkedIds(getAttr(card, LINK_ATTR)); // CHANGE: migrated planting overlay.
+            if (linkedIds.length === 0) return null; // CHANGE: migrated planting overlay.
+
+            return JSON.stringify([ // CHANGE: migrated planting overlay.
+                linkedIds, // CHANGE: migrated planting overlay.
+                normalizeRepeatIdentityText(getAttr(card, 'plant_name')), // CHANGE: migrated planting overlay.
+                normalizeRepeatIdentityText(getAttr(card, 'method')), // CHANGE: migrated planting overlay.
+                normalizeRepeatIdentityText(getAttr(card, 'title')) // CHANGE: migrated planting overlay.
+            ]); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function compareRepeatOccurrenceCards(a, b) { // CHANGE: migrated planting overlay.
+            const aRange = getTaskDateRange(a); // CHANGE: migrated planting overlay.
+            const bRange = getTaskDateRange(b); // CHANGE: migrated planting overlay.
+            if (aRange && bRange && aRange.startDay !== bRange.startDay) return aRange.startDay - bRange.startDay; // CHANGE: migrated planting overlay.
+            if (aRange && !bRange) return -1; // CHANGE: migrated planting overlay.
+            if (!aRange && bRange) return 1; // CHANGE: migrated planting overlay.
+            if (aRange && bRange && aRange.endDay !== bRange.endDay) return aRange.endDay - bRange.endDay; // CHANGE: migrated planting overlay.
+            return String(a && a.id || '').localeCompare(String(b && b.id || '')); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isOverlayCardVisibilityEligible(card) { // CHANGE: migrated planting overlay.
+            return getAttr(card, 'year_hidden') !== '1' && getAttr(card, 'repeat_hidden') !== '1'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getLaneOrderIndex(lane) { // CHANGE: migrated planting overlay.
+            if (!lane) return Number.POSITIVE_INFINITY; // CHANGE: migrated planting overlay.
+            const parent = model.getParent(lane); // CHANGE: migrated planting overlay.
+            if (!parent) return Number.POSITIVE_INFINITY; // CHANGE: migrated planting overlay.
+            const count = model.getChildCount(parent); // CHANGE: migrated planting overlay.
+            for (let i = 0; i < count; i++) { // CHANGE: migrated planting overlay.
+                if (model.getChildAt(parent, i) === lane) return i; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return Number.POSITIVE_INFINITY; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function cleanOverlayLaneLabel(label) { // CHANGE: migrated planting overlay.
+            return stripHtmlAndPlaceholders(String(label || '')).replace(/\s*\(Page\s+\d+\s*\/\s*\d+\)\s*$/i, '').trim(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getLaneGroupLabel(card, lane, laneKey) { // CHANGE: migrated planting overlay.
+            if (lane) { // CHANGE: migrated planting overlay.
+                const explicit = getAttr(lane, 'label') || getAttr(lane, 'status'); // CHANGE: migrated planting overlay.
+                if (explicit) return cleanOverlayLaneLabel(explicit); // CHANGE: migrated planting overlay.
+                if (typeof lane.value === 'string' && lane.value) return cleanOverlayLaneLabel(lane.value); // CHANGE: migrated planting overlay.
+                if (lane.value && lane.value.textContent) return cleanOverlayLaneLabel(lane.value.textContent); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return laneKey || getAttr(card, 'status') || 'Unlaned'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function makeLaneGroupForCard(card) { // CHANGE: migrated planting overlay.
+            const lane = findLaneAncestor(card); // CHANGE: migrated planting overlay.
+            const laneKey = getLaneStatusKeyForTask(card) || (lane ? getAttr(lane, 'lane_key') : null) || 'UNLANED'; // CHANGE: migrated planting overlay.
+            return { // CHANGE: migrated planting overlay.
+                lane, // CHANGE: migrated planting overlay.
+                laneId: lane && lane.id ? lane.id : laneKey, // CHANGE: migrated planting overlay.
+                laneKey, // CHANGE: migrated planting overlay.
+                label: getLaneGroupLabel(card, lane, laneKey), // CHANGE: migrated planting overlay.
+                color: getTaskLaneColor(card), // CHANGE: migrated planting overlay.
+                order: getLaneOrderIndex(lane), // CHANGE: migrated planting overlay.
+                items: [] // CHANGE: migrated planting overlay.
+            }; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function withRepeatOverlayBadge(item, badgeText) { // CHANGE: migrated planting overlay.
+            item.repeatBadge = badgeText || ''; // CHANGE: migrated planting overlay.
+            return item; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function groupLinkedTasksForOverlay(cards) { // CHANGE: migrated planting overlay.
+            const groupsByLane = new Map(); // CHANGE: migrated planting overlay.
+
+            function getGroup(card) { // CHANGE: migrated planting overlay.
+                const lane = findLaneAncestor(card); // CHANGE: migrated planting overlay.
+                const laneKey = getLaneStatusKeyForTask(card) || (lane ? getAttr(lane, 'lane_key') : null) || 'UNLANED'; // CHANGE: migrated planting overlay.
+                const laneId = lane && lane.id ? lane.id : laneKey; // CHANGE: migrated planting overlay.
+                if (!groupsByLane.has(laneId)) groupsByLane.set(laneId, makeLaneGroupForCard(card)); // CHANGE: migrated planting overlay.
+                return groupsByLane.get(laneId); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            const recordsByLaneAndSeries = new Map(); // CHANGE: migrated planting overlay.
+            for (const card of cards || []) { // CHANGE: migrated planting overlay.
+                if (!card || getAttr(card, 'year_hidden') === '1') continue; // CHANGE: migrated planting overlay.
+                const group = getGroup(card); // CHANGE: migrated planting overlay.
+                const seriesKey = buildRepeatSeriesKeyForOverlay(card); // CHANGE: migrated planting overlay.
+
+                if (!seriesKey) { // CHANGE: migrated planting overlay.
+                    if (isOverlayCardVisibilityEligible(card)) group.items.push({ card, repeatBadge: '' }); // CHANGE: migrated planting overlay.
+                    continue; // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+
+                const laneSeriesKey = group.laneId + '|' + seriesKey; // CHANGE: migrated planting overlay.
+                if (!recordsByLaneAndSeries.has(laneSeriesKey)) { // CHANGE: migrated planting overlay.
+                    recordsByLaneAndSeries.set(laneSeriesKey, { group, seriesKey, cards: [] }); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                recordsByLaneAndSeries.get(laneSeriesKey).cards.push(card); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            for (const series of recordsByLaneAndSeries.values()) { // CHANGE: migrated planting overlay.
+                const ordered = series.cards.slice().sort(compareRepeatOccurrenceCards); // CHANGE: migrated planting overlay.
+                const candidates = ordered.filter(isOverlayCardVisibilityEligible); // CHANGE: migrated planting overlay.
+                if (!candidates.length) continue; // CHANGE: migrated planting overlay.
+                const representative = candidates[0]; // CHANGE: migrated planting overlay.
+                const globalIndex = ordered.indexOf(representative); // CHANGE: migrated planting overlay.
+                const hiddenInLane = Math.max(0, ordered.length - 1); // CHANGE: migrated planting overlay.
+                const badge = ordered.length > 1 // CHANGE: migrated planting overlay.
+                    ? ((globalIndex + 1) + '/' + ordered.length + (hiddenInLane > 0 ? ' +' + hiddenInLane : '')) // CHANGE: migrated planting overlay.
+                    : ''; // CHANGE: migrated planting overlay.
+                series.group.items.push(withRepeatOverlayBadge({ card: representative }, badge)); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            const groups = Array.from(groupsByLane.values()) // CHANGE: migrated planting overlay.
+                .map(group => { // CHANGE: migrated planting overlay.
+                    group.items.sort((a, b) => compareTaskCardsByStartDate(a.card, b.card)); // CHANGE: migrated planting overlay.
+                    return group; // CHANGE: migrated planting overlay.
+                }) // CHANGE: migrated planting overlay.
+                .filter(group => group.items.length > 0) // CHANGE: migrated planting overlay.
+                .sort((a, b) => (a.order - b.order) || String(a.label || '').localeCompare(String(b.label || ''))); // CHANGE: migrated planting overlay.
+
+            return groups; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function findLaneAncestor(cell) { // CHANGE: migrated planting overlay.
+            const m = graph.getModel(); // CHANGE: migrated planting overlay.
+            let cur = cell ? m.getParent(cell) : null; // CHANGE: migrated planting overlay.
+            while (cur) { // CHANGE: migrated planting overlay.
+                if (getAttr(cur, 'lane_key')) return cur; // CHANGE: migrated planting overlay.
+                cur = m.getParent(cur); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getRawStyleValue(cell, key) { // CHANGE: migrated planting overlay.
+            const s = (cell && cell.getStyle && cell.getStyle()) || ''; // CHANGE: migrated planting overlay.
+            const m = s.match(new RegExp('(?:^|;)' + key + '=([^;]*)')); // CHANGE: migrated planting overlay.
+            return m ? m[1] : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isRealColor(c) { // CHANGE: migrated planting overlay.
+            if (!c) return false; // CHANGE: migrated planting overlay.
+            const v = String(c).trim().toLowerCase(); // CHANGE: migrated planting overlay.
+            if (v === 'none' || v === 'default') return false; // CHANGE: migrated planting overlay.
+            return true; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getLaneColorForCard(card) { // CHANGE: migrated planting overlay.
+            if (!isKanbanCard(card)) return null; // CHANGE: migrated planting overlay.
+            const lane = findLaneAncestor(card); // CHANGE: migrated planting overlay.
+            if (!lane) { // CHANGE: migrated planting overlay.
+                vertexLinkLog('[ManualLinker] getLaneColorForCard: no lane for card', // CHANGE: migrated planting overlay.
+                    card && card.id); // CHANGE: migrated planting overlay.
+                return null; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            const style = lane.getStyle ? lane.getStyle() : ''; // CHANGE: migrated planting overlay.
+            const laneFill = getRawStyleValue(lane, 'swimlaneFillColor'); // CHANGE: migrated planting overlay.
+            const laneFillColor = getRawStyleValue(lane, 'fillColor'); // CHANGE: migrated planting overlay.
+            const laneStroke = getRawStyleValue(lane, 'strokeColor'); // CHANGE: migrated planting overlay.
+
+            let picked = null; // CHANGE: migrated planting overlay.
+            if (isRealColor(laneFill)) picked = laneFill; // CHANGE: migrated planting overlay.
+            else if (isRealColor(laneFillColor)) picked = laneFillColor; // CHANGE: migrated planting overlay.
+            else if (isRealColor(laneStroke)) picked = laneStroke; // CHANGE: migrated planting overlay.
+
+            vertexLinkLog('[ManualLinker] getLaneColorForCard', { // CHANGE: migrated planting overlay.
+                cardId: card && card.id, // CHANGE: migrated planting overlay.
+                laneId: lane && lane.id, // CHANGE: migrated planting overlay.
+                laneStyle: style, // CHANGE: migrated planting overlay.
+                laneFill, // CHANGE: migrated planting overlay.
+                laneFillColor, // CHANGE: migrated planting overlay.
+                laneStroke, // CHANGE: migrated planting overlay.
+                pickedColor: picked // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+
+            return picked; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        const STRIP_PLACEHOLDERS = true; // CHANGE: migrated planting overlay.
+
+        function decodeBasicEntities(s) { // CHANGE: migrated planting overlay.
+            // minimal decode for common entities used in labels
+            return s // CHANGE: migrated planting overlay.
+                .replace(/&nbsp;/g, ' ') // CHANGE: migrated planting overlay.
+                .replace(/&amp;/g, '&') // CHANGE: migrated planting overlay.
+                .replace(/&lt;/g, '<') // CHANGE: migrated planting overlay.
+                .replace(/&gt;/g, '>'); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function stripHtmlAndPlaceholders(s) { // CHANGE: migrated planting overlay.
+            // Remove HTML tags
+            s = s.replace(/<[^>]*>/g, ''); // CHANGE: migrated planting overlay.
+            // Decode common entities
+            s = decodeBasicEntities(s); // CHANGE: migrated planting overlay.
+            // Optionally remove %placeholder% tokens
+            if (STRIP_PLACEHOLDERS) s = s.replace(/%[^%]+%/g, ''); // CHANGE: migrated planting overlay.
+            // Normalize whitespace
+            return s.replace(/\s+/g, ' ').trim(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getRawTextLabel(cell) { // CHANGE: migrated planting overlay.
+            if (!cell) return ''; // CHANGE: migrated planting overlay.
+            const v = cell.value; // CHANGE: migrated planting overlay.
+            if (v == null) return ''; // CHANGE: migrated planting overlay.
+
+            if (typeof v === 'string') { // CHANGE: migrated planting overlay.
+                return stripHtmlAndPlaceholders(v); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            // XML <object> case
+            if (v.getAttribute) { // CHANGE: migrated planting overlay.
+                // Prefer explicit 'label' attribute if present
+                const lbl = v.getAttribute('label'); // CHANGE: migrated planting overlay.
+                if (lbl != null && lbl !== '') return stripHtmlAndPlaceholders(lbl); // CHANGE: migrated planting overlay.
+                // Fallback: textContent of the node subtree (plain text)
+                let txt = ''; // CHANGE: migrated planting overlay.
+                try { txt = v.textContent || ''; } catch (_) { } // CHANGE: migrated planting overlay.
+                return stripHtmlAndPlaceholders(txt); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            // Fallback
+            return stripHtmlAndPlaceholders(String(v)); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getCellCenter(cell) { // CHANGE: migrated planting overlay.
+            if (!cell) return null; // CHANGE: migrated planting overlay.
+
+            const view = graph.getView(); // CHANGE: migrated planting overlay.
+            const m = graph.getModel(); // CHANGE: migrated planting overlay.
+
+            // First try the cell itself                                               
+            let st = view.getState(cell); // CHANGE: migrated planting overlay.
+            if (st && m.isVisible(cell)) { // CHANGE: migrated planting overlay.
+                return { // CHANGE: migrated planting overlay.
+                    x: st.x + st.width / 2, // CHANGE: migrated planting overlay.
+                    y: st.y + st.height / 2, // CHANGE: migrated planting overlay.
+                    w: st.width, // CHANGE: migrated planting overlay.
+                    h: st.height // CHANGE: migrated planting overlay.
+                }; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            // Fallback: if this is a Kanban task card that is currently hidden,       
+            // anchor overlays to its parent lane instead of dropping the link.        
+            if (isKanbanCard(cell)) { // CHANGE: migrated planting overlay.
+                const lane = findLaneAncestor(cell); // CHANGE: migrated planting overlay.
+                if (lane) { // CHANGE: migrated planting overlay.
+                    const laneState = view.getState(lane); // CHANGE: migrated planting overlay.
+                    if (laneState && m.isVisible(lane)) { // CHANGE: migrated planting overlay.
+                        return { // CHANGE: migrated planting overlay.
+                            x: laneState.x + laneState.width / 2, // CHANGE: migrated planting overlay.
+                            y: laneState.y + laneState.height / 2, // CHANGE: migrated planting overlay.
+                            w: laneState.width, // CHANGE: migrated planting overlay.
+                            h: laneState.height // CHANGE: migrated planting overlay.
+                        }; // CHANGE: migrated planting overlay.
+                    } // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            // No usable geometry                                                      
+            return null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function sideToward(srcCenter, dstCenter) { // CHANGE: migrated planting overlay.
+            const dx = dstCenter.x - srcCenter.x; // CHANGE: migrated planting overlay.
+            const dy = dstCenter.y - srcCenter.y; // CHANGE: migrated planting overlay.
+            if (Math.abs(dx) >= Math.abs(dy)) { // CHANGE: migrated planting overlay.
+                return dx >= 0 ? 'right' : 'left'; // CHANGE: migrated planting overlay.
+            } else { // CHANGE: migrated planting overlay.
+                return dy >= 0 ? 'bottom' : 'top'; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function anchorOnSide(center, side, t) { // CHANGE: migrated planting overlay.
+            // center: {x, y, w, h}, side: 'left'|'right'|'top'|'bottom', t in [0,1]           
+            const c = center; // CHANGE: migrated planting overlay.
+            const tt = Math.max(0, Math.min(1, t == null ? 0.5 : t)); // CHANGE: migrated planting overlay.
+            if (!c) return null; // CHANGE: migrated planting overlay.
+            if (side === 'left') { // CHANGE: migrated planting overlay.
+                return { x: c.x - c.w / 2, y: c.y - c.h / 2 + tt * c.h }; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            if (side === 'right') { // CHANGE: migrated planting overlay.
+                return { x: c.x + c.w / 2, y: c.y - c.h / 2 + tt * c.h }; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            if (side === 'top') { // CHANGE: migrated planting overlay.
+                return { x: c.x - c.w / 2 + tt * c.w, y: c.y - c.h / 2 }; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            if (side === 'bottom') { // CHANGE: migrated planting overlay.
+                return { x: c.x - c.w / 2 + tt * c.w, y: c.y + c.h / 2 }; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            // Fallback: center                                                                 
+            return { x: c.x, y: c.y }; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function mapStatusToKey(raw) { // CHANGE: migrated planting overlay.
+            if (!raw) return null; // CHANGE: migrated planting overlay.
+            raw = String(raw).trim().toUpperCase(); // CHANGE: migrated planting overlay.
+
+            if (raw.includes('UPCOMING')) { // CHANGE: migrated planting overlay.
+                if (raw.includes('YEAR')) return 'UPCOMING_YEAR'; // CHANGE: migrated planting overlay.
+                if (raw.includes('MONTH')) return 'UPCOMING_MONTH'; // CHANGE: migrated planting overlay.
+                return 'UPCOMING_WEEK'; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            if (raw.includes('STAGED')) return 'TODO_STAGED'; // CHANGE: migrated planting overlay.
+            if (raw === 'TODO') return 'TODO'; // CHANGE: migrated planting overlay.
+            if (raw === 'DOING') return 'DOING'; // CHANGE: migrated planting overlay.
+
+            if (raw.includes('DONE')) { // CHANGE: migrated planting overlay.
+                if (raw.includes('WEEK')) return 'DONE_WEEK'; // CHANGE: migrated planting overlay.
+                if (raw.includes('MONTH')) return 'DONE_MONTH'; // CHANGE: migrated planting overlay.
+                if (raw.includes('YEAR')) return 'DONE_YEAR'; // CHANGE: migrated planting overlay.
+                return 'DONE'; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            if (raw.includes('ARCHIVED')) return 'ARCHIVED'; // CHANGE: migrated planting overlay.
+
+            return raw; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getLaneStatusKeyForTask(card) { // CHANGE: migrated planting overlay.
+            if (!card) return null; // CHANGE: migrated planting overlay.
+            const lane = findLaneAncestor(card); // CHANGE: migrated planting overlay.
+            let laneRaw = lane ? getAttr(lane, 'lane_key') : null; // CHANGE: migrated planting overlay.
+
+            if (laneRaw) { // CHANGE: migrated planting overlay.
+                const key = String(laneRaw).trim().toUpperCase(); // CHANGE: migrated planting overlay.
+                vertexLinkLog('[LaneStatus] from lane_key', { cardId: card.id, laneId: lane && lane.id, laneRaw, key }); // CHANGE: migrated planting overlay.
+                return key || null; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            const statusRaw = getAttr(card, 'status'); // CHANGE: migrated planting overlay.
+            const mapped = mapStatusToKey(statusRaw); // CHANGE: migrated planting overlay.
+            vertexLinkLog('[LaneStatus] from status', { cardId: card.id, statusRaw, mapped }); // CHANGE: migrated planting overlay.
+            return mapped; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isTilerGroup(cell) { // CHANGE: migrated planting overlay.
+            return !!cell && getAttr(cell, 'tiler_group') === '1'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function dispatchYearFilterChangedForTaskOverlay(card, year) { // CHANGE: migrated planting overlay.
+            try { // CHANGE: migrated planting overlay.
+                window.dispatchEvent(new CustomEvent('yearFilterChanged', { // CHANGE: migrated planting overlay.
+                    detail: { moduleCellId: null, taskCardId: card && card.id || null, year: year == null ? null : year } // CHANGE: migrated planting overlay.
+                })); // CHANGE: migrated planting overlay.
+            } catch (_) { } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getLinkSet(cell) { // CHANGE: migrated planting overlay.
+            if (!cell) return new Set(); // CHANGE: migrated planting overlay.
+            const val = cell.value; // CHANGE: migrated planting overlay.
+            const raw = (val && val.getAttribute) ? val.getAttribute(LINK_ATTR) : null; // CHANGE: migrated planting overlay.
+            if (!raw) return new Set(); // CHANGE: migrated planting overlay.
+            return new Set(String(raw).split(',').map(s => s.trim()).filter(Boolean)); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+        const MODE_CARDS = 'cards'; // CHANGE: migrated planting overlay.
+        const MODE_SCHEDULE = 'schedule'; // CHANGE: migrated planting overlay.
+        const MODE_SPACING = 'spacing'; // CHANGE: migrated planting overlay.
+        const PANEL_MIN_WIDTH = 168; // CHANGE: compact schedule-only overlays should shrink to their controls.
+        const PANEL_MAX_WIDTH = 520; // CHANGE: wider spacing/task views can grow without overrunning the canvas.
+        const PANEL_FALLBACK_WIDTH = 380; // CHANGE: preserve the old width as a measurement fallback.
+        const PANEL_GAP = 12; // CHANGE: migrated planting overlay.
+        const PANEL_SIDE_OFFSET = 60; // CHANGE: migrated planting overlay.
+        const BODY_MAX_HEIGHT = 360; // CHANGE: migrated planting overlay.
+        const registry = new Map(); // sourceId -> entry
+        const selectedYearBySource = new Map(); // sourceId -> session-only year
+        const LANE_COLLAPSE_STORAGE_KEY = 'trellis.vertexLinker.taskOverlay.collapsedLanes.v1'; // CHANGE: migrated planting overlay.
+        const laneCollapseState = new Map(); // laneKey -> collapsed boolean
+        let laneCollapseLoaded = false; // CHANGE: migrated planting overlay.
+        let activeMode = MODE_CARDS; // CHANGE: migrated planting overlay.
+
+        function isTeamPermissionModeActiveForTaskScheduleOverlay() { // CHANGE: migrated planting overlay.
+            const users = window.Trellis && window.Trellis.users; // NEW
+            return !!(users && typeof users.isTeamPermissionModeActive === 'function' && users.isTeamPermissionModeActive()); // NEW
+        } // CHANGE: migrated planting overlay.
+
+        function getOverlayPane() { // CHANGE: migrated planting overlay.
+            const layeredPane = ensureGraphOverlaySvgLayer('connection'); // CHANGE: migrated planting overlay.
+            if (layeredPane) return layeredPane; // CHANGE: migrated planting overlay.
+            const view = graph.getView && graph.getView(); // CHANGE: migrated planting overlay.
+            return view && view.getOverlayPane ? view.getOverlayPane() : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getPanelHost() { // CHANGE: migrated planting overlay.
+            const host = graph.container; // CHANGE: migrated planting overlay.
+            if (!host) return null; // CHANGE: migrated planting overlay.
+            try { // CHANGE: migrated planting overlay.
+                if (window.getComputedStyle(host).position === 'static') { // CHANGE: migrated planting overlay.
+                    host.style.position = 'relative'; // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } catch (_) { } // CHANGE: migrated planting overlay.
+            return host; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getPanelLayer() { // CHANGE: migrated planting overlay.
+            return ensureGraphOverlayHtmlLayer('control'); // CHANGE: task schedule panels must stay on the graph control layer below dialogs.
+        } // CHANGE: migrated planting overlay.
+
+        function removeNode(node) { // CHANGE: migrated planting overlay.
+            if (node && node.parentNode) node.parentNode.removeChild(node); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function removePolyline(poly) { // CHANGE: migrated planting overlay.
+            if (poly && poly.node && poly.node.parentNode) { // CHANGE: migrated planting overlay.
+                poly.node.parentNode.removeChild(poly.node); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function loadLaneCollapseState() { // CHANGE: migrated planting overlay.
+            if (laneCollapseLoaded) return; // CHANGE: migrated planting overlay.
+            laneCollapseLoaded = true; // CHANGE: migrated planting overlay.
+            try { // CHANGE: migrated planting overlay.
+                const raw = window.localStorage && window.localStorage.getItem(LANE_COLLAPSE_STORAGE_KEY); // CHANGE: migrated planting overlay.
+                const parsed = raw ? JSON.parse(raw) : null; // CHANGE: migrated planting overlay.
+                if (!parsed || typeof parsed !== 'object') return; // CHANGE: migrated planting overlay.
+                for (const key in parsed) { // CHANGE: migrated planting overlay.
+                    if (Object.prototype.hasOwnProperty.call(parsed, key)) laneCollapseState.set(key, parsed[key] === true); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } catch (_) { } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function saveLaneCollapseState() { // CHANGE: migrated planting overlay.
+            try { // CHANGE: migrated planting overlay.
+                if (!window.localStorage) return; // CHANGE: migrated planting overlay.
+                const out = {}; // CHANGE: migrated planting overlay.
+                laneCollapseState.forEach((collapsed, key) => { out[key] = !!collapsed; }); // CHANGE: migrated planting overlay.
+                window.localStorage.setItem(LANE_COLLAPSE_STORAGE_KEY, JSON.stringify(out)); // CHANGE: migrated planting overlay.
+            } catch (_) { } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function laneCollapseKey(group) { // CHANGE: migrated planting overlay.
+            return String(group && (group.laneKey || group.label || group.laneId) || 'UNLANED'); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isLaneGroupCollapsed(group) { // CHANGE: migrated planting overlay.
+            loadLaneCollapseState(); // CHANGE: migrated planting overlay.
+            return laneCollapseState.get(laneCollapseKey(group)) === true; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function setLaneGroupCollapsed(group, collapsed) { // CHANGE: migrated planting overlay.
+            loadLaneCollapseState(); // CHANGE: migrated planting overlay.
+            laneCollapseState.set(laneCollapseKey(group), !!collapsed); // CHANGE: migrated planting overlay.
+            saveLaneCollapseState(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function normalizeBadgeText(text) { // CHANGE: migrated planting overlay.
+            return stripHtmlAndPlaceholders(String(text || '')).trim(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isValidOverlayCard(card) { // CHANGE: migrated planting overlay.
+            return !!card && model.isVertex(card) && isKanbanCard(card) && !!findKanbanBoardAncestor(card); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function taskTitle(card) { // CHANGE: migrated planting overlay.
+            return getAttr(card, 'title') || getRawTextLabel(card) || card.id || 'Task'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getSourceCropTitle(source) { // CHANGE: migrated planting overlay.
+            if (!source) return ''; // CHANGE: migrated planting overlay.
+            const plant = normalizeBadgeText(getAttr(source, 'plant_name') || getAttr(source, 'crop_name') || ''); // CHANGE: migrated planting overlay.
+            const variety = normalizeBadgeText(getAttr(source, 'variety_name') || getAttr(source, 'variety') || ''); // CHANGE: migrated planting overlay.
+            if (plant && variety) return plant + ' - ' + variety; // CHANGE: migrated planting overlay.
+            return plant || variety; // CHANGE: selected planting overlays use only crop/variety, never task/link metadata.
+        } // CHANGE: migrated planting overlay.
+
+        function getOverlayTitle(entry) { // CHANGE: migrated planting overlay.
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE: migrated planting overlay.
+            return getSourceCropTitle(source) || 'Planting'; // CHANGE: title reflects the selected crop instead of the overlay's task internals.
+        } // CHANGE: migrated planting overlay.
+
+        function getScheduleOnlyTitle(entry) { // CHANGE: migrated planting overlay.
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE: migrated planting overlay.
+            return getSourceCropTitle(source) || 'Planting'; // CHANGE: schedule-only overlay follows the same crop/variety title rule.
+        } // CHANGE: migrated planting overlay.
+
+        function hasTilerSchedule(cell) { // CHANGE: migrated planting overlay.
+            const start = getAttr(cell, 'sow_date'); // CHANGE: migrated planting overlay.
+            return start != null && String(start).trim() !== ''; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function canScheduleTilerGroup(cell) { // CHANGE: migrated planting overlay.
+            if (!isTilerGroup(cell)) return false; // CHANGE: migrated planting overlay.
+            const users = window.Trellis && window.Trellis.users; // CHANGE: migrated planting overlay.
+            if (users && typeof users.isEnabled === 'function' && users.isEnabled() && typeof users.canManagePlanting === 'function') return users.canManagePlanting(cell); // CHANGE: migrated planting overlay.
+            return true; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getOccupancyNavigatorApi() { // CHANGE: migrated planting overlay.
+            return graph && graph.__trellisBedSuccessionNavigator && typeof graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy === 'function' // CHANGE: migrated planting overlay.
+                ? graph.__trellisBedSuccessionNavigator // CHANGE: migrated planting overlay.
+                : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getPlantingOccupancyRange(cell) { // CHANGE: migrated planting overlay.
+            const perennial = String(getAttr(cell, 'perennial') || '') === '1' || !!String(getAttr(cell, 'lifespan_start') || '').trim(); // CHANGE: migrated planting overlay.
+            const start = perennial ? parseTaskOverlayDate(getAttr(cell, 'lifespan_start')) : (parseTaskOverlayDate(getAttr(cell, 'transplant_date')) || parseTaskOverlayDate(getAttr(cell, 'sow_date'))); // CHANGE: migrated planting overlay.
+            const end = perennial ? parseTaskOverlayDate(getAttr(cell, 'lifespan_end')) : parseTaskOverlayDate(getAttr(cell, 'harvest_end')); // CHANGE: migrated planting overlay.
+            if (!start || !end || end.dayNumber < start.dayNumber) return { startISO: null, endISO: null }; // CHANGE: migrated planting overlay.
+            return { startISO: start.iso, endISO: end.iso }; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function fallbackOccupancyForSource(source) { // CHANGE: migrated planting overlay.
+            if (!isTilerGroup(source)) return { selectedId: null, items: [] }; // CHANGE: migrated planting overlay.
+            const range = getPlantingOccupancyRange(source); // CHANGE: migrated planting overlay.
+            return { // CHANGE: migrated planting overlay.
+                selectedId: source.id, // CHANGE: migrated planting overlay.
+                items: [{ cellId: source.id, label: getSourceCropTitle(source) || 'Planting', startISO: range.startISO, endISO: range.endISO }] // CHANGE: migrated planting overlay.
+            }; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getOccupancyModelForEntry(entry) { // CHANGE: migrated planting overlay.
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE: migrated planting overlay.
+            const api = getOccupancyNavigatorApi(); // CHANGE: migrated planting overlay.
+            if (api) { // CHANGE: migrated planting overlay.
+                const result = api.getSelectedClusterOccupancy(source); // CHANGE: migrated planting overlay.
+                if (result && Array.isArray(result.items) && result.items.length) return result; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return fallbackOccupancyForSource(source); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getScheduleDialogOpener() { // CHANGE: migrated planting overlay.
+            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openScheduleDialog === 'function' // CHANGE: migrated planting overlay.
+                ? window.USL.scheduler.openScheduleDialog // CHANGE: migrated planting overlay.
+                : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getDerivedScheduleDialogOpener() { // CHANGE: migrated planting overlay.
+            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openDerivedScheduleDialog === 'function' // CHANGE: migrated planting overlay.
+                ? window.USL.scheduler.openDerivedScheduleDialog // CHANGE: migrated planting overlay.
+                : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getSetPlantDialogOpener() { // CHANGE: migrated planting overlay.
+            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openSetPlantDialog === 'function' // CHANGE: migrated planting overlay.
+                ? window.USL.scheduler.openSetPlantDialog // CHANGE: migrated planting overlay.
+                : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function sourceOccupancyCompleteForDerived(cell) { // CHANGE: migrated planting overlay.
+            if (!isTilerGroup(cell)) return false; // CHANGE: migrated planting overlay.
+            const perennial = String(getAttr(cell, 'perennial') || '') === '1' || !!String(getAttr(cell, 'lifespan_start') || '').trim(); // CHANGE: migrated planting overlay.
+            const start = perennial ? String(getAttr(cell, 'lifespan_start') || '').trim() : (String(getAttr(cell, 'transplant_date') || '').trim() || String(getAttr(cell, 'sow_date') || '').trim()); // CHANGE: migrated planting overlay.
+            const end = perennial ? String(getAttr(cell, 'lifespan_end') || '').trim() : String(getAttr(cell, 'harvest_end') || '').trim(); // CHANGE: migrated planting overlay.
+            return !!(start && end); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function sourceIsAnnual(cell) { // CHANGE: migrated planting overlay.
+            if (String(getAttr(cell, 'perennial') || '') === '1' || String(getAttr(cell, 'lifespan_start') || '').trim()) return false; // CHANGE: migrated planting overlay.
+            return String(getAttr(cell, 'annual') || '') === '1' || !!String(getAttr(cell, 'harvest_end') || '').trim(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function styleDerivedActionButton(button, enabled, color) { // CHANGE: migrated planting overlay.
+            applyPlantingOverlayButtonStyle(button, 'add', { compact: true }); // CHANGE: migrated planting overlay.
+            button.style.border = '1px solid ' + color; // CHANGE: migrated planting overlay.
+            button.style.borderRadius = '5px'; // CHANGE: migrated planting overlay.
+            button.style.background = enabled ? '#ffffff' : '#f1f3f4'; // CHANGE: migrated planting overlay.
+            button.style.color = enabled ? color : '#9aa0a6'; // CHANGE: migrated planting overlay.
+            button.style.cursor = enabled ? 'pointer' : 'default'; // CHANGE: migrated planting overlay.
+            button.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            button.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            button.style.padding = '4px 7px'; // CHANGE: migrated planting overlay.
+            button.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createDerivedScheduleActionButton(entry, mode) { // CHANGE: migrated planting overlay.
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE: migrated planting overlay.
+            if (!isTilerGroup(source) || !hasTilerSchedule(source)) return null; // CHANGE: migrated planting overlay.
+            const opener = getDerivedScheduleDialogOpener(); // CHANGE: migrated planting overlay.
+            const allowed = canScheduleTilerGroup(source); // CHANGE: migrated planting overlay.
+            const hasDates = sourceOccupancyCompleteForDerived(source); // CHANGE: migrated planting overlay.
+            const annualOk = mode !== 'turnover' || sourceIsAnnual(source); // CHANGE: migrated planting overlay.
+            const enabled = !!(opener && allowed && hasDates && annualOk); // CHANGE: migrated planting overlay.
+            const button = document.createElement('button'); // CHANGE: migrated planting overlay.
+            button.type = 'button'; // CHANGE: migrated planting overlay.
+            button.textContent = mode === 'turnover' ? 'Add Turnover' : 'Add Companion'; // CHANGE: migrated planting overlay.
+            button.disabled = !enabled; // CHANGE: migrated planting overlay.
+            button.title = !opener ? 'Scheduler plugin is unavailable.' : (!allowed ? 'You do not have permission to schedule this planting group.' : (!hasDates ? 'Source occupancy dates are required.' : (!annualOk ? 'Turnover is available only for annual source groups.' : button.textContent))); // CHANGE: migrated planting overlay.
+            styleDerivedActionButton(button, enabled, '#166534'); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'click', async function (evt) { // CHANGE: migrated planting overlay.
+                consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
+                if (!enabled) return; // CHANGE: migrated planting overlay.
+                const liveSource = model.getCell(entry.sourceId); // CHANGE: migrated planting overlay.
+                if (!isTilerGroup(liveSource)) return; // CHANGE: migrated planting overlay.
+                try { // CHANGE: migrated planting overlay.
+                    await opener(ui, liveSource, { mode }); // CHANGE: migrated planting overlay.
+                    setTimeout(refresh, 0); // CHANGE: migrated planting overlay.
+                } catch (e) { // CHANGE: migrated planting overlay.
+                    mxUtils.alert('Derived scheduling error: ' + (e && e.message ? e.message : String(e))); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            return button; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function hasAssignedPlant(cell) { // CHANGE: migrated planting overlay.
+            const plantName = getAttr(cell, 'plant_name'); // CHANGE: migrated planting overlay.
+            return plantName != null && String(plantName).trim() !== ''; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getTaskLinkLabelBadge(entry, card) { // CHANGE: migrated planting overlay.
+            if (!entry || !entry.linkLabels || !card) return ''; // CHANGE: migrated planting overlay.
+            const label = normalizeBadgeText(entry.linkLabels.get(card.id)); // CHANGE: migrated planting overlay.
+            if (!label) return ''; // CHANGE: migrated planting overlay.
+            const title = normalizeBadgeText(taskTitle(card)); // CHANGE: migrated planting overlay.
+            return label.toLowerCase() === title.toLowerCase() ? '' : label; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function applyPanelStyle(panel) { // CHANGE: migrated planting overlay.
+            panel.style.position = 'absolute'; // CHANGE: migrated planting overlay.
+            panel.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE: migrated planting overlay.
+            panel.style.width = 'max-content'; // CHANGE: let the planting overlay size from current mode/content.
+            panel.style.minWidth = PANEL_MIN_WIDTH + 'px'; // CHANGE: migrated planting overlay.
+            panel.style.maxWidth = PANEL_MAX_WIDTH + 'px'; // CHANGE: migrated planting overlay.
+            panel.style.boxSizing = 'border-box'; // CHANGE: migrated planting overlay.
+            panel.style.padding = '8px'; // CHANGE: migrated planting overlay.
+            panel.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // CHANGE: migrated planting overlay.
+            panel.style.borderRadius = '6px'; // CHANGE: migrated planting overlay.
+            panel.style.background = 'rgba(255, 255, 255, 0.97)'; // CHANGE: migrated planting overlay.
+            panel.style.boxShadow = '0 3px 10px rgba(0, 0, 0, 0.20)'; // CHANGE: migrated planting overlay.
+            panel.style.fontFamily = 'Arial, Helvetica, sans-serif'; // CHANGE: migrated planting overlay.
+            panel.style.fontSize = '11px'; // CHANGE: migrated planting overlay.
+            panel.style.lineHeight = '16px'; // CHANGE: migrated planting overlay.
+            panel.style.pointerEvents = 'all'; // CHANGE: migrated planting overlay.
+            panel.style.color = '#202124'; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function dynamicPanelWidth(panel) { // CHANGE: migrated planting overlay.
+            const measured = Number(panel && panel.offsetWidth); // CHANGE: migrated planting overlay.
+            return Number.isFinite(measured) && measured > 0 ? measured : PANEL_FALLBACK_WIDTH; // CHANGE: positioning follows rendered dynamic width.
+        } // CHANGE: migrated planting overlay.
+
+        function makeTextSpan(text, color) { // CHANGE: migrated planting overlay.
+            const span = document.createElement('span'); // CHANGE: migrated planting overlay.
+            span.textContent = text || ''; // CHANGE: migrated planting overlay.
+            span.style.overflow = 'hidden'; // CHANGE: migrated planting overlay.
+            span.style.textOverflow = 'ellipsis'; // CHANGE: migrated planting overlay.
+            span.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
+            if (color) span.style.color = color; // CHANGE: migrated planting overlay.
+            return span; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function makeClickableRow(card, className) { // CHANGE: migrated planting overlay.
+            const row = document.createElement('div'); // CHANGE: migrated planting overlay.
+            row.className = className || ''; // CHANGE: migrated planting overlay.
+            row.setAttribute('title', 'Click to navigate to task'); // CHANGE: migrated planting overlay.
+            const cardId = card.id; // CHANGE: migrated planting overlay.
+            mxEvent.addListener(row, 'mousedown', function (evt) { // CHANGE: migrated planting overlay.
+                if (evt.button != null && evt.button !== 0) return; // CHANGE: migrated planting overlay.
+                const realCard = model.getCell(cardId); // CHANGE: migrated planting overlay.
+                if (realCard && model.isVertex(realCard)) navigateOverlayCell(realCard); // CHANGE: migrated planting overlay.
+                mxEvent.consume(evt); // CHANGE: migrated planting overlay.
+                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE: migrated planting overlay.
+                if (evt.preventDefault) evt.preventDefault(); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            return row; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function makeBadge(text) { // CHANGE: migrated planting overlay.
+            const badge = document.createElement('span'); // CHANGE: migrated planting overlay.
+            badge.textContent = text; // CHANGE: migrated planting overlay.
+            badge.style.display = 'inline-block'; // CHANGE: migrated planting overlay.
+            badge.style.maxWidth = '150px'; // CHANGE: migrated planting overlay.
+            badge.style.overflow = 'hidden'; // CHANGE: migrated planting overlay.
+            badge.style.textOverflow = 'ellipsis'; // CHANGE: migrated planting overlay.
+            badge.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
+            badge.style.padding = '1px 6px'; // CHANGE: migrated planting overlay.
+            badge.style.border = '1px solid rgba(60, 64, 67, 0.25)'; // CHANGE: migrated planting overlay.
+            badge.style.borderRadius = '10px'; // CHANGE: migrated planting overlay.
+            badge.style.background = '#f8f9fa'; // CHANGE: migrated planting overlay.
+            badge.style.color = '#3c4043'; // CHANGE: migrated planting overlay.
+            badge.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            badge.style.lineHeight = '14px'; // CHANGE: migrated planting overlay.
+            return badge; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function makeYearControlButton(text, disabled) { // CHANGE: migrated planting overlay.
+            const button = document.createElement('button'); // CHANGE: migrated planting overlay.
+            button.type = 'button'; // CHANGE: migrated planting overlay.
+            button.textContent = text; // CHANGE: migrated planting overlay.
+            button.disabled = !!disabled; // CHANGE: migrated planting overlay.
+            button.style.width = '24px'; // CHANGE: migrated planting overlay.
+            button.style.height = '22px'; // CHANGE: migrated planting overlay.
+            button.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // CHANGE: migrated planting overlay.
+            button.style.borderRadius = '5px'; // CHANGE: migrated planting overlay.
+            button.style.background = disabled ? '#f1f3f4' : '#ffffff'; // CHANGE: migrated planting overlay.
+            button.style.color = disabled ? '#9aa0a6' : '#202124'; // CHANGE: migrated planting overlay.
+            button.style.cursor = disabled ? 'default' : 'pointer'; // CHANGE: migrated planting overlay.
+            button.style.padding = '0'; // CHANGE: migrated planting overlay.
+            button.style.lineHeight = '18px'; // CHANGE: migrated planting overlay.
+            return button; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function consumeOverlayControlEvent(evt) { // CHANGE: migrated planting overlay.
+            try { mxEvent.consume(evt); } catch (_) { } // CHANGE: migrated planting overlay.
+            if (evt && evt.stopPropagation) evt.stopPropagation(); // CHANGE: migrated planting overlay.
+            if (evt && evt.preventDefault) evt.preventDefault(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function scheduleActionButtonLabelFor(source) { // CHANGE: migrated planting overlay.
+            return hasTilerSchedule(source) ? 'Edit schedule' : 'Set schedule'; // CHANGE: legacy companion identity no longer changes schedule editing copy.
+        } // CHANGE: migrated planting overlay.
+
+        function scheduleActionButtonTitleFor(source, opener, allowed) { // CHANGE: migrated planting overlay.
+            if (!allowed) return 'You do not have permission to schedule this planting group.'; // CHANGE: migrated planting overlay.
+            if (!opener) return 'Scheduler plugin is unavailable.'; // CHANGE: migrated planting overlay.
+            return scheduleActionButtonLabelFor(source); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createScheduleActionButton(entry) { // CHANGE: migrated planting overlay.
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE: migrated planting overlay.
+            if (!isTilerGroup(source)) return null; // CHANGE: migrated planting overlay.
+            const opener = getScheduleDialogOpener(); // CHANGE: migrated planting overlay.
+            const allowed = canScheduleTilerGroup(source); // CHANGE: migrated planting overlay.
+            const button = document.createElement('button'); // CHANGE: migrated planting overlay.
+            button.type = 'button'; // CHANGE: migrated planting overlay.
+            button.textContent = scheduleActionButtonLabelFor(source); // CHANGE: migrated planting overlay.
+            button.title = scheduleActionButtonTitleFor(source, opener, allowed); // CHANGE: migrated planting overlay.
+            button.disabled = !opener || !allowed; // CHANGE: migrated planting overlay.
+            applyPlantingOverlayButtonStyle(button, 'open', { compact: true }); // CHANGE: migrated planting overlay.
+            button.style.border = '1px solid #2563eb'; // CHANGE: migrated planting overlay.
+            button.style.borderRadius = '5px'; // CHANGE: migrated planting overlay.
+            button.style.background = opener && allowed ? '#ffffff' : '#f1f3f4'; // CHANGE: migrated planting overlay.
+            button.style.color = opener && allowed ? '#1d4ed8' : '#9aa0a6'; // CHANGE: migrated planting overlay.
+            button.style.cursor = opener && allowed ? 'pointer' : 'default'; // CHANGE: migrated planting overlay.
+            button.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            button.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            button.style.padding = '4px 7px'; // CHANGE: migrated planting overlay.
+            button.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'click', async function (evt) { // CHANGE: migrated planting overlay.
+                consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
+                if (!opener) return; // CHANGE: migrated planting overlay.
+                const liveSource = model.getCell(entry.sourceId); // CHANGE: migrated planting overlay.
+                if (!isTilerGroup(liveSource)) return; // CHANGE: migrated planting overlay.
+                if (!canScheduleTilerGroup(liveSource)) return; // CHANGE: migrated planting overlay.
+                try { // CHANGE: migrated planting overlay.
+                    await opener(ui, liveSource); // CHANGE: migrated planting overlay.
+                    setTimeout(refresh, 0); // CHANGE: migrated planting overlay.
+                } catch (e) { // CHANGE: migrated planting overlay.
+                    mxUtils.alert('Scheduling error: ' + (e && e.message ? e.message : String(e))); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            return button; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createSetPlantActionButton(entry) { // CHANGE: migrated planting overlay.
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE: migrated planting overlay.
+            if (!isTilerGroup(source) || hasAssignedPlant(source)) return null; // CHANGE: migrated planting overlay.
+            const opener = getSetPlantDialogOpener(); // CHANGE: migrated planting overlay.
+            const button = document.createElement('button'); // CHANGE: migrated planting overlay.
+            button.type = 'button'; // CHANGE: migrated planting overlay.
+            button.textContent = 'Set plant'; // CHANGE: migrated planting overlay.
+            button.title = opener ? 'Assign a plant and its default spacing to this planting group.' : 'Scheduler plant picker is unavailable.'; // CHANGE
+            button.disabled = !opener; // CHANGE: migrated planting overlay.
+            applyPlantingOverlayButtonStyle(button, 'add', { compact: true }); // CHANGE: migrated planting overlay.
+            button.style.border = '1px solid #188038'; // CHANGE: migrated planting overlay.
+            button.style.borderRadius = '5px'; // CHANGE: migrated planting overlay.
+            button.style.background = opener ? '#ffffff' : '#f1f3f4'; // CHANGE: migrated planting overlay.
+            button.style.color = opener ? '#137333' : '#9aa0a6'; // CHANGE: migrated planting overlay.
+            button.style.cursor = opener ? 'pointer' : 'default'; // CHANGE: migrated planting overlay.
+            button.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            button.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            button.style.padding = '4px 7px'; // CHANGE: migrated planting overlay.
+            button.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(button, 'click', async function (evt) { // CHANGE: migrated planting overlay.
+                consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
+                if (!opener) return; // CHANGE: migrated planting overlay.
+                const liveSource = model.getCell(entry.sourceId); // CHANGE: migrated planting overlay.
+                if (!isTilerGroup(liveSource) || hasAssignedPlant(liveSource)) return; // CHANGE: migrated planting overlay.
+                try { // CHANGE: migrated planting overlay.
+                    await opener(ui, liveSource); // CHANGE: migrated planting overlay.
+                    setTimeout(refresh, 0); // CHANGE: migrated planting overlay.
+                } catch (e) { // CHANGE: migrated planting overlay.
+                    mxUtils.alert('Set Plant error: ' + (e && e.message ? e.message : String(e))); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            return button; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createSecondaryActionRow(entry) { // CHANGE: migrated planting overlay.
+            const setPlantButton = createSetPlantActionButton(entry); // CHANGE: migrated planting overlay.
+            if (!setPlantButton) return null; // CHANGE: migrated planting overlay.
+            const row = document.createElement('div'); // CHANGE: migrated planting overlay.
+            row.style.gridColumn = '1 / span 2'; // CHANGE: migrated planting overlay.
+            row.style.display = 'flex'; // CHANGE: migrated planting overlay.
+            row.style.justifyContent = 'flex-end'; // CHANGE: migrated planting overlay.
+            row.style.marginTop = '7px'; // CHANGE: migrated planting overlay.
+            row.appendChild(setPlantButton); // CHANGE: migrated planting overlay.
+            return row; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function applyOverlayYearFilter(entry, year) { // CHANGE: migrated planting overlay.
+            if (!entry || !Number.isFinite(Number(year))) return; // CHANGE: migrated planting overlay.
+            const selectedYear = Number(year); // CHANGE: migrated planting overlay.
+            const cards = entry.targetIds.map(id => model.getCell(id)).filter(isValidOverlayCard); // CHANGE: migrated planting overlay.
+            model.beginUpdate(); // CHANGE: migrated planting overlay.
+            try { // CHANGE: migrated planting overlay.
+                for (const card of cards) { // CHANGE: migrated planting overlay.
+                    const hidden = !taskDateRangeOverlapsYear(card, selectedYear); // CHANGE: migrated planting overlay.
+                    const nextValue = hidden ? '1' : null; // CHANGE: migrated planting overlay.
+                    if (getAttr(card, 'year_hidden') !== (nextValue || null)) setCellAttrUndoable(card, 'year_hidden', nextValue); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } finally { // CHANGE: migrated planting overlay.
+                model.endUpdate(); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            entry.selectedYear = selectedYear; // CHANGE: migrated planting overlay.
+            selectedYearBySource.set(entry.sourceId, selectedYear); // CHANGE: migrated planting overlay.
+            dispatchYearFilterChangedForTaskOverlay(null, selectedYear); // CHANGE: migrated planting overlay.
+            renderEntry(entry); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function restoreEntryTasksToCurrentYear(entry) { // CHANGE: migrated planting overlay.
+            if (!entry || !entry.targetIds) return; // CHANGE: migrated planting overlay.
+            const cards = entry.targetIds.map(id => model.getCell(id)).filter(isValidOverlayCard); // CHANGE: migrated planting overlay.
+            if (!cards.length) return; // CHANGE: migrated planting overlay.
+            const source = model.getCell(entry.sourceId); // CHANGE: migrated planting overlay.
+            const restoreYear = getDashboardYearForCell(source || cards[0]); // CHANGE: migrated planting overlay.
+            if (Number(entry.selectedYear) === restoreYear) return; // CHANGE: migrated planting overlay.
+            model.beginUpdate(); // CHANGE: migrated planting overlay.
+            try { // CHANGE: migrated planting overlay.
+                for (const card of cards) { // CHANGE: migrated planting overlay.
+                    const hidden = !taskDateRangeOverlapsYear(card, restoreYear); // CHANGE: migrated planting overlay.
+                    const nextValue = hidden ? '1' : null; // CHANGE: migrated planting overlay.
+                    if (getAttr(card, 'year_hidden') !== (nextValue || null)) setCellAttrUndoable(card, 'year_hidden', nextValue); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } finally { // CHANGE: migrated planting overlay.
+                model.endUpdate(); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            selectedYearBySource.delete(entry.sourceId); // CHANGE: migrated planting overlay.
+            dispatchYearFilterChangedForTaskOverlay(null, restoreYear); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function isEntryStillSelected(entry) { // CHANGE: migrated planting overlay.
+            const selected = graph.getSelectionCells && graph.getSelectionCells(); // CHANGE: migrated planting overlay.
+            if (!entry || !selected || selected.length !== 1) return false; // CHANGE: migrated planting overlay.
+            const selectedCell = (graph.__trellisPlantingLinking ? graph.__trellisPlantingLinking.normalizeSelection(selected[0]) : selected[0]); // CHANGE: migrated planting overlay.
+            return !!selectedCell && selectedCell.id === entry.sourceId; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createYearControls(entry) { // CHANGE: migrated planting overlay.
+            const years = entry && entry.years ? entry.years : []; // CHANGE: migrated planting overlay.
+            if (years.length < 2) return null; // CHANGE: migrated planting overlay.
+            const current = Number(entry.selectedYear); // CHANGE: migrated planting overlay.
+            const idx = Math.max(0, years.indexOf(current)); // CHANGE: migrated planting overlay.
+            const wrap = document.createElement('div'); // CHANGE: migrated planting overlay.
+            wrap.style.gridColumn = '1 / span 2'; // CHANGE: migrated planting overlay.
+            wrap.style.display = 'flex'; // CHANGE: migrated planting overlay.
+            wrap.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+            wrap.style.gap = '5px'; // CHANGE: migrated planting overlay.
+            wrap.style.marginTop = '7px'; // CHANGE: migrated planting overlay.
+
+            const prev = makeYearControlButton('<', idx <= 0); // CHANGE: migrated planting overlay.
+            prev.title = prev.disabled ? 'Already at the first available year.' : 'Show the previous year\'s plantings.'; // CHANGE
+            prev.setAttribute('aria-label', 'Previous year'); // CHANGE
+            const label = document.createElement('div'); // CHANGE: migrated planting overlay.
+            label.textContent = String(years[idx] || current || years[0]); // CHANGE: migrated planting overlay.
+            label.style.minWidth = '48px'; // CHANGE: migrated planting overlay.
+            label.style.textAlign = 'center'; // CHANGE: migrated planting overlay.
+            label.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // CHANGE: migrated planting overlay.
+            label.style.borderRadius = '5px'; // CHANGE: migrated planting overlay.
+            label.style.background = '#ffffff'; // CHANGE: migrated planting overlay.
+            label.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            label.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            label.style.lineHeight = '20px'; // CHANGE: migrated planting overlay.
+            const next = makeYearControlButton('>', idx >= years.length - 1); // CHANGE: migrated planting overlay.
+            next.title = next.disabled ? 'Already at the last available year.' : 'Show the next year\'s plantings.'; // CHANGE
+            next.setAttribute('aria-label', 'Next year'); // CHANGE
+
+            mxEvent.addListener(prev, 'mousedown', function (evt) { // CHANGE: migrated planting overlay.
+                if (idx > 0) applyOverlayYearFilter(entry, years[idx - 1]); // CHANGE: migrated planting overlay.
+                mxEvent.consume(evt); // CHANGE: migrated planting overlay.
+                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE: migrated planting overlay.
+                if (evt.preventDefault) evt.preventDefault(); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(next, 'mousedown', function (evt) { // CHANGE: migrated planting overlay.
+                if (idx < years.length - 1) applyOverlayYearFilter(entry, years[idx + 1]); // CHANGE: migrated planting overlay.
+                mxEvent.consume(evt); // CHANGE: migrated planting overlay.
+                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE: migrated planting overlay.
+                if (evt.preventDefault) evt.preventDefault(); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+
+            wrap.appendChild(prev); // CHANGE: migrated planting overlay.
+            wrap.appendChild(label); // CHANGE: migrated planting overlay.
+            wrap.appendChild(next); // CHANGE: migrated planting overlay.
+            return wrap; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createHeader(entry, count) { // CHANGE: migrated planting overlay.
+            const header = document.createElement('div'); // CHANGE: migrated planting overlay.
+            header.style.display = 'grid'; // CHANGE: migrated planting overlay.
+            header.style.gridTemplateColumns = '1fr auto'; // CHANGE: migrated planting overlay.
+            header.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+            header.style.columnGap = '8px'; // CHANGE: migrated planting overlay.
+            header.style.marginBottom = '8px'; // CHANGE: migrated planting overlay.
+
+            const titleWrap = document.createElement('div'); // CHANGE: migrated planting overlay.
+            const title = document.createElement('div'); // CHANGE: migrated planting overlay.
+            title.textContent = getOverlayTitle(entry); // CHANGE: migrated planting overlay.
+            title.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            title.style.fontSize = '12px'; // CHANGE: migrated planting overlay.
+            title.style.overflow = 'hidden'; // CHANGE: migrated planting overlay.
+            title.style.textOverflow = 'ellipsis'; // CHANGE: migrated planting overlay.
+            title.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
+            const subtitle = document.createElement('div'); // CHANGE: migrated planting overlay.
+            subtitle.textContent = activeMode === MODE_SPACING ? (count + (count === 1 ? ' planting row' : ' planting rows')) : (count + (count === 1 ? ' linked task' : ' linked tasks')); // CHANGE: migrated planting overlay.
+            subtitle.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            subtitle.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            titleWrap.appendChild(title); // CHANGE: migrated planting overlay.
+            titleWrap.appendChild(subtitle); // CHANGE: migrated planting overlay.
+            header.appendChild(titleWrap); // CHANGE: migrated planting overlay.
+
+            const actions = document.createElement('div'); // CHANGE: migrated planting overlay.
+            actions.style.display = 'inline-flex'; // CHANGE: migrated planting overlay.
+            actions.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+            actions.style.gap = '6px'; // CHANGE: migrated planting overlay.
+            actions.style.flexWrap = 'wrap'; // CHANGE: migrated planting overlay.
+            actions.style.justifyContent = 'flex-end'; // CHANGE: migrated planting overlay.
+
+            const toggle = document.createElement('div'); // CHANGE: migrated planting overlay.
+            toggle.style.cssText = 'display:inline-flex;align-items:center;gap:0;border:1px solid #c7c7cc;border-radius:4px;overflow:hidden;box-sizing:border-box;'; // CHANGE: match the irrigation Build/Analysis selector.
+            toggle.appendChild(createModeButton(entry, 'Cards', MODE_CARDS)); // CHANGE: migrated planting overlay.
+            toggle.appendChild(createModeButton(entry, 'Schedule', MODE_SCHEDULE)); // CHANGE: migrated planting overlay.
+            toggle.appendChild(createModeButton(entry, 'Spacing', MODE_SPACING)); // CHANGE: migrated planting overlay.
+            actions.appendChild(toggle); // CHANGE: migrated planting overlay.
+            const scheduleButton = createScheduleActionButton(entry); // CHANGE: migrated planting overlay.
+            if (scheduleButton) actions.appendChild(scheduleButton); // CHANGE: migrated planting overlay.
+            const companionButton = createDerivedScheduleActionButton(entry, 'companion'); // CHANGE: migrated planting overlay.
+            if (companionButton) actions.appendChild(companionButton); // CHANGE: migrated planting overlay.
+            const turnoverButton = createDerivedScheduleActionButton(entry, 'turnover'); // CHANGE: migrated planting overlay.
+            if (turnoverButton) actions.appendChild(turnoverButton); // CHANGE: migrated planting overlay.
+            header.appendChild(actions); // CHANGE: migrated planting overlay.
+            const secondaryActionRow = createSecondaryActionRow(entry); // CHANGE: migrated planting overlay.
+            if (secondaryActionRow) header.appendChild(secondaryActionRow); // CHANGE: migrated planting overlay.
+            const yearControls = createYearControls(entry); // CHANGE: migrated planting overlay.
+            if (yearControls) header.appendChild(yearControls); // CHANGE: migrated planting overlay.
+            return header; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createScheduleOnlyHeader(entry) { // CHANGE: migrated planting overlay.
+            const header = document.createElement('div'); // CHANGE: migrated planting overlay.
+            header.style.display = 'flex'; // CHANGE: migrated planting overlay.
+            header.style.flexDirection = 'column'; // CHANGE: migrated planting overlay.
+            header.style.alignItems = 'stretch'; // CHANGE: migrated planting overlay.
+            header.style.gap = '7px'; // CHANGE: migrated planting overlay.
+
+            const title = document.createElement('div'); // CHANGE: migrated planting overlay.
+            title.textContent = getScheduleOnlyTitle(entry); // CHANGE: migrated planting overlay.
+            title.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            title.style.fontSize = '12px'; // CHANGE: migrated planting overlay.
+            title.style.overflow = 'hidden'; // CHANGE: migrated planting overlay.
+            title.style.textOverflow = 'ellipsis'; // CHANGE: migrated planting overlay.
+            title.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
+            header.appendChild(title); // CHANGE: migrated planting overlay.
+
+            const toggle = document.createElement('div'); // CHANGE: migrated planting overlay.
+            toggle.style.cssText = 'display:inline-flex;align-items:center;gap:0;border:1px solid #c7c7cc;border-radius:4px;overflow:hidden;box-sizing:border-box;'; // CHANGE: schedule-only groups use the same joined mode selector.
+            toggle.style.alignSelf = 'flex-start'; // CHANGE: migrated planting overlay.
+            const effectiveMode = activeMode === MODE_SPACING ? MODE_SPACING : MODE_SCHEDULE; // CHANGE: migrated planting overlay.
+            toggle.appendChild(createModeButton(entry, 'Schedule', MODE_SCHEDULE, effectiveMode)); // CHANGE: migrated planting overlay.
+            toggle.appendChild(createModeButton(entry, 'Spacing', MODE_SPACING, effectiveMode)); // CHANGE: migrated planting overlay.
+            header.appendChild(toggle); // CHANGE: migrated planting overlay.
+
+            const scheduleButton = createScheduleActionButton(entry); // CHANGE: migrated planting overlay.
+            if (scheduleButton) { // CHANGE: migrated planting overlay.
+                scheduleButton.style.alignSelf = 'flex-start'; // CHANGE: migrated planting overlay.
+                header.appendChild(scheduleButton); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            const companionButton = createDerivedScheduleActionButton(entry, 'companion'); // CHANGE: migrated planting overlay.
+            if (companionButton) { companionButton.style.alignSelf = 'flex-start'; header.appendChild(companionButton); } // CHANGE: migrated planting overlay.
+            const turnoverButton = createDerivedScheduleActionButton(entry, 'turnover'); // CHANGE: migrated planting overlay.
+            if (turnoverButton) { turnoverButton.style.alignSelf = 'flex-start'; header.appendChild(turnoverButton); } // CHANGE: migrated planting overlay.
+            const setPlantButton = createSetPlantActionButton(entry); // CHANGE: migrated planting overlay.
+            if (setPlantButton) { // CHANGE: migrated planting overlay.
+                setPlantButton.style.alignSelf = 'flex-start'; // CHANGE: migrated planting overlay.
+                header.appendChild(setPlantButton); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return header; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createModeButton(entry, label, mode, activeOverride) { // CHANGE: migrated planting overlay.
+            const button = document.createElement('button'); // CHANGE: migrated planting overlay.
+            button.type = 'button'; // CHANGE: migrated planting overlay.
+            button.textContent = label; // CHANGE: migrated planting overlay.
+            button.title = mode === MODE_CARDS ? 'Show linked planting cards.' : mode === MODE_SCHEDULE ? 'Show planting schedules and occupancy dates.' : 'Edit planting spacing and offsets.'; // CHANGE
+            const active = (activeOverride || activeMode) === mode; // CHANGE: migrated planting overlay.
+            button.setAttribute('aria-pressed', String(active)); // CHANGE: expose the selected planting view.
+            if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // CHANGE: share the irrigation mode styling.
+                window.Trellis.ui.applyButtonStyle(button, 'mode', { compact: true, active }); // CHANGE
+            } else { // CHANGE: keep the same appearance when the shared UI helper has not loaded.
+                button.style.cssText = 'box-sizing:border-box;border:0;border-radius:0;padding:3px 6px;font:12px Arial,sans-serif;white-space:nowrap;outline-offset:-2px;cursor:pointer;background:' + (active ? '#ecfeff' : '#fff') + ';color:' + (active ? '#155e75' : '#374151') + ';font-weight:' + (active ? '700' : '400') + ';'; // CHANGE: match the irrigation segment palette and dimensions.
+            } // CHANGE
+            mxEvent.addListener(button, 'mousedown', function (evt) { // CHANGE: migrated planting overlay.
+                setMode(mode); // CHANGE: migrated planting overlay.
+                mxEvent.consume(evt); // CHANGE: migrated planting overlay.
+                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE: migrated planting overlay.
+                if (evt.preventDefault) evt.preventDefault(); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            return button; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createBody() { // CHANGE: migrated planting overlay.
+            const body = document.createElement('div'); // CHANGE: migrated planting overlay.
+            body.style.maxHeight = BODY_MAX_HEIGHT + 'px'; // CHANGE: migrated planting overlay.
+            body.style.overflowY = 'auto'; // CHANGE: migrated planting overlay.
+            body.style.overflowX = 'hidden'; // CHANGE: migrated planting overlay.
+            body.style.paddingRight = '2px'; // CHANGE: migrated planting overlay.
+            return body; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderEmptyTaskOverlayMessage(body) { // CHANGE: migrated planting overlay.
+            const empty = document.createElement('div'); // CHANGE: migrated planting overlay.
+            empty.textContent = 'No linked tasks visible for this year'; // CHANGE: migrated planting overlay.
+            empty.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            empty.style.padding = '8px 0'; // CHANGE: migrated planting overlay.
+            body.appendChild(empty); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function countGroupItems(groups) { // CHANGE: migrated planting overlay.
+            return (groups || []).reduce((sum, group) => sum + group.items.length, 0); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function countScheduleRows(cards) { // CHANGE: migrated planting overlay.
+            return buildScheduleRowsForCards(cards).length; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function countOccupancyRows(entry) { // CHANGE: migrated planting overlay.
+            const occupancy = getOccupancyModelForEntry(entry); // CHANGE: migrated planting overlay.
+            return occupancy && Array.isArray(occupancy.items) ? occupancy.items.length : 0; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getLayoutTools() { // CHANGE: migrated planting overlay.
+            return window.USL && window.USL.scheduler && window.USL.scheduler.layoutTools; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function countSpacingRows(entry) { // CHANGE: migrated planting overlay.
+            if (entry && Array.isArray(entry.spacingRows)) return entry.spacingRows.length; // CHANGE: migrated planting overlay.
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE: migrated planting overlay.
+            const api = graph.__trellisBedSuccessionNavigator; // CHANGE: migrated planting overlay.
+            const context = api && typeof api.getSelectedClusterLayoutContext === 'function' ? api.getSelectedClusterLayoutContext(source) : null; // CHANGE: migrated planting overlay.
+            return context && Array.isArray(context.cellIds) && context.cellIds.length ? context.cellIds.length : 1; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        const spacingPreviewState = { host: null, hidden: [], chromeCells: [] }; // CHANGE: spacing draft previews are DOM-only copies, not faded mxCells.
+
+        /** Restore old rendered nodes and current selection handlers before reconciling a redraw. */ // CHANGE
+        function restoreSpacingPreviewVisibility() { // CHANGE
+            spacingPreviewState.hidden.forEach(item => { // CHANGE: migrated planting overlay.
+                if (item && item.node && item.node.style) item.node.style.opacity = item.opacity; // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            spacingPreviewState.hidden = []; // CHANGE: migrated planting overlay.
+            spacingPreviewState.chromeCells.forEach(cell => setSpacingPreviewSelectionChromeVisible(cell, true)); // CHANGE: migrated planting overlay.
+            spacingPreviewState.chromeCells = []; // CHANGE: migrated planting overlay.
+        } // CHANGE
+
+        function clearSpacingPreview() { // CHANGE: migrated planting overlay.
+            restoreSpacingPreviewVisibility(); // CHANGE
+            plantingPreview.clear('spacing'); // CHANGE: an editor cannot clear Allocate's preview. // CHANGE: migrated planting overlay.
+            spacingPreviewState.host = null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function setSpacingPreviewSelectionChromeVisible(cell, visible) { // NEW: hide handles without changing graph selection.
+            const handler = graph.selectionCellsHandler && typeof graph.selectionCellsHandler.getHandler === 'function' // CHANGE: migrated planting overlay.
+                ? graph.selectionCellsHandler.getHandler(cell) // CHANGE: migrated planting overlay.
+                : null; // CHANGE: migrated planting overlay.
+            if (!handler || typeof handler.setHandlesVisible !== 'function') return; // CHANGE: migrated planting overlay.
+            handler.setHandlesVisible(!!visible); // CHANGE: migrated planting overlay.
+            if (visible && typeof handler.redraw === 'function') handler.redraw(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function rememberSpacingPreviewChromeCell(cell) { // NEW: restore selected-cell chrome when draft preview clears.
+            if (!cell || spacingPreviewState.chromeCells.indexOf(cell) >= 0) return; // CHANGE: migrated planting overlay.
+            spacingPreviewState.chromeCells.push(cell); // CHANGE: migrated planting overlay.
+            setSpacingPreviewSelectionChromeVisible(cell, false); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function spacingPreviewCellNodes(cell) { // NEW: hide a group and its rendered descendants while the DOM copy is visible.
+            const view = graph.getView && graph.getView(); // CHANGE: migrated planting overlay.
+            const out = []; // CHANGE: migrated planting overlay.
+            const stack = cell ? [cell] : []; // CHANGE: migrated planting overlay.
+            while (stack.length && view) { // CHANGE: migrated planting overlay.
+                const current = stack.pop(); // CHANGE: migrated planting overlay.
+                const state = view.getState && view.getState(current); // CHANGE: migrated planting overlay.
+                if (state && state.shape && state.shape.node) out.push(state.shape.node); // CHANGE: migrated planting overlay.
+                if (state && state.text && state.text.node) out.push(state.text.node); // CHANGE: migrated planting overlay.
+                const count = model.getChildCount ? model.getChildCount(current) : 0; // CHANGE: migrated planting overlay.
+                for (let i = 0; i < count; i++) stack.push(model.getChildAt(current, i)); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return out; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function hideSpacingPreviewCell(cell) { // CHANGE: migrated planting overlay.
+            spacingPreviewCellNodes(cell).forEach(node => { // CHANGE: migrated planting overlay.
+                if (!node || !node.style || spacingPreviewState.hidden.some(item => item.node === node)) return; // CHANGE: migrated planting overlay.
+                spacingPreviewState.hidden.push({ node, opacity: node.style.opacity || '' }); // CHANGE: migrated planting overlay.
+                node.style.opacity = '0'; // CHANGE: keep the real cell hit-testable but visually replaced by the draft copy.
+            }); // CHANGE: migrated planting overlay.
+            rememberSpacingPreviewChromeCell(cell); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+
+        /** Translate a canonical draft by its saved anchor's display displacement, preserving generated frames. */ // CHANGE
+        function projectSpacingPreviewRow(row) { // CHANGE
+            const cell = model.getCell(row.anchorCellId || row.cellId); // CHANGE: an unsaved companion shares its saved source's display displacement.
+            const view = graph.getView(), state = cell && view.getState(cell); // CHANGE
+            if (!state || state.invalid || !state.shape || !state.shape.node) return null; // CHANGE: never substitute a saved origin when the displayed origin is unavailable.
+            let savedX = 0, savedY = 0; // CHANGE
+            for (let current = cell; current; current = model.getParent(current)) { // CHANGE
+                const geometry = model.getGeometry(current); // CHANGE
+                if (geometry) { savedX += Number(geometry.x) || 0; savedY += Number(geometry.y) || 0; } // CHANGE
+            } // CHANGE
+            const scale = Number(view.scale) || 1, translate = view.translate || { x: 0, y: 0 }; // CHANGE
+            const dx = state.x / scale - translate.x - savedX, dy = state.y / scale - translate.y - savedY; // CHANGE
+            if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null; // CHANGE
+            return Object.assign({}, row, { // CHANGE: only the disposable drawing copy receives display coordinates.
+                rect: Object.assign({}, row.rect, { x: row.rect.x + dx, y: row.rect.y + dy }), // CHANGE
+                circles: (row.circles || []).map(dot => Object.assign({}, dot, { x: dot.x + dx, y: dot.y + dy })) // CHANGE
+            }); // CHANGE
+        } // CHANGE
+
+        /** Reconcile current shapes only after all required anchors of a bed preview are available. */ // CHANGE
+        function resolveSpacingPreviewInput(rows, bedPreview) { // CHANGE
+            restoreSpacingPreviewVisibility(); // CHANGE: graph refresh may have replaced the nodes hidden by the previous draw.
+            const projected = rows.map(projectSpacingPreviewRow); // CHANGE
+            const projectedBed = bedPreview ? projectSpacingPreviewRow(bedPreview) : null; // CHANGE
+            if (bedPreview && (!projectedBed || projected.some(row => !row))) return null; // CHANGE: a bed and its planting rows are one visibility unit.
+            const visibleRows = projected.filter(Boolean); // CHANGE: independent groups may suspend separately.
+            if (projectedBed) hideSpacingPreviewCell(model.getCell(projectedBed.cellId)); // CHANGE
+            visibleRows.forEach(row => hideSpacingPreviewCell(model.getCell(row.cellId))); // CHANGE
+            return { className: 'manual-link-spacing-preview', rows: visibleRows, bedPreview: projectedBed }; // CHANGE
+        } // CHANGE
+
+        /** Retain canonical spacing data; resolve anchors and shape visibility on every renderer redraw. */ // CHANGE
+        function renderSpacingPreview(modelPreview) { // CHANGE
+            clearSpacingPreview(); // CHANGE
+            const rows = modelPreview && Array.isArray(modelPreview.rows) ? modelPreview.rows : []; // CHANGE
+            if (!rows.length) return; // CHANGE
+            const bedPreview = modelPreview.bedPreview; // CHANGE
+            const savedAnchor = rows.find(row => !row.proposed && model.getCell(row.cellId)); // CHANGE: proposed companion frames already share this source's canonical rectangle.
+            const normalized = rows.map(row => Object.assign({}, row.groupPreview || { rect: row.rect, circles: row.dots && row.dots.circles || [] }, { cellId: row.cellId, anchorCellId: row.proposed ? savedAnchor && savedAnchor.cellId : row.cellId })); // CHANGE
+            spacingPreviewState.host = plantingPreview.render('spacing', { resolveInput: () => resolveSpacingPreviewInput(normalized, bedPreview) }); // CHANGE
+        } // CHANGE
+
+        function spacingNumberInput(value, enabled) { // CHANGE: migrated planting overlay.
+            const input = document.createElement('input'); // CHANGE: migrated planting overlay.
+            input.type = 'number'; // CHANGE: migrated planting overlay.
+            input.step = '1'; // CHANGE: native spacing-tab steppers move in whole-centimeter intervals while typed decimals remain valid.
+            input.value = value == null ? '' : String(Number(value)); // CHANGE: retain computed tangency precision instead of rounding generated layouts.
+            input.disabled = !enabled; // CHANGE: migrated planting overlay.
+            input.style.width = '100%'; // CHANGE: fit all spacing fields inside the fixed overlay width.
+            input.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+            input.style.boxSizing = 'border-box'; // CHANGE: migrated planting overlay.
+            input.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            input.style.padding = '2px 3px'; // CHANGE: compact numeric fields prevent clipped columns.
+            input.style.textAlign = 'right'; // CHANGE: compact numeric columns stay readable.
+            return input; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        const spacingOffsetValues = new WeakMap(); // CHANGE: exact offsets belong to controls, independently of their rounded display.
+
+        /** Assign offsets from layouts or drafts without losing precision to display formatting. */ // CHANGE
+        function setSpacingOffsetValue(input, value, roundDisplay = true) { // CHANGE
+            const exact = value == null ? '' : String(value); // CHANGE
+            const finite = exact.trim() !== '' && Number.isFinite(Number(exact)); // CHANGE
+            if (roundDisplay) input.value = finite ? String(Math.round(Number(exact)) || 0) : exact; // CHANGE: normalize negative zero; reading edits must not overwrite the browser's incomplete input text.
+            spacingOffsetValues.set(input, { exact, displayed: input.value }); // CHANGE: remember the browser's displayed text, including sanitized invalid numbers.
+            input.title = finite ? 'Rounded to whole cm for display. Exact offset: ' + exact + ' cm. Editing replaces this offset.' : 'Enter a finite offset in cm. Valid offsets are rounded only for display.'; // CHANGE
+        } // CHANGE
+
+        /** Only explicit edits replace an exact offset; unrelated events read the retained value. */ // CHANGE
+        function readSpacingOffsetValue(input, edited = false) { // CHANGE
+            let stored = spacingOffsetValues.get(input); // CHANGE
+            if (!stored || edited || input.value !== stored.displayed) { // CHANGE: also accept programmatic changes before a shared row refresh.
+                setSpacingOffsetValue(input, input.value, false); // CHANGE: preserve typed decimals and incomplete input until blur.
+                stored = spacingOffsetValues.get(input); // CHANGE
+            } // CHANGE
+            return stored.exact; // CHANGE
+        } // CHANGE
+
+        function spacingSelect(value, enabled) { // CHANGE: migrated planting overlay.
+            const select = document.createElement('select'); // CHANGE: migrated planting overlay.
+            ['beside', 'interplant', 'staggered'].forEach(optionValue => { // CHANGE: migrated planting overlay.
+                const option = document.createElement('option'); // CHANGE: migrated planting overlay.
+                option.value = optionValue; // CHANGE: migrated planting overlay.
+                option.textContent = optionValue; // CHANGE: migrated planting overlay.
+                select.appendChild(option); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            select.value = value || 'beside'; // CHANGE: migrated planting overlay.
+            select.disabled = !enabled; // CHANGE: migrated planting overlay.
+            select.style.width = '100%'; // CHANGE: let the spacing grid own column sizing.
+            select.style.minWidth = '0'; // CHANGE: prevent the native select width from forcing overflow.
+            select.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            select.style.padding = '2px 3px'; // CHANGE: keep template control aligned with compact numeric fields.
+            return select; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function spacingIdleStatus(rows) { // CHANGE: migrated planting overlay.
+            const allRows = rows || []; // CHANGE: migrated planting overlay.
+            const activeCount = allRows.filter(row => row && row.enabled !== false).length; // CHANGE: migrated planting overlay.
+            const inactiveCount = allRows.length - activeCount; // CHANGE: migrated planting overlay.
+            if (!activeCount && allRows.length) return 'No active rows in this occupancy window.'; // CHANGE: explain why preview/apply is unavailable.
+            return inactiveCount ? 'Only active-window rows preview and apply.' : ''; // CHANGE: inactive rows are context, not editable targets.
+        } // CHANGE: migrated planting overlay.
+
+        function spacingDraftFromRowStates(rowStates) { // CHANGE: migrated planting overlay.
+            return (rowStates || []).map(state => Object.assign({}, state.row, { // CHANGE: migrated planting overlay.
+                spacingXCm: state.spacingX.value, // CHANGE: migrated planting overlay.
+                spacingYCm: state.spacingY.value, // CHANGE: migrated planting overlay.
+                offsetXCm: readSpacingOffsetValue(state.offsetX), // CHANGE: drafts consume exact offsets, never rounded display text.
+                offsetYCm: readSpacingOffsetValue(state.offsetY) // CHANGE
+            })); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function spacingDraftKey(row) { // CHANGE: migrated planting overlay.
+            return String(row && row.cellId || ''); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function readStoredSpacingDraft(entry, row) { // NEW: view refreshes keep uncommitted field values.
+            const key = spacingDraftKey(row); // CHANGE: migrated planting overlay.
+            return key && entry && entry.spacingDraftByCellId ? entry.spacingDraftByCellId.get(key) : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function writeStoredSpacingDrafts(entry, rowStates) { // NEW: draft state lives outside the graph model.
+            if (!entry) return; // CHANGE: migrated planting overlay.
+            if (!entry.spacingDraftByCellId) entry.spacingDraftByCellId = new Map(); // CHANGE: migrated planting overlay.
+            (rowStates || []).forEach(state => { // CHANGE: migrated planting overlay.
+                const key = spacingDraftKey(state.row); // CHANGE: migrated planting overlay.
+                if (!key || state.row.enabled === false) return; // CHANGE: migrated planting overlay.
+                if (spacingRowChanged(state)) { // CHANGE: migrated planting overlay.
+                    entry.spacingDraftByCellId.set(key, { // CHANGE: migrated planting overlay.
+                        layoutMetadata: { rect: state.row.rect, modelRect: state.row.modelRect, rotationDeg: state.row.rotationDeg, vegDiameterCm: state.row.vegDiameterCm, clipBounds: state.row.clipBounds, resetDisabled: state.row.resetDisabled, generatedPattern: state.row.generatedPattern, strictFootprint: state.row.strictFootprint }, // CHANGE
+                        spacingXCm: state.spacingX.value, // CHANGE: migrated planting overlay.
+                        spacingYCm: state.spacingY.value, // CHANGE: migrated planting overlay.
+                        offsetXCm: readSpacingOffsetValue(state.offsetX), // CHANGE: view refreshes retain exact offset drafts.
+                        offsetYCm: readSpacingOffsetValue(state.offsetY) // CHANGE
+                    }); // CHANGE: migrated planting overlay.
+                } else { // CHANGE: migrated planting overlay.
+                    entry.spacingDraftByCellId.delete(key); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function clearStoredSpacingDrafts(entry) { // CHANGE: migrated planting overlay.
+            if (entry && entry.spacingDraftByCellId) entry.spacingDraftByCellId.clear(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function spacingRowChanged(state) { // CHANGE: migrated planting overlay.
+            const row = state.row; // CHANGE: migrated planting overlay.
+            const offsetX = readSpacingOffsetValue(state.offsetX), offsetY = readSpacingOffsetValue(state.offsetY); // CHANGE: include incomplete offset drafts even when the original offset was zero.
+            return Number(state.spacingX.value) !== Number(row.spacingXCm) || // CHANGE: migrated planting overlay.
+                Number(state.spacingY.value) !== Number(row.spacingYCm) || // CHANGE: migrated planting overlay.
+                offsetX.trim() === '' || Number(offsetX) !== Number(row.offsetXCm) || // CHANGE: rounding alone cannot mark a layout Custom or changed; blank is not zero.
+                offsetY.trim() === '' || Number(offsetY) !== Number(row.offsetYCm) || !!row.generatedPattern; // CHANGE: generated patterns also update the shared planting frame.
+        } // CHANGE: migrated planting overlay.
+
+        function revertSpacingRowState(state) { // CHANGE: migrated planting overlay.
+            const row = state.row.plantDefaultLayout || state.row; // CHANGE: row reset restores plant defaults when the scheduler exposes them.
+            state.spacingX.value = row.spacingXCm == null ? '' : String(Math.round(Number(row.spacingXCm) * 10) / 10); // CHANGE: migrated planting overlay.
+            state.spacingY.value = row.spacingYCm == null ? '' : String(Math.round(Number(row.spacingYCm) * 10) / 10); // CHANGE: migrated planting overlay.
+            setSpacingOffsetValue(state.offsetX, row.offsetXCm); // CHANGE: reset restores the exact layout and its rounded display together.
+            setSpacingOffsetValue(state.offsetY, row.offsetYCm); // CHANGE
+        } // CHANGE: migrated planting overlay.
+
+        const SPACING_ROW_GRID_COLUMNS = 'minmax(92px,1fr) repeat(4,minmax(42px,46px)) 24px'; // CHANGE: companion template column is gone; rows are uniform planting layout rows.
+
+        function createSpacingGridRow(className) { // CHANGE: migrated planting overlay.
+            const row = document.createElement('div'); // CHANGE: migrated planting overlay.
+            row.className = className || ''; // CHANGE: migrated planting overlay.
+            row.style.display = 'grid'; // CHANGE: migrated planting overlay.
+            row.style.gridTemplateColumns = SPACING_ROW_GRID_COLUMNS; // CHANGE: migrated planting overlay.
+            row.style.columnGap = '4px'; // CHANGE: migrated planting overlay.
+            row.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+            row.style.width = '100%'; // CHANGE: migrated planting overlay.
+            row.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+            return row; // CHANGE: each plant owns one grid row instead of relying on global CSS grid auto-placement.
+        } // CHANGE: migrated planting overlay.
+
+        function renderSpacingEditor(entry, body, context, tools, options = {}) { // CHANGE: Allocate and saved groups share one spacing editor.
+            body.innerHTML = ''; // CHANGE: migrated planting overlay.
+            entry.spacingRows = context.rows || []; // CHANGE: migrated planting overlay.
+            const wrap = document.createElement('div'); // CHANGE: migrated planting overlay.
+            wrap.className = 'manual-link-spacing-editor'; // CHANGE: migrated planting overlay.
+            wrap.style.display = 'flex'; // CHANGE: migrated planting overlay.
+            wrap.style.flexDirection = 'column'; // CHANGE: migrated planting overlay.
+            wrap.style.gap = '6px'; // CHANGE: migrated planting overlay.
+
+            const patternBar = document.createElement('div'); // CHANGE
+            patternBar.className = 'manual-link-spacing-pattern'; patternBar.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;'; // CHANGE
+            const patternLabel = document.createElement('span'); patternLabel.textContent = 'Row layout:'; patternBar.appendChild(patternLabel); // CHANGE
+            const targetSelect = document.createElement('select'); targetSelect.setAttribute('aria-label', 'Companion planting'); // CHANGE
+            const targets = context.companionTargets || []; // CHANGE
+            if (targets.length > 1) { const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Choose companion'; targetSelect.appendChild(placeholder); } // CHANGE
+            targets.forEach(row => { const option = document.createElement('option'); option.value = row.cellId; option.textContent = row.label || row.cellId; targetSelect.appendChild(option); }); // CHANGE
+            targetSelect.value = context.pairTargetId || entry.pairTargetId || (targets.length === 1 ? targets[0].cellId : ''); // CHANGE
+            if (targets.length > 1) patternBar.appendChild(targetSelect); // CHANGE
+            const patternSource = document.createElement('span'); patternSource.className = 'manual-link-spacing-pattern-source'; patternSource.textContent = context.layoutSource || 'Custom'; // CHANGE
+            const patternButtons = ['aligned', 'staggered'].map(pattern => { // CHANGE
+                const button = document.createElement('button'); button.type = 'button'; button.textContent = pattern === 'aligned' ? 'Aligned' : 'Staggered'; // CHANGE
+                button.dataset.spacingPattern = pattern; applyPlantingOverlayButtonStyle(button, 'neutral', { compact: true }); // CHANGE
+                button.disabled = !targetSelect.value || !tools.generateCompanionPairLayout; patternBar.appendChild(button); return button; // CHANGE
+            }); // CHANGE
+            patternBar.appendChild(patternSource); patternBar.style.display = targets.length ? 'flex' : 'none'; wrap.appendChild(patternBar); // CHANGE
+            const rowsWrap = document.createElement('div'); // CHANGE: migrated planting overlay.
+            rowsWrap.className = 'manual-link-spacing-rows'; // CHANGE: migrated planting overlay.
+            rowsWrap.style.display = 'flex'; // CHANGE: migrated planting overlay.
+            rowsWrap.style.flexDirection = 'column'; // CHANGE: migrated planting overlay.
+            rowsWrap.style.gap = '5px'; // CHANGE: migrated planting overlay.
+            rowsWrap.style.width = '100%'; // CHANGE: migrated planting overlay.
+            rowsWrap.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+            const headerRow = createSpacingGridRow('manual-link-spacing-header'); // CHANGE: migrated planting overlay.
+            if (options.live) headerRow.style.gridTemplateColumns = 'minmax(44px,1.4fr) repeat(4,minmax(0,1fr)) 18px'; // CHANGE: allocation fields shrink with the reachable above-bed panel.
+            ['Planting', 'Space X', 'Space Y', 'Off X', 'Off Y', ''].forEach(text => { // CHANGE: migrated planting overlay.
+                const head = document.createElement('div'); // CHANGE: migrated planting overlay.
+                head.textContent = text; // CHANGE: migrated planting overlay.
+                head.style.fontSize = '9px'; // CHANGE: migrated planting overlay.
+                head.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+                head.style.fontWeight = '700'; // CHANGE: migrated planting overlay.
+                head.style.minWidth = '0'; // CHANGE: headers no longer force the spacing grid wider than the panel.
+                head.style.textAlign = text === 'Planting' ? 'left' : 'center'; // CHANGE: compact columns remain visually aligned.
+                headerRow.appendChild(head); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            rowsWrap.appendChild(headerRow); // CHANGE: migrated planting overlay.
+
+            const rowStates = []; // CHANGE: migrated planting overlay.
+            (context.rows || []).forEach(initialRow => { // CHANGE
+                const metadata = readStoredSpacingDraft(entry, initialRow)?.layoutMetadata || {}; // CHANGE
+                const row = Object.assign({}, initialRow, metadata); // CHANGE
+                const enabled = row.enabled !== false; // CHANGE: migrated planting overlay.
+                const storedDraft = readStoredSpacingDraft(entry, row); // CHANGE: migrated planting overlay.
+                const displayRow = storedDraft ? Object.assign({}, row, storedDraft) : row; // CHANGE: migrated planting overlay.
+                const rowEl = createSpacingGridRow('manual-link-spacing-row'); // CHANGE: migrated planting overlay.
+                if (options.live) rowEl.style.gridTemplateColumns = 'minmax(44px,1.4fr) repeat(4,minmax(0,1fr)) 18px'; // CHANGE: keep all four inputs inside narrow allocation panels.
+                rowEl.dataset.spacingRowCell = row.cellId || ''; // CHANGE: migrated planting overlay.
+                const labelCell = document.createElement('div'); // CHANGE: migrated planting overlay.
+                labelCell.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+                labelCell.style.display = 'flex'; // CHANGE: migrated planting overlay.
+                labelCell.style.flexDirection = 'column'; // CHANGE: migrated planting overlay.
+                labelCell.style.lineHeight = '12px'; // CHANGE: migrated planting overlay.
+                const label = makeTextSpan(row.label || row.cellId || 'Planting', enabled ? null : '#9aa0a6'); // CHANGE: migrated planting overlay.
+                label.style.fontWeight = row.selected ? '700' : '400'; // CHANGE: migrated planting overlay.
+                labelCell.appendChild(label); // CHANGE: migrated planting overlay.
+                if (!enabled) { // CHANGE: migrated planting overlay.
+                    const marker = document.createElement('span'); // CHANGE: migrated planting overlay.
+                    marker.textContent = 'Inactive'; // CHANGE: migrated planting overlay.
+                    marker.style.fontSize = '9px'; // CHANGE: migrated planting overlay.
+                    marker.style.color = '#9aa0a6'; // CHANGE: migrated planting overlay.
+                    marker.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
+                    marker.style.lineHeight = '10px'; // CHANGE: migrated planting overlay.
+                    labelCell.appendChild(marker); // CHANGE: disabled rows are explicitly outside the active occupancy window.
+                } // CHANGE: migrated planting overlay.
+                rowEl.appendChild(labelCell); // CHANGE: migrated planting overlay.
+
+                const spacingX = spacingNumberInput(displayRow.spacingXCm, enabled); // CHANGE: migrated planting overlay.
+                const spacingY = spacingNumberInput(displayRow.spacingYCm, enabled); // CHANGE: migrated planting overlay.
+                const offsetX = spacingNumberInput(displayRow.offsetXCm, enabled); // CHANGE: migrated planting overlay.
+                const offsetY = spacingNumberInput(displayRow.offsetYCm, enabled); // CHANGE: migrated planting overlay.
+                setSpacingOffsetValue(offsetX, displayRow.offsetXCm); setSpacingOffsetValue(offsetY, displayRow.offsetYCm); // CHANGE: all shared Spacing editors round only offset displays.
+                [spacingX, spacingY, offsetX, offsetY].forEach((input, index) => input.setAttribute('aria-label', (row.label || 'Planting') + ' ' + ['Spacing X (cm)', 'Spacing Y (cm)', 'Offset X (cm)', 'Offset Y (cm)'][index])); // CHANGE: numeric fields remain identifiable in either overlay host.
+                [spacingX, spacingY, offsetX, offsetY].forEach(input => rowEl.appendChild(input)); // CHANGE: migrated planting overlay.
+
+                const revert = document.createElement('button'); // CHANGE: migrated planting overlay.
+                revert.type = 'button'; // CHANGE: migrated planting overlay.
+                revert.textContent = '↺'; // CHANGE: use a revert symbol instead of Reset text.
+                revert.setAttribute('aria-label', 'Restore plant defaults'); // CHANGE: row reset targets the plant-table defaults.
+                revert.title = 'Restore plant defaults'; // CHANGE: distinguish plant defaults from companion-set defaults.
+                revert.style.fontSize = '12px'; // CHANGE: migrated planting overlay.
+                revert.style.lineHeight = '14px'; // CHANGE: migrated planting overlay.
+                revert.style.visibility = 'hidden'; // CHANGE: reserve the grid slot without exposing inactive actions.
+                revert.style.pointerEvents = 'none'; // CHANGE: migrated planting overlay.
+                revert.disabled = !enabled; // CHANGE: migrated planting overlay.
+                applyPlantingOverlayButtonStyle(revert, 'neutral', { compact: true }); // CHANGE: migrated planting overlay.
+                revert.style.width = '100%'; // CHANGE: revert column stays fixed and aligned.
+                revert.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+                revert.style.padding = '2px 0'; // CHANGE: override shared compact padding to fit the icon column.
+                rowEl.appendChild(revert); // CHANGE: migrated planting overlay.
+
+                const state = { row, spacingX, spacingY, offsetX, offsetY, revert }; // CHANGE: migrated planting overlay.
+                rowStates.push(state); // CHANGE: migrated planting overlay.
+                rowsWrap.appendChild(rowEl); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            wrap.appendChild(rowsWrap); // CHANGE: migrated planting overlay.
+
+            const defaultLabel = document.createElement('label'); // CHANGE: migrated planting overlay.
+            defaultLabel.style.display = 'none'; // CHANGE: migrated planting overlay.
+            defaultLabel.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+            defaultLabel.style.gap = '6px'; // CHANGE: migrated planting overlay.
+            defaultLabel.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            defaultLabel.style.color = '#3c4043'; // CHANGE: migrated planting overlay.
+            const saveDefaults = document.createElement('input'); // CHANGE: migrated planting overlay.
+            saveDefaults.type = 'checkbox'; // CHANGE: migrated planting overlay.
+            defaultLabel.appendChild(saveDefaults); // CHANGE: migrated planting overlay.
+            defaultLabel.appendChild(document.createTextNode(options.live ? 'Save as default' : 'Save as companion default')); // CHANGE: allocation defaults are explicit and deferred until Create.
+            saveDefaults.checked = !!options.saveDefaults; // CHANGE: preserve opt-in across allocation view switches.
+            if (options.fitToDemand) defaultLabel.title = 'Save X/Y spacing as the plant default after Create. Offsets apply to this allocation.'; // CHANGE: single-plant default storage supports spacing; companion-set storage also supports offsets.
+            wrap.appendChild(defaultLabel); // CHANGE: migrated planting overlay.
+
+            const status = document.createElement('div'); // CHANGE: migrated planting overlay.
+            if (options.live) status.style.whiteSpace = 'pre-line'; // CHANGE: count and coverage changes for affected crops remain readable on separate lines.
+            status.style.minHeight = '14px'; // CHANGE: migrated planting overlay.
+            status.style.color = '#92400e'; // CHANGE: migrated planting overlay.
+            status.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            status.style.fontWeight = '700'; // CHANGE: migrated planting overlay.
+            wrap.appendChild(status); // CHANGE: migrated planting overlay.
+            const idleStatus = spacingIdleStatus(context.rows || []); // CHANGE: migrated planting overlay.
+            status.textContent = idleStatus; // CHANGE: clarify inactive rows before edits begin.
+
+            const actions = document.createElement('div'); // CHANGE: migrated planting overlay.
+            actions.style.display = 'flex'; // CHANGE: migrated planting overlay.
+            actions.style.gap = '6px'; // CHANGE: migrated planting overlay.
+            actions.style.justifyContent = 'flex-end'; // CHANGE: migrated planting overlay.
+            const applySetDefault = document.createElement('button'); // CHANGE: migrated planting overlay.
+            applySetDefault.type = 'button'; // CHANGE: migrated planting overlay.
+            applySetDefault.textContent = 'Apply set default'; // CHANGE: migrated planting overlay.
+            applySetDefault.title = 'Restore the saved companion-set spacing defaults for active rows.'; // CHANGE
+            applySetDefault.style.display = context.hasSetDefault ? '' : 'none'; // CHANGE: migrated planting overlay.
+            applyPlantingOverlayButtonStyle(applySetDefault, 'neutral', { compact: true }); // CHANGE: migrated planting overlay.
+            actions.appendChild(applySetDefault); // CHANGE: set defaults can be restored explicitly without editing a row first.
+            const apply = document.createElement('button'); // CHANGE: migrated planting overlay.
+            apply.type = 'button'; // CHANGE: migrated planting overlay.
+            apply.textContent = 'Apply'; // CHANGE: migrated planting overlay.
+            apply.disabled = true; // CHANGE: migrated planting overlay.
+            applyPlantingOverlayButtonStyle(apply, 'add', { compact: true }); // CHANGE: migrated planting overlay.
+            actions.appendChild(apply); // CHANGE: migrated planting overlay.
+            if (options.live) apply.style.display = 'none'; // CHANGE: allocation edits update the draft, never apply graph mutations.
+            wrap.appendChild(actions); // CHANGE: migrated planting overlay.
+            body.appendChild(wrap); // CHANGE: migrated planting overlay.
+
+            function refreshDraftState() { // CHANGE: migrated planting overlay.
+                const changed = rowStates.filter(state => state.row.enabled !== false && spacingRowChanged(state)); // CHANGE: migrated planting overlay.
+                writeStoredSpacingDrafts(entry, rowStates); // CHANGE: migrated planting overlay.
+                rowStates.forEach(state => { // CHANGE: migrated planting overlay.
+                    const showRevert = state.row.enabled !== false && spacingRowChanged(state); // CHANGE: migrated planting overlay.
+                    state.revert.style.visibility = showRevert ? 'visible' : 'hidden'; // CHANGE: keep row layout stable while toggling the revert affordance.
+                    state.revert.style.pointerEvents = showRevert ? 'auto' : 'none'; // CHANGE: hidden revert controls are not interactive.
+                }); // CHANGE: migrated planting overlay.
+                defaultLabel.style.display = changed.length || targets.length ? 'flex' : 'none'; // CHANGE
+                const draft = spacingDraftFromRowStates(rowStates); // CHANGE: migrated planting overlay.
+                const validation = tools.validateSpacingDraft(draft); // CHANGE: migrated planting overlay.
+                apply.disabled = (!changed.length && !options.proposed) || !validation.ok || (options.isCurrent && !options.isCurrent()); // CHANGE
+                apply.title = !changed.length ? 'Change an active row\'s spacing or offset before applying.' : !validation.ok ? validation.errors.join(' ') : 'Apply the spacing and offsets to the changed active plantings.'; // CHANGE
+                status.textContent = validation.ok ? idleStatus : validation.errors.join(' '); // CHANGE: preserve active-window explanation while editing.
+                if (options.live && options.fitToDemand) { // CHANGE: Allocate owns resizing, count, coverage, and canvas drawing.
+                    defaultLabel.style.display = 'flex'; // CHANGE
+                    options.onChange?.(draft, null, validation.ok, { saveDefaults: saveDefaults.checked }); // CHANGE
+                    return; // CHANGE
+                } // CHANGE
+                if ((!changed.length && !options.proposed) || !validation.ok) { // CHANGE
+                    if (!options.live) clearSpacingPreview(); options.onChange?.(draft, null, false, { saveDefaults: saveDefaults.checked }); // CHANGE
+                    return; // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                const changedCellIds = new Set(changed.map(state => String(state.row.cellId || ''))); // CHANGE: migrated planting overlay.
+                const bedScopedPreview = context && context.scope === 'bed' && draft.some(row => row.bedId); // CHANGE: bed spacing previews replace the whole rotated bed unit.
+                const previewRows = draft.map(row => { // CHANGE: migrated planting overlay.
+                    const isChanged = changedCellIds.has(String(row.cellId || '')) || !!options.proposed && row.enabled !== false; // CHANGE
+                    const includeBedContext = !!(bedScopedPreview && row.bedId); // CHANGE: migrated planting overlay.
+                    return Object.assign({}, row, { // CHANGE: migrated planting overlay.
+                        enabled: isChanged, // CHANGE: migrated planting overlay.
+                        previewOnly: includeBedContext && !isChanged, // CHANGE: migrated planting overlay.
+                        previewUnrotated: includeBedContext // CHANGE: migrated planting overlay.
+                    }); // CHANGE: migrated planting overlay.
+                }); // CHANGE: migrated planting overlay.
+                const preview = tools.buildSpacingPreviewModel(graph, previewRows); // CHANGE: pass graph so scheduler can use the read-only tiler preview API.
+                if (preview && preview.status === 'invalid') { // CHANGE: migrated planting overlay.
+                    apply.disabled = true; // CHANGE: zero in-bounds plant drafts cannot be applied.
+                    apply.title = preview.warning || 'No plants remain inside the planting area.'; // CHANGE
+                    if (!options.live) clearSpacingPreview(); // CHANGE: allocation preview belongs to Allocate.
+                    status.textContent = preview.warning || 'No plants remain inside the planting area.'; // CHANGE: migrated planting overlay.
+                    options.onChange?.(draft, preview, false, { saveDefaults: saveDefaults.checked }); return; // CHANGE
+                } // CHANGE: migrated planting overlay.
+                if (!options.live) renderSpacingPreview(preview); // CHANGE: allocation uses its owner-scoped renderer.
+                if (preview.warning) status.textContent = preview.warning; // CHANGE: migrated planting overlay.
+                options.onChange?.(draft, preview, !apply.disabled, { saveDefaults: saveDefaults.checked }); // CHANGE
+            } // CHANGE: migrated planting overlay.
+
+            rowStates.forEach(state => { // CHANGE: migrated planting overlay.
+                [state.spacingX, state.spacingY, state.offsetX, state.offsetY].filter(Boolean).forEach(control => { // CHANGE: migrated planting overlay.
+                    const edit = event => { // CHANGE
+                        if (control === state.offsetX || control === state.offsetY) readSpacingOffsetValue(control, event.type === 'input'); // CHANGE: typing zero over a rounded zero is an edit; unchanged change events retain precision.
+                        refreshPatternSource(); refreshDraftState(); refreshPatterns(); // CHANGE
+                    }; // CHANGE
+                    control.addEventListener('input', edit); control.addEventListener('change', edit); // CHANGE
+                }); // CHANGE: migrated planting overlay.
+                [state.offsetX, state.offsetY].forEach(control => control.addEventListener('blur', () => { // CHANGE
+                    const exact = readSpacingOffsetValue(control); // CHANGE
+                    if (exact.trim() !== '' && Number.isFinite(Number(exact))) setSpacingOffsetValue(control, exact); // CHANGE: format valid offsets only; incomplete browser input remains visible and invalid.
+                })); // CHANGE
+                state.revert.addEventListener('click', function (evt) { // CHANGE: migrated planting overlay.
+                    consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
+                    revertSpacingRowState(state); refreshPatternSource(); // CHANGE
+                    refreshDraftState(); // CHANGE: migrated planting overlay.
+                }); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            saveDefaults.addEventListener('change', refreshDraftState); // CHANGE: allocation's opt-in remains in memory until creation succeeds.
+
+            /** Regenerate only the selected pair; unrelated bed rows remain unchanged. */ // CHANGE
+            function pairRows() { // CHANGE
+                const draft = spacingDraftFromRowStates(rowStates); // CHANGE
+                const source = draft.find(row => row.cellId === String(context.selectedId)) || draft.find(row => row.selected); // CHANGE
+                const target = draft.find(row => row.cellId === targetSelect.value); // CHANGE
+                return source && target ? [source, target] : []; // CHANGE
+            } // CHANGE
+            /** A manual edit is Custom only while the chosen pair differs from both generated layouts. */ // CHANGE
+            function refreshPatternSource() { // CHANGE
+                patternSource.textContent = 'Custom'; // CHANGE
+                const rows = pairRows(), fields = ['spacingXCm', 'spacingYCm', 'offsetXCm', 'offsetYCm']; // CHANGE
+                if (rows.length !== 2) return; // CHANGE
+                for (const pattern of ['aligned', 'staggered']) { // CHANGE
+                    try { // CHANGE
+                        const generated = tools.generateCompanionPairLayout(graph, rows, pattern); // CHANGE
+                        const matches = rows.every((row, index) => fields.every(field => Math.abs(Number(row[field]) - Number(generated[index][field])) < 1e-7) && // CHANGE
+                            ['x', 'y', 'width', 'height'].every(field => Math.abs(Number(row.rect[field]) - Number(generated[index].rect[field])) < 1e-7) && // CHANGE
+                            Math.abs(Number(row.rotationDeg || 0) - Number(generated[index].rotationDeg || 0)) < 1e-7); // CHANGE
+                        if (matches) { patternSource.textContent = pattern === 'aligned' ? 'Aligned' : 'Staggered'; return; } // CHANGE
+                    } catch (_) { /* An impossible generated pattern cannot describe the edited layout. */ } // CHANGE
+                } // CHANGE
+            } // CHANGE
+            function refreshPatterns() { // CHANGE
+                entry.pairTargetId = targetSelect.value; // CHANGE
+                patternButtons.forEach((button, index) => { // CHANGE
+                    try { if (pairRows().length !== 2) throw new Error('Choose a companion planting.'); tools.generateCompanionPairLayout(graph, pairRows(), index ? 'staggered' : 'aligned'); button.disabled = false; button.title = 'Preview ' + button.textContent.toLowerCase() + ' touching rows.'; } // CHANGE
+                    catch (error) { button.disabled = true; button.title = error.message; } // CHANGE
+                }); // CHANGE
+            } // CHANGE
+            targetSelect.addEventListener('change', refreshPatterns); // CHANGE
+            patternButtons.forEach((button, index) => button.addEventListener('click', evt => { // CHANGE
+                consumeOverlayControlEvent(evt); // CHANGE
+                try { // CHANGE
+                    const generated = tools.generateCompanionPairLayout(graph, pairRows(), index ? 'staggered' : 'aligned'); // CHANGE
+                    generated.forEach(row => { const state = rowStates.find(item => item.row.cellId === row.cellId); // CHANGE
+                        state.row = Object.assign({}, state.row, { rect: row.rect, modelRect: row.modelRect, rotationDeg: row.rotationDeg, vegDiameterCm: row.vegDiameterCm, clipBounds: row.clipBounds, resetDisabled: true, generatedPattern: row.generatedPattern, strictFootprint: false }); // CHANGE
+                        state.spacingX.value = String(row.spacingXCm); state.spacingY.value = String(row.spacingYCm); // CHANGE
+                        setSpacingOffsetValue(state.offsetX, row.offsetXCm); setSpacingOffsetValue(state.offsetY, row.offsetYCm); // CHANGE: generated tangency offsets retain full precision.
+                    }); // CHANGE
+                    patternSource.textContent = button.textContent; refreshDraftState(); refreshPatterns(); // CHANGE
+                } catch (error) { status.textContent = error.message; } // CHANGE
+            })); // CHANGE
+            refreshPatterns(); // CHANGE
+            apply.textContent = options.applyLabel || 'Apply'; // CHANGE
+            apply.addEventListener('click', async function (evt) { // CHANGE: migrated planting overlay.
+                consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
+                if (apply.disabled || options.live) return; // CHANGE: a hidden allocation action cannot mutate saved plantings.
+                try { // CHANGE: migrated planting overlay.
+                    const allRows = spacingDraftFromRowStates(rowStates); // CHANGE
+                    const changedRows = allRows.filter(row => row.enabled !== false && (options.proposed || spacingRowChanged(rowStates.find(state => state.row.cellId === row.cellId)))); // CHANGE
+                    if (options.onApply) await options.onApply(allRows, { saveDefaults: saveDefaults.checked }); // CHANGE
+                    else { // CHANGE
+                        await tools.applySpacingDraft(graph, changedRows, { saveDefaults: false }); // CHANGE
+                        if (saveDefaults.checked) await tools.saveSpacingDefaultsForRows(pairRows().length === 2 ? pairRows() : changedRows, graph, model); // CHANGE
+                    } // CHANGE
+                    clearStoredSpacingDrafts(entry); // CHANGE: migrated planting overlay.
+                    clearSpacingPreview(); // CHANGE: migrated planting overlay.
+                    status.textContent = 'Spacing applied.'; // CHANGE: migrated planting overlay.
+                    if (!options.onApply) setTimeout(refresh, 0); // CHANGE
+                } catch (e) { // CHANGE: migrated planting overlay.
+                    status.textContent = e && e.message ? e.message : String(e); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            applySetDefault.addEventListener('click', async function (evt) { // CHANGE: migrated planting overlay.
+                consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
+                if (!context.hasSetDefault || !tools || typeof tools.applySetDefault !== 'function') return; // CHANGE: migrated planting overlay.
+                try { // CHANGE: migrated planting overlay.
+                    rowStates.forEach(state => { // CHANGE
+                        const layout = tools.setDefaultRowForSpacingRow(context.setDefault, state.row); // CHANGE
+                        if (!layout || state.row.enabled === false) return; // CHANGE
+                        state.spacingX.value = String(layout.spacingXCm); state.spacingY.value = String(layout.spacingYCm); // CHANGE
+                        setSpacingOffsetValue(state.offsetX, layout.offsetXCm); setSpacingOffsetValue(state.offsetY, layout.offsetYCm); // CHANGE: saved defaults are exact even when their displays round to zero.
+                    }); // CHANGE
+                    patternSource.textContent = 'Saved layout'; refreshDraftState(); // CHANGE
+                } catch (e) { // CHANGE: migrated planting overlay.
+                    status.textContent = e && e.message ? e.message : String(e); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            refreshDraftState(); // CHANGE: preserve and redraw valid spacing drafts across view refreshes.
+            return { setStatus: message => { status.textContent = message || ''; } }; // CHANGE: live fitting updates feedback without replacing inputs or focus.
+        } // CHANGE: migrated planting overlay.
+
+        function renderSpacingView(entry, body) { // CHANGE: migrated planting overlay.
+            clearSpacingPreview(); // CHANGE: migrated planting overlay.
+            const tools = getLayoutTools(); // CHANGE: migrated planting overlay.
+            if (!tools || typeof tools.buildSpacingLayoutRows !== 'function') { // CHANGE: migrated planting overlay.
+                const empty = document.createElement('div'); // CHANGE: migrated planting overlay.
+                empty.textContent = 'Spacing tools are unavailable.'; // CHANGE: migrated planting overlay.
+                empty.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+                empty.style.padding = '8px 0'; // CHANGE: migrated planting overlay.
+                body.appendChild(empty); // CHANGE: migrated planting overlay.
+                return; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE: migrated planting overlay.
+            const token = (entry.spacingRenderToken || 0) + 1; // CHANGE: migrated planting overlay.
+            entry.spacingRenderToken = token; // CHANGE: migrated planting overlay.
+            const loading = document.createElement('div'); // CHANGE: migrated planting overlay.
+            loading.textContent = 'Loading spacing...'; // CHANGE: migrated planting overlay.
+            loading.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            loading.style.padding = '8px 0'; // CHANGE: migrated planting overlay.
+            body.appendChild(loading); // CHANGE: migrated planting overlay.
+            Promise.resolve(tools.buildSpacingLayoutRows(graph, source)).then(context => { // CHANGE: migrated planting overlay.
+                if (entry.spacingRenderToken !== token || !entry.panel || activeMode !== MODE_SPACING) return; // CHANGE: migrated planting overlay.
+                renderSpacingEditor(entry, body, context || { rows: [] }, tools); // CHANGE: migrated planting overlay.
+                positionPanel(entry, source); // CHANGE: migrated planting overlay.
+            }).catch(e => { // CHANGE: migrated planting overlay.
+                if (entry.spacingRenderToken !== token) return; // CHANGE: migrated planting overlay.
+                body.innerHTML = ''; // CHANGE: migrated planting overlay.
+                const error = document.createElement('div'); // CHANGE: migrated planting overlay.
+                error.textContent = e && e.message ? e.message : String(e); // CHANGE: migrated planting overlay.
+                error.style.color = '#b91c1c'; // CHANGE: migrated planting overlay.
+                error.style.padding = '8px 0'; // CHANGE: migrated planting overlay.
+                body.appendChild(error); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function todayOverlayDayNumber() { // CHANGE: migrated planting overlay.
+            const now = new Date(); // CHANGE: migrated planting overlay.
+            return Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function firstScheduledCard(cards) { // CHANGE: migrated planting overlay.
+            return (cards || []).slice().sort(compareRepeatOccurrenceCards).find(card => !!getTaskDateRange(card)) || (cards && cards[0]) || null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function buildScheduleRowsForCards(cards) { // CHANGE: migrated planting overlay.
+            const rows = []; // CHANGE: migrated planting overlay.
+            const repeatRows = new Map(); // CHANGE: migrated planting overlay.
+
+            for (const card of cards || []) { // CHANGE: migrated planting overlay.
+                const seriesKey = buildRepeatSeriesKeyForOverlay(card); // CHANGE: migrated planting overlay.
+                if (!seriesKey) { // CHANGE: migrated planting overlay.
+                    rows.push({ // CHANGE: migrated planting overlay.
+                        key: 'card:' + card.id, // CHANGE: migrated planting overlay.
+                        card, // CHANGE: migrated planting overlay.
+                        cards: [card], // CHANGE: migrated planting overlay.
+                        label: taskTitle(card), // CHANGE: migrated planting overlay.
+                        repeat: false // CHANGE: migrated planting overlay.
+                    }); // CHANGE: migrated planting overlay.
+                    continue; // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+
+                if (!repeatRows.has(seriesKey)) { // CHANGE: migrated planting overlay.
+                    repeatRows.set(seriesKey, { // CHANGE: migrated planting overlay.
+                        key: 'repeat:' + seriesKey, // CHANGE: migrated planting overlay.
+                        card, // CHANGE: migrated planting overlay.
+                        cards: [], // CHANGE: migrated planting overlay.
+                        label: taskTitle(card), // CHANGE: migrated planting overlay.
+                        repeat: true // CHANGE: migrated planting overlay.
+                    }); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                repeatRows.get(seriesKey).cards.push(card); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            for (const row of repeatRows.values()) { // CHANGE: migrated planting overlay.
+                row.cards.sort(compareRepeatOccurrenceCards); // CHANGE: migrated planting overlay.
+                row.card = firstScheduledCard(row.cards) || row.cards[0]; // CHANGE: migrated planting overlay.
+                row.label = taskTitle(row.card); // CHANGE: migrated planting overlay.
+                rows.push(row); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            rows.sort((a, b) => compareTaskCardsByStartDate(a.card, b.card)); // CHANGE: migrated planting overlay.
+            return rows; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createLaneHeader(entry, group, collapsed) { // CHANGE: migrated planting overlay.
+            const header = document.createElement('div'); // CHANGE: migrated planting overlay.
+            header.style.display = 'grid'; // CHANGE: migrated planting overlay.
+            header.style.gridTemplateColumns = '21px 6px 1fr auto'; // CHANGE: migrated planting overlay.
+            header.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+            header.style.columnGap = '6px'; // CHANGE: migrated planting overlay.
+            header.style.margin = '8px 0 3px'; // CHANGE: migrated planting overlay.
+            header.style.color = '#3c4043'; // CHANGE: migrated planting overlay.
+            header.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            header.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            header.style.cursor = 'pointer'; // CHANGE: visible toggle replaces browser title tooltip
+
+            const toggle = document.createElement('span'); // CHANGE: migrated planting overlay.
+            toggle.textContent = collapsed ? '+' : '-'; // CHANGE: migrated planting overlay.
+            toggle.style.display = 'inline-block'; // CHANGE: migrated planting overlay.
+            toggle.style.width = '21px'; // CHANGE: migrated planting overlay.
+            toggle.style.textAlign = 'center'; // CHANGE: migrated planting overlay.
+            toggle.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            toggle.style.fontSize = '15px'; // CHANGE: migrated planting overlay.
+            toggle.style.lineHeight = '14px'; // CHANGE: migrated planting overlay.
+            header.appendChild(toggle); // CHANGE: migrated planting overlay.
+
+            const stripe = document.createElement('span'); // CHANGE: migrated planting overlay.
+            stripe.style.height = '12px'; // CHANGE: migrated planting overlay.
+            stripe.style.borderRadius = '4px'; // CHANGE: migrated planting overlay.
+            stripe.style.background = group.color || '#9aa0a6'; // CHANGE: migrated planting overlay.
+            header.appendChild(stripe); // CHANGE: migrated planting overlay.
+
+            header.appendChild(makeTextSpan(group.label || 'Lane', null)); // CHANGE: migrated planting overlay.
+            const count = document.createElement('span'); // CHANGE: migrated planting overlay.
+            count.textContent = String(group.items.length); // CHANGE: migrated planting overlay.
+            count.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            count.style.fontWeight = 'normal'; // CHANGE: migrated planting overlay.
+            header.appendChild(count); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(header, 'mousedown', function (evt) { // CHANGE: migrated planting overlay.
+                if (evt.button != null && evt.button !== 0) return; // CHANGE: migrated planting overlay.
+                setLaneGroupCollapsed(group, !isLaneGroupCollapsed(group)); // CHANGE: migrated planting overlay.
+                renderEntry(entry); // CHANGE: migrated planting overlay.
+                mxEvent.consume(evt); // CHANGE: migrated planting overlay.
+                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE: migrated planting overlay.
+                if (evt.preventDefault) evt.preventDefault(); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            return header; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderCardView(entry, body, groups) { // CHANGE: migrated planting overlay.
+            for (const group of groups) { // CHANGE: migrated planting overlay.
+                const collapsed = isLaneGroupCollapsed(group); // CHANGE: migrated planting overlay.
+                body.appendChild(createLaneHeader(entry, group, collapsed)); // CHANGE: migrated planting overlay.
+                if (collapsed) continue; // CHANGE: migrated planting overlay.
+                for (const item of group.items) { // CHANGE: migrated planting overlay.
+                    const card = item.card; // CHANGE: migrated planting overlay.
+                const row = makeClickableRow(card, 'manual-link-task-schedule-card'); // CHANGE: migrated planting overlay.
+                row.style.display = 'grid'; // CHANGE: migrated planting overlay.
+                row.style.gridTemplateColumns = '6px 1fr'; // CHANGE: migrated planting overlay.
+                row.style.columnGap = '8px'; // CHANGE: migrated planting overlay.
+                row.style.margin = '4px 0'; // CHANGE: migrated planting overlay.
+                row.style.border = '1px solid rgba(60, 64, 67, 0.18)'; // CHANGE: migrated planting overlay.
+                row.style.borderRadius = '5px'; // CHANGE: migrated planting overlay.
+                row.style.background = '#ffffff'; // CHANGE: migrated planting overlay.
+                row.style.cursor = 'pointer'; // CHANGE: migrated planting overlay.
+                row.style.overflow = 'hidden'; // CHANGE: migrated planting overlay.
+
+                const stripe = document.createElement('div'); // CHANGE: migrated planting overlay.
+                stripe.style.background = getTaskLaneColor(card); // CHANGE: migrated planting overlay.
+                row.appendChild(stripe); // CHANGE: migrated planting overlay.
+
+                const content = document.createElement('div'); // CHANGE: migrated planting overlay.
+                content.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+                content.style.padding = '6px 7px 6px 0'; // CHANGE: migrated planting overlay.
+
+                const titleLine = makeTextSpan(taskTitle(card), null); // CHANGE: migrated planting overlay.
+                titleLine.style.display = 'block'; // CHANGE: migrated planting overlay.
+                titleLine.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+                titleLine.style.fontSize = '12px'; // CHANGE: migrated planting overlay.
+                content.appendChild(titleLine); // CHANGE: migrated planting overlay.
+
+                const metaLine = makeTextSpan(formatTaskDateRange(card), '#5f6368'); // CHANGE: migrated planting overlay.
+                metaLine.style.display = 'block'; // CHANGE: migrated planting overlay.
+                metaLine.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+                content.appendChild(metaLine); // CHANGE: migrated planting overlay.
+
+                    let badges = getTaskOverlayBadges(card); // CHANGE: migrated planting overlay.
+                    const linkLabelBadge = getTaskLinkLabelBadge(entry, card); // CHANGE: migrated planting overlay.
+                    if (linkLabelBadge) badges.unshift(linkLabelBadge); // CHANGE: migrated planting overlay.
+                    if (item.repeatBadge) { // CHANGE: migrated planting overlay.
+                        badges = badges.filter(text => !String(text || '').startsWith('Repeat ')); // CHANGE: migrated planting overlay.
+                        badges.unshift('Repeat ' + item.repeatBadge); // CHANGE: migrated planting overlay.
+                    } // CHANGE: migrated planting overlay.
+                    const visibleBadges = badges.slice(0, 4); // CHANGE: migrated planting overlay.
+                    if (visibleBadges.length) { // CHANGE: migrated planting overlay.
+                    const badgeRow = document.createElement('div'); // CHANGE: migrated planting overlay.
+                    badgeRow.style.display = 'flex'; // CHANGE: migrated planting overlay.
+                    badgeRow.style.flexWrap = 'wrap'; // CHANGE: migrated planting overlay.
+                    badgeRow.style.gap = '3px'; // CHANGE: migrated planting overlay.
+                    badgeRow.style.marginTop = '4px'; // CHANGE: migrated planting overlay.
+                        for (const badge of visibleBadges) badgeRow.appendChild(makeBadge(badge)); // CHANGE: migrated planting overlay.
+                    content.appendChild(badgeRow); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+
+                row.appendChild(content); // CHANGE: migrated planting overlay.
+                body.appendChild(row); // CHANGE: migrated planting overlay.
+                entry.visibleItems.push({ cardId: card.id, row }); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function axisLabelForDay(dayNumber) { // CHANGE: migrated planting overlay.
+            const date = new Date(dayNumber * 86400000); // CHANGE: migrated planting overlay.
+            return formatTaskOverlayDate({ date }); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderScheduleAxis(grid, minDay, maxDay, todayPct, leftHeaderText = 'Task') { // CHANGE: migrated planting overlay.
+            const axis = document.createElement('div'); // CHANGE: migrated planting overlay.
+            axis.style.display = 'grid'; // CHANGE: migrated planting overlay.
+            axis.style.gridTemplateColumns = '112px 1fr'; // CHANGE: migrated planting overlay.
+            axis.style.columnGap = '8px'; // CHANGE: migrated planting overlay.
+            axis.style.alignItems = 'end'; // CHANGE: migrated planting overlay.
+            axis.style.marginBottom = '4px'; // CHANGE: migrated planting overlay.
+
+            const taskHead = document.createElement('div'); // CHANGE: migrated planting overlay.
+            taskHead.textContent = leftHeaderText; // CHANGE: migrated planting overlay.
+            taskHead.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            taskHead.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            axis.appendChild(taskHead); // CHANGE: migrated planting overlay.
+
+            const ticks = document.createElement('div'); // CHANGE: migrated planting overlay.
+            ticks.style.display = 'grid'; // CHANGE: migrated planting overlay.
+            ticks.style.gridTemplateColumns = 'repeat(4, 1fr)'; // CHANGE: migrated planting overlay.
+            ticks.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            ticks.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            ticks.style.position = 'relative'; // CHANGE: migrated planting overlay.
+            ticks.appendChild(makeTextSpan(axisLabelForDay(minDay), null)); // CHANGE: migrated planting overlay.
+            ticks.appendChild(makeTextSpan(axisLabelForDay(Math.round(minDay + (maxDay - minDay) / 3)), null)); // CHANGE: migrated planting overlay.
+            ticks.appendChild(makeTextSpan(axisLabelForDay(Math.round(minDay + 2 * (maxDay - minDay) / 3)), null)); // CHANGE: migrated planting overlay.
+            const end = makeTextSpan(axisLabelForDay(maxDay), null); // CHANGE: migrated planting overlay.
+            end.style.textAlign = 'right'; // CHANGE: migrated planting overlay.
+            ticks.appendChild(end); // CHANGE: migrated planting overlay.
+            if (todayPct != null) { // CHANGE: migrated planting overlay.
+                const today = document.createElement('span'); // CHANGE: migrated planting overlay.
+                today.textContent = 'Today'; // CHANGE: migrated planting overlay.
+                today.style.position = 'absolute'; // CHANGE: migrated planting overlay.
+                today.style.left = todayPct + '%'; // CHANGE: migrated planting overlay.
+                today.style.top = '-12px'; // CHANGE: migrated planting overlay.
+                today.style.transform = 'translateX(-50%)'; // CHANGE: migrated planting overlay.
+                today.style.color = '#1d4ed8'; // CHANGE: today marker label uses neutral blue instead of error red.
+                today.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+                ticks.appendChild(today); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            axis.appendChild(ticks); // CHANGE: migrated planting overlay.
+            grid.appendChild(axis); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderScheduleBar(track, card, range, minDay, totalDays) { // CHANGE: migrated planting overlay.
+            const bar = document.createElement('div'); // CHANGE: migrated planting overlay.
+            const leftPct = Math.max(0, Math.min(98, ((range.startDay - minDay) / totalDays) * 100)); // CHANGE: migrated planting overlay.
+            const rawWidthPct = range.startDay === range.endDay ? 2 : ((range.endDay - range.startDay + 1) / totalDays) * 100; // CHANGE: migrated planting overlay.
+            const widthPct = Math.max(range.startDay === range.endDay ? 2 : 3, rawWidthPct); // CHANGE: migrated planting overlay.
+            bar.style.position = 'absolute'; // CHANGE: migrated planting overlay.
+            bar.style.left = leftPct + '%'; // CHANGE: migrated planting overlay.
+            bar.style.top = '5px'; // CHANGE: migrated planting overlay.
+            bar.style.width = Math.min(100 - leftPct, widthPct) + '%'; // CHANGE: migrated planting overlay.
+            bar.style.height = range.startDay === range.endDay ? '8px' : '9px'; // CHANGE: migrated planting overlay.
+            bar.style.borderRadius = range.startDay === range.endDay ? '999px' : '4px'; // CHANGE: migrated planting overlay.
+            bar.style.background = getTaskLaneColor(card); // CHANGE: migrated planting overlay.
+            track.appendChild(bar); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function occupancyRangeForItem(item) { // CHANGE: migrated planting overlay.
+            const start = parseTaskOverlayDate(item && item.startISO); // CHANGE: migrated planting overlay.
+            const end = parseTaskOverlayDate(item && item.endISO); // CHANGE: migrated planting overlay.
+            if (!start || !end || end.dayNumber < start.dayNumber) return null; // CHANGE: migrated planting overlay.
+            return { start, end, startDay: start.dayNumber, endDay: end.dayNumber, durationDays: end.dayNumber - start.dayNumber + 1 }; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderOccupancyBar(track, range, selected, minDay, totalDays) { // CHANGE: migrated planting overlay.
+            const bar = document.createElement('div'); // CHANGE: migrated planting overlay.
+            const leftPct = Math.max(0, Math.min(98, ((range.startDay - minDay) / totalDays) * 100)); // CHANGE: migrated planting overlay.
+            const rawWidthPct = range.startDay === range.endDay ? 2 : ((range.endDay - range.startDay + 1) / totalDays) * 100; // CHANGE: migrated planting overlay.
+            const widthPct = Math.max(range.startDay === range.endDay ? 2 : 3, rawWidthPct); // CHANGE: migrated planting overlay.
+            bar.style.position = 'absolute'; // CHANGE: migrated planting overlay.
+            bar.style.left = leftPct + '%'; // CHANGE: migrated planting overlay.
+            bar.style.top = '5px'; // CHANGE: migrated planting overlay.
+            bar.style.width = Math.min(100 - leftPct, widthPct) + '%'; // CHANGE: migrated planting overlay.
+            bar.style.height = range.startDay === range.endDay ? '8px' : '9px'; // CHANGE: migrated planting overlay.
+            bar.style.borderRadius = range.startDay === range.endDay ? '999px' : '4px'; // CHANGE: migrated planting overlay.
+            bar.style.background = selected ? '#137333' : '#188038'; // CHANGE: migrated planting overlay.
+            bar.style.opacity = selected ? '1' : '0.72'; // CHANGE: migrated planting overlay.
+            track.appendChild(bar); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function makeOccupancyRow(entry, item) { // CHANGE: migrated planting overlay.
+            const row = document.createElement('div'); // CHANGE: migrated planting overlay.
+            row.className = 'manual-link-task-occupancy-row'; // CHANGE: migrated planting overlay.
+            row.setAttribute('title', 'Click to select planting group'); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(row, 'mousedown', function (evt) { // CHANGE: migrated planting overlay.
+                if (evt.button != null && evt.button !== 0) return; // CHANGE: migrated planting overlay.
+                const cell = item && item.cellId ? model.getCell(item.cellId) : null; // CHANGE: migrated planting overlay.
+                if (cell && model.isVertex(cell)) navigateOverlayCell(cell); // CHANGE: migrated planting overlay.
+                mxEvent.consume(evt); // CHANGE: migrated planting overlay.
+                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE: migrated planting overlay.
+                if (evt.preventDefault) evt.preventDefault(); // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            return row; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function occupancyRangesOverlap(left, right) { // CHANGE: migrated planting overlay.
+            return !!(left && right && left.startDay <= right.endDay && right.startDay <= left.endDay); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function makeRelationshipBadge(text, color) { // CHANGE: migrated planting overlay.
+            const badge = document.createElement('span'); // CHANGE: migrated planting overlay.
+            badge.textContent = text; // CHANGE: migrated planting overlay.
+            badge.style.display = 'inline-block'; // CHANGE: migrated planting overlay.
+            badge.style.marginTop = '2px'; // CHANGE: migrated planting overlay.
+            badge.style.marginRight = '4px'; // CHANGE: migrated planting overlay.
+            badge.style.padding = '1px 4px'; // CHANGE: migrated planting overlay.
+            badge.style.borderRadius = '4px'; // CHANGE: migrated planting overlay.
+            badge.style.border = '1px solid ' + color; // CHANGE: migrated planting overlay.
+            badge.style.color = color; // CHANGE: migrated planting overlay.
+            badge.style.fontSize = '9px'; // CHANGE: migrated planting overlay.
+            badge.style.fontWeight = '700'; // CHANGE: migrated planting overlay.
+            return badge; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderOccupancyRelationshipBadges(entry, labelCell, item, range) { // CHANGE: migrated planting overlay.
+            const rel = item && item.relationship; // CHANGE: migrated planting overlay.
+            if (!rel || !range) return ''; // CHANGE: migrated planting overlay.
+            if (rel.mode === 'turnover') { // CHANGE: migrated planting overlay.
+                const gap = rel.gapDays !== '' ? rel.gapDays + 'd gap' : 'turnover'; // CHANGE: migrated planting overlay.
+                return 'Turnover relationship: ' + gap + '.'; // CHANGE: only explicit turnover keeps relationship tooltip semantics.
+            } // CHANGE: migrated planting overlay.
+            return ''; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderOccupancyRow(entry, grid, item, range, minDay, totalDays, todayPct) { // CHANGE: migrated planting overlay.
+            const selected = item && item.cellId === entry.sourceId; // CHANGE: migrated planting overlay.
+            const row = makeOccupancyRow(entry, item); // CHANGE: migrated planting overlay.
+            row.style.display = 'grid'; // CHANGE: migrated planting overlay.
+            row.style.gridTemplateColumns = '112px 1fr'; // CHANGE: migrated planting overlay.
+            row.style.columnGap = '8px'; // CHANGE: migrated planting overlay.
+            row.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+            row.style.minHeight = '24px'; // CHANGE: migrated planting overlay.
+            row.style.cursor = 'pointer'; // CHANGE: migrated planting overlay.
+            row.style.fontWeight = selected ? 'bold' : 'normal'; // CHANGE: migrated planting overlay.
+
+            const labelCell = document.createElement('div'); // CHANGE: migrated planting overlay.
+            labelCell.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+            const label = makeTextSpan(item.label || item.cellId || 'Planting', null); // CHANGE: migrated planting overlay.
+            label.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            labelCell.appendChild(label); // CHANGE: migrated planting overlay.
+            const relationshipTooltip = renderOccupancyRelationshipBadges(entry, labelCell, item, range); // CHANGE: migrated planting overlay.
+            if (relationshipTooltip) { // CHANGE: migrated planting overlay.
+                row.title = relationshipTooltip; // CHANGE: migrated planting overlay.
+                labelCell.title = relationshipTooltip; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            row.appendChild(labelCell); // CHANGE: migrated planting overlay.
+
+            const track = document.createElement('div'); // CHANGE: migrated planting overlay.
+            track.style.position = 'relative'; // CHANGE: migrated planting overlay.
+            track.style.height = '18px'; // CHANGE: migrated planting overlay.
+            track.style.borderBottom = '1px solid #e8eaed'; // CHANGE: migrated planting overlay.
+            if (todayPct != null) { // CHANGE: migrated planting overlay.
+                const todayLine = document.createElement('div'); // CHANGE: migrated planting overlay.
+                todayLine.style.position = 'absolute'; // CHANGE: migrated planting overlay.
+                todayLine.style.left = todayPct + '%'; // CHANGE: migrated planting overlay.
+                todayLine.style.top = '0'; // CHANGE: migrated planting overlay.
+                todayLine.style.bottom = '0'; // CHANGE: migrated planting overlay.
+                todayLine.style.width = '1px'; // CHANGE: migrated planting overlay.
+                todayLine.style.background = '#2563eb'; // CHANGE: today marker line uses neutral blue instead of error red.
+                todayLine.style.opacity = '0.75'; // CHANGE: migrated planting overlay.
+                track.appendChild(todayLine); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            renderOccupancyBar(track, range, selected, minDay, totalDays); // CHANGE: migrated planting overlay.
+            if (relationshipTooltip) track.title = relationshipTooltip; // CHANGE: migrated planting overlay.
+            row.appendChild(track); // CHANGE: migrated planting overlay.
+            grid.appendChild(row); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderScheduleRow(entry, grid, scheduleRow, minDay, totalDays, todayPct) { // CHANGE: migrated planting overlay.
+            const card = scheduleRow.card; // CHANGE: migrated planting overlay.
+            const row = makeClickableRow(card, 'manual-link-task-schedule-row'); // CHANGE: migrated planting overlay.
+            row.style.display = 'grid'; // CHANGE: migrated planting overlay.
+            row.style.gridTemplateColumns = '112px 1fr'; // CHANGE: migrated planting overlay.
+            row.style.columnGap = '8px'; // CHANGE: migrated planting overlay.
+            row.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+            row.style.minHeight = '24px'; // CHANGE: migrated planting overlay.
+            row.style.cursor = 'pointer'; // CHANGE: migrated planting overlay.
+
+            const labelCell = document.createElement('div'); // CHANGE: migrated planting overlay.
+            labelCell.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+            const label = makeTextSpan(scheduleRow.label, null); // CHANGE: migrated planting overlay.
+            label.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            if (scheduleRow.repeat && scheduleRow.cards.length > 1) { // CHANGE: migrated planting overlay.
+                label.textContent = scheduleRow.label + ' (' + scheduleRow.cards.length + ')'; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            labelCell.appendChild(label); // CHANGE: migrated planting overlay.
+
+            const scheduleBadge = getTaskLinkLabelBadge(entry, card); // CHANGE: migrated planting overlay.
+            if (scheduleBadge) { // CHANGE: migrated planting overlay.
+                const badgeWrap = document.createElement('div'); // CHANGE: migrated planting overlay.
+                badgeWrap.style.marginTop = '2px'; // CHANGE: migrated planting overlay.
+                badgeWrap.appendChild(makeBadge(scheduleBadge)); // CHANGE: migrated planting overlay.
+                labelCell.appendChild(badgeWrap); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            row.appendChild(labelCell); // CHANGE: migrated planting overlay.
+
+            const track = document.createElement('div'); // CHANGE: migrated planting overlay.
+            track.style.position = 'relative'; // CHANGE: migrated planting overlay.
+            track.style.height = '18px'; // CHANGE: migrated planting overlay.
+            track.style.borderBottom = '1px solid #e8eaed'; // CHANGE: migrated planting overlay.
+            if (todayPct != null) { // CHANGE: migrated planting overlay.
+                const todayLine = document.createElement('div'); // CHANGE: migrated planting overlay.
+                todayLine.style.position = 'absolute'; // CHANGE: migrated planting overlay.
+                todayLine.style.left = todayPct + '%'; // CHANGE: migrated planting overlay.
+                todayLine.style.top = '0'; // CHANGE: migrated planting overlay.
+                todayLine.style.bottom = '0'; // CHANGE: migrated planting overlay.
+                todayLine.style.width = '1px'; // CHANGE: migrated planting overlay.
+                todayLine.style.background = '#2563eb'; // CHANGE: today marker line uses neutral blue instead of error red.
+                todayLine.style.opacity = '0.75'; // CHANGE: migrated planting overlay.
+                track.appendChild(todayLine); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            for (const occurrenceCard of scheduleRow.cards) { // CHANGE: migrated planting overlay.
+                const range = getTaskDateRange(occurrenceCard); // CHANGE: migrated planting overlay.
+                if (range) renderScheduleBar(track, occurrenceCard, range, minDay, totalDays); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            row.appendChild(track); // CHANGE: migrated planting overlay.
+
+            grid.appendChild(row); // CHANGE: migrated planting overlay.
+            for (const occurrenceCard of scheduleRow.cards) { // CHANGE: migrated planting overlay.
+                entry.visibleItems.push({ cardId: occurrenceCard.id, row }); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderUnscheduledSection(entry, body, unscheduledRows) { // CHANGE: migrated planting overlay.
+            if (!unscheduledRows.length) return; // CHANGE: migrated planting overlay.
+            const section = document.createElement('div'); // CHANGE: migrated planting overlay.
+            section.style.marginTop = '8px'; // CHANGE: migrated planting overlay.
+            const title = document.createElement('div'); // CHANGE: migrated planting overlay.
+            title.textContent = 'Unscheduled'; // CHANGE: migrated planting overlay.
+            title.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            title.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            title.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            title.style.marginBottom = '3px'; // CHANGE: migrated planting overlay.
+            section.appendChild(title); // CHANGE: migrated planting overlay.
+            for (const scheduleRow of unscheduledRows) { // CHANGE: migrated planting overlay.
+                const card = scheduleRow.card; // CHANGE: migrated planting overlay.
+                const row = makeClickableRow(card, 'manual-link-task-schedule-unscheduled'); // CHANGE: migrated planting overlay.
+                row.style.display = 'grid'; // CHANGE: migrated planting overlay.
+                row.style.gridTemplateColumns = '6px 1fr'; // CHANGE: migrated planting overlay.
+                row.style.columnGap = '6px'; // CHANGE: migrated planting overlay.
+                row.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+                row.style.minHeight = '22px'; // CHANGE: migrated planting overlay.
+                row.style.padding = '2px 0'; // CHANGE: migrated planting overlay.
+                row.style.cursor = 'pointer'; // CHANGE: migrated planting overlay.
+                const stripe = document.createElement('span'); // CHANGE: migrated planting overlay.
+                stripe.style.height = '14px'; // CHANGE: migrated planting overlay.
+                stripe.style.borderRadius = '4px'; // CHANGE: migrated planting overlay.
+                stripe.style.background = getTaskLaneColor(card); // CHANGE: migrated planting overlay.
+                row.appendChild(stripe); // CHANGE: migrated planting overlay.
+                const label = scheduleRow.repeat && scheduleRow.cards.length > 1 // CHANGE: migrated planting overlay.
+                    ? scheduleRow.label + ' (' + scheduleRow.cards.length + ')' // CHANGE: migrated planting overlay.
+                    : scheduleRow.label; // CHANGE: migrated planting overlay.
+                const labelWrap = document.createElement('div'); // CHANGE: migrated planting overlay.
+                labelWrap.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+                labelWrap.appendChild(makeTextSpan(label, '#5f6368')); // CHANGE: migrated planting overlay.
+                const linkLabelBadge = getTaskLinkLabelBadge(entry, card); // CHANGE: migrated planting overlay.
+                if (linkLabelBadge) { // CHANGE: migrated planting overlay.
+                    const badgeLine = document.createElement('div'); // CHANGE: migrated planting overlay.
+                    badgeLine.style.marginTop = '2px'; // CHANGE: migrated planting overlay.
+                    badgeLine.appendChild(makeBadge(linkLabelBadge)); // CHANGE: migrated planting overlay.
+                    labelWrap.appendChild(badgeLine); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                row.appendChild(labelWrap); // CHANGE: migrated planting overlay.
+                section.appendChild(row); // CHANGE: migrated planting overlay.
+                for (const occurrenceCard of scheduleRow.cards) { // CHANGE: migrated planting overlay.
+                    entry.visibleItems.push({ cardId: occurrenceCard.id, row }); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            body.appendChild(section); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderScheduleView(entry, body, cards) { // CHANGE: migrated planting overlay.
+            const rows = buildScheduleRowsForCards(cards); // CHANGE: migrated planting overlay.
+            const scheduledRows = []; // CHANGE: migrated planting overlay.
+            const unscheduled = []; // CHANGE: migrated planting overlay.
+            for (const row of rows) { // CHANGE: migrated planting overlay.
+                const ranges = row.cards.map(card => getTaskDateRange(card)).filter(Boolean); // CHANGE: migrated planting overlay.
+                if (ranges.length) scheduledRows.push({ row, ranges }); // CHANGE: migrated planting overlay.
+                else unscheduled.push(row); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            let minDay = null; // CHANGE: migrated planting overlay.
+            let maxDay = null; // CHANGE: migrated planting overlay.
+            let totalDays = 1; // CHANGE: migrated planting overlay.
+            let todayPct = null; // CHANGE: migrated planting overlay.
+            if (scheduledRows.length) { // CHANGE: migrated planting overlay.
+                const startDays = []; // CHANGE: migrated planting overlay.
+                const endDays = []; // CHANGE: migrated planting overlay.
+                for (const record of scheduledRows) { // CHANGE: migrated planting overlay.
+                    for (const range of record.ranges) { // CHANGE: migrated planting overlay.
+                        startDays.push(range.startDay); // CHANGE: migrated planting overlay.
+                        endDays.push(range.endDay); // CHANGE: migrated planting overlay.
+                    } // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                minDay = Math.min.apply(null, startDays); // CHANGE: migrated planting overlay.
+                maxDay = Math.max.apply(null, endDays); // CHANGE: migrated planting overlay.
+                totalDays = Math.max(1, maxDay - minDay + 1); // CHANGE: migrated planting overlay.
+                const today = todayOverlayDayNumber(); // CHANGE: migrated planting overlay.
+                if (today >= minDay && today <= maxDay) todayPct = ((today - minDay) / totalDays) * 100; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            if (!scheduledRows.length) { // CHANGE: migrated planting overlay.
+                const empty = document.createElement('div'); // CHANGE: migrated planting overlay.
+                empty.textContent = 'No scheduled task dates'; // CHANGE: migrated planting overlay.
+                empty.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+                empty.style.padding = '8px 0'; // CHANGE: migrated planting overlay.
+                body.appendChild(empty); // CHANGE: migrated planting overlay.
+            } else { // CHANGE: migrated planting overlay.
+                const grid = document.createElement('div'); // CHANGE: migrated planting overlay.
+                renderScheduleAxis(grid, minDay, maxDay, todayPct); // CHANGE: migrated planting overlay.
+                scheduledRows.sort((a, b) => compareTaskCardsByStartDate(a.row.card, b.row.card)); // CHANGE: migrated planting overlay.
+                for (const record of scheduledRows) { // CHANGE: migrated planting overlay.
+                    renderScheduleRow(entry, grid, record.row, minDay, totalDays, todayPct); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                body.appendChild(grid); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            renderUnscheduledSection(entry, body, unscheduled); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderOccupancyUnscheduledSection(entry, body, items) { // CHANGE: migrated planting overlay.
+            if (!items.length) return; // CHANGE: migrated planting overlay.
+            const section = document.createElement('div'); // CHANGE: migrated planting overlay.
+            section.style.marginTop = '8px'; // CHANGE: migrated planting overlay.
+            const title = document.createElement('div'); // CHANGE: migrated planting overlay.
+            title.textContent = 'Unscheduled'; // CHANGE: migrated planting overlay.
+            title.style.fontWeight = 'bold'; // CHANGE: migrated planting overlay.
+            title.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
+            title.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+            title.style.marginBottom = '3px'; // CHANGE: migrated planting overlay.
+            section.appendChild(title); // CHANGE: migrated planting overlay.
+            for (const item of items) { // CHANGE: migrated planting overlay.
+                const row = makeOccupancyRow(entry, item); // CHANGE: migrated planting overlay.
+                row.style.display = 'grid'; // CHANGE: migrated planting overlay.
+                row.style.gridTemplateColumns = '6px 1fr'; // CHANGE: migrated planting overlay.
+                row.style.columnGap = '6px'; // CHANGE: migrated planting overlay.
+                row.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
+                row.style.minHeight = '22px'; // CHANGE: migrated planting overlay.
+                row.style.padding = '2px 0'; // CHANGE: migrated planting overlay.
+                row.style.cursor = 'pointer'; // CHANGE: migrated planting overlay.
+                const stripe = document.createElement('span'); // CHANGE: migrated planting overlay.
+                stripe.style.height = '14px'; // CHANGE: migrated planting overlay.
+                stripe.style.borderRadius = '4px'; // CHANGE: migrated planting overlay.
+                stripe.style.background = '#9aa0a6'; // CHANGE: migrated planting overlay.
+                row.appendChild(stripe); // CHANGE: migrated planting overlay.
+                const labelWrap = document.createElement('div'); // CHANGE: migrated planting overlay.
+                labelWrap.style.minWidth = '0'; // CHANGE: migrated planting overlay.
+                labelWrap.appendChild(makeTextSpan(item.label || item.cellId || 'Planting', '#5f6368')); // CHANGE: migrated planting overlay.
+                row.appendChild(labelWrap); // CHANGE: migrated planting overlay.
+                section.appendChild(row); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            body.appendChild(section); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderOccupancyView(entry, body) { // CHANGE: migrated planting overlay.
+            const occupancy = getOccupancyModelForEntry(entry); // CHANGE: migrated planting overlay.
+            const rows = (occupancy.items || []).map(item => ({ item, range: occupancyRangeForItem(item) })); // CHANGE: migrated planting overlay.
+            const scheduledRows = rows.filter(row => !!row.range); // CHANGE: migrated planting overlay.
+            const unscheduledItems = rows.filter(row => !row.range).map(row => row.item); // CHANGE: migrated planting overlay.
+            let minDay = null; // CHANGE: migrated planting overlay.
+            let maxDay = null; // CHANGE: migrated planting overlay.
+            let totalDays = 1; // CHANGE: migrated planting overlay.
+            let todayPct = null; // CHANGE: migrated planting overlay.
+
+            if (scheduledRows.length) { // CHANGE: migrated planting overlay.
+                minDay = Math.min.apply(null, scheduledRows.map(row => row.range.startDay)); // CHANGE: migrated planting overlay.
+                maxDay = Math.max.apply(null, scheduledRows.map(row => row.range.endDay)); // CHANGE: migrated planting overlay.
+                totalDays = Math.max(1, maxDay - minDay + 1); // CHANGE: migrated planting overlay.
+                const today = todayOverlayDayNumber(); // CHANGE: migrated planting overlay.
+                if (today >= minDay && today <= maxDay) todayPct = ((today - minDay) / totalDays) * 100; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            if (!scheduledRows.length) { // CHANGE: migrated planting overlay.
+                const empty = document.createElement('div'); // CHANGE: migrated planting overlay.
+                empty.textContent = 'No scheduled occupancy dates'; // CHANGE: migrated planting overlay.
+                empty.style.color = '#5f6368'; // CHANGE: migrated planting overlay.
+                empty.style.padding = '8px 0'; // CHANGE: migrated planting overlay.
+                body.appendChild(empty); // CHANGE: migrated planting overlay.
+            } else { // CHANGE: migrated planting overlay.
+                const grid = document.createElement('div'); // CHANGE: migrated planting overlay.
+                renderScheduleAxis(grid, minDay, maxDay, todayPct, 'Planting'); // CHANGE: migrated planting overlay.
+                scheduledRows.sort((a, b) => a.range.startDay - b.range.startDay || String(a.item.cellId || '').localeCompare(String(b.item.cellId || ''))); // CHANGE: migrated planting overlay.
+                for (const row of scheduledRows) renderOccupancyRow(entry, grid, row.item, row.range, minDay, totalDays, todayPct); // CHANGE: migrated planting overlay.
+                body.appendChild(grid); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            renderOccupancyUnscheduledSection(entry, body, unscheduledItems); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getSourceBoundsForPanel(source) { // CHANGE: migrated planting overlay.
+            const host = getPanelHost(); // CHANGE: migrated planting overlay.
+            const state = source && graph.getView && graph.getView().getState(source); // CHANGE: migrated planting overlay.
+            if (host && state && state.shape && state.shape.node && state.shape.node.getBoundingClientRect) { // CHANGE: migrated planting overlay.
+                const hostRect = host.getBoundingClientRect(); // CHANGE: migrated planting overlay.
+                const cellRect = state.shape.node.getBoundingClientRect(); // CHANGE: migrated planting overlay.
+                return { // CHANGE: migrated planting overlay.
+                    x: cellRect.left - hostRect.left + (host.scrollLeft || 0), // CHANGE: migrated planting overlay.
+                    y: cellRect.top - hostRect.top + (host.scrollTop || 0), // CHANGE: migrated planting overlay.
+                    w: cellRect.width, // CHANGE: migrated planting overlay.
+                    h: cellRect.height // CHANGE: migrated planting overlay.
+                }; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            const center = getCellCenter(source); // CHANGE: migrated planting overlay.
+            return center ? { x: center.x - center.w / 2, y: center.y - center.h / 2, w: center.w, h: center.h } : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function normalizeLayoutBounds(bounds) { // CHANGE: migrated planting overlay.
+            if (!bounds) return null; // CHANGE: migrated planting overlay.
+            const w = Number(bounds.w ?? bounds.width ?? 0); // CHANGE: migrated planting overlay.
+            const h = Number(bounds.h ?? bounds.height ?? 0); // CHANGE: migrated planting overlay.
+            const x = Number(bounds.x ?? bounds.left ?? 0); // CHANGE: migrated planting overlay.
+            const y = Number(bounds.y ?? bounds.top ?? 0); // CHANGE: migrated planting overlay.
+            return Number.isFinite(x) && Number.isFinite(y) && w >= 0 && h >= 0 ? { x, y, w, h } : null; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function getClusterBoundsForPanel(source) { // CHANGE: migrated planting overlay.
+            const api = graph.__trellisBedSuccessionNavigator; // CHANGE: migrated planting overlay.
+            if (api && typeof api.getSelectedClusterLayoutContext === 'function') { // CHANGE: migrated planting overlay.
+                const context = api.getSelectedClusterLayoutContext(source); // CHANGE: migrated planting overlay.
+                const bounds = normalizeLayoutBounds(context && (context.overlayAnchorBounds || context.clusterBounds)); // CHANGE: visual anchoring is separate from bed-scoped layout context.
+                if (bounds) return bounds; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return getSourceBoundsForPanel(source); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function positionPanel(entry, source) { // CHANGE: migrated planting overlay.
+            const host = getPanelHost(); // CHANGE: migrated planting overlay.
+            const sourceBounds = getClusterBoundsForPanel(source); // CHANGE: migrated planting overlay.
+            if (!host || !entry.panel || !sourceBounds) return false; // CHANGE: migrated planting overlay.
+
+            const panelHeight = entry.panel.offsetHeight || 32; // CHANGE: migrated planting overlay.
+            const panelWidth = dynamicPanelWidth(entry.panel); // CHANGE: keep the left anchor correct for dynamically sized overlays.
+            const left = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - panelWidth; // CHANGE: spacing/task overlay now lives on the left side of the selected cluster.
+            const centeredTop = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2; // CHANGE: center only when the overlay would not enter the reserved occupancy space above the cluster.
+            const top = centeredTop < sourceBounds.y ? sourceBounds.y : centeredTop; // CHANGE: deterministic clamp avoids render-order-sensitive Occupancy bounds measurement.
+
+            entry.panelLeft = left; // CHANGE: migrated planting overlay.
+            entry.panelTop = top; // CHANGE: migrated planting overlay.
+            entry.panel.style.left = left + 'px'; // CHANGE: migrated planting overlay.
+            entry.panel.style.top = top + 'px'; // CHANGE: migrated planting overlay.
+            return true; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function itemCenterFromRow(entry, row) { // CHANGE: migrated planting overlay.
+            const host = getPanelHost(); // CHANGE: migrated planting overlay.
+            if (!host || !row || !row.getBoundingClientRect) return null; // CHANGE: migrated planting overlay.
+            const rowRect = row.getBoundingClientRect(); // CHANGE: migrated planting overlay.
+            const hostRect = host.getBoundingClientRect(); // CHANGE: migrated planting overlay.
+            return { // CHANGE: migrated planting overlay.
+                x: rowRect.left - hostRect.left + (host.scrollLeft || 0) + rowRect.width / 2, // CHANGE: migrated planting overlay.
+                y: rowRect.top - hostRect.top + (host.scrollTop || 0) + rowRect.height / 2, // CHANGE: migrated planting overlay.
+                w: rowRect.width, // CHANGE: migrated planting overlay.
+                h: rowRect.height // CHANGE: migrated planting overlay.
+            }; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function createOrUpdateLine(entry, cardId, row) { // CHANGE: migrated planting overlay.
+            const pane = getOverlayPane(); // CHANGE: migrated planting overlay.
+            const card = model.getCell(cardId); // CHANGE: migrated planting overlay.
+            if (!pane || !row || !isValidOverlayCard(card)) { // CHANGE: migrated planting overlay.
+                removePolyline(entry.lines.get(cardId)); // CHANGE: migrated planting overlay.
+                entry.lines.delete(cardId); // CHANGE: migrated planting overlay.
+                return; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            const itemC = itemCenterFromRow(entry, row); // CHANGE: migrated planting overlay.
+            const dstC = getCellCenter(card); // CHANGE: migrated planting overlay.
+            if (!itemC || !dstC) { // CHANGE: migrated planting overlay.
+                removePolyline(entry.lines.get(cardId)); // CHANGE: migrated planting overlay.
+                entry.lines.delete(cardId); // CHANGE: migrated planting overlay.
+                return; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            const srcPt = anchorOnSide(itemC, sideToward(itemC, dstC), 0.5); // CHANGE: migrated planting overlay.
+            const dstPt = anchorOnSide(dstC, sideToward(dstC, itemC), 0.5); // CHANGE: migrated planting overlay.
+            if (!srcPt || !dstPt) return; // CHANGE: migrated planting overlay.
+
+            const points = [new mxPoint(srcPt.x, srcPt.y), new mxPoint(dstPt.x, dstPt.y)]; // CHANGE: migrated planting overlay.
+            const stroke = getTaskLaneColor(card); // CHANGE: migrated planting overlay.
+            let poly = entry.lines.get(cardId); // CHANGE: migrated planting overlay.
+
+            if (poly && poly.node && poly.node.parentNode === pane) { // CHANGE: migrated planting overlay.
+                poly.points = points; // CHANGE: migrated planting overlay.
+                poly.stroke = stroke; // CHANGE: migrated planting overlay.
+                poly.redraw(); // CHANGE: migrated planting overlay.
+            } else { // CHANGE: migrated planting overlay.
+                removePolyline(poly); // CHANGE: migrated planting overlay.
+                poly = new mxPolyline(points, stroke, 2); // CHANGE: migrated planting overlay.
+                poly.dialect = graph.dialect; // CHANGE: migrated planting overlay.
+                poly.init(pane); // CHANGE: migrated planting overlay.
+                poly.redraw(); // CHANGE: migrated planting overlay.
+                if (poly.node) { // CHANGE: migrated planting overlay.
+                    poly.node.style.pointerEvents = 'none'; // CHANGE: migrated planting overlay.
+                    poly.node.setAttribute('opacity', '0.72'); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                entry.lines.set(cardId, poly); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function refreshLines(entry) { // CHANGE: migrated planting overlay.
+            const liveIds = new Set(); // CHANGE: migrated planting overlay.
+            for (const item of entry.visibleItems || []) { // CHANGE: migrated planting overlay.
+                liveIds.add(item.cardId); // CHANGE: migrated planting overlay.
+                createOrUpdateLine(entry, item.cardId, item.row); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            for (const [cardId, poly] of Array.from(entry.lines.entries())) { // CHANGE: migrated planting overlay.
+                if (liveIds.has(cardId)) continue; // CHANGE: migrated planting overlay.
+                removePolyline(poly); // CHANGE: migrated planting overlay.
+                entry.lines.delete(cardId); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function renderEntry(entry) { // CHANGE: migrated planting overlay.
+            const host = getPanelHost(); // CHANGE: migrated planting overlay.
+            const panelHost = getPanelLayer(); // CHANGE: migrated planting overlay.
+            const source = model.getCell(entry.sourceId); // CHANGE: migrated planting overlay.
+            if (!host || !panelHost || !source || !model.isVertex(source)) { // CHANGE: migrated planting overlay.
+                removeEntry(entry); // CHANGE: migrated planting overlay.
+                return; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            const cards = entry.targetIds // CHANGE: migrated planting overlay.
+                .map((id) => model.getCell(id)) // CHANGE: migrated planting overlay.
+                .filter(isValidOverlayCard) // CHANGE: migrated planting overlay.
+                .sort(compareTaskCardsByStartDate); // CHANGE: migrated planting overlay.
+            entry.targetIds = cards.map((card) => card.id); // CHANGE: migrated planting overlay.
+            if (entry.linkLabels) { // CHANGE: migrated planting overlay.
+                const liveLabels = new Map(); // CHANGE: migrated planting overlay.
+                for (const card of cards) liveLabels.set(card.id, entry.linkLabels.get(card.id) || ''); // CHANGE: migrated planting overlay.
+                entry.linkLabels = liveLabels; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            if (cards.length === 0) { // CHANGE: migrated planting overlay.
+                if (!entry.scheduleOnly) { // CHANGE: migrated planting overlay.
+                    removeEntry(entry); // CHANGE: migrated planting overlay.
+                    return; // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            if (entry.scheduleOnly) { // CHANGE: migrated planting overlay.
+                if (!entry.panel) { // CHANGE: migrated planting overlay.
+                    entry.panel = document.createElement('div'); // CHANGE: migrated planting overlay.
+                    entry.panel.className = 'manual-link-task-schedule-overlay manual-link-task-schedule-only'; // CHANGE: migrated planting overlay.
+                    applyPanelStyle(entry.panel); // CHANGE: migrated planting overlay.
+                    panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
+                } else if (entry.panel.parentNode !== panelHost) { // CHANGE: migrated planting overlay.
+                    panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild); // CHANGE: migrated planting overlay.
+                entry.visibleItems = []; // CHANGE: migrated planting overlay.
+                entry.panel.appendChild(createScheduleOnlyHeader(entry)); // CHANGE: migrated planting overlay.
+                if (activeMode === MODE_SPACING) { // CHANGE: migrated planting overlay.
+                    const body = createBody(); // CHANGE: migrated planting overlay.
+                    entry.panel.appendChild(body); // CHANGE: migrated planting overlay.
+                    renderSpacingView(entry, body); // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                if (!positionPanel(entry, source)) { // CHANGE: migrated planting overlay.
+                    removeEntry(entry); // CHANGE: migrated planting overlay.
+                    return; // CHANGE: migrated planting overlay.
+                } // CHANGE: migrated planting overlay.
+                refreshLines(entry); // CHANGE: migrated planting overlay.
+                return; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            entry.years = getTaskOverlayYears(cards); // CHANGE: migrated planting overlay.
+            if (entry.years.length) { // CHANGE: migrated planting overlay.
+                const rememberedYear = selectedYearBySource.get(entry.sourceId); // CHANGE: migrated planting overlay.
+                entry.selectedYear = entry.years.indexOf(rememberedYear) >= 0 ? rememberedYear : (entry.selectedYear || chooseDefaultOverlayYear(entry.years)); // CHANGE: migrated planting overlay.
+            } else { // CHANGE: migrated planting overlay.
+                entry.selectedYear = null; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            const visibleCards = cards.filter(card => getAttr(card, 'year_hidden') !== '1'); // CHANGE: migrated planting overlay.
+            const groups = groupLinkedTasksForOverlay(visibleCards); // CHANGE: migrated planting overlay.
+
+            if (!entry.panel) { // CHANGE: migrated planting overlay.
+                entry.panel = document.createElement('div'); // CHANGE: migrated planting overlay.
+                entry.panel.className = 'manual-link-task-schedule-overlay'; // CHANGE: migrated planting overlay.
+                applyPanelStyle(entry.panel); // CHANGE: migrated planting overlay.
+                panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
+            } else if (entry.panel.parentNode !== panelHost) { // CHANGE: migrated planting overlay.
+                panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild); // CHANGE: migrated planting overlay.
+            entry.visibleItems = []; // CHANGE: migrated planting overlay.
+            const headerCount = activeMode === MODE_SPACING ? countSpacingRows(entry) : (activeMode === MODE_SCHEDULE ? countScheduleRows(visibleCards) : countGroupItems(groups)); // CHANGE: migrated planting overlay.
+            entry.panel.appendChild(createHeader(entry, headerCount)); // CHANGE: migrated planting overlay.
+            const body = createBody(); // CHANGE: migrated planting overlay.
+            entry.panel.appendChild(body); // CHANGE: migrated planting overlay.
+            mxEvent.addListener(body, 'scroll', function () { refreshLines(entry); }); // CHANGE: migrated planting overlay.
+
+            if (activeMode === MODE_SPACING) renderSpacingView(entry, body); // CHANGE: migrated planting overlay.
+            else if (visibleCards.length === 0) renderEmptyTaskOverlayMessage(body); // CHANGE: migrated planting overlay.
+            else if (activeMode === MODE_SCHEDULE) renderScheduleView(entry, body, visibleCards); // CHANGE: migrated planting overlay.
+            else if (groups.length) renderCardView(entry, body, groups); // CHANGE: migrated planting overlay.
+            else renderEmptyTaskOverlayMessage(body); // CHANGE: migrated planting overlay.
+
+            if (!positionPanel(entry, source)) { // CHANGE: migrated planting overlay.
+                removeEntry(entry); // CHANGE: migrated planting overlay.
+                return; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+
+            refreshLines(entry); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function removeEntry(entry, restoreYear) { // CHANGE: migrated planting overlay.
+            if (!entry) return; // CHANGE: migrated planting overlay.
+            clearSpacingPreview(); // CHANGE: migrated planting overlay.
+            for (const poly of entry.lines.values()) removePolyline(poly); // CHANGE: migrated planting overlay.
+            entry.lines.clear(); // CHANGE: migrated planting overlay.
+            removeNode(entry.panel); // CHANGE: migrated planting overlay.
+            registry.delete(entry.sourceId); // CHANGE: migrated planting overlay.
+            if (restoreYear && !isEntryStillSelected(entry)) restoreEntryTasksToCurrentYear(entry); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function show(source, cards, linkLabels) { // CHANGE: migrated planting overlay.
+            clear(); // CHANGE: migrated planting overlay.
+            if (isTeamPermissionModeActiveForTaskScheduleOverlay()) return; // NEW
+            if (!source || !source.id || !cards || cards.length === 0) return; // CHANGE: migrated planting overlay.
+
+            const validCards = cards.filter(isValidOverlayCard).sort(compareTaskCardsByStartDate); // CHANGE: migrated planting overlay.
+            if (validCards.length === 0) return; // CHANGE: migrated planting overlay.
+
+            const entry = { // CHANGE: migrated planting overlay.
+                sourceId: source.id, // CHANGE: migrated planting overlay.
+                targetIds: validCards.map((card) => card.id), // CHANGE: migrated planting overlay.
+                linkLabels: new Map(), // CHANGE: migrated planting overlay.
+                panel: null, // CHANGE: migrated planting overlay.
+                panelLeft: 0, // CHANGE: migrated planting overlay.
+                panelTop: 0, // CHANGE: migrated planting overlay.
+                visibleItems: [], // CHANGE: migrated planting overlay.
+                spacingDraftByCellId: new Map(), // CHANGE: migrated planting overlay.
+                lines: new Map() // CHANGE: migrated planting overlay.
+            }; // CHANGE: migrated planting overlay.
+            for (const card of validCards) entry.linkLabels.set(card.id, linkLabels && linkLabels.get ? (linkLabels.get(card.id) || '') : ''); // CHANGE: migrated planting overlay.
+            registry.set(source.id, entry); // CHANGE: migrated planting overlay.
+            renderEntry(entry); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function showScheduleOnly(source) { // CHANGE: migrated planting overlay.
+            clear(); // CHANGE: migrated planting overlay.
+            if (isTeamPermissionModeActiveForTaskScheduleOverlay()) return; // NEW
+            if (!source || !source.id || !isTilerGroup(source)) return; // CHANGE: migrated planting overlay.
+            const entry = { // CHANGE: migrated planting overlay.
+                sourceId: source.id, // CHANGE: migrated planting overlay.
+                targetIds: [], // CHANGE: migrated planting overlay.
+                linkLabels: new Map(), // CHANGE: migrated planting overlay.
+                scheduleOnly: true, // CHANGE: migrated planting overlay.
+                panel: null, // CHANGE: migrated planting overlay.
+                panelLeft: 0, // CHANGE: migrated planting overlay.
+                panelTop: 0, // CHANGE: migrated planting overlay.
+                visibleItems: [], // CHANGE: migrated planting overlay.
+                spacingDraftByCellId: new Map(), // CHANGE: migrated planting overlay.
+                lines: new Map() // CHANGE: migrated planting overlay.
+            }; // CHANGE: migrated planting overlay.
+            registry.set(source.id, entry); // CHANGE: migrated planting overlay.
+            renderEntry(entry); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function clear() { // CHANGE: migrated planting overlay.
+            for (const entry of Array.from(registry.values())) removeEntry(entry, true); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function refresh() { // CHANGE: migrated planting overlay.
+            if (isTeamPermissionModeActiveForTaskScheduleOverlay()) { clear(); return; } // NEW
+            for (const entry of Array.from(registry.values())) renderEntry(entry); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        /** View-only changes reposition panels in place; only model/context changes rebuild their contents. */ // CHANGE
+        function refreshView() { // CHANGE
+            if (isTeamPermissionModeActiveForTaskScheduleOverlay()) { clear(); return; } // CHANGE
+            for (const entry of Array.from(registry.values())) { // CHANGE
+                const source = model.getCell(entry.sourceId); // CHANGE
+                if (!source) { removeEntry(entry); continue; } // CHANGE
+                if (entry.panel) entry.panel.style.display = positionPanel(entry, source) ? '' : 'none'; // CHANGE
+                refreshLines(entry); // CHANGE
+            } // CHANGE
+        } // CHANGE
+
+        function changeCellForSpacingDraft(change) { // NEW: detect committed graph edits that invalidate transient drafts.
+            return change && (change.cell || change.child || change.terminal || null); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function spacingDraftTouchesCell(entry, cell) { // CHANGE: migrated planting overlay.
+            if (!entry || !entry.spacingDraftByCellId || !entry.spacingDraftByCellId.size || !cell) return false; // CHANGE: migrated planting overlay.
+            const draftIds = entry.spacingDraftByCellId; // CHANGE: migrated planting overlay.
+            for (let cur = cell; cur; cur = model.getParent ? model.getParent(cur) : null) { // CHANGE: migrated planting overlay.
+                if (cur.id && draftIds.has(String(cur.id))) return true; // CHANGE: migrated planting overlay.
+            } // CHANGE: migrated planting overlay.
+            return false; // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        function clearSpacingDraftsForChanges(changes) { // CHANGE: migrated planting overlay.
+            const list = Array.isArray(changes) ? changes : []; // CHANGE: migrated planting overlay.
+            if (!list.length) return; // CHANGE: migrated planting overlay.
+            let cleared = false; // CHANGE: migrated planting overlay.
+            registry.forEach(entry => { // CHANGE: migrated planting overlay.
+                if (!entry.spacingDraftByCellId || !entry.spacingDraftByCellId.size) return; // CHANGE: migrated planting overlay.
+                if (!list.some(change => spacingDraftTouchesCell(entry, changeCellForSpacingDraft(change)))) return; // CHANGE: migrated planting overlay.
+                clearStoredSpacingDrafts(entry); // CHANGE: migrated planting overlay.
+                cleared = true; // CHANGE: migrated planting overlay.
+            }); // CHANGE: migrated planting overlay.
+            if (cleared) clearSpacingPreview(); // CHANGE: affected undo/redo/model edits restore real groups immediately.
+        } // CHANGE: migrated planting overlay.
+
+        function setMode(mode) { // CHANGE: migrated planting overlay.
+            clearSpacingPreview(); // CHANGE: migrated planting overlay.
+            activeMode = mode === MODE_SPACING ? MODE_SPACING : (mode === MODE_SCHEDULE ? MODE_SCHEDULE : MODE_CARDS); // CHANGE: migrated planting overlay.
+            if (activeMode !== MODE_SPACING) registry.forEach(entry => clearStoredSpacingDrafts(entry)); // CHANGE: leaving Spacing discards uncommitted layout drafts.
+            refresh(); // CHANGE: migrated planting overlay.
+        } // CHANGE: migrated planting overlay.
+
+        graph.__trellisPlantingSpacingEditor = { // CHANGE: public UI bridge lets Allocate reuse the actual planting overlay editor.
+            render: (body, context, options) => renderSpacingEditor({ sourceId: context.selectedId, spacingDraftByCellId: new Map() }, body, context, getLayoutTools(), options), // CHANGE
+            clear: clearSpacingPreview // CHANGE
+        }; // CHANGE
+        return { // CHANGE: migrated planting overlay.
+            show, // CHANGE: migrated planting overlay.
+            showScheduleOnly, // CHANGE: migrated planting overlay.
+            clear, // CHANGE: migrated planting overlay.
+            refresh, // CHANGE: migrated planting overlay.
+            clearSpacingDraftsForChanges, // CHANGE: migrated planting overlay.
+            refreshView, // CHANGE
+            setMode, registry // CHANGE: migrated planting overlay.
+        }; // CHANGE: migrated planting overlay.
+    })(); // CHANGE: migrated planting overlay.
+    // Primary flag persistence remains in the linking plugin. // CHANGE
+
+    /** Navigate through the linking adapter, preserving card paging and ancestor reveal behavior. */ // CHANGE
+    function navigateOverlayCell(cell) { // CHANGE
+        const adapter = graph.__trellisPlantingLinking; // CHANGE
+        if (adapter) adapter.navigate(cell); // CHANGE
+        else { graph.setSelectionCell(cell); if (graph.scrollCellToVisible) graph.scrollCellToVisible(cell); } // CHANGE
+    } // CHANGE
+
+    /** One controller owns selection, draft invalidation and presentation refreshes. */ // CHANGE
+    function createPlantingOverlayLifecycle() { // CHANGE
+        let restoringHistory = false; // CHANGE
+        function syncSelection() { // CHANGE
+            if (restoringHistory) return; // CHANGE
+            const selected = graph.getSelectionCells ? graph.getSelectionCells() : []; // CHANGE
+            const adapter = graph.__trellisPlantingLinking; // CHANGE
+            let source = selected.length === 1 ? selected[0] : null; // CHANGE
+            if (source && adapter) source = adapter.normalizeSelection(source); // CHANGE
+            else if (source) { // CHANGE
+                for (let cell = source; cell; cell = model.getParent(cell)) if (isTilerGroup(cell)) { source = cell; break; } // CHANGE
+            } // CHANGE
+            if (source && model.contains && !model.contains(source)) source = null; // CHANGE
+            const active = source && taskScheduleOverlay.registry.get(source.id); // CHANGE
+            const context = source && adapter ? adapter.getContext(source) : null; // CHANGE
+            const targetIds = context ? context.cards.map(card => card.id).sort() : []; // CHANGE
+            if (active && JSON.stringify(active.targetIds.slice().sort()) === JSON.stringify(targetIds)) { taskScheduleOverlay.refresh(); return; } // CHANGE: preserve drafts unless the linked-card context actually changed.
+            if (context && context.cards.length && !(source.getAttribute && source.getAttribute('kanban_card') === '1')) taskScheduleOverlay.show(source, context.cards, context.linkLabels); // CHANGE
+            else if (source && isTilerGroup(source)) taskScheduleOverlay.showScheduleOnly(source); // CHANGE
+            else taskScheduleOverlay.clear(); // CHANGE
+        } // CHANGE
+
+        function onModelChange(_sender, event) { // CHANGE
+            const edit = event && event.getProperty && event.getProperty('edit'); // CHANGE
+            taskScheduleOverlay.clearSpacingDraftsForChanges(edit && edit.changes); // CHANGE
+            syncSelection(); // CHANGE
+        } // CHANGE
+
+        let viewRefreshPending = false; // CHANGE
+        function onViewChange() { // CHANGE
+            if (viewRefreshPending) return; // CHANGE: coalesce graph refresh, zoom and scroll notifications after view validation.
+            viewRefreshPending = true; // CHANGE
+            const schedule = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (callback => setTimeout(callback, 0)); // CHANGE
+            schedule(() => { // CHANGE
+                viewRefreshPending = false; // CHANGE
+                plantingPreview.refresh(); taskScheduleOverlay.refreshView(); // CHANGE: redraw ghosts without rebuilding the spacing form.
+            }); // CHANGE
+        } // CHANGE
+
+        const selection = graph.getSelectionModel && graph.getSelectionModel(); // CHANGE
+        if (selection && selection.addListener) selection.addListener(mxEvent.CHANGE, syncSelection); // CHANGE
+        if (model.addListener) model.addListener(mxEvent.CHANGE, onModelChange); // CHANGE
+        const view = graph.getView && graph.getView(); // CHANGE
+        if (view && view.addListener) [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE, mxEvent.UP, mxEvent.DOWN].filter(Boolean).forEach(name => view.addListener(name, onViewChange)); // CHANGE
+        if (graph.addListener) { // CHANGE
+            graph.addListener(mxEvent.REFRESH, onViewChange); // CHANGE: personal Roadmap projection changes refresh the graph without editing its model.
+            graph.addListener('linksChanged', syncSelection); // CHANGE
+            graph.addListener('trellisPlantingLinkingReady', syncSelection); // CHANGE
+            graph.addListener('trellisSelectionVisualsRefresh', syncSelection); // CHANGE
+            graph.addListener(TILER_GROUP_CREATED_EVENT, (_sender, event) => { // CHANGE
+                const id = event && event.getProperty && event.getProperty('cellId'); // CHANGE
+                const cell = id && model.getCell(id) || event && event.getProperty && event.getProperty('cell'); // CHANGE
+                if (!cell || !isTilerGroup(cell)) return; // CHANGE
+                graph.setSelectionCell(cell); // CHANGE
+                setTimeout(() => { if ((!model.contains || model.contains(cell)) && graph.getSelectionCell() === cell) syncSelection(); }, 0); // CHANGE
+            }); // CHANGE
+        } // CHANGE
+        if (graph.container && graph.container.addEventListener) graph.container.addEventListener('scroll', onViewChange); // CHANGE
+        if (window.addEventListener) { // CHANGE
+            window.addEventListener('resize', onViewChange); // CHANGE
+            window.addEventListener('trellisTeamPermissionModeChanged', syncSelection); // CHANGE
+            window.addEventListener('trellisHistoryBeforeRestore', () => { restoringHistory = true; taskScheduleOverlay.clear(); }); // CHANGE
+            window.addEventListener('trellisHistoryAfterRestore', () => { restoringHistory = false; syncSelection(); }); // CHANGE
+        } // CHANGE
+        return Object.assign({}, taskScheduleOverlay, { syncSelection }); // CHANGE
+    } // CHANGE
+
+    graph.__trellisPlantingGroup = { preview: plantingPreview, overlay: createPlantingOverlayLifecycle(), spacingEditor: graph.__trellisPlantingSpacingEditor }; // CHANGE
+
     // ---- Public API export (for other plugins) ---------------------------------
     window.USL = window.USL || {};
-    window.USL.tiler = Object.assign({}, window.USL.tiler, {
+    window.USL.plantingGroup = Object.assign({}, window.USL.plantingGroup || window.USL.tiler, { // CHANGE
         retileGroup,
         retileAndFitToContainingBed,
         createSiblingTilerGroupFromSource,
@@ -7265,6 +10290,9 @@ Draw.loadPlugin(function (ui) {
         createPlantingFromProposal,
         reorderModuleChildrenForLayering
     });
+    graph.__trellisPlantingGroup.overlay.syncSelection(); // CHANGE: support linking-before-owner startup.
+    window.USL.tiler = window.USL.plantingGroup; // CHANGE: identity alias preserves old callers.
+    if (graph.fireEvent && typeof mxEventObject !== 'undefined') graph.fireEvent(new mxEventObject('trellisPlantingGroupReady')); // CHANGE
     installTrellisDebugSurface();
     bedFitLog("loaded", bedFitStatus());
 

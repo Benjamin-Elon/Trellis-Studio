@@ -141,7 +141,7 @@
         loadDatabaseInfo(databaseInfo); // CHANGE: show live/source counts before destructive restore.
 
         const actions = createEl("div", "trellis-db-tools-actions");
-        const cancel = createButton("Cancel", function () { closeDialog(ui); }, "neutral");
+        const cancel = createButton("Cancel", function () { closeDialog(ui); }, "close"); // CHANGE: restore cancellation uses the red outline.
         const restore = createButton("Restore built-in database", function () {
             restore.disabled = true;
             restore.title = "The built-in database is being restored."; // CHANGE

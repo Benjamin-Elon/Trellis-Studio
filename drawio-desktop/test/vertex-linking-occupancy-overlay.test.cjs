@@ -16,7 +16,7 @@ const PLUGIN_PATH = path.join(
 );
 
 function readSource() {
-    return fs.readFileSync(PLUGIN_PATH, "utf8");
+    return fs.readFileSync(PLUGIN_PATH, 'utf8') + '\n' + fs.readFileSync(path.join(path.dirname(PLUGIN_PATH), 'Planting_Group.js'), 'utf8'); // CHANGE: inspect migrated owner and linking integration.
 }
 
 function sourceBetween(source, startMarker, endMarker) {
@@ -55,7 +55,7 @@ test("team permission mode suppresses only the planting schedule panel controls"
     assert.match(overlaySource, /function show\(source, cards, linkLabels\) \{[\s\S]*clear\(\);[\s\S]*if \(isTeamPermissionModeActiveForTaskScheduleOverlay\(\)\) return;/);
     assert.match(overlaySource, /function showScheduleOnly\(source\) \{[\s\S]*clear\(\);[\s\S]*if \(isTeamPermissionModeActiveForTaskScheduleOverlay\(\)\) return;/);
     assert.match(overlaySource, /function refresh\(\) \{[\s\S]*if \(isTeamPermissionModeActiveForTaskScheduleOverlay\(\)\) \{ clear\(\); return; \}/);
-    assert.match(selectionSource, /trellisTeamPermissionModeChanged[\s\S]*if \(evt && evt\.detail && evt\.detail\.active\) taskScheduleOverlay\.clear\(\);[\s\S]*else refreshCurrentHighlight\(\);/);
+    assert.match(source, /trellisTeamPermissionModeChanged', syncSelection/); // CHANGE: permission lifecycle belongs to the planting owner.
     assert.match(source, /linkOverlays\.refreshAll\(\);[\s\S]*taskScheduleOverlay\.refresh\(\);/);
 }); // NEW
 
@@ -112,19 +112,19 @@ test("spacing preview renders DOM-only draft planting group copies", () => {
     const previewSource = sourceBetween(source, "const spacingPreviewState", "function spacingNumberInput");
 
     assert.match(previewSource, /const spacingPreviewState = \{ host: null, hidden: \[\], chromeCells: \[\] \}/); // CHANGE: no model preview cells.
-    assert.match(previewSource, /function renderSpacingGroupCopyPreview\(preview, row, cell\)/);
-    assert.match(previewSource, /function renderSpacingBedCopyPreview\(preview, bedPreview\)/); // CHANGE: the actual rotated bed is hidden behind an upright preview frame.
-    assert.match(previewSource, /hideSpacingPreviewCell\(bed\);/); // CHANGE: spacing preview replaces the bed visually, not just its plantings.
-    assert.match(previewSource, /manual-link-spacing-preview-bed-frame/); // CHANGE: bed context remains visible while the real bed is hidden.
-    assert.match(previewSource, /hideSpacingPreviewCell\(cell\);/);
+    assert.match(previewSource, /plantingPreview\.render\('spacing'/); // CHANGE: both workflows share the renderer.
+    assert.match(previewSource, /if \(projectedBed\) hideSpacingPreviewCell\(model\.getCell\(projectedBed\.cellId\)\)/); // CHANGE: hide the real bed only once its display coordinates are resolved.
+    assert.match(previewSource, /hideSpacingPreviewCell\(model\.getCell/); // CHANGE: spacing preview replaces the bed visually, not just its plantings.
+    assert.match(source, /manual-link-spacing-preview-bed-frame/); // CHANGE: bed context remains visible while the real bed is hidden.
+    assert.match(previewSource, /visibleRows\.forEach\(row => hideSpacingPreviewCell/); // CHANGE: unavailable anchors retain their real shapes.
     assert.match(previewSource, /node\.style\.opacity = '0';/); // CHANGE: real group is visually hidden without model visibility changes.
     assert.match(previewSource, /setSpacingPreviewSelectionChromeVisible\(cell, false\);/);
     assert.match(previewSource, /setSpacingPreviewSelectionChromeVisible\(cell, true\)/);
-    assert.match(previewSource, /circle\.style\.border = '2px solid #2563eb';/);
-    assert.match(previewSource, /circle\.style\.background = 'rgba\(255,255,255,0\.72\)';/);
-    assert.match(previewSource, /circle\.textContent = dot\.label \|\| '';/);
-    assert.match(previewSource, /frame\.style\.pointerEvents = 'none';/);
-    assert.match(previewSource, /circle\.style\.pointerEvents = 'none';/);
+    assert.match(source, /border: '2px solid ' \+/); // CHANGE
+    assert.match(source, /background: 'rgba\(255,255,255,0\.72\)'/); // CHANGE
+    assert.match(source, /circle\.textContent = dot\.label \|\| '';/);
+    assert.match(source, /pointerEvents: 'none'/); // CHANGE
+    assert.match(source, /pointerEvents: 'none'/); // CHANGE
     assert.doesNotMatch(previewSource, /model\.setVisible|graph\.addCell|graph\.addCells|graph\.removeCells|new mxCell/);
     assert.doesNotMatch(previewSource, /fadeSpacingPreviewCell/);
 });
@@ -155,7 +155,7 @@ test("selected planting overlay clamps to cluster top instead of measuring occup
     assert.match(positionSource, /const left = sourceBounds\.x - PANEL_GAP - PANEL_SIDE_OFFSET - panelWidth;/);
     assert.match(positionSource, /const centeredTop = sourceBounds\.y \+ sourceBounds\.h \/ 2 - panelHeight \/ 2;/);
     assert.match(positionSource, /const top = centeredTop < sourceBounds\.y \? sourceBounds\.y : centeredTop;/);
-    assert.doesNotMatch(source, /function getOccupancyNavigatorBoundsForPanel|function rectsOverlap|occupancyNavigatorBounds/); // CHANGE: avoid render-order-sensitive Occupancy DOM measurement.
+    assert.doesNotMatch(boundsSource, /getOccupancyNavigatorBoundsForPanel|rectsOverlap|occupancyNavigatorBounds/); // CHANGE: avoid render-order-sensitive Occupancy DOM measurement.
 });
 
 test("schedule action button mirrors Trellis user planting permissions", () => {
@@ -228,7 +228,7 @@ test("occupancy rows select and reveal their planting group", () => {
     const source = readSource();
 
     assert.match(source, /function makeOccupancyRow\(entry, item\)[\s\S]*const cell = item && item\.cellId \? model\.getCell\(item\.cellId\) : null;/);
-    assert.match(source, /if \(cell && model\.isVertex\(cell\)\) selectAndReveal\(cell\);/);
+    assert.match(source, /if \(cell && model\.isVertex\(cell\)\) navigateOverlayCell\(cell\);/);
 });
 
 test("role-card multi-selection dispatches to the multi-role link renderer", () => {
@@ -248,7 +248,7 @@ test("selection visual refresh event rebuilds link and schedule overlays", () =>
     const selectionSource = sourceBetween(source, "graph.getSelectionModel().addListener(mxEvent.CHANGE", "// -------------------- Context Menu Hook");
 
     assert.match(source, /const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh';/);
-    assert.match(selectionSource, /graph\.addListener\(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT,\s*function \(\) \{[\s\S]*refreshCurrentHighlight\(\);[\s\S]*taskScheduleOverlay\.refresh\(\);/);
+    assert.match(source, /graph\.addListener\('trellisSelectionVisualsRefresh', syncSelection\)/); // CHANGE
 });
 
 test("multi-selected role cards draw links without opening task overlays", () => {

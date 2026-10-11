@@ -4954,7 +4954,7 @@ Draw.loadPlugin(function (ui) {
                 const title = document.createElement("div");
                 title.className = "yp-picker-title";
                 title.textContent = settings.title || "Select items";
-                const close = mkBtn("Close", "neutral");
+                const close = mkBtn("Close", "close"); // CHANGE: picker dismissal uses the shared red outline.
                 head.appendChild(title);
                 head.appendChild(close);
                 const bodyEl = document.createElement("div");
@@ -4974,7 +4974,7 @@ Draw.loadPlugin(function (ui) {
                 warning.className = "yp-picker-warning";
                 const actions = document.createElement("div");
                 actions.className = "yp-row";
-                const cancel = mkBtn("Cancel", "neutral");
+                const cancel = mkBtn("Cancel", "close"); // CHANGE: picker cancellation uses the dismissal variant.
                 const add = mkBtn(settings.addLabel || "Add selected", "add");
                 actions.appendChild(cancel);
                 actions.appendChild(add);
@@ -6526,7 +6526,7 @@ Draw.loadPlugin(function (ui) {
                 const title = document.createElement("div");
                 title.className = "yp-picker-title";
                 title.textContent = settings.title || "Manage packages";
-                const close = mkBtn("Close", "neutral");
+                const close = mkBtn("Close", "close"); // CHANGE: picker dismissal uses the shared red outline.
                 head.appendChild(title);
                 head.appendChild(close);
                 const bodyEl = document.createElement("div");
@@ -6555,7 +6555,7 @@ Draw.loadPlugin(function (ui) {
                 warning.className = "yp-picker-warning";
                 const actions = document.createElement("div");
                 actions.className = "yp-row";
-                const cancel = mkBtn("Cancel", "neutral");
+                const cancel = mkBtn("Cancel", "close"); // CHANGE: picker cancellation uses the dismissal variant.
                 const apply = mkBtn("Apply changes", "add");
                 actions.appendChild(cancel);
                 actions.appendChild(apply);
@@ -9177,7 +9177,7 @@ Draw.loadPlugin(function (ui) {
             const reset = mkBtn(loadedExistingForCurrentYear ? "Reset" : "Clear", "danger");
             const promptSave = mkBtn("Save and Close", "add");
             const promptDiscard = mkBtn("Discard", "danger", "Discard unsaved plan changes and close the year planner."); // CHANGE: explicit action tooltip.
-            const promptCancel = mkBtn("Cancel", "neutral");
+            const promptCancel = mkBtn("Cancel", "close"); // CHANGE: dismiss the unsaved-changes prompt with the red outline.
             titleEl.textContent = `Plan Year ${currentYear}`;
             headerControls.appendChild(headerStatus);
             headerActions.appendChild(save); headerActions.appendChild(saveClose); headerActions.appendChild(close);
@@ -9609,7 +9609,7 @@ Draw.loadPlugin(function (ui) {
                 const title = document.createElement("div"); // CHANGE
                 title.className = "yp-picker-title"; // CHANGE
                 title.textContent = "Add/Remove crops"; // CHANGE
-                const close = mkBtn("Close", "neutral"); // CHANGE
+                const close = mkBtn("Close", "close"); // CHANGE: picker dismissal uses the shared red outline.
                 head.appendChild(title); head.appendChild(close); // CHANGE
                 const bodyEl = document.createElement("div"); // CHANGE
                 bodyEl.className = "yp-picker-body"; // CHANGE
@@ -9634,7 +9634,7 @@ Draw.loadPlugin(function (ui) {
                 warning.className = "yp-picker-warning"; // CHANGE
                 const actions = document.createElement("div"); // CHANGE
                 actions.className = "yp-row"; // CHANGE
-                const cancel = mkBtn("Cancel", "neutral"); // CHANGE
+                const cancel = mkBtn("Cancel", "close"); // CHANGE: picker cancellation uses the dismissal variant.
                 const apply = mkBtn("Apply changes", "add"); // CHANGE
                 actions.appendChild(cancel); actions.appendChild(apply); // CHANGE
                 foot.appendChild(status); foot.appendChild(warning); foot.appendChild(actions); // CHANGE

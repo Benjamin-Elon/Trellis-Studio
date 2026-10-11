@@ -2257,7 +2257,7 @@ Draw.loadPlugin(function (ui) {
         }, "Import equipment, task types, and capabilities from JSON.", "open")); // CHANGE: explicit action tooltip.
         right.appendChild(buttonEl("Save", "trellis-eq-btn", saveAll, "Save equipment changes to the selected garden module.", "add"));
         right.appendChild(buttonEl("Save & Close", "trellis-eq-btn", saveAndClose, "Save changes and close the equipment dialog.", "add"));
-        right.appendChild(buttonEl("Cancel", "trellis-eq-btn", close, "Close without saving unsaved changes.", "neutral"));
+        right.appendChild(buttonEl("Cancel", "trellis-eq-btn", close, "Close without saving unsaved changes.", "close")); // CHANGE: equipment cancellation uses the red outline.
 
         footer.appendChild(left);
         footer.appendChild(right);
