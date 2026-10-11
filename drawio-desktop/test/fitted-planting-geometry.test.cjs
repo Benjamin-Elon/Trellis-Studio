@@ -13,6 +13,26 @@ function occupancy(rect, overrides = {}) { // CHANGE
 } // CHANGE
 function close(actual, expected, tolerance = 1e-6) { assert.ok(Math.abs(actual - expected) < tolerance, `${actual} != ${expected}`); } // CHANGE
 
+test('zero-offset planting circles balance opposite bed edges independently of spacing and rotation', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    for (const rotation of [0, 30, 45, 90, -30]) for (const percentage of [0, 30, 50, 12.5]) { // CHANGE
+        for (const [sx, sy, diameter, width, height] of [[85, 120, 110, 300, 180], [85, 120, 110, 1600, 950], [15, 20, 10, 500, 130], [120, 85, 110, 950, 1600]]) { // CHANGE
+            const targetBed = bed(width, height, rotation); // CHANGE
+            const p = api.proposePlantingGeometry(input({ bedCell: targetBed, spacingXCm: sx, spacingYCm: sy, vegDiameterCm: diameter, allowedOverhangPct: percentage, offsetXCm: 0, offsetYCm: 0, fillAvailableBed: true })); // CHANGE
+            assert.equal(p.ok, true); // CHANGE
+            close(p.plantingRect.x + p.plantingRect.width / 2, 40 + width / 2); // CHANGE
+            close(p.plantingRect.y + p.plantingRect.height / 2, 60 + height / 2); // CHANGE
+            close(p.layoutOffsetXCm, 0); close(p.layoutOffsetYCm, 0); // CHANGE
+            const group = api.createPlantingFromProposal({ moduleCell: {}, proposal: p }); // CHANGE
+            assert.equal(group.attrs.layout_alignment, 'centered'); // CHANGE
+            close(Number(group.attrs.layout_base_offset_x_cm), p.layoutBaseOffsetXCm); // CHANGE
+            close(Number(group.attrs.layout_base_offset_y_cm), p.layoutBaseOffsetYCm); // CHANGE
+            const stats = api.classifyPlantingSlots(group, api.toPx(sx), api.toPx(sy), api.groupLabelMetrics(group).bandPx, api.readDisabledSet(group)); // CHANGE
+            assert.equal(stats.actual, p.plantCount); // CHANGE
+        } // CHANGE
+    } // CHANGE
+}); // CHANGE
+
 test('percentage overhang is precise, diameter-relative, validated, and persisted including zero', () => { // CHANGE
     const api = loadFittedPlantingGeometry(); // CHANGE
     for (const percentage of [0, 30, 50, 12.5]) for (const diameter of [10, 20]) { // CHANGE
@@ -66,6 +86,17 @@ test('small offsets move circles within the bed-fitted frame instead of being ca
     const before = api.proposePlantingGeometry(request), after = api.proposePlantingGeometry({ ...request, offsetXCm: 2 }); // CHANGE
     close(before.geometry.x, after.geometry.x); assert.equal(before.plantCount, after.plantCount); // CHANGE
     close(after.slots[0].x - before.slots[0].x, api.toPx(2)); // CHANGE
+}); // CHANGE
+
+test('offsets displace both axes from the same baseline, including partial assigned sections', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    for (const fitAxisOverride of ['width', 'height']) { // CHANGE
+        const request = input({ bedCell: bed(1000, 1000), spacingXCm: 30, spacingYCm: 30, vegDiameterCm: 20, plantCount: 6, fitAxisOverride, offsetXCm: 0, offsetYCm: 0 }); // CHANGE
+        const original = api.proposePlantingGeometry(request), shifted = api.proposePlantingGeometry({ ...request, offsetXCm: 1.25, offsetYCm: -0.5 }); // CHANGE
+        close(shifted.geometry.x, original.geometry.x); close(shifted.geometry.y, original.geometry.y); // CHANGE
+        assert.equal(shifted.plantCount, original.plantCount); // CHANGE
+        shifted.slots.forEach((slot, index) => { close(slot.x - original.slots[index].x, api.toPx(1.25)); close(slot.y - original.slots[index].y, api.toPx(-0.5)); }); // CHANGE
+    } // CHANGE
 }); // CHANGE
 
 test('short-axis defaults, square ties, and explicit rotation preserve unequal spacing', () => { // CHANGE

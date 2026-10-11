@@ -140,6 +140,15 @@ mxStencilRegistry.allowEval = false;
 
 		//Load desktop plugins
 		var plugins = (mxSettings.settings != null) ? mxSettings.getPlugins() : null;
+		// NEW: production uses app.min.js; register the sharing entry point in the desktop source layer too.
+		App.pluginRegistry.trellisSyncthing = 'plugins/garden_planner_plugins/Trellis_Syncthing.js'; // NEW
+		if (App.publicPlugin.indexOf('trellisSyncthing') < 0) App.publicPlugin.push('trellisSyncthing'); // NEW
+		if (localStorage.getItem('.trellisSyncthingDefault.v1') == null) { // NEW: one-time migration preserves later deliberate plugin removal.
+			plugins = (plugins || []).slice(); // NEW
+			if (!plugins.some(plugin => /(?:^|\/)Trellis_Syncthing\.js$/.test(plugin) || plugin === 'trellisSyncthing')) plugins.push(App.pluginRegistry.trellisSyncthing); // NEW
+			mxSettings.setPlugins(plugins); mxSettings.save(); // NEW
+			localStorage.setItem('.trellisSyncthingDefault.v1', '1'); // NEW
+		} // NEW
 		App.initPluginCallback();
 
 		if (plugins != null && plugins.length > 0)
@@ -216,7 +225,7 @@ mxStencilRegistry.allowEval = false;
 			break;
 		}
 
-		mxmeta(null, 'default-src \'self\'; connect-src \'self\' https://fonts.googleapis.com https://fonts.gstatic.com; img-src * data:; ' +
+		mxmeta(null, 'default-src \'self\'; connect-src \'self\' https://fonts.googleapis.com https://fonts.gstatic.com; img-src * data: file:; ' + // CHANGE: explicitly copied shared images render through local file URLs.
 			'media-src *; font-src * data:; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com', 'Content-Security-Policy');
 
 		//Disable web plugins loading

@@ -83,6 +83,7 @@ function createDbBridge() {
             return Promise.resolve({ ok: true, changes: 1, lastInsertRowid: "1" });
         },
         query(dbId, sql, params = []) {
+            if (/SELECT id FROM history_events WHERE id/.test(sql)) return Promise.resolve({ ok: true, rows: state.events.filter(row => row.id === params[0]).map(row => ({ id: row.id })) }); // NEW: emulate the real database's import deduplication query.
             if (/SELECT \* FROM history_events/.test(sql) && /ORDER BY timestamp DESC/.test(sql)) {
                 return Promise.resolve({ ok: true, rows: state.events.slice(-1) });
             }
@@ -199,6 +200,25 @@ test("history API records a baseline and exposes a side-panel action", async () 
     assert.match(harness.document.body.textContent, /History/);
     assert.equal(harness.dbBridge.state.events[0].category, "System");
     assert.equal(harness.layer.getAttribute("trellis_history_id").startsWith("diagram_"), true);
+});
+
+test('shared history imports are idempotent and retain original attribution without re-export events', async () => { // NEW
+    const harness = loadPlugin();
+    await settle(20);
+    const history = harness.context.window.Trellis.history;
+    const compressedXml = '<mxGraphModel><root><mxCell id="0"/></root></mxGraphModel>';
+    const entry = {
+        revision: { id: 'remote-revision', snapshotId: 'remote-snapshot', diagramHistoryId: history.getDiagramId(), actorUserId: 'remote-user', actorName: 'Remote', actorRole: 'regular', timestamp: Date.now(), category: 'Diagram', action: 'change', origin: 'remote', title: 'Remote saved work', diagramHash: history._test.hashString(compressedXml), parentRevisionId: 'not-yet-arrived' },
+        snapshot: { snapshotId: 'remote-snapshot', compressedXml, compressedKind: 'plain', checksum: history._test.hashString(compressedXml) }
+    };
+    let exported = 0;
+    harness.context.window.addEventListener('trellisHistoryRevisionRecorded', () => exported++);
+    await history.importShared(entry);
+    await history.importShared(entry);
+    assert.equal(harness.dbBridge.state.events.filter(row => row.id === 'remote-revision').length, 1);
+    assert.equal(history.list().find(row => row.id === 'remote-revision').actorUserId, 'remote-user');
+    assert.equal(history.list().find(row => row.id === 'remote-revision').parentRevisionId, 'not-yet-arrived');
+    assert.equal(exported, 0);
 });
 
 test("history panel takes over and restores the format sidebar", async () => {

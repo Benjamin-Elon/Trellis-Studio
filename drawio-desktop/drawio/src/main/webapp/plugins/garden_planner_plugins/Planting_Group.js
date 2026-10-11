@@ -112,6 +112,7 @@ Draw.loadPlugin(function (ui) {
     const BED_FIT_TOLERANCE = 0.25;
     const BED_FIT_RESIZE_SUPPRESS_MS = 250;
     const DEFAULT_ALLOWED_OVERHANG_PCT = 30; // CHANGE: percentage of circle diameter per bed edge.
+    const activePlantingLayoutSnapshots = new Map(); // CHANGE: counts during retile use the same pending manual geometry as insertion.
     const savedCropOverhangDefaults = new Map(); // CHANGE: open editors must restore defaults saved after their rows were loaded.
     window.addEventListener('usl:cropOverhangSaved', event => { // CHANGE
         const detail = event.detail; // CHANGE
@@ -918,11 +919,23 @@ Draw.loadPlugin(function (ui) {
     function shiftedSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx) { // NEW: offset visibly moves the grid instead of being swallowed by clamping.
         const logical = interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
         const offset = layoutGridOffsetPx(groupCell);
+        const baseline = layoutGridBaseOffsetPx(groupCell); // CHANGE: automatic centering is independent of user displacement.
         return {
-            x: logical.x + offset.x,
-            y: logical.y + offset.y
+            x: logical.x + baseline.x + offset.x, // CHANGE
+            y: logical.y + baseline.y + offset.y // CHANGE
         };
     }
+
+    function layoutGridBaseOffsetPx(groupCell) { // CHANGE
+        if (getXmlAttr(groupCell, 'layout_alignment', '') !== 'centered') return { x: 0, y: 0 }; // CHANGE: legacy and companion layouts retain their placement.
+        return { x: toPx(finiteNumberOrNull(getXmlAttr(groupCell, 'layout_base_offset_x_cm', '')) || 0), // CHANGE
+            y: toPx(finiteNumberOrNull(getXmlAttr(groupCell, 'layout_base_offset_y_cm', '')) || 0) }; // CHANGE
+    } // CHANGE
+
+    function plantingLayoutDiameterPx(groupCell, spacingXpx, spacingYpx) { // CHANGE
+        const diameterCm = Number(getXmlAttr(groupCell, 'veg_diameter_cm', '0')); // CHANGE
+        return Math.max(6, diameterCm > 0 ? toPx(diameterCm) : clamp(DEFAULT_ICON_DIAM_RATIO * Math.min(spacingXpx, spacingYpx), MIN_ICON_DIAM_PX, MAX_ICON_DIAM_PX)); // CHANGE
+    } // CHANGE
 
     function layoutGridOffsetActive(groupCell) {
         return layoutGridOffsetPx(groupCell).active;
@@ -1444,7 +1457,8 @@ Draw.loadPlugin(function (ui) {
                     toRemove.push(tile); // CHANGE: spacing retile removes any tile whose slot center is outside the content area.
                     continue;
                 }
-                if (!(isAutoTile(tile) && !isDirty(tile)) && !isPointInPlantingContentArea(groupCell, childCenterInUnrotatedGroupSpace(groupCell, tile), bandPx)) {
+                const pendingManual = snapMap.get(key); // CHANGE
+                if (!(isAutoTile(tile) && !isDirty(tile)) && !isPointInPlantingContentArea(groupCell, pendingManual ? { x: pendingManual.x + iconDiamPx / 2, y: pendingManual.y + iconDiamPx / 2 } : childCenterInUnrotatedGroupSpace(groupCell, tile), bandPx)) { // CHANGE: validate the accepted snapshot, not geometry around the old pivot.
                     toRemove.push(tile); // CHANGE: dirty/manual circles outside the content area are removed during retile.
                     slotMap.delete(key); // CHANGE: valid generated slots can be recreated after removing outside manual geometry.
                     continue;
@@ -4186,6 +4200,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function trimGroupToPlantFootprint(tg, bed, bbox, fitWidth, fitHeight, debugCtx) {
+        if (getXmlAttr(tg, 'layout_alignment', '') === 'centered') return false; // CHANGE: retain the accepted area and baseline; trimming would change the available capacity on every fit.
         if (tg && isCollapsedLOD(tg)) {
             bedFitLog("trim-skip", {
                 txnId: debugCtx && debugCtx.txnId,
@@ -4323,7 +4338,7 @@ Draw.loadPlugin(function (ui) {
         const beforeGeo = bedFitGeometrySnapshot(tg);
         const beforeRotation = getTilerRotationDeg(tg);
         const beforeBandPx = groupLabelMetrics(tg).bandPx;
-        const layoutSnapshot = captureBedFitLayoutSnapshot(tg);
+        let layoutSnapshot = captureBedFitLayoutSnapshot(tg); // CHANGE
         const next = g.clone();
         if (fitWidth) next.width = targetFrameWidth + GROUP_PADDING_PX * 2;
         if (fitHeight) {
@@ -4341,6 +4356,11 @@ Draw.loadPlugin(function (ui) {
         const afterBandPx = groupLabelMetrics(tg).bandPx;
         const bandDeltaY = (Number(afterBandPx) || 0) - (Number(beforeBandPx) || 0);
         shiftLayoutSnapshotByDeltaY(layoutSnapshot, bandDeltaY);
+        if (getXmlAttr(tg, 'layout_alignment', '') === 'centered') { // CHANGE
+            const centered = prepareCenteredSpacingDraft(tg, { centeringSourceSnapshot: layoutSnapshot, sourceLabelBandPx: afterBandPx }); // CHANGE: the snapshot still represents the old pivot and its shifted header.
+            setCellAttrsNoTxn(model, tg, { layout_base_offset_x_cm: String(centered.layoutBaseOffsetXCm || 0), layout_base_offset_y_cm: String(centered.layoutBaseOffsetYCm || 0) }); // CHANGE
+            layoutSnapshot = centered.bedFitLayoutSnapshot || layoutSnapshot; // CHANGE
+        } // CHANGE
         bedFitLog("fit", {
             txnId: debugCtx && debugCtx.txnId,
             source: debugCtx && debugCtx.source,
@@ -5760,6 +5780,15 @@ Draw.loadPlugin(function (ui) {
             .map(item => ({ item, points: plantingFootprintPolygon(item.plantingRect || item.rect || item.geometry).map(point => rotatePointAround(point, center, -rotation)) })); // CHANGE
     } // CHANGE
 
+    /** Center a lattice's physical footprint; equal radii cancel from its center calculation. */ // CHANGE
+    function centeredAxisBaseOffset(length, pitch, count) { // CHANGE
+        return (length - count * pitch) / 2; // CHANGE
+    } // CHANGE
+
+    function plantingPartialAxisLength(count, pitch, diameter) { // CHANGE
+        return count > 0 ? Math.max(count * pitch, (count - 1) * pitch + diameter) : 0; // CHANGE: a partial section must contain physical circles when diameter exceeds spacing.
+    } // CHANGE
+
     /** Shared fitted-frame sizing. Slot counts are never forced to one when no physical row fits. */ // CHANGE
     function plantingProposalFrame(maxW, maxH, sx, sy, diameter, percentage) { // CHANGE
         const overhang = allowedOverhangForDiameter(diameter, percentage); // CHANGE
@@ -5780,8 +5809,8 @@ Draw.loadPlugin(function (ui) {
     function fittedOffsetPlantingProposalCandidate(input, axis, sx, sy, diameter, bedRect, rotation) { // CHANGE
         const frame = plantingProposalFrame(bedRect.width, bedRect.height, sx, sy, diameter, input.allowedOverhangPct); // CHANGE
         const ox = toPx(Number(input.offsetXCm) || 0), oy = toPx(Number(input.offsetYCm) || 0); // CHANGE
-        const maxX = fittedOffsetAxisRange(frame.width, sx, ox, frame.cols, diameter); // CHANGE
-        const maxY = fittedOffsetAxisRange(frame.height, sy, oy, frame.rows, diameter); // CHANGE
+        const maxX = fittedOffsetAxisRange(frame.width, sx, ox + centeredAxisBaseOffset(frame.width, sx, frame.cols), frame.cols, diameter); // CHANGE
+        const maxY = fittedOffsetAxisRange(frame.height, sy, oy + centeredAxisBaseOffset(frame.height, sy, frame.rows), frame.rows, diameter); // CHANGE
         const requested = Math.max(0, Math.trunc(Number(input.plantCount) || 0)); // CHANGE
         const perRow = axis === 'width' ? maxX.count : maxY.count; // CHANGE
         const capacity = maxX.count * maxY.count; // CHANGE
@@ -5791,22 +5820,25 @@ Draw.loadPlugin(function (ui) {
         let low = 0, high = maxGrid; // CHANGE
         while (low < high) { // CHANGE: binary search avoids scanning huge beds or tiny spacing.
             const mid = Math.floor((low + high) / 2); // CHANGE
-            const length = mid === maxGrid ? maxLength : mid * pitch; // CHANGE: a capacity-sized partial allocation retains the bed's residual edge space.
-            if (fittedOffsetAxisRange(length, pitch, offset, mid, diameter).count >= requiredRows) high = mid; else low = mid + 1; // CHANGE
+            const length = mid === maxGrid ? maxLength : plantingPartialAxisLength(mid, pitch, diameter); // CHANGE
+            if (fittedOffsetAxisRange(length, pitch, offset + centeredAxisBaseOffset(length, pitch, mid), mid, diameter).count >= requiredRows) high = mid; else low = mid + 1; // CHANGE
         } // CHANGE
-        const cols = axis === 'width' ? frame.cols : low, rows = axis === 'width' ? low : frame.rows; // CHANGE
-        const fw = axis === 'width' || cols === frame.cols ? frame.width : cols * sx, fh = axis === 'height' || rows === frame.rows ? frame.height : rows * sy; // CHANGE
-        const activeColumns = fittedOffsetAxisRange(fw, sx, ox, cols, diameter), activeRows = fittedOffsetAxisRange(fh, sy, oy, rows, diameter); // CHANGE
+        const fullBed = input.fillAvailableBed === true; // CHANGE: explicit zero offsets also honor whole-bed capacity.
+        const cols = axis === 'width' || fullBed ? frame.cols : low, rows = axis === 'height' || fullBed ? frame.rows : low; // CHANGE
+        const fw = axis === 'width' || cols === frame.cols ? frame.width : plantingPartialAxisLength(cols, sx, diameter), fh = axis === 'height' || rows === frame.rows ? frame.height : plantingPartialAxisLength(rows, sy, diameter); // CHANGE
+        const bx = centeredAxisBaseOffset(fw, sx, cols), by = centeredAxisBaseOffset(fh, sy, rows); // CHANGE
+        const activeColumns = fittedOffsetAxisRange(fw, sx, ox + bx, cols, diameter), activeRows = fittedOffsetAxisRange(fh, sy, oy + by, rows, diameter); // CHANGE
         const plantCount = activeColumns.count * activeRows.count; // CHANGE
         const width = Math.max(1, fw + GROUP_PADDING_PX * 2); // CHANGE
         const solved = solveOuterHeightForPlantingFrame(fh, width, fh + GROUP_LABEL_BAND_PX); // CHANGE
-        const localRect = { x: GROUP_PADDING_PX + sx / 2 + activeColumns.first * sx + ox - diameter / 2, // CHANGE
-            y: GROUP_PADDING_PX + solved.bandPx + sy / 2 + activeRows.first * sy + oy - diameter / 2, // CHANGE
+        const localRect = { x: GROUP_PADDING_PX + sx / 2 + activeColumns.first * sx + bx + ox - diameter / 2, // CHANGE
+            y: GROUP_PADDING_PX + solved.bandPx + sy / 2 + activeRows.first * sy + by + oy - diameter / 2, // CHANGE
             width: activeColumns.count ? (activeColumns.count - 1) * sx + diameter : 0, height: activeRows.count ? (activeRows.count - 1) * sy + diameter : 0 }; // CHANGE
-        const base = { fitAxis: axis, rows, cols, capacity, plantCount, requestedPlantCount: requested, activeColumns, activeRows, // CHANGE
+        const base = { fitAxis: axis, fillAvailableBed: fullBed, rows, cols, capacity, plantCount, requestedPlantCount: requested, activeColumns, activeRows, // CHANGE
             fullPlantCount: perRow ? Math.ceil(requested / perRow) * perRow : 0, spacingXpx: sx, spacingYpx: sy, iconDiameterPx: diameter, labelBandPx: solved.bandPx, // CHANGE
             layoutOffsetXCm: Number(input.offsetXCm) || 0, layoutOffsetYCm: Number(input.offsetYCm) || 0, rotation, // CHANGE: retain the entered centimeter values without conversion roundoff.
-            geometry: { x: bedRect.x, y: bedRect.y, width, height: solved.outerHeight }, complete: capacity > 0 && plantCount >= requested }; // CHANGE
+            layoutBaseOffsetXCm: bx / toPx(1), layoutBaseOffsetYCm: by / toPx(1), layoutAlignment: 'centered', // CHANGE
+            geometry: { x: bedRect.x, y: bedRect.y, width, height: solved.outerHeight }, complete: capacity > 0 && (fullBed || plantCount >= requested) }; // CHANGE
         return chooseFittedPlantingProposalPlacement(input, base, frame, bedRect, rotation, localRect); // CHANGE
     } // CHANGE
 
@@ -5823,18 +5855,19 @@ Draw.loadPlugin(function (ui) {
         const rows = axis === "height" || fullBed ? frame.rows : rowCount; // CHANGE
         const capacity = frame.cols * frame.rows; // CHANGE
         const plantCount = fullBed || input.fillCompleteRows ? cols * rows : Math.min(requested, cols * rows); // CHANGE
-        const frameWidth = axis === "width" || fullBed ? frame.width : cols * sx; // CHANGE
-        const frameHeight = axis === "height" || fullBed ? frame.height : rows * sy; // CHANGE
+        const frameWidth = axis === "width" || fullBed ? frame.width : plantingPartialAxisLength(cols, sx, diameter); // CHANGE
+        const frameHeight = axis === "height" || fullBed ? frame.height : plantingPartialAxisLength(rows, sy, diameter); // CHANGE
         const width = Math.max(1, frameWidth + GROUP_PADDING_PX * 2); // CHANGE
         const solved = solveOuterHeightForPlantingFrame(Math.max(0, frameHeight), width, frameHeight + GROUP_LABEL_BAND_PX); // CHANGE
-        const bboxW = cols > 0 ? (cols - 1) * sx + diameter : 0; // CHANGE
-        const bboxH = rows > 0 ? (rows - 1) * sy + diameter : 0; // CHANGE
-        const offsetX = (frameWidth - cols * sx) / 2, offsetY = (frameHeight - rows * sy) / 2; // CHANGE
+        const enabledCols = Math.min(cols, plantCount), enabledRows = cols > 0 ? Math.ceil(plantCount / cols) : 0; // CHANGE: a partial final row does not center disabled slots.
+        const bboxW = enabledCols > 0 ? (enabledCols - 1) * sx + diameter : 0; // CHANGE
+        const bboxH = enabledRows > 0 ? (enabledRows - 1) * sy + diameter : 0; // CHANGE
+        const offsetX = centeredAxisBaseOffset(frameWidth, sx, enabledCols), offsetY = centeredAxisBaseOffset(frameHeight, sy, enabledRows); // CHANGE
         const localRect = { x: GROUP_PADDING_PX + (frameWidth - bboxW) / 2, y: GROUP_PADDING_PX + solved.bandPx + (frameHeight - bboxH) / 2, width: bboxW, height: bboxH }; // CHANGE
         const fullRowCount = perRow ? Math.ceil(requested / perRow) * perRow : 0; // CHANGE
         const base = { fitAxis: axis, fillAvailableBed: fullBed, rows, cols, capacity, plantCount, requestedPlantCount: requested, fullPlantCount: fullRowCount, // CHANGE
             spacingXpx: sx, spacingYpx: sy, iconDiameterPx: diameter, labelBandPx: solved.bandPx, // CHANGE
-            layoutOffsetXCm: offsetX / toPx(1), layoutOffsetYCm: offsetY / toPx(1), rotation, // CHANGE
+            layoutOffsetXCm: 0, layoutOffsetYCm: 0, layoutBaseOffsetXCm: offsetX / toPx(1), layoutBaseOffsetYCm: offsetY / toPx(1), layoutAlignment: 'centered', rotation, // CHANGE
             geometry: { x: bedRect.x, y: bedRect.y, width, height: solved.outerHeight }, complete: capacity > 0 && (fullBed || plantCount >= requested) }; // CHANGE
         return chooseFittedPlantingProposalPlacement(input, base, frame, bedRect, rotation, localRect); // CHANGE
     } // CHANGE
@@ -5845,10 +5878,11 @@ Draw.loadPlugin(function (ui) {
         const bboxW = localRect.width, bboxH = localRect.height; // CHANGE
         const occupied = plantingProposalOccupancy(input, bedRect, rotation); // CHANGE
         const spanWidth = axis === "width" || fullBed, spanHeight = axis === "height" || fullBed; // CHANGE
-        const startX = spanWidth ? (base.activeColumns ? bedRect.x - frame.overhang + localRect.x - GROUP_PADDING_PX : bedRect.x + (bedRect.width - bboxW) / 2) : bedRect.x - frame.overhang; // CHANGE: pin the fitted frame so explicit offsets visibly shift the grid on its bed axis.
-        const startY = spanHeight ? (base.activeRows ? bedRect.y - frame.overhang + localRect.y - GROUP_PADDING_PX - base.labelBandPx : bedRect.y + (bedRect.height - bboxH) / 2) : bedRect.y - frame.overhang; // CHANGE
-        const endX = spanWidth ? startX : bedRect.x + bedRect.width + frame.overhang - bboxW; // CHANGE
-        const endY = spanHeight ? startY : bedRect.y + bedRect.height + frame.overhang - bboxH; // CHANGE
+        const localX = localRect.x - GROUP_PADDING_PX, localY = localRect.y - GROUP_PADDING_PX - base.labelBandPx; // CHANGE
+        const sectionWidth = base.geometry.width - GROUP_PADDING_PX * 2, sectionHeight = base.geometry.height - GROUP_PADDING_PX * 2 - base.labelBandPx; // CHANGE
+        const startX = bedRect.x - frame.overhang + localX, startY = bedRect.y - frame.overhang + localY; // CHANGE: anchor the assigned section, so placement never cancels a user offset.
+        const endX = spanWidth ? startX : bedRect.x + bedRect.width + frame.overhang - sectionWidth + localX; // CHANGE
+        const endY = spanHeight ? startY : bedRect.y + bedRect.height + frame.overhang - sectionHeight + localY; // CHANGE
         const positions = (start, end, step) => { // CHANGE
             const out = []; // CHANGE
             for (let value = start; value <= end + 1e-7; value += Math.max(8, step)) out.push(Math.min(value, end)); // CHANGE
@@ -5952,8 +5986,8 @@ Draw.loadPlugin(function (ui) {
             for (let c = 0; c < best.cols && out.length < limit; c++) { // CHANGE
                 if (best.activeColumns && (c < best.activeColumns.first || c > best.activeColumns.last) || best.activeRows && (r < best.activeRows.first || r > best.activeRows.last)) continue; // CHANGE: omit shifted-out slots rather than drawing them at the edge.
                 out.push({ row: r, col: c, // CHANGE
-                    x: GROUP_PADDING_PX + best.spacingXpx / 2 + c * best.spacingXpx + toPx(best.layoutOffsetXCm || 0), // CHANGE
-                    y: GROUP_PADDING_PX + best.labelBandPx + best.spacingYpx / 2 + r * best.spacingYpx + toPx(best.layoutOffsetYCm || 0), // CHANGE
+                    x: GROUP_PADDING_PX + best.spacingXpx / 2 + c * best.spacingXpx + toPx(best.layoutBaseOffsetXCm || 0) + toPx(best.layoutOffsetXCm || 0), // CHANGE
+                    y: GROUP_PADDING_PX + best.labelBandPx + best.spacingYpx / 2 + r * best.spacingYpx + toPx(best.layoutBaseOffsetYCm || 0) + toPx(best.layoutOffsetYCm || 0), // CHANGE
                     r: best.iconDiameterPx / 2 }); // CHANGE
             } // CHANGE
         } // CHANGE
@@ -5967,6 +6001,9 @@ Draw.loadPlugin(function (ui) {
 
     function previewDraftAttrs(groupCell, draft) { // NEW: overlays can render an uncommitted tiler-faithful copy.
         const attrs = {};
+        if (draft?.layoutAlignment != null) attrs.layout_alignment = String(draft.layoutAlignment); // CHANGE
+        if (draft?.layoutBaseOffsetXCm != null) attrs.layout_base_offset_x_cm = String(draft.layoutBaseOffsetXCm); // CHANGE
+        if (draft?.layoutBaseOffsetYCm != null) attrs.layout_base_offset_y_cm = String(draft.layoutBaseOffsetYCm); // CHANGE
         if (draft && draft.allowedOverhangPct != null) attrs.allowed_overhang_pct = String(draft.allowedOverhangPct); // CHANGE
         if (draft && draft.spacingXCm != null) attrs.spacing_x_cm = String(draft.spacingXCm);
         if (draft && draft.spacingYCm != null) attrs.spacing_y_cm = String(draft.spacingYCm);
@@ -5980,7 +6017,7 @@ Draw.loadPlugin(function (ui) {
             attrs.layout_offset_y_cm = String(draft.offsetYCm);
             attrs.companion_offset_y_cm = ""; // CHANGE: previewed planting offsets must override stale legacy companion offsets.
         }
-        if (draft.generatedPattern) { attrs.companion_layout_interplant = ''; attrs.companion_layout_template = ''; } // CHANGE: obsolete legacy staggering must not shift generated pair slots twice.
+        if (draft.generatedPattern) { attrs.companion_layout_interplant = ''; attrs.companion_layout_template = ''; attrs.layout_alignment = ''; attrs.layout_base_offset_x_cm = '0'; attrs.layout_base_offset_y_cm = '0'; } // CHANGE: companion patterns retain their own shared-area placement, without an inherited ordinary baseline.
         if (draft && draft.label != null) attrs.label = String(draft.label);
         if (draft && draft.abbr != null) attrs.plant_abbr = String(draft.abbr);
         return attrs;
@@ -6020,6 +6057,37 @@ Draw.loadPlugin(function (ui) {
         return Object.assign({}, draft, { rect, bedFitGeometry: next, bedFitLayoutSnapshot: captureBedFitLayoutSnapshot(groupCell), clipBounds: bounds, strictFootprint: false }); // CHANGE
     } // CHANGE
 
+    /** Pure centering of enabled logical circles; offsets are added only after resolving the baseline. */ // CHANGE
+    function prepareCenteredSpacingDraft(groupCell, draft) { // CHANGE
+        if (!groupCell || draft.centeringPrepared || draft.generatedPattern || draft.strictFootprint || draft.proposed || isInterplantLayoutGroup(groupCell) || groupCell.getAttribute('bed_auto_fit') === '0') return draft; // CHANGE
+        const prepared = prepareBedFitSpacingDraft(groupCell, draft); // CHANGE
+        const current = groupCell.getGeometry(), rect = Object.assign({}, current, prepared.rect || {}); // CHANGE
+        const attrs = Object.assign({}, previewDraftAttrs(groupCell, prepared), { layout_alignment: 'centered', layout_base_offset_x_cm: '0', layout_base_offset_y_cm: '0', layout_offset_x_cm: '0', layout_offset_y_cm: '0' }); // CHANGE
+        const cell = makeDraftPreviewCell(groupCell, rect, attrs), sx = toPx(Number(cell.getAttribute('spacing_x_cm') || cell.getAttribute('spacing_cm') || 30)), sy = toPx(Number(cell.getAttribute('spacing_y_cm') || cell.getAttribute('spacing_cm') || 30)); // CHANGE
+        if (!(sx > 0 && sy > 0)) return prepared; // CHANGE: normal validation handles incomplete edits.
+        const diameter = plantingLayoutDiameterPx(cell, sx, sy); // CHANGE
+        const bandPx = groupLabelMetrics(cell).bandPx, bounds = plantingContentBoundsLocal(cell, bandPx), grid = computeGridStatsXY(cell, sx, sy); // CHANGE
+        const oldBaseline = layoutGridBaseOffsetPx(groupCell), oldOffset = layoutGridOffsetPx(groupCell), oldBand = draft.sourceLabelBandPx ?? groupLabelMetrics(groupCell).bandPx; // CHANGE
+        const sourceSnapshot = draft.centeringSourceSnapshot || captureBedFitLayoutSnapshot(groupCell); // CHANGE: all reads precede geometry changes, including rotated manual circles.
+        const snapshot = { v: 1, tiles: (sourceSnapshot?.tiles || []).map(tile => Object.assign({}, tile, { // CHANGE
+            x: tile.x + (tile.w - diameter) / 2 - oldBaseline.x - oldOffset.x, // CHANGE: preserve manual centers when diameter changes.
+            y: tile.y + (tile.h - diameter) / 2 - oldBaseline.y - oldOffset.y + bandPx - oldBand, w: diameter, h: diameter })) }; // CHANGE
+        const manual = snapshotTileMap(snapshot), disabled = prepared.resetDisabled ? new Set() : readDisabledSet(groupCell); // CHANGE
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; // CHANGE
+        for (let r = 0; r < grid.rows; r++) for (let c = 0; c < grid.cols; c++) { // CHANGE
+            if (disabled.has(`${r},${c}`)) continue; // CHANGE
+            const tile = manual.get(`${r},${c}`), center = tile ? { x: tile.x + diameter / 2, y: tile.y + diameter / 2 } : logicalSlotCenterLocal(r, c, sx, sy, bandPx); // CHANGE
+            minX = Math.min(minX, center.x - diameter / 2); maxX = Math.max(maxX, center.x + diameter / 2); // CHANGE
+            minY = Math.min(minY, center.y - diameter / 2); maxY = Math.max(maxY, center.y + diameter / 2); // CHANGE
+        } // CHANGE
+        const bx = Number.isFinite(minX) ? (bounds.minX + bounds.maxX - minX - maxX) / 2 : 0, by = Number.isFinite(minY) ? (bounds.minY + bounds.maxY - minY - maxY) / 2 : 0; // CHANGE
+        const ox = toPx(Number(prepared.offsetXCm ?? oldOffset.x / toPx(1)) || 0), oy = toPx(Number(prepared.offsetYCm ?? oldOffset.y / toPx(1)) || 0); // CHANGE
+        snapshot.tiles.forEach(tile => { tile.x += bx + ox; tile.y += by + oy; }); // CHANGE: manual and generated circles receive the identical translation.
+        const centeringInvalid = maxX - minX > bounds.maxX - bounds.minX + 1e-7 || maxY - minY > bounds.maxY - bounds.minY + 1e-7; // CHANGE
+        return Object.assign({}, prepared, { layoutAlignment: 'centered', layoutBaseOffsetXCm: bx / toPx(1), layoutBaseOffsetYCm: by / toPx(1), // CHANGE
+            bedFitLayoutSnapshot: snapshot, centeringPrepared: true, centeringInvalid, clipBounds: undefined }); // CHANGE: omissions are transient, not newly disabled user slots.
+    } // CHANGE
+
     function makeDraftPreviewCell(groupCell, rect, attrs) { // NEW: tiny cell facade lets preview reuse tiler geometry helpers.
         const width = Math.max(0, Number(rect && rect.width) || 0);
         const height = Math.max(0, Number(rect && rect.height) || 0);
@@ -6047,6 +6115,7 @@ Draw.loadPlugin(function (ui) {
         }, draft.rect || opts.rect || {});
         const attrs = Object.assign({}, draft.attributes || {}, previewDraftAttrs(groupCell, draft)); // CHANGE
         const previewCell = makeDraftPreviewCell(groupCell, rect, attrs);
+        previewCell.layoutSnapshot = draft.bedFitLayoutSnapshot || (groupCell.getParent ? captureBedFitLayoutSnapshot(groupCell) : null); // CHANGE
         const spacingXcm = previewDraftNumber(previewCell.getAttribute("spacing_x_cm") || previewCell.getAttribute("spacing_cm"), 30);
         const spacingYcm = previewDraftNumber(previewCell.getAttribute("spacing_y_cm") || previewCell.getAttribute("spacing_cm"), 30);
         const spacingXpx = toPx(spacingXcm > 0 ? spacingXcm : 30);
@@ -6077,7 +6146,7 @@ Draw.loadPlugin(function (ui) {
         const label = getGroupDisplayName(previewCell, previewCell.getAttribute("plant_abbr") || "?");
         const abbr = previewCell.getAttribute("plant_abbr") || "?";
         const circles = [];
-        const manualSlots = snapshotTileMap(draft.bedFitLayoutSnapshot); // CHANGE: manual plants keep logical positions when a percentage changes the frame.
+        const manualSlots = snapshotTileMap(previewCell.layoutSnapshot); // CHANGE: preview and commit share centered manual positions.
         for (let r = 0; r < grid.rows; r++) {
             for (let c = 0; c < grid.cols; c++) {
                 const slotKey = `${r},${c}`;
@@ -6097,6 +6166,7 @@ Draw.loadPlugin(function (ui) {
         return {
             status: "ok",
             allowedOverhangPct: resolveAllowedOverhangPct(previewCell), // CHANGE
+            layoutAlignment: previewCell.getAttribute('layout_alignment') || '', layoutBaseOffsetXCm: layoutGridBaseOffsetPx(previewCell).x / toPx(1), layoutBaseOffsetYCm: layoutGridBaseOffsetPx(previewCell).y / toPx(1), centeringInvalid: !!draft.centeringInvalid, // CHANGE
             rect,
             label,
             abbr,
@@ -6185,10 +6255,11 @@ Draw.loadPlugin(function (ui) {
         if (!bbox) { // CHANGE
             const bandPx = groupLabelMetrics(group).bandPx; // CHANGE
             const stats = classifyPlantingSlots(group, sx, sy, bandPx, readDisabledSet(group)); // CHANGE
+            const manual = group.getParent ? snapshotTileMap(captureBedFitLayoutSnapshot(group)) : new Map(); // CHANGE: collapsed footprints include retained manual geometry.
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; // CHANGE
             stats.renderedKeys.forEach(key => { // CHANGE
                 const [r, c] = key.split(",").map(Number); // CHANGE
-                const point = shiftedSlotCenterLocal(group, r, c, sx, sy, bandPx); // CHANGE
+                const saved = manual.get(key), point = saved ? { x: saved.x + diameter / 2, y: saved.y + diameter / 2 } : shiftedSlotCenterLocal(group, r, c, sx, sy, bandPx); // CHANGE
                 minX = Math.min(minX, point.x - diameter / 2); minY = Math.min(minY, point.y - diameter / 2); // CHANGE
                 maxX = Math.max(maxX, point.x + diameter / 2); maxY = Math.max(maxY, point.y + diameter / 2); // CHANGE
             }); // CHANGE
@@ -6245,6 +6316,8 @@ Draw.loadPlugin(function (ui) {
         const model = activeGraphArg.getModel && activeGraphArg.getModel();
         const attrs = Object.assign({}, input.attributes || proposal.attributes || {}, {
             allowed_overhang_pct: String(resolveAllowedOverhangPct(proposal.allowedOverhangPct)), // CHANGE
+            ...(proposal.layoutAlignment === 'centered' && !proposal.sharedFootprint ? { layout_alignment: 'centered', // CHANGE
+                layout_base_offset_x_cm: String(proposal.layoutBaseOffsetXCm || 0), layout_base_offset_y_cm: String(proposal.layoutBaseOffsetYCm || 0) } : {}), // CHANGE
             plant_count: String(Math.max(0, Math.trunc(Number(proposal.plantCount) || 0))),
             spacing_x_cm: String(proposal.spacingXCm || 30),
             spacing_y_cm: String(proposal.spacingYCm || 30),
@@ -6295,6 +6368,12 @@ Draw.loadPlugin(function (ui) {
         const usableW = Math.max(0, g.width - GROUP_PADDING_PX * 2);
         const usableH = Math.max(0, g.height - GROUP_PADDING_PX * 2 - bandPx);
         if (usableW <= 0 || usableH <= 0) return { rows: 0, cols: 0, count: 0 };
+        if (getXmlAttr(groupCell, 'layout_alignment', '') === 'centered') { // CHANGE
+            const diameter = plantingLayoutDiameterPx(groupCell, spacingXpx, spacingYpx); // CHANGE
+            const count = (length, pitch) => Math.max(0, Math.min(Math.floor((length + 1e-7) / pitch), Math.floor((length - diameter + 1e-7) / pitch) + 1)); // CHANGE: centered capacity uses the same physical-circle constraint as proposals.
+            const cols = count(usableW, spacingXpx), rows = count(usableH, spacingYpx); // CHANGE
+            return { rows, cols, count: rows * cols }; // CHANGE
+        } // CHANGE
         const cols = Math.max(1, Math.floor((usableW + 1e-7) / spacingXpx)); // CHANGE: fitted dimensions must not lose a column to floating-point subtraction.
         const rows = Math.max(1, Math.floor((usableH + 1e-7) / spacingYpx)); // CHANGE: solved dynamic header heights preserve exact whole-row counts.
         return { rows, cols, count: rows * cols };
@@ -6303,6 +6382,9 @@ Draw.loadPlugin(function (ui) {
     function classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet) { // NEW: one source of truth for offset omission and counts.
         const grid = computeGridStatsXY(groupCell, spacingXpx, spacingYpx);
         const disabled = disabledSet || new Set();
+        const centered = getXmlAttr(groupCell, 'layout_alignment', '') === 'centered'; // CHANGE
+        const manual = centered ? snapshotTileMap(groupCell.layoutSnapshot || activePlantingLayoutSnapshots.get(groupCell) || (groupCell.getParent ? captureBedFitLayoutSnapshot(groupCell) : null)) : new Map(); // CHANGE
+        const bounds = plantingContentBoundsLocal(groupCell, bandPx), radius = plantingLayoutDiameterPx(groupCell, spacingXpx, spacingYpx) / 2; // CHANGE
         const inBoundsKeys = new Set();
         const renderedKeys = new Set();
         const omittedKeys = new Set();
@@ -6310,8 +6392,9 @@ Draw.loadPlugin(function (ui) {
         for (let r = 0; r < grid.rows; r++) {
             for (let c = 0; c < grid.cols; c++) {
                 const key = `${r},${c}`;
-                const center = shiftedSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
-                const inBounds = isPointInPlantingContentArea(groupCell, center, bandPx);
+                const saved = manual.get(key); // CHANGE
+                const center = saved ? { x: saved.x + radius, y: saved.y + radius } : shiftedSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx); // CHANGE
+                const inBounds = centered ? center.x - radius >= bounds.minX - 1e-7 && center.x + radius <= bounds.maxX + 1e-7 && center.y - radius >= bounds.minY - 1e-7 && center.y + radius <= bounds.maxY + 1e-7 : isPointInPlantingContentArea(groupCell, center, bandPx); // CHANGE: allowed overhang limits the full circle, not just its center.
                 if (inBounds) inBoundsKeys.add(key);
                 if (disabled.has(key)) {
                     if (inBounds) disabledInBounds += 1;
@@ -6500,72 +6583,80 @@ Draw.loadPlugin(function (ui) {
     function retileGroup(graph, groupCell, opts = {}) {
 
         if (opts.duringResize) return;
-        const model = graph.getModel();
-        const ownsTitleUpdate = !opts.inTransaction;
-        if (ownsTitleUpdate) model.beginUpdate();
-        try {
-            syncGroupTitle(model, groupCell);
-            applyGroupLabelFont(model, groupCell);
-        } finally {
-            if (ownsTitleUpdate) model.endUpdate();
-        }
-        const abbr = groupCell.getAttribute("plant_abbr") || "?";
-        const spacingXcm = Number(groupCell.getAttribute("spacing_x_cm") ||
-            groupCell.getAttribute("spacing_cm") || "30");
-        const spacingYcm = Number(groupCell.getAttribute("spacing_y_cm") ||
-            groupCell.getAttribute("spacing_cm") || "30");
-        const spacingXpx = toPx(spacingXcm);
-        const spacingYpx = toPx(spacingYcm);
-
-        const vegDiamCm = Number(groupCell.getAttribute("veg_diameter_cm") || 0);
-        let iconDiam = vegDiamCm > 0 ? toPx(vegDiamCm)
-            : clamp(
-                DEFAULT_ICON_DIAM_RATIO * Math.min(spacingXpx, spacingYpx),
-                MIN_ICON_DIAM_PX,
-                MAX_ICON_DIAM_PX
-            );
-        iconDiam = Math.max(iconDiam, 6);
-
-        const collapsed = isCollapsedLOD(groupCell);
-        const forceExpand = !!opts.forceExpand;
-        const forceCollapse = !!opts.forceCollapse;
-
-        const autoCollapse = shouldCollapseLOD(graph, groupCell, spacingXpx, spacingYpx);
-        const autoExpand = shouldExpandLOD(graph, groupCell, spacingXpx, spacingYpx);
-
-        if (forceCollapse) {
-            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
-            return;
-        }
-        if (forceExpand) {
-            expandGroupDetail(graph, groupCell, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
-            return;
-        }
-
-        if (autoCollapse && !collapsed) {
-            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
-            return;
-        }
-        if (autoExpand && collapsed) {
-            expandGroupDetail(graph, groupCell, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
-            return;
-        }
-
-        // Default path: keep current state; only refresh contents/summary        
-        if (!collapsed) {
-            if (opts.preferInPlace && hasEffectiveRotation(groupCell)) {
-                const synced = syncAutoTileGeometriesInPlace(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiam, {
-                    layoutSnapshot: opts.layoutSnapshot,
-                    previousRotationDeg: opts.previousRotationDeg,
-                    useLiveSnapshot: opts.useLiveSnapshot,
-                    inTransaction: opts.inTransaction
-                });
-                if (!synced.fallback) return;
+        const previousSnapshot = activePlantingLayoutSnapshots.get(groupCell); // CHANGE
+        const layoutSnapshot = resolveLayoutSnapshot(graph, groupCell, opts); // CHANGE: capture manual positions before rebuilding clears the children.
+        activePlantingLayoutSnapshots.set(groupCell, layoutSnapshot); // CHANGE
+        opts = Object.assign({}, opts, { layoutSnapshot, useLiveSnapshot: false }); // CHANGE
+        try { // CHANGE: snapshot scope includes counts, LOD classification, and child insertion.
+            const model = graph.getModel();
+            const ownsTitleUpdate = !opts.inTransaction;
+            if (ownsTitleUpdate) model.beginUpdate();
+            try {
+                syncGroupTitle(model, groupCell);
+                applyGroupLabelFont(model, groupCell);
+            } finally {
+                if (ownsTitleUpdate) model.endUpdate();
             }
-            expandTiles(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiam, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
-        } else {
-            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
-        }
+            const abbr = groupCell.getAttribute("plant_abbr") || "?";
+            const spacingXcm = Number(groupCell.getAttribute("spacing_x_cm") ||
+                groupCell.getAttribute("spacing_cm") || "30");
+            const spacingYcm = Number(groupCell.getAttribute("spacing_y_cm") ||
+                groupCell.getAttribute("spacing_cm") || "30");
+            const spacingXpx = toPx(spacingXcm);
+            const spacingYpx = toPx(spacingYcm);
+
+            const vegDiamCm = Number(groupCell.getAttribute("veg_diameter_cm") || 0);
+            let iconDiam = vegDiamCm > 0 ? toPx(vegDiamCm)
+                : clamp(
+                    DEFAULT_ICON_DIAM_RATIO * Math.min(spacingXpx, spacingYpx),
+                    MIN_ICON_DIAM_PX,
+                    MAX_ICON_DIAM_PX
+                );
+            iconDiam = Math.max(iconDiam, 6);
+
+            const collapsed = isCollapsedLOD(groupCell);
+            const forceExpand = !!opts.forceExpand;
+            const forceCollapse = !!opts.forceCollapse;
+
+            const autoCollapse = shouldCollapseLOD(graph, groupCell, spacingXpx, spacingYpx);
+            const autoExpand = shouldExpandLOD(graph, groupCell, spacingXpx, spacingYpx);
+
+            if (forceCollapse) {
+                collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
+                return;
+            }
+            if (forceExpand) {
+                expandGroupDetail(graph, groupCell, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
+                return;
+            }
+
+            if (autoCollapse && !collapsed) {
+                collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
+                return;
+            }
+            if (autoExpand && collapsed) {
+                expandGroupDetail(graph, groupCell, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
+                return;
+            }
+
+            // Default path: keep current state; only refresh contents/summary. // CHANGE
+            if (!collapsed) {
+                if (opts.preferInPlace && hasEffectiveRotation(groupCell)) {
+                    const synced = syncAutoTileGeometriesInPlace(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiam, {
+                        layoutSnapshot: opts.layoutSnapshot,
+                        previousRotationDeg: opts.previousRotationDeg,
+                        useLiveSnapshot: opts.useLiveSnapshot,
+                        inTransaction: opts.inTransaction
+                    });
+                    if (!synced.fallback) return;
+                }
+                expandTiles(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiam, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
+            } else {
+                collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
+            }
+        } finally { // CHANGE
+            if (previousSnapshot) activePlantingLayoutSnapshots.set(groupCell, previousSnapshot); else activePlantingLayoutSnapshots.delete(groupCell); // CHANGE
+        } // CHANGE
     }
 
     (function installRotationRetileListener() {
@@ -6848,7 +6939,10 @@ Draw.loadPlugin(function (ui) {
                         carried.add(cell); // CHANGE
                         const next = transformedGeometry(record, snapshot, targetCenter, delta); // CHANGE
                         if (!model.getGeometry(cell).equals(next)) model.setGeometry(cell, next); // CHANGE
-                        if (!model.isEdge(cell)) setCellRotationDeg(cell, record.rotation + delta); // CHANGE
+                        if (!model.isEdge(cell)) { // CHANGE: circle centers follow the bed, but their text stays upright on rotation.
+                            const rotation = isPlantCircle(cell) && !nearlySameNumber(delta, 0) ? 0 : record.rotation + delta; // CHANGE: pure movement preserves previously saved orientations.
+                            setCellRotationDeg(cell, rotation); // CHANGE: orientation shares the geometry transaction for Undo/Redo.
+                        } // CHANGE
                         if (isTilerGroup(cell)) edit.__trellisBedTransformGroups.add(cell.id); // CHANGE
                     } // CHANGE
                 } // CHANGE
@@ -6896,7 +6990,7 @@ Draw.loadPlugin(function (ui) {
             graph.setGraphXml = function () { loading++; try { return setGraphXml.apply(this, arguments); } finally { loading--; } }; // CHANGE
         } // CHANGE
 
-        /** Clone rendered SVG/HTML once per gesture; transform wrappers without touching live states. */
+        /** Clone bed contents except plant circles; hide all originals until read-only preview cleanup. */ // CHANGE
         function createPreview(beds, extraCells = []) { // CHANGE
             flushPendingLayouts(); // CHANGE
             const units = Array.from(new Set(beds)).map(bed => capture(bed, live)).filter(Boolean); // CHANGE
@@ -6921,6 +7015,8 @@ Draw.loadPlugin(function (ui) {
                         const node = rendered && rendered.node; // CHANGE
                         if (!node || !node.parentNode || seen.has(node)) continue; // CHANGE
                         seen.add(node); // CHANGE
+                        hidden.push({ node, visibility: node.style.visibility }); node.style.visibility = 'hidden'; // CHANGE: restore exact visibility for SVG and HTML nodes on every exit path.
+                        if (isPlantCircle(cell)) continue; // CHANGE: omit circles and their labels visually while retaining them in the commit snapshot.
                         const svg = node.namespaceURI === 'http://www.w3.org/2000/svg'; // CHANGE
                         let wrapper = parents.get(node.parentNode); // CHANGE
                         if (!wrapper) { // CHANGE
@@ -6938,7 +7034,6 @@ Draw.loadPlugin(function (ui) {
                         copy.setAttribute('data-trellis-bed-preview-cell', cell.id); // CHANGE
                         copy.setAttribute('data-trellis-bed-preview-kind', rendered === state.shape ? 'shape' : 'text'); // CHANGE
                         wrapper.appendChild(copy); // CHANGE
-                        hidden.push({ node, visibility: node.style.visibility }); node.style.visibility = 'hidden'; // CHANGE
                     } // CHANGE
                 } // CHANGE
             } // CHANGE
@@ -7745,13 +7840,20 @@ Draw.loadPlugin(function (ui) {
                     const nextBandPx = groupLabelMetrics(g).bandPx;
                     const deltaBandY = (Number(nextBandPx) || 0) - (Number(snap.bandPx) || 0);
                     if (deltaBandY) {
-                        if (snap.rotated) shiftLayoutSnapshotByDeltaY(snap.layoutSnapshot, deltaBandY);
+                        if (snap.rotated || getXmlAttr(g, 'layout_alignment', '') === 'centered') shiftLayoutSnapshotByDeltaY(snap.layoutSnapshot, deltaBandY); // CHANGE
                         else shiftGroupChildrenByDeltaBand(graph, g, deltaBandY, { inTransaction: true });
                         snap.bandPx = nextBandPx;
                     }
 
                     // Prune disabled entries now outside grid
                     pruneDisabledToGrid(model, g, next.rows, next.cols);
+
+                    if (getXmlAttr(g, 'layout_alignment', '') === 'centered') { // CHANGE
+                        const centered = prepareCenteredSpacingDraft(g, { centeringSourceSnapshot: snap.layoutSnapshot, sourceLabelBandPx: nextBandPx }); // CHANGE
+                        setCellAttrsNoTxn(model, g, { layout_base_offset_x_cm: String(centered.layoutBaseOffsetXCm || 0), layout_base_offset_y_cm: String(centered.layoutBaseOffsetYCm || 0) }); // CHANGE
+                        retileGroup(graph, g, { layoutSnapshot: centered.bedFitLayoutSnapshot, useLiveSnapshot: false, preferInPlace: true, inTransaction: true }); // CHANGE
+                        groupsNeedingRefresh.push(g); continue; // CHANGE: use the shared layout pipeline instead of adding uncentered delta slots.
+                    } // CHANGE
 
                     // Update group count/yield to match new capacity
                     const disabledSet = readDisabledSet(g);
@@ -7970,6 +8072,7 @@ Draw.loadPlugin(function (ui) {
             const entry = owners.get(ownerId); // CHANGE
             if (entry && entry.node && entry.node.parentNode) entry.node.parentNode.removeChild(entry.node); // CHANGE: suspended owners retain input without a DOM node.
             owners.delete(ownerId); // CHANGE
+            graph.__trellisPlantingPreviewHistory?.refreshActions(); // CHANGE: suspended registrations affect command availability too.
         } // CHANGE
 
         /** An optional resolveInput callback produces current-view model coordinates on every draw or refresh. */ // CHANGE
@@ -7979,7 +8082,7 @@ Draw.loadPlugin(function (ui) {
             const resolved = input && typeof input.resolveInput === 'function' ? input.resolveInput() : input; // CHANGE: resolve display coordinates afresh without modifying the retained canonical input.
             if (typeof input.resolveInput === 'function') owners.set(ownerId, { node: null, input }); // CHANGE: only dynamic owners retain suspended redraw registration.
             const layer = ensureGraphOverlayHtmlLayer('annotation'); // CHANGE
-            if (!layer || !resolved || !Array.isArray(resolved.rows) || !resolved.rows.length) return null; // CHANGE
+            if (!layer || !resolved || !Array.isArray(resolved.rows) || !resolved.rows.length) { graph.__trellisPlantingPreviewHistory?.refreshActions(); return null; } // CHANGE: hidden owners remain dismissible.
             const host = document.createElement('div'); // CHANGE
             host.className = resolved.className || 'planting-group-preview'; // CHANGE
             host.dataset.plantingPreviewOwner = ownerId; // CHANGE
@@ -7990,6 +8093,7 @@ Draw.loadPlugin(function (ui) {
                 if (!row.summaryText) (row.circles || []).forEach(dot => appendCircle(host, dot, row.tone)); // CHANGE
             } // CHANGE
             layer.appendChild(host); owners.set(ownerId, { node: host, input }); // CHANGE
+            graph.__trellisPlantingPreviewHistory?.refreshActions(); // CHANGE
             return host; // CHANGE
         } // CHANGE
 
@@ -7998,10 +8102,59 @@ Draw.loadPlugin(function (ui) {
             for (const [ownerId, entry] of Array.from(owners)) draw(ownerId, entry.input); // CHANGE
         } // CHANGE
 
-        return { render: draw, clear, refresh }; // CHANGE
+        return { render: draw, clear, refresh, hasOwner: ownerId => owners.has(ownerId) }; // CHANGE: query retained input rather than rendered DOM.
     } // CHANGE
 
     const plantingPreview = createPlantingPreviewRenderer(); // CHANGE
+
+    /** First Undo/Redo cancels all transient owners; only a subsequent command advances graph history. */ // CHANGE
+    function createPlantingPreviewHistory() { // CHANGE
+        const participants = graph.__trellisPlantingPreviewDrafts ||= new Map(); // CHANGE: allocation can register before this plugin loads.
+        if (ui.__trellisPlantingPreviewHistory) return ui.__trellisPlantingPreviewHistory; // CHANGE: intercept each editor only once.
+        const manager = ui.editor && ui.editor.undoManager; // CHANGE
+        if (!manager) return null; // CHANGE: viewer-only hosts have no graph history.
+        let dismissing = false, lastActive = null; // CHANGE
+
+        function hasActivePreview() { // CHANGE
+            return Array.from(participants.values()).some(owner => owner.isActive()); // CHANGE: retained and pending drafts count without DOM nodes.
+        } // CHANGE
+
+        function refreshActions(force = false) { // CHANGE
+            if (dismissing) return; // CHANGE: cleanup publishes availability once all owners are discarded.
+            const active = hasActivePreview(); // CHANGE
+            if (!force && active === lastActive) return; // CHANGE: ordinary redraws do not rebuild editor actions.
+            lastActive = active; // CHANGE
+            ui.updateActionStates?.(); // CHANGE: preview dismissal remains available even with empty graph stacks.
+        } // CHANGE
+
+        function dismissActivePreviews() { // CHANGE
+            if (dismissing) return true; // CHANGE: callbacks cannot recursively advance graph history during cleanup.
+            const active = Array.from(participants.values()).filter(owner => owner.isActive()); // CHANGE: snapshot before any owner changes shared state.
+            if (!active.length) return false; // CHANGE
+            dismissing = true; // CHANGE
+            try { active.forEach(owner => owner.discard()); } // CHANGE: one command dismisses every active workflow.
+            finally { dismissing = false; refreshActions(true); } // CHANGE
+            return true; // CHANGE: no synthetic history edit and no completed-history event.
+        } // CHANGE
+
+        for (const direction of ['undo', 'redo']) { // CHANGE
+            const original = manager[direction]; // CHANGE
+            if (typeof original !== 'function') continue; // CHANGE
+            manager[direction] = function () { // CHANGE
+                if (dismissActivePreviews()) return; // CHANGE
+                return original.apply(this, arguments); // CHANGE: preserve the manager receiver, arguments and return value.
+            }; // CHANGE
+            const availability = direction === 'undo' ? 'canUndo' : 'canRedo'; // CHANGE
+            const originalAvailability = ui[availability] || function () { return manager[availability](); }; // CHANGE: minimal plugin hosts use the manager directly.
+            ui[availability] = function () { return hasActivePreview() || originalAvailability.apply(this, arguments); }; // CHANGE: native label-text undo still follows the editor's existing dispatch.
+        } // CHANGE
+        const controller = { refreshActions }; // CHANGE: owners publish activity changes without owning command interception.
+        ui.__trellisPlantingPreviewHistory = controller; // CHANGE
+        graph.__trellisPlantingPreviewHistory = controller; // CHANGE
+        return controller; // CHANGE
+    } // CHANGE
+
+    const previewHistory = createPlantingPreviewHistory(); // CHANGE
 
     const taskScheduleOverlay = (function () { // CHANGE: planting-group owner of Cards, Schedule and Spacing.
         const LINK_ATTR = 'linkedTo'; // CHANGE: migrated planting overlay.
@@ -9474,7 +9627,7 @@ Draw.loadPlugin(function (ui) {
                 if (!key || state.row.enabled === false) return; // CHANGE: migrated planting overlay.
                 if (spacingRowChanged(state)) { // CHANGE: migrated planting overlay.
                     entry.spacingDraftByCellId.set(key, { // CHANGE: migrated planting overlay.
-                        layoutMetadata: { rect: state.row.rect, modelRect: state.row.modelRect, rotationDeg: state.row.rotationDeg, vegDiameterCm: state.row.vegDiameterCm, clipBounds: state.row.clipBounds, resetDisabled: state.row.resetDisabled, generatedPattern: state.row.generatedPattern, strictFootprint: state.row.strictFootprint }, // CHANGE
+                        layoutMetadata: { rect: state.row.rect, modelRect: state.row.modelRect, rotationDeg: state.row.rotationDeg, vegDiameterCm: state.row.vegDiameterCm, clipBounds: state.row.clipBounds, resetDisabled: state.row.resetDisabled, generatedPattern: state.row.generatedPattern, strictFootprint: state.row.strictFootprint, layoutAlignment: state.row.layoutAlignment, layoutBaseOffsetXCm: state.row.layoutBaseOffsetXCm, layoutBaseOffsetYCm: state.row.layoutBaseOffsetYCm }, // CHANGE
                         spacingXCm: state.spacingX.value, // CHANGE: migrated planting overlay.
                         spacingYCm: state.spacingY.value, // CHANGE: migrated planting overlay.
                         allowedOverhangPct: state.overhang.value, overhangEdited: state.overhangEdited, // CHANGE
@@ -9485,10 +9638,13 @@ Draw.loadPlugin(function (ui) {
                     entry.spacingDraftByCellId.delete(key); // CHANGE: migrated planting overlay.
                 } // CHANGE: migrated planting overlay.
             }); // CHANGE: migrated planting overlay.
+            previewHistory?.refreshActions(); // CHANGE: invalid field drafts must also enable preview dismissal.
         } // CHANGE: migrated planting overlay.
 
         function clearStoredSpacingDrafts(entry) { // CHANGE: migrated planting overlay.
-            if (entry && entry.spacingDraftByCellId) entry.spacingDraftByCellId.clear(); // CHANGE: migrated planting overlay.
+            if (entry && entry.spacingDraftByCellId) entry.spacingDraftByCellId.clear(); // CHANGE: discard transient field values.
+            if (entry) entry.spacingRenderToken = (entry.spacingRenderToken || 0) + 1; // CHANGE: reject pending context loads captured before cleanup.
+            previewHistory?.refreshActions(); // CHANGE
         } // CHANGE: migrated planting overlay.
 
         function spacingRowChanged(state) { // CHANGE: migrated planting overlay.
@@ -9714,7 +9870,7 @@ Draw.loadPlugin(function (ui) {
                     return Object.assign({}, row, { // CHANGE: migrated planting overlay.
                         enabled: isChanged, // CHANGE: migrated planting overlay.
                         previewOnly: includeBedContext && !isChanged, // CHANGE: migrated planting overlay.
-                        previewUnrotated: includeBedContext // CHANGE: migrated planting overlay.
+                        previewBedContext: includeBedContext // CHANGE: include the bed without overriding planting rotation.
                     }); // CHANGE: migrated planting overlay.
                 }); // CHANGE: migrated planting overlay.
                 const preview = tools.buildSpacingPreviewModel(graph, previewRows); // CHANGE: pass graph so scheduler can use the read-only tiler preview API.
@@ -10642,11 +10798,13 @@ Draw.loadPlugin(function (ui) {
 
         function removeEntry(entry, restoreYear) { // CHANGE: migrated planting overlay.
             if (!entry) return; // CHANGE: migrated planting overlay.
+            clearStoredSpacingDrafts(entry); // CHANGE: closing an editor invalidates context loads as well as its retained draft.
             clearSpacingPreview(); // CHANGE: migrated planting overlay.
             for (const poly of entry.lines.values()) removePolyline(poly); // CHANGE: migrated planting overlay.
             entry.lines.clear(); // CHANGE: migrated planting overlay.
             removeNode(entry.panel); // CHANGE: migrated planting overlay.
             registry.delete(entry.sourceId); // CHANGE: migrated planting overlay.
+            previewHistory?.refreshActions(); // CHANGE: removing the final editor also removes its pending dismissal.
             if (restoreYear && !isEntryStillSelected(entry)) restoreEntryTasksToCurrentYear(entry); // CHANGE: migrated planting overlay.
         } // CHANGE: migrated planting overlay.
 
@@ -10740,6 +10898,12 @@ Draw.loadPlugin(function (ui) {
             if (cleared) clearSpacingPreview(); // CHANGE: affected undo/redo/model edits restore real groups immediately.
         } // CHANGE: migrated planting overlay.
 
+        /** History always discards drafts, even when the edited cell is outside the planting context. */ // CHANGE
+        function discardSpacingDrafts() { // CHANGE
+            registry.forEach(clearStoredSpacingDrafts); // CHANGE
+            clearSpacingPreview(); // CHANGE: unregister retained redraw inputs and restore real shapes/handles.
+        } // CHANGE
+
         function setMode(mode) { // CHANGE: migrated planting overlay.
             clearSpacingPreview(); // CHANGE: migrated planting overlay.
             activeMode = mode === MODE_SPACING ? MODE_SPACING : (mode === MODE_SCHEDULE ? MODE_SCHEDULE : MODE_CARDS); // CHANGE: migrated planting overlay.
@@ -10756,7 +10920,7 @@ Draw.loadPlugin(function (ui) {
             showScheduleOnly, // CHANGE: migrated planting overlay.
             clear, // CHANGE: migrated planting overlay.
             refresh, // CHANGE: migrated planting overlay.
-            clearSpacingDraftsForChanges, // CHANGE: migrated planting overlay.
+            clearSpacingDraftsForChanges, discardSpacingDrafts, // CHANGE: history cleanup is independent of edited-cell matching.
             refreshView, // CHANGE
             setMode, registry // CHANGE: migrated planting overlay.
         }; // CHANGE: migrated planting overlay.
@@ -10796,6 +10960,22 @@ Draw.loadPlugin(function (ui) {
             const edit = event && event.getProperty && event.getProperty('edit'); // CHANGE
             taskScheduleOverlay.clearSpacingDraftsForChanges(edit && edit.changes); // CHANGE
             syncSelection(); // CHANGE
+        } // CHANGE
+
+        /** Undo-manager events describe completed history actions, unlike model UNDO notifications. */ // CHANGE
+        function onHistoryChange() { // CHANGE
+            taskScheduleOverlay.discardSpacingDrafts(); // CHANGE
+            syncSelection(); // CHANGE: reload committed rows after the entire history edit has executed.
+        } // CHANGE
+        graph.__trellisPlantingPreviewDrafts.set('spacing', { // CHANGE: editor state remains active while preview anchors or context loads are missing.
+            isActive: () => plantingPreview.hasOwner('spacing') || Array.from(taskScheduleOverlay.registry.values()).some(entry => entry.spacingDraftByCellId?.size), // CHANGE
+            discard: onHistoryChange // CHANGE: restore committed inputs without executing graph history.
+        }); // CHANGE
+        previewHistory?.refreshActions(); // CHANGE
+        const undoManager = ui && ui.editor && ui.editor.undoManager; // CHANGE
+        if (undoManager && undoManager.addListener) { // CHANGE
+            undoManager.addListener(mxEvent.UNDO, onHistoryChange); // CHANGE
+            undoManager.addListener(mxEvent.REDO, onHistoryChange); // CHANGE
         } // CHANGE
 
         let viewRefreshPending = false; // CHANGE
@@ -10852,6 +11032,7 @@ Draw.loadPlugin(function (ui) {
         readPlantingFootprint, // CHANGE: allocation timeline clustering can use the same header-free occupancy as placement.
         resolveAllowedOverhangPct, // CHANGE: shared scheduler and Allocate defaults use the same percentage policy.
         prepareBedFitSpacingDraft, // CHANGE: pure fitting shared by saved-planting previews and commits.
+        prepareCenteredSpacingDraft, // CHANGE: one logical footprint baseline shared by saved previews and commits.
         proposePlantingGeometry,
         createPlantingFromProposal,
         reorderModuleChildrenForLayering

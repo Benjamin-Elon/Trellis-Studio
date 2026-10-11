@@ -20,6 +20,7 @@ var mxSettings =
 		'trellisDatabaseTools', // NEW
 		'trellisUiCleanup', // NEW
 		'trellisUsers', // NEW
+		'trellisSyncthing', // NEW: sharing entry points remain available before diagram login.
 		'trellisContextMenu', // NEW
 		'gardenSuccession', // NEW
 		'plantingGroup', // NEW
@@ -46,6 +47,7 @@ var mxSettings =
 		trellisDatabaseTools: 'plugins/garden_planner_plugins/Trellis_Database_Tools.js', // NEW
 		trellisUiCleanup: 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js', // NEW
 		trellisUsers: 'plugins/garden_planner_plugins/Trellis_Users.js', // NEW
+		trellisSyncthing: 'plugins/garden_planner_plugins/Trellis_Syncthing.js', // NEW
 		trellisContextMenu: 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', // NEW
 		gardenSuccession: 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js', // NEW
 		plantingGroup: 'plugins/garden_planner_plugins/Planting_Group.js', // CHANGE

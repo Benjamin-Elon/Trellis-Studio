@@ -100,9 +100,9 @@ test("spacing editor preserves active-window preview and reserved revert gating"
     assert.match(editorSource, /state\.revert\.style\.pointerEvents = showRevert \? 'auto' : 'none';/);
     assert.doesNotMatch(editorSource, /reset\.style\.display = 'none'|state\.reset\.style\.display/); // CHANGE: row actions must not remove a grid slot.
     assert.match(editorSource, /status\.textContent = validation\.ok \? idleStatus : validation\.errors\.join\(' '\);/);
-    assert.match(editorSource, /const bedScopedPreview = context && context\.scope === 'bed' && draft\.some\(row => row\.bedId\);/); // CHANGE: rotated beds preview as a full upright bed unit.
+    assert.match(editorSource, /const bedScopedPreview = context && context\.scope === 'bed' && draft\.some\(row => row\.bedId\);/); // CHANGE: rotated beds preview as a full bed unit at their current angle.
     assert.match(editorSource, /previewOnly: includeBedContext && !isChanged/); // CHANGE: unchanged bed rows are drawn without becoming apply targets.
-    assert.match(editorSource, /previewUnrotated: includeBedContext/); // CHANGE: bed-scoped spacing previews suppress plant group rotation.
+    assert.match(editorSource, /previewBedContext: includeBedContext/); // CHANGE: bed-scoped spacing includes context without overriding rotation.
     assert.match(editorSource, /tools\.buildSpacingPreviewModel\(graph, previewRows\);/); // CHANGE: preview model can use the read-only tiler API.
     assert.match(editorSource, /refreshDraftState\(\); \/\/ CHANGE: preserve and redraw valid spacing drafts across view refreshes\./);
 });

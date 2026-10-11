@@ -47,5 +47,6 @@ async function addElectronFuses(context)
 
 module.exports = async (context) => 
 {
+    await require('./syncthing.cjs')(context); // NEW: stage matching Syncthing binary outside ASAR before signing.
     await addElectronFuses(context);
 };

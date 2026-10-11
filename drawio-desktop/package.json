@@ -16,6 +16,8 @@
     "test:task-manager": "node --test ./test/task-manager-overlays.test.cjs ./test/planting-scheduler-reliability.test.cjs ./test/trellis-overlay-layering.test.cjs",
     "test:release-prepare": "node --test ./test/release-prepare.test.mjs",
     "start": "electron .",
+    "syncthing:prepare": "node ./scripts/prepare-syncthing.mjs",
+    "test:syncthing": "node --test ./test/trellis-syncthing*.test.mjs ./test/trellis-syncthing*.test.cjs",
     "sync": "node ./sync.cjs",
     "trellis:seed": "python ./scripts/trellis_seed_cli.py",
     "trellis:seed:sowing-season-diagnostics": "node ./scripts/trellis_seed_sowing_season_diagnostics.cjs",
@@ -53,6 +55,7 @@
   },
   "homepage": "https://github.com/Benjamin-Elon/trellis-studio",
   "dependencies": {
+    "@xmldom/xmldom": "0.8.11",
     "@babel/parser": "^7.28.6",
     "@babel/traverse": "^7.28.6",
     "@cantoo/pdf-lib": "^2.5.3",

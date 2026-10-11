@@ -8,10 +8,10 @@
 import fs from 'fs';
 import { promises as fsProm } from 'fs';
 import path from 'path';
-import url from 'url';
+import url, { fileURLToPath } from 'url'; // CHANGE: validate file requests before allowing local resources.
 import {
 	Menu as menu, shell, dialog, session, screen,
-	clipboard, nativeImage, ipcMain, app, BrowserWindow
+	clipboard, nativeImage, ipcMain, app, BrowserWindow, Tray // CHANGE: managed sharing remains accessible after windows close.
 } from 'electron';
 import crc from 'crc';
 import zlib from 'zlib';
@@ -27,11 +27,19 @@ import { spawn } from 'child_process';
 import { disableUpdate as disUpPkg } from './disableUpdate.js';
 import { createFileWatchRegistry } from './fileWatchRegistry.js';
 import { createTrellisSplashBackgroundSelector } from './trellis-splash-backgrounds.js';
+import { createSyncthingService } from './trellis-syncthing-service.js'; // NEW
+import { createSharingTray, setSharingStartup } from './trellis-sharing-tray.js'; // NEW
+import { assertSharingFileAccess } from './trellis-sharing-files.js'; // NEW: generic filesystem IPC must not expose service credentials.
 
 // (ADD): SQLite
 import Database from 'better-sqlite3';
 
 const fileWatchRegistry = createFileWatchRegistry();
+let sharingService = null; // NEW
+let sharingTray = null; // NEW
+let sharingTrayCreation = null; // NEW: concurrent Share/Join requests must not create duplicate trays.
+let sharingQuitReady = false; // NEW
+const sharingWindowPaths = new Map(); // NEW: bind sharing IPC to the caller's watched document.
 
 try {
 	const drawioUserDataPath = path.join(app.getPath('appData'), 'draw.io'); // CHANGE: preserve the existing legacy runtime profile.
@@ -592,6 +600,7 @@ function createWindow(opt = {}) {
 			else {
 				cmdQPressed = false;
 				modifiedModalOpen = false;
+				restoreSharingAfterCancelledQuit(); // NEW: cancelling Quit must restore background sync and reset the shutdown guard.
 			}
 		}
 		else {
@@ -639,6 +648,7 @@ function createWindow(opt = {}) {
 					cmdQPressed = false;
 					modifiedModalOpen = false;
 					closeCheckTimer = null;
+					restoreSharingAfterCancelledQuit(); // NEW
 				}
 			}, 1000); // Trellis compatibility: preserve close without adding a multi-second delay if the renderer misses the request.
 			event.preventDefault();
@@ -656,6 +666,8 @@ function createWindow(opt = {}) {
 		}
 
 		fileWatchRegistry.unwatchWindow(mainWindow);
+		sharingWindowPaths.delete(mainWindow.webContents.id); // NEW
+		sharingService?.forgetContext(mainWindow.webContents.id); // NEW
 		windowsRegistry.splice(index, 1)
 	})
 
@@ -699,16 +711,15 @@ app.whenReady().then(() => {
 	const pluginsCodeUrl = url.pathToFileURL(path.join(getAppDataFolder(), '/plugins/')).href.replace(/\/.\:\//, str => str.toUpperCase());
 
 	// Enforce loading file only from our app directory
-	session.defaultSession.webRequest.onBeforeRequest({ urls: ['file://*'] }, (details, callback) => {
+	session.defaultSession.webRequest.onBeforeRequest({ urls: ['file://*'] }, async (details, callback) => { // CHANGE: only registered shared images may load outside application directories.
 		const url = details.url.replace(/\/.\:\//, str => str.toUpperCase());
-
-		if (!url.startsWith(codeUrl) && (!isPluginsEnabled() || (isPluginsEnabled() && !url.startsWith(pluginsCodeUrl)))) {
+		try {
+			await assertSharingFileAccess(fileURLToPath(details.url), path.join(app.getPath('userData'), 'trellis-sharing')); // NEW: private files cannot be fetched through a plugin-directory alias.
+			if (url.startsWith(codeUrl) || isPluginsEnabled() && url.startsWith(pluginsCodeUrl)) { callback({}); return; }
+			if (details.resourceType === 'image' && sharingService && await sharingService.isManagedAssetRequest(details.webContentsId, details.url)) { callback({}); return; } // NEW: no scripts, fetches, or unregistered local images.
 			console.log('Blocked loading file from ' + details.url, url, codeUrl, pluginsCodeUrl);
 			callback({ cancel: true });
-		}
-		else {
-			callback({});
-		}
+		} catch (_) { callback({ cancel: true }); } // CHANGE: fail closed on path validation errors.
 	});
 
 	ipcMain.on('newfile', (e, arg) => {
@@ -752,6 +763,7 @@ app.whenReady().then(() => {
 			.argument('[input file/folder]', 'input diagram file or a folder with diagram files') // CHANGE
 			.allowUnknownOption() //-h and --help are considered unknown!!
 			.option('-c, --create', 'creates a new empty file if no file is passed')
+			.option('--trellis-background', 'start managed canvas syncing in the tray') // NEW
 			.option('-k, --check', 'does not overwrite existing files')
 			.option('-x, --export', 'export the input file/folder based on the given options')
 			.option('-r, --recursive', 'for a folder input, recursively convert all files in sub-folders also')
@@ -1118,6 +1130,7 @@ app.whenReady().then(() => {
 
 	if (!gotTheLock) {
 		app.quit()
+		return; // NEW: the second instance must never start another synchronization process.
 	}
 	else {
 		app.on('second-instance', (event, commandLine, workingDirectory) => {
@@ -1156,6 +1169,15 @@ app.whenReady().then(() => {
 		})
 	}
 
+	if (options.trellisBackground && (!program.args || !program.args.length)) { // NEW
+		getSharingService().then(async service => {
+			if (service.hasCanvases()) await service.start();
+			await ensureSharingTray(service);
+			if (!sharingTray) createWindow();
+		}).catch(err => { log.error('Sharing startup:', err.message); createWindow(); });
+		return;
+	}
+	getSharingService().then(service => service.hasCanvases() ? service.start().then(() => ensureSharingTray(service)) : null).catch(err => log.error('Sharing startup:', err.message)); // NEW
 	let win = createWindow()
 
 	let loadEvtCount = 0;
@@ -1388,6 +1410,10 @@ app.on('window-all-closed', function () {
 
 	// On OS X it is common for applications and their menu bar
 	// to stay active until the user quits explicitly with Cmd + Q
+	if (sharingService?.hasCanvases() && !cmdQPressed) { // NEW: never leave an unreachable background process.
+		if (!sharingTray) createWindow();
+		return;
+	}
 	if (cmdQPressed || !isMac) {
 		app.quit()
 	}
@@ -2587,17 +2613,48 @@ function getTrellisAppInfo() {
 	};
 }
 
-function getTrellisSyncthingShareInfo() {
-	return {
-		ok: false,
-		managed: false,
-		deviceId: '',
-		folderId: '',
-		folderLabel: '',
-		folderPath: '',
-		reason: 'Bundled Syncthing sharing is not wired in this Trellis build yet.'
-	};
+async function getSharingService() { // NEW: single service for all application windows.
+	if (!sharingService) {
+		sharingService = createSyncthingService({ userDataPath: app.getPath('userData'), documentsPath: app.getPath('documents'), binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store) });
+		sharingService.onStatus(status => {
+			for (const win of windowsRegistry) if (!win.isDestroyed()) win.webContents.send('trellisShareStatus', sharingService.listStatus(win.webContents.id)); // CHANGE: exclude each window's current actor from its count.
+		});
+	}
+	await sharingService.initialize();
+	return sharingService;
 }
+async function ensureSharingTray(service) { // NEW
+	if (sharingTray || !service.hasCanvases()) return;
+	if (sharingTrayCreation) return sharingTrayCreation; // NEW
+	sharingTrayCreation = (async () => { try {
+		sharingTray = await createSharingTray({ app, Tray, Menu: menu, nativeImage, service, store, iconPath: path.join(codeDir, 'images/window-icon.png'), openWindow: diagramPath => {
+			const win = createWindow();
+			if (diagramPath) { // CHANGE: wait for this renderer's desktop file loader, not document load.
+				const listener = event => { if (event.sender.id === win.webContents.id) { ipcMain.removeListener('app-load-finished', listener); win.webContents.send('args-obj', { args: [diagramPath] }); } };
+				ipcMain.on('app-load-finished', listener);
+				win.once('closed', () => ipcMain.removeListener('app-load-finished', listener));
+			}
+		} });
+	} catch (err) { log.error('Sharing tray unavailable:', err.message); } })().finally(() => { sharingTrayCreation = null; }); // CHANGE
+	return sharingTrayCreation;
+}
+async function getTrellisSyncthingShareInfo(args) { // CHANGE: real managed-share lookup replaces unavailable stub.
+	return (await getSharingService()).shareInfo(args);
+}
+function restoreSharingAfterCancelledQuit() { // NEW
+	if (!sharingQuitReady || !sharingService) return;
+	sharingQuitReady = false;
+	sharingTray = null;
+	sharingService.start().then(() => ensureSharingTray(sharingService)).catch(err => log.error('Sharing restart after cancelled Quit:', err.message));
+}
+
+app.on('before-quit', event => { // NEW: graceful shutdown and no service orphan after explicit Quit.
+	cmdQPressed = true;
+	if (sharingService && !sharingQuitReady) {
+		event.preventDefault();
+		sharingService.stop().finally(() => { sharingQuitReady = true; sharingTray?.dispose(); app.quit(); });
+	}
+});
 
 function openTrellisEmailDraft(args) {
 	const source = args || {};
@@ -2647,6 +2704,13 @@ ipcMain.on("rendererReq", async (event, args) => {
 
 	try {
 		let ret = null;
+		const profile = path.join(app.getPath('userData'), 'trellis-sharing'); // NEW: retain ordinary filesystem APIs while protecting the service profile.
+		const paths = [args.path, args.filename, args.file, args.filePath, args.dbPath, args.fileObject?.path];
+		if (typeof args.seedRelPath === 'string') paths.push(path.resolve(__dirname, args.seedRelPath));
+		if (typeof args.dbName === 'string') paths.push(getLiveDbPath(args.dbName));
+		if (Array.isArray(args.pathParts) && args.pathParts.every(part => typeof part === 'string')) paths.push(path.join(...args.pathParts));
+		if (typeof args.plugin === 'string') paths.push(path.join(getAppDataFolder(), 'plugins', args.plugin));
+		for (const filename of paths) await assertSharingFileAccess(filename, profile); // NEW: check aliases and not-yet-created destinations before dispatch.
 
 		switch (args.action) {
 			case 'saveFile':
@@ -2728,8 +2792,26 @@ ipcMain.on("rendererReq", async (event, args) => {
 				ret = await getTrellisReleases();
 				break;
 			case 'getTrellisSyncthingShareInfo':
-				ret = getTrellisSyncthingShareInfo(args);
+				ret = await getTrellisSyncthingShareInfo(args); // CHANGE
 				break;
+			case 'trellisShare': { // NEW: narrow sharing methods; never proxy arbitrary REST requests.
+				const service = await getSharingService();
+				const callerId = event.sender.id;
+				const payload = args.payload || {};
+				if (args.method === 'setContext') {
+					const watched = sharingWindowPaths.get(callerId);
+					if (payload.diagramPath && (!watched || path.resolve(payload.diagramPath) !== path.resolve(watched))) throw new Error('Sharing document context does not match this window.');
+					service.setContext(callerId, payload);
+					ret = { ok: true };
+				} else if (args.method === 'getStatus') ret = { ok: true, canvases: service.listStatus(callerId) }; // CHANGE
+				else if (args.method === 'joinCanvas') ret = await service.joinCanvas(payload);
+				else if (args.method === 'openAsset') { const reason = await shell.openPath(await service.assetPath(callerId, payload)); ret = { ok: !reason, reason }; } // NEW: open only registered, explicitly copied assets.
+				else if (args.method === 'setPaused') ret = await service.setPausedForContext(callerId, payload); // CHANGE: bind renderer pause controls to its open canvas.
+				else if (['setupCanvas', 'createInviteBlock', 'createDeviceInvite', 'requestMembership', 'listRequests', 'setConflictState', 'saveRecoveryCopy', 'inspectConflict', 'resolveConflict', 'exportHistory', 'importHistory', 'recovery'].includes(args.method)) ret = await service[args.method](callerId, payload);
+				else throw new Error('Unsupported sharing operation.');
+				if (['setupCanvas', 'joinCanvas', 'recovery'].includes(args.method)) await ensureSharingTray(service);
+				break;
+			}
 			case 'openTrellisEmailDraft':
 				ret = openTrellisEmailDraft(args);
 				break;
@@ -2741,9 +2823,11 @@ ipcMain.on("rendererReq", async (event, args) => {
 				break;
 			case 'watchFile':
 				ret = await watchFile(args.path, getRequestWindow(event));
+				sharingWindowPaths.set(event.sender.id, args.path); // NEW
 				break;
 			case 'unwatchFile':
 				ret = await unwatchFile(args.path, getRequestWindow(event));
+				if (sharingWindowPaths.get(event.sender.id) === args.path) { sharingWindowPaths.delete(event.sender.id); sharingService?.forgetContext(event.sender.id); } // NEW
 				break;
 			case 'exit':
 				app.quit();

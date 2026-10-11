@@ -1189,9 +1189,10 @@ Draw.loadPlugin(function (ui) {
 
     function applyScheduleModel(state) {
         if (!state) return;
-        chooseFirstActionWeek(state);
+        const retainingHistoryChoice = state.awaitingBedSelection && state.scheduleProgress?.phase !== "complete"; // CHANGE: partial scan results cannot invalidate the retained crop/week.
+        if (!retainingHistoryChoice) chooseFirstActionWeek(state); // CHANGE
         state.opportunityModel = buildSowWeekOpportunityModel(state, state.weekIndex);
-        if (state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = "";
+        if (!retainingHistoryChoice && state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = ""; // CHANGE
     }
 
     function createButton(label, variant, tooltip, ariaLabel) { // CHANGE: callers supply action-specific help rather than repeating labels.
@@ -1448,14 +1449,14 @@ Draw.loadPlugin(function (ui) {
                 weekIndex: 0,
                 selectedCropId: "",
                 selectedBedId: "",
-                targetBedId: "", // CHANGE: canvas target exists independently of a valid proposal.
+                targetBedId: "", awaitingBedSelection: false, // CHANGE: history requires a deliberate new target choice.
                 targetFailure: "", // CHANGE
                 draft: null,
                 defaultsLookup: null, requiredDefaultsSetup: false, // CHANGE: saved-default readiness is independent of geometry; setup notifications cannot cancel their own draft.
                 allocationView: 'occupancy', spacingCropId: '', spacingOverrides: null, spacingRevision: 0, spacingPending: false, spacingValid: true, // CHANGE
                 spacingSaveDefaults: false, spacingBody: null, spacingContextKey: '', spacingBase: null, ordinarySpacingOverrides: null, companionMode: false, companionTargetId: '', companionRows: null, // CHANGE
                 overlayVersion: 0,
-                draftVersion: 0,
+                draftVersion: 0, historyRevision: 0, // CHANGE: history cancellation is distinct from normal post-commit refresh.
                 noticeMessage: "",
                 closed: false,
                 cleanups: []
@@ -1478,6 +1479,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         async function loadState(state) {
+            const loadRevision = state.refreshJobId; // CHANGE: a history reset invalidates pending climate resolution.
             const planning = window.USL && window.USL.planningCore;
             const scheduler = window.USL && window.USL.scheduler;
             const tiler = window.USL && window.USL.tiler;
@@ -1490,6 +1492,7 @@ Draw.loadPlugin(function (ui) {
                 return;
             }
             const cityResult = await scheduler.resolveCityForModule(state.moduleCell);
+            if (state.closed || state.refreshJobId !== loadRevision) return; // CHANGE
             if (!cityResult || !cityResult.ok) {
                 state.message = "Set the garden climate/location before allocating.";
                 return;
@@ -1514,7 +1517,7 @@ Draw.loadPlugin(function (ui) {
             state.coverage = planning.computeYearCoverage({ moduleCell: state.moduleCell, year: state.year, plan: state.plan });
             state.beds = tiler.listGardenBeds(state.moduleCell);
             const context = currentBedContext(state); // CHANGE: model edits can move a selected group into another bed or remove its target.
-            state.targetBedId = context ? cellId(context.bed) : ""; // CHANGE
+            state.targetBedId = !state.awaitingBedSelection && context ? cellId(context.bed) : ""; // CHANGE: background reload cannot resume a discarded proposal.
             state.targetFailure = ""; // CHANGE
             state.occupancy = typeof tiler.listPlantingFootprints === "function" ? tiler.listPlantingFootprints(state.moduleCell, { includeUndatedOccupancy: true }) : []; // CHANGE: badges report unresolved occupancy without inferring dates.
             state.scheduleCacheSignature = buildScheduleCacheSignature(state);
@@ -1523,8 +1526,8 @@ Draw.loadPlugin(function (ui) {
             state.actionSchedule = emptyActionSchedule();
             state.scheduleProgress = createScheduleProgress(state.scheduleRows.length ? "scanning demand" : "complete", state.scheduleRows.length);
             state.opportunityModel = buildSowWeekOpportunityModel(state, state.weekIndex);
-            if (state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = "";
-            state.noticeMessage = "";
+            if (!state.awaitingBedSelection && state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = ""; // CHANGE: history choices are validated when the full opportunity scan finishes.
+            state.noticeMessage = state.awaitingBedSelection ? "Choose a bed to preview another planting." : ""; // CHANGE
             if (state.coverage.totals.targetKg <= EPS) state.message = "No demand to allocate.";
             else if (state.coverage.totals.shortKg <= EPS) state.message = "The plan is covered.";
             else {
@@ -1754,6 +1757,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function renderHud(state) {
+            graph.__trellisPlantingPreviewHistory?.refreshActions(); // CHANGE: proposal/pending state controls both history commands.
             const panel = state.hud;
             if (!panel) return;
             const refs = ensureHudRefs(state, panel);
@@ -1794,10 +1798,10 @@ Draw.loadPlugin(function (ui) {
             refs.companion.disabled = state.reviewing || !relations?.companion.length || !!relations?.incompatible.length || !graph.__trellisPlantingSpacingEditor; // CHANGE
             refs.companion.title = relations?.incompatible.length ? 'Incompatible crops share this bed during the proposed occupancy. Companion creation is blocked.' // CHANGE
                 : !graph.__trellisPlantingSpacingEditor ? 'The planting Spacing editor is unavailable.' : 'Choose a companion and preview spacing before creating.'; // CHANGE
-            refs.rotate.disabled = state.spacingPending || !state.spacingValid || !state.draft || !state.draft.geometry || !!state.draft.companionLayout; // CHANGE: invalid or pending layouts cannot rotate a stale proposal.
+            refs.rotate.disabled = state.awaitingBedSelection || state.spacingPending || !state.spacingValid || !state.draft || !state.draft.geometry || !!state.draft.companionLayout; // CHANGE: invalid or pending layouts cannot rotate a stale proposal.
             refs.rotate.title = refs.rotate.disabled ? "Choose a planting placement before rotating it." : "Rotate the proposed planting by 90 degrees."; // CHANGE
             const defaultsReady = state.defaultsLookup?.status?.complete && !state.defaultsLookup.pending && !state.defaultsLookup.error; // CHANGE
-            refs.create.disabled = state.reviewing || !defaultsReady || state.spacingPending || state.spacingValid === false || !graph.__trellisPlantingGroup?.preview || !state.draft?.geometry?.ok || state.draft.status === "structural_failure" || state.draft.status === "unavailable"; // CHANGE
+            refs.create.disabled = state.awaitingBedSelection || state.reviewing || !defaultsReady || state.spacingPending || state.spacingValid === false || !graph.__trellisPlantingGroup?.preview || !state.draft?.geometry?.ok || state.draft.status === "structural_failure" || state.draft.status === "unavailable"; // CHANGE
             refs.create.title = !defaultsReady ? 'Save the required crop defaults before creating. Use the missing-item links above.' : refs.create.disabled ? 'Choose a valid, available planting preview first.' : 'Create this planting and its generated tasks.'; // CHANGE
         }
 
@@ -1863,10 +1867,11 @@ Draw.loadPlugin(function (ui) {
         async function beginRequiredDefaultsSetup(state, key) { // CHANGE
             const draft = allocationDefaultsDraft(state), status = state.defaultsLookup?.status; // CHANGE
             if (state.reviewing || state.spacingPending || !draft?.plantResolution || !status || status.complete) return; // CHANGE
+            const historyRevision = state.historyRevision; // CHANGE: this setup owns busy state only until the next history action.
             state.reviewing = true; state.requiredDefaultsSetup = true; renderHud(state); // CHANGE
             try { await openAllocationSchedulerAndPreview(state, draft, { defaultStatus: status, requiredDefaults: status.missing, focusMissingDefault: key }); } // CHANGE
-            catch (error) { if (!state.closed) state.noticeMessage = error.message || 'Unable to configure required defaults.'; } // CHANGE
-            finally { state.requiredDefaultsSetup = false; state.reviewing = false; if (!state.closed) { await refreshAllocationDefaults(state, true); renderHud(state); } } // CHANGE
+            catch (error) { if (!state.closed && state.historyRevision === historyRevision) state.noticeMessage = error.message || 'Unable to configure required defaults.'; } // CHANGE
+            finally { if (state.historyRevision === historyRevision) { state.requiredDefaultsSetup = false; state.reviewing = false; if (!state.closed) { await refreshAllocationDefaults(state, true); renderHud(state); } } } // CHANGE: discarded setup cannot unlock a new review.
         } // CHANGE
 
         function renderUnresolvedReasons(state, box) {
@@ -1979,7 +1984,7 @@ Draw.loadPlugin(function (ui) {
                     if (result && (result.ok || result.allocationContext)) { currentBadgeIds.add(cellId(bed)); renderBedOverlay(state, bed, overlayModel(result)); } // CHANGE
                 } // CHANGE
                 for (const node of state.overlayHost.querySelectorAll('[data-bed-id]')) if (!currentBadgeIds.has(node.getAttribute('data-bed-id'))) removeNode(node); // CHANGE
-                if (!state.draft) { // CHANGE
+                if (!state.draft && !state.awaitingBedSelection) { // CHANGE: refreshed badges do not automatically publish a history-discarded target.
                     const target = results.find(result => cellId(result.bed) === state.targetBedId); // CHANGE
                     if (target && target.ok) setDraft(state, target); // CHANGE
                     else { state.targetFailure = target && target.reason || (state.targetBedId ? "Selected bed is unavailable." : ""); renderHud(state); renderTimelinePreview(state); } // CHANGE: a no-fit result still exposes editable spacing.
@@ -2012,7 +2017,7 @@ Draw.loadPlugin(function (ui) {
                 node.style.cssText = "position:absolute;pointer-events:auto;white-space:pre-line;text-align:left;border-radius:4px;padding:4px 6px;font:11px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.16);cursor:pointer;";
                 node.addEventListener("click", function () {
                     if (graph.setSelectionCell) graph.setSelectionCell(bed);
-                    syncSelectionTarget(state); // CHANGE: badges and canvas clicks share target resolution and stale-result guards.
+                    syncSelectionTarget(state, true); // CHANGE: a badge deliberately resumes allocation, including the same selected bed.
                 });
                 state.overlayHost.appendChild(node);
             }
@@ -2067,6 +2072,7 @@ Draw.loadPlugin(function (ui) {
                 spacingYCm: layout.spacingYCm ?? geometry?.spacingYCm ?? plant.spacing_y_cm ?? plant.spacing_cm ?? 30, // CHANGE
                 offsetXCm: layout.offsetXCm ?? geometry?.layoutOffsetXCm ?? 0, offsetYCm: layout.offsetYCm ?? geometry?.layoutOffsetYCm ?? 0, // CHANGE
                 allowedOverhangPct: layout.allowedOverhangPct ?? geometry?.allowedOverhangPct ?? plant.allowed_overhang_pct ?? 30, overhangEdited: !!layout.overhangEdited, // CHANGE
+                layoutAlignment: geometry?.layoutAlignment || '', layoutBaseOffsetXCm: geometry?.layoutBaseOffsetXCm ?? 0, layoutBaseOffsetYCm: geometry?.layoutBaseOffsetYCm ?? 0, // CHANGE: automatic baseline travels with the proposal, separately from editable offsets.
                 vegDiameterCm: plant.veg_diameter_cm, bedId: cellId(base.bed), // CHANGE
                 attributes: { label: base.crop.label + ' group', plant_name: plant.plant_name, plant_abbr: plant.plant_abbr || '?', plant_yield: String(base.kgPerPlant), growth_stage_key: base.crop.growthStageKey === 'mature' ? '' : base.crop.growthStageKey || '' } }; // CHANGE
         } // CHANGE
@@ -2152,7 +2158,7 @@ Draw.loadPlugin(function (ui) {
 
         /** Sends an in-memory proposal to the navigator; no preview cell is inserted into mxGraph. */ // CHANGE
         function renderTimelinePreview(state) { // CHANGE
-            if (state.closed) return; // CHANGE
+            if (state.closed || state.awaitingBedSelection) { clearTimelinePreview(state); return; } // CHANGE: no timeline/editor can resurrect a discarded proposal.
             const navigator = graph.__trellisBedSuccessionNavigator; // CHANGE
             const draft = state.draft || state.bedResults?.get(state.targetBedId) || state.spacingBase; // CHANGE: no-fit drafts still have a selected bed and crop.
             if (!navigator || typeof navigator.showAllocationPreview !== "function" || !draft || !state.selectedCropId || !state.targetBedId) { clearTimelinePreview(state); return; } // CHANGE
@@ -2177,9 +2183,11 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE
 
         /** Canvas selection owns the target; changing beds discards reviewed dates and pending evaluations. */ // CHANGE
-        function syncSelectionTarget(state) { // CHANGE
-            if (state.closed || state.committing) return;
+        function syncSelectionTarget(state, deliberate = false) { // CHANGE
+            if (state.closed || state.committing || state.awaitingBedSelection && !deliberate) return; // CHANGE: history-driven selection events cannot resume allocation.
             const context = currentBedContext(state);
+            if (state.awaitingBedSelection && !context) return; // CHANGE: only a valid bed choice ends the waiting state.
+            state.awaitingBedSelection = false; // CHANGE
             const targetId = context ? cellId(context.bed) : "";
             if (targetId === state.targetBedId) { renderHud(state); return; }
             state.targetBedId = targetId;
@@ -2202,7 +2210,7 @@ Draw.loadPlugin(function (ui) {
             if (state.closed || !state.selectedCropId || state.findingBed) return;
             const crop = (state.opportunityModel?.actionable || []).concat((state.opportunityModel?.unresolved || []).filter(item => item.spacingAdjustable)).find(item => item.cropId === state.selectedCropId); // CHANGE
             if (!crop) return;
-            const version = state.overlayVersion;
+            const version = state.overlayVersion, historyRevision = state.historyRevision; // CHANGE: cancellation owns the lifetime of this deliberate search.
             state.findingBed = true;
             renderHud(state);
             try {
@@ -2215,15 +2223,15 @@ Draw.loadPlugin(function (ui) {
                 const best = results.sort((a, b) => rankBedResult(a) - rankBedResult(b))[0];
                 if (!best) { state.noticeMessage = "No suitable bed fits this crop and week."; return; }
                 if (graph.setSelectionCell) graph.setSelectionCell(best.bed);
-                syncSelectionTarget(state);
+                syncSelectionTarget(state, true); // CHANGE: Find best bed is an explicit target choice.
                 if (!state.draft && state.targetBedId === cellId(best.bed)) scheduleOverlayEvaluation(state);
             } catch (error) {
                 if (!state.closed && state.overlayVersion === version) state.noticeMessage = error && error.message || "Unable to find a suitable bed.";
-            } finally { state.findingBed = false; if (!state.closed) renderHud(state); }
+            } finally { if (state.historyRevision === historyRevision) { state.findingBed = false; if (!state.closed) renderHud(state); } } // CHANGE: a discarded search cannot unlock a newer search.
         } // CHANGE
 
         function setDraft(state, result) {
-            if (state.closed) return; // CHANGE
+            if (state.closed || state.awaitingBedSelection) return; // CHANGE: stale computations cannot republish discarded proposals.
             state.draft = Object.assign({}, result, {
                 allocationWeek: Number(state.weekIndex) + 1
             });
@@ -2259,7 +2267,7 @@ Draw.loadPlugin(function (ui) {
             if (renderer) renderer.clear(state.ownerId); // CHANGE
             clearGhost(state); state.ghost = null; // CHANGE
             const draft = state.draft; // CHANGE
-            if (state.spacingPending || state.spacingValid === false) return; // CHANGE: never display an accepted ghost while newer input is invalid or pending.
+            if (state.awaitingBedSelection || state.spacingPending || state.spacingValid === false) return; // CHANGE: waiting/history-discarded proposals cannot draw.
             if (!draft || !draft.geometry || !draft.geometry.ok || !draft.geometry.geometry) return; // CHANGE
             if (!renderer) { state.noticeMessage = PREVIEW_UNAVAILABLE_MESSAGE; return; } // CHANGE
             if (state.noticeMessage === PREVIEW_UNAVAILABLE_MESSAGE) state.noticeMessage = ""; // CHANGE: late plugin loading restores the preview and its HUD.
@@ -2319,7 +2327,7 @@ Draw.loadPlugin(function (ui) {
             if (!summary?.companion.length || summary.incompatible.length) return; // CHANGE
             const tools = window.USL.scheduler?.layoutTools, editor = graph.__trellisPlantingSpacingEditor; // CHANGE
             if (!tools || !editor) return; // CHANGE
-            const revision = state.refreshJobId, cropId = state.selectedCropId, bedId = state.targetBedId; // CHANGE
+            const revision = state.refreshJobId, historyRevision = state.historyRevision, cropId = state.selectedCropId, bedId = state.targetBedId; // CHANGE
             const isCurrent = () => !state.closed && state.refreshJobId === revision && state.selectedCropId === cropId && state.targetBedId === bedId; // CHANGE
             state.reviewing = true; renderHud(state); // CHANGE
             try { // CHANGE
@@ -2343,13 +2351,13 @@ Draw.loadPlugin(function (ui) {
                 state.companionTargetId = base.bedRelationships.companion.length === 1 ? base.bedRelationships.companion[0].groupId : ''; // CHANGE
                 state.companionRows = null; state.spacingSaveDefaults = false; state.spacingContextKey = ''; state.allocationView = 'spacing'; // CHANGE
                 renderTimelinePreview(state); // CHANGE: review/Create remains an explicit HUD action after inline editing.
-            } catch (error) { if (!state.closed) state.noticeMessage = error.message || 'Unable to preview companions.'; } // CHANGE
-            finally { state.reviewing = false; state.requiredDefaultsSetup = false; editor.clear(); if (!state.closed) { void refreshAllocationDefaults(state, true); renderHud(state); renderGhost(state); } } // CHANGE
+            } catch (error) { if (isCurrent()) state.noticeMessage = error.message || 'Unable to preview companions.'; } // CHANGE
+            finally { if (state.historyRevision === historyRevision) { state.reviewing = false; state.requiredDefaultsSetup = false; editor.clear(); if (!state.closed) { void refreshAllocationDefaults(state, true); renderHud(state); renderGhost(state); } } } // CHANGE: stale setup must not clear a newer editor.
         } // CHANGE
 
         async function beginCreate(state) {
             if (!state.draft || state.reviewing || state.spacingPending || state.spacingValid === false) return; // CHANGE
-            const draft = state.draft; // CHANGE
+            const draft = state.draft, reviewRevision = state.historyRevision; // CHANGE: normal post-commit refresh still releases this review; history cancellation does not.
             state.reviewing = true; // CHANGE
             renderHud(state); // CHANGE
             try { // CHANGE: only one review/configuration operation may run for this proposal.
@@ -2366,8 +2374,8 @@ Draw.loadPlugin(function (ui) {
                 if (reviewed && reviewed.action === "create") await createDraft(state, reviewed.draft);
                 else if (reviewed && reviewed.action === "scheduler") await openAllocationSchedulerAndPreview(state, reviewed.draft, { defaultStatus: defaults }); // CHANGE
             } catch (error) { // CHANGE: preserve the accepted proposal when scheduling or creation fails.
-                if (!state.closed) state.noticeMessage = error && error.message || "Unable to review this proposal."; // CHANGE
-            } finally { state.reviewing = false; if (!state.closed) renderHud(state); } // CHANGE
+                if (!state.closed && state.historyRevision === reviewRevision) state.noticeMessage = error && error.message || "Unable to review this proposal."; // CHANGE
+            } finally { if (state.historyRevision === reviewRevision) { state.reviewing = false; if (!state.closed) renderHud(state); } } // CHANGE: an obsolete review cannot unlock a newer one.
         }
 
         async function openAllocationSchedulerAndPreview(state, draft, options = {}) { // CHANGE
@@ -2515,7 +2523,9 @@ Draw.loadPlugin(function (ui) {
                 create.addEventListener("click", function () {
                     resolve({ action: "create", draft }); ui.hideDialog(); // CHANGE
                 });
-                ui.showDialog(div, 560, 520, true, true, () => resolve(null)); // CHANGE: closing review must clear the pending operation.
+                const cancelReview = () => { resolve(null); ui.hideDialog(); }; // CHANGE: history can dismiss this allocation-owned review.
+                state.cancelHistoryReview = cancelReview; // CHANGE
+                ui.showDialog(div, 560, 520, true, true, () => { if (state.cancelHistoryReview === cancelReview) state.cancelHistoryReview = null; resolve(null); }); // CHANGE
             });
         }
 
@@ -2636,7 +2646,40 @@ Draw.loadPlugin(function (ui) {
             beginBackgroundStateRefresh(state, { previousCropId, noticeMessage: state.noticeMessage }); // CHANGE
         }
 
+        /** Discard transient edits without modifying committed plantings or leaving allocation mode. */ // CHANGE
+        function discardAllocationForHistory(state) { // CHANGE
+            if (state.closed) return; // CHANGE
+            state.awaitingBedSelection = true; state.targetBedId = ""; // CHANGE
+            state.historyRevision++; state.draftVersion++; state.spacingRevision++; // CHANGE: reject schedule reviews and pending layout calculations.
+            state.spacingOverrides = null; state.ordinarySpacingOverrides = null; state.spacingSaveDefaults = false; // CHANGE
+            state.spacingBody = null; state.spacingEditorHandle = null; state.spacingContextKey = ""; state.spacingBase = null; // CHANGE
+            state.companionMode = false; state.companionTargetId = ""; state.companionRows = null; // CHANGE
+            state.spacingPending = false; state.spacingValid = true; state.defaultsLookup = null; // CHANGE
+            state.findingBed = false; state.reviewing = false; state.requiredDefaultsSetup = false; // CHANGE
+            state.cancelHistoryReview?.(); // CHANGE: dismiss only the review owned by this allocation.
+            state.cancelHistoryReview = null; // CHANGE
+            scheduleStateRefresh(state); // CHANGE: invalidate refresh/evaluation jobs, clear both previews, and reload planning data.
+            state.ghost = null; state.noticeMessage = "Choose a bed to preview another planting."; renderHud(state); // CHANGE
+        } // CHANGE
+
+        /** Background planning alone is not a draft; a chosen target or deliberate preview operation is. */ // CHANGE
+        function hasAllocationPreview(state) { // CHANGE
+            if (state.closed || state.committing) return false; // CHANGE
+            if (state.findingBed) return true; // CHANGE: a deliberate bed search is active even before it ends the waiting state.
+            if (state.awaitingBedSelection) return false; // CHANGE: passive background scans cannot consume another history command.
+            return !!(state.draft || state.selectedCropId && (state.targetBedId || state.spacingPending || // CHANGE
+                state.spacingOverrides || state.companionMode || state.reviewing)); // CHANGE: committed leftovers without a selected crop are not active previews.
+        } // CHANGE
+
         function installListeners(state) {
+            const participants = graph.__trellisPlantingPreviewDrafts ||= new Map(); // CHANGE: reverse plugin loading order uses the same owner registry.
+            const participant = { isActive: () => hasAllocationPreview(state), discard: () => discardAllocationForHistory(state) }; // CHANGE
+            participants.set(state.ownerId, participant); // CHANGE
+            graph.__trellisPlantingPreviewHistory?.refreshActions(); // CHANGE
+            state.cleanups.push(() => { // CHANGE
+                if (participants.get(state.ownerId) === participant) participants.delete(state.ownerId); // CHANGE: reopening cannot unregister a newer session.
+                graph.__trellisPlantingPreviewHistory?.refreshActions(); // CHANGE
+            }); // CHANGE
             if (graph.addListener) { // CHANGE
                 const ready = () => { if (!state.closed) { renderGhost(state); renderHud(state); renderTimelinePreview(state); } }; // CHANGE: late plugin loading enables spacing on no-fit beds too.
                 graph.addListener('trellisPlantingGroupReady', ready); // CHANGE
@@ -2657,6 +2700,12 @@ Draw.loadPlugin(function (ui) {
             }; // CHANGE
             window.addEventListener('usl:cropOverhangSaved', overhangRefresh); // CHANGE
             state.cleanups.push(() => window.removeEventListener('usl:cropOverhangSaved', overhangRefresh)); // CHANGE
+            const undoManager = ui && ui.editor && ui.editor.undoManager; // CHANGE
+            if (undoManager && undoManager.addListener) { // CHANGE
+                const historyRefresh = () => discardAllocationForHistory(state); // CHANGE
+                undoManager.addListener(mxEvent.UNDO, historyRefresh); undoManager.addListener(mxEvent.REDO, historyRefresh); // CHANGE
+                state.cleanups.push(() => undoManager.removeListener?.(historyRefresh)); // CHANGE: closed/reopened allocations cannot accumulate listeners.
+            } // CHANGE
             const selectionRefresh = function () {
                 if (state.closed) return;
                 syncSelectionTarget(state); // CHANGE
@@ -2679,6 +2728,14 @@ Draw.loadPlugin(function (ui) {
                 state.cleanups.push(function () { if (model.removeListener) model.removeListener(modelRefresh); }); // CHANGE
             } // CHANGE
             if (graph.addListener && typeof mxEvent !== "undefined") {
+                const bedClick = (_sender, event) => { // CHANGE: a click on the already-selected bed must resume allocation.
+                    if (!state.awaitingBedSelection || state.closed) return; // CHANGE
+                    const cell = event && event.getProperty && event.getProperty("cell"); // CHANGE
+                    if (!cell || !(state.beds || []).includes(cell) && !findTilerGroupAncestor(cell)) return; // CHANGE
+                    if (graph.setSelectionCell) graph.setSelectionCell(cell); // CHANGE
+                    syncSelectionTarget(state, true); // CHANGE
+                }; // CHANGE
+                graph.addListener(mxEvent.CLICK, bedClick); state.cleanups.push(() => graph.removeListener?.(bedClick)); // CHANGE
                 graph.addListener(mxEvent.CELLS_MOVED, refresh);
                 graph.addListener(mxEvent.CELLS_RESIZED, refresh);
                 graph.addListener(mxEvent.CELLS_ADDED, refresh);

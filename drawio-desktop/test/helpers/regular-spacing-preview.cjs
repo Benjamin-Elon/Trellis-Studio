@@ -1,5 +1,5 @@
 /** Browser-portable fixture using real scheduler rows, the regular overlay, and Roadmap projection. */ // CHANGE
-async function createRegularSpacingFixture(w, graph) { // CHANGE
+async function createRegularSpacingFixture(w, graph, options = {}) { // CHANGE: initial styles exercise rotated saved plantings without invoking bed-unit rotation gestures. // CHANGE
     const model = graph.getModel(), roadmap = graph.__trellisRoadmapManager; // CHANGE
     const value = attrs => { const node = w.mxUtils.createXmlDocument().createElement('object'); Object.entries(attrs).forEach(([key, item]) => node.setAttribute(key, String(item))); return node; }; // CHANGE
     const insert = (parent, id, attrs, x, y, width, height, style = '') => graph.insertVertex(parent, id, value(attrs), x, y, width, height, style); // CHANGE
@@ -7,9 +7,9 @@ async function createRegularSpacingFixture(w, graph) { // CHANGE
     const board = roadmap.ensureMainRoadmapInRoadmapModule(roadmapModule); // CHANGE
     const outer = insert(null, 'spacing-outer', { label: 'Host' }, roadmapModule.getGeometry().x + roadmapModule.getGeometry().width + 40, 20, 900, 700, 'module=1;container=1;'); // CHANGE
     const garden = insert(outer, 'spacing-garden', { garden_module: '1', label: 'Garden' }, 70, 60, 700, 600, 'module=1;container=1;'); // CHANGE
-    const bed = insert(garden, 'spacing-bed', { garden_bed: '1', label: 'Bed' }, 100, 100, 420, 300, 'rotation=37;fillColor=#afb576;'); // CHANGE
+    const bed = insert(garden, 'spacing-bed', { garden_bed: '1', label: 'Bed' }, 100, 100, 420, 300, 'rotation=' + (options.bedAngle ?? 37) + ';fillColor=#afb576;'); // CHANGE
     const groups = [0, 1].map(index => insert(garden, 'spacing-group-' + index, { tiler_group: '1', label: 'Radish', plant_name: 'Radish', plant_abbr: 'RAD', // CHANGE
-        spacing_x_cm: '30', spacing_y_cm: '30', veg_diameter_cm: '10', plant_yield: '1' }, 120 + index * 170, 120, 140, 170)); // CHANGE
+        spacing_x_cm: '30', spacing_y_cm: '30', veg_diameter_cm: '10', plant_yield: '1' }, 120 + index * 170, 120, 140, 170, 'rotation=' + (index ? 0 : options.groupAngle || 0) + ';')); // CHANGE
     groups.forEach(group => w.USL.tiler.retileGroup(graph, group)); // CHANGE
     const overlay = graph.__trellisPlantingGroup.overlay, tools = w.USL.scheduler.layoutTools; // CHANGE
     const settle = () => new Promise(resolve => w.requestAnimationFrame(() => w.requestAnimationFrame(resolve))); // CHANGE

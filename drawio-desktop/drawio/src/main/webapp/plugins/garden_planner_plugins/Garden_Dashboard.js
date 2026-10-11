@@ -1775,6 +1775,22 @@ Draw.loadPlugin(function (ui) {
         if (dialog && dialog.parentNode) dialog.parentNode.removeChild(dialog);
     }
 
+    /** Keep native form gestures inside the dialog and focus after editor restoration. */ // NEW
+    function mountShareDialog(overlay, initialField) { // NEW
+        overlay.className = "trellis-garden-share-dialog"; // NEW
+        ["mousedown", "mouseup", "pointerdown", "pointerup", "touchstart", "touchend", "click", "dblclick", "keypress", "keyup"].forEach(function (type) { // NEW
+            overlay.addEventListener(type, stopToolbarNativeControlEvent); // NEW: stop propagation, never cancel native input/select defaults.
+        }); // NEW
+        overlay.addEventListener("keydown", function (evt) { // NEW
+            stopToolbarNativeControlEvent(evt); // NEW: typing and editing shortcuts must not reach graph handlers.
+            if (evt.key === "Escape") closeShareDialog(overlay); // NEW
+        }); // NEW
+        document.body.appendChild(overlay); // NEW
+        setTimeout(function () { // NEW: save/setup dialogs may have queued graph focus restoration.
+            if (overlay.isConnected && initialField.isConnected) initialField.focus(); // NEW: cancellation must not steal focus later.
+        }, 0); // NEW
+    } // NEW
+
     function openShareInviteDialog(scopes, shareInfo) {
         const users = trellisUsersApi();
         const overlay = document.createElement("div");
@@ -1831,11 +1847,14 @@ Draw.loadPlugin(function (ui) {
         const cancel = createToolbarButton("Cancel", "Close share dialog", "close"); // CHANGE: share cancellation uses the red outline.
         const send = createToolbarButton("Create Email", "Create invite and open an email draft", "open");
         cancel.addEventListener("click", function () { closeShareDialog(overlay); });
-        send.addEventListener("click", function () {
+        send.addEventListener("click", async function () { // CHANGE: persist the invite before publishing its setup block.
             const result = users.createPendingInvite({ email: email.value, scopeCellIds: scopes.map(function (scope) { return scope.id; }), preset: preset.value, capabilities: selectedInviteCapabilities(), shareInfo });
             if (!result.ok) { status.textContent = result.reason; return; }
             const bridge = window.trellisShare;
-            bridge.openEmailDraft(result.emailDraft).then(function (draftResult) {
+            const sharing = window.Trellis && window.Trellis.sharing; // NEW
+            let draft = result.emailDraft; // NEW
+            try { if (sharing) draft = await sharing.prepareInvite(result); } catch (err) { status.textContent = err.message; return; } // NEW
+            bridge.openEmailDraft(draft).then(function (draftResult) {
                 if (!draftResult || draftResult.ok === false) { status.textContent = (draftResult && draftResult.reason) || "Email draft could not be opened."; return; }
                 closeShareDialog(overlay);
             }).catch(function (err) { status.textContent = err && err.message ? err.message : String(err); });
@@ -1850,8 +1869,7 @@ Draw.loadPlugin(function (ui) {
         box.appendChild(status);
         box.appendChild(buttons);
         overlay.appendChild(box);
-        document.body.appendChild(overlay);
-        email.focus();
+        mountShareDialog(overlay, email); // CHANGE: preserve native recipient input focus and events.
     }
 
     function openEnableUsersForShareDialog() {
@@ -1895,8 +1913,7 @@ Draw.loadPlugin(function (ui) {
         box.appendChild(status);
         box.appendChild(buttons);
         overlay.appendChild(box);
-        document.body.appendChild(overlay);
-        name.focus();
+        mountShareDialog(overlay, name); // CHANGE: apply the same focus isolation to first-admin setup.
     }
 
     async function openShareGardenCanvasDialog() {
@@ -1916,7 +1933,8 @@ Draw.loadPlugin(function (ui) {
             return;
         }
         let shareInfo;
-        try { shareInfo = await bridge.getSyncthingShareInfo({}); } catch (err) { shareInfo = { ok: false, reason: err && err.message ? err.message : String(err) }; }
+        const sharing = window.Trellis && window.Trellis.sharing; // NEW
+        try { shareInfo = sharing ? await sharing.ensureManaged() : await bridge.getSyncthingShareInfo({ diagramPath: ui.getCurrentFile && ui.getCurrentFile() && ui.getCurrentFile().fileObject && ui.getCurrentFile().fileObject.path }); } catch (err) { shareInfo = { ok: false, reason: err && err.message ? err.message : String(err) }; } // CHANGE
         if (!shareInfo || shareInfo.ok === false) { alertShareStatus((shareInfo && shareInfo.reason) || "Syncthing sharing is unavailable."); return; }
         if (shareInfo.managed === false) { alertShareStatus(shareInfo.reason || "Move this diagram into a Trellis-managed Syncthing folder before sharing."); return; }
         openShareInviteDialog(permission.scopes || state.scopes, shareInfo);
@@ -2036,6 +2054,9 @@ Draw.loadPlugin(function (ui) {
         const messagesBtn = createToolbarButton("Messages", "Review access requests", "open");
         const exportBtn = createToolbarButton("Export", "Export dashboard CSV", "neutral");
         const shareBtn = createToolbarButton("Share", "Share selected module(s), task board(s), or garden bed(s)", "open");
+        const syncBtn = createToolbarButton("Connected collaborators: --", "Canvas connection status", "neutral"); // NEW
+        syncBtn.style.minWidth = "175px"; // NEW: connection updates do not shift toolbar controls.
+        syncBtn.addEventListener("click", function () { const sharing = window.Trellis && window.Trellis.sharing; if (sharing) sharing.showSharingDialog(); }); // NEW
         const tableBtn = createToolbarButton("Table", "Show dashboard table", "open");
 
         const table = document.createElement("div");
@@ -2062,6 +2083,7 @@ Draw.loadPlugin(function (ui) {
         rightActions.appendChild(messagesBtn);
         rightActions.appendChild(exportBtn);
         rightActions.appendChild(shareBtn);
+        rightActions.appendChild(syncBtn); // NEW
         rightActions.appendChild(tableBtn);
         controls.appendChild(leftControls);
         controls.appendChild(rightActions);
@@ -2070,7 +2092,8 @@ Draw.loadPlugin(function (ui) {
         wrap.appendChild(panel);
         host.appendChild(wrap);
 
-        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE: Roadmap lives inside the workspace switcher.
+        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, syncBtn, tableBtn, table }; // CHANGE: add per-canvas connection status.
+        refreshSharingCount(); // NEW
         [prev, next, planBtn, equipmentBtn, irrigationBtn, allocateBtn, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, messagesBtn, exportBtn, shareBtn, tableBtn, gardenPickerBtn, createGardenBtn].forEach(function (button) { // CHANGE
             button.__trellisDashboardDefaultTitle = button.title || "";
         });
@@ -2278,6 +2301,14 @@ Draw.loadPlugin(function (ui) {
         if (viewportToolbar) viewportToolbar.wrap.style.display = "none";
         activeToolbarModule = null;
     }
+    function refreshSharingCount() { // NEW: online means connected devices, not editor presence.
+        if (!viewportToolbar || !viewportToolbar.syncBtn) return;
+        const sharing = window.Trellis && window.Trellis.sharing;
+        const state = sharing && sharing.getStatus();
+        viewportToolbar.syncBtn.style.display = sharing ? "" : "none";
+        viewportToolbar.syncBtn.textContent = "Connected collaborators: " + (state && state.connectedCollaborators != null ? state.connectedCollaborators : "--");
+        viewportToolbar.syncBtn.title = state ? state.state + (state.reason ? ": " + state.reason : "") : "Canvas is not shared";
+    }
 
     function refreshViewportToolbarForSelection() {
         toolbarRefreshTimer = null;
@@ -2330,6 +2361,7 @@ Draw.loadPlugin(function (ui) {
     };
 
     window.addEventListener("resize", scheduleOverlayReposition);
+    window.addEventListener("trellisSharingStatusChanged", refreshSharingCount); // NEW
     if (graph.getSelectionModel && graph.getSelectionModel().addListener) {
         graph.getSelectionModel().addListener(mxEvent.CHANGE, scheduleViewportToolbarRefresh);
     }

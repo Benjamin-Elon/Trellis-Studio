@@ -1,6 +1,7 @@
 const fs = require('node:fs'); // CHANGE
 const path = require('node:path'); // CHANGE
 const { JSDOM } = require('jsdom'); // CHANGE
+const { createPreviewHistoryUi } = require('./preview-history-ui.cjs'); // CHANGE
 
 /** Runs the complete production tiler against the bundled mxGraph model and SVG renderer. */ // CHANGE
 function loadPlantTilerMxGraph() { // CHANGE
@@ -16,7 +17,8 @@ function loadPlantTilerMxGraph() { // CHANGE
     graph.convertValueToString = cell => cell.value && cell.value.getAttribute ? cell.value.getAttribute('label') || '' : String(cell.value || ''); // CHANGE: draw.io's XML label convention.
     const undoManager = new window.mxUndoManager(); // CHANGE
     graph.getModel().addListener(window.mxEvent.UNDO, (sender, event) => undoManager.undoableEditHappened(event.getProperty('edit'))); // CHANGE
-    window.Draw = { loadPlugin(callback) { callback({ editor: { graph, undoManager }, actions: { get: () => null }, hideDialog() {} }); } }; // CHANGE
+    const ui = createPreviewHistoryUi(window, graph, undoManager); // CHANGE
+    window.Draw = { loadPlugin(callback) { callback(ui); } }; // CHANGE
     window.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Planting_Group.js'), 'utf8')); // CHANGE
     function value(attrs) { // CHANGE
         const node = window.mxUtils.createXmlDocument().createElement('object'); // CHANGE
@@ -27,7 +29,7 @@ function loadPlantTilerMxGraph() { // CHANGE
     function bed(width, height, rotation = 0, x = 200, y = 200) { // CHANGE
         return graph.insertVertex(moduleCell, null, value({ garden_bed: '1', label: 'Bed' }), x, y, width, height, `rotation=${rotation};dashed=1;fillColor=#afb576;`); // CHANGE
     } // CHANGE
-    return { dom, window, graph, undoManager, moduleCell, bed, tiler: window.USL.tiler, close: () => window.close() }; // CHANGE
+    return { dom, window, graph, undoManager, ui, moduleCell, bed, tiler: window.USL.tiler, close: () => { graph.__trellisPlantingGroup.overlay.clear(); window.close(); } }; // CHANGE
 } // CHANGE
 
 module.exports = { loadPlantTilerMxGraph }; // CHANGE

@@ -3988,6 +3988,9 @@ Draw.loadPlugin(function (ui) {
     }
     function plantingLayoutAttributePatch(layout) { // ADDED: persist current layout rows independently of reusable defaults.
         const patch = {};
+        if (layout?.layoutAlignment != null) patch.layout_alignment = String(layout.layoutAlignment); // CHANGE
+        if (layout?.layoutBaseOffsetXCm != null) patch.layout_base_offset_x_cm = String(layout.layoutBaseOffsetXCm); // CHANGE
+        if (layout?.layoutBaseOffsetYCm != null) patch.layout_base_offset_y_cm = String(layout.layoutBaseOffsetYCm); // CHANGE
         if (layout?.allowedOverhangPct != null) patch.allowed_overhang_pct = String(layout.allowedOverhangPct); // CHANGE
         if (layout?.spacingXCm != null) patch.spacing_x_cm = String(layout.spacingXCm);
         if (layout?.spacingYCm != null) patch.spacing_y_cm = String(layout.spacingYCm);
@@ -17239,8 +17242,12 @@ Draw.loadPlugin(function (ui) {
 
     /** Relevant graph state guards read-only previews across asynchronous relationship lookups. */ // CHANGE
     function spacingCellRevision(cell) { // CHANGE
-        const names = ['plant_id', 'variety_id', 'growth_stage_key', 'spacing_x_cm', 'spacing_y_cm', 'veg_diameter_cm', 'allowed_overhang_pct', 'layout_offset_x_cm', 'layout_offset_y_cm', 'disabled_plants', 'plant_count', 'plant_yield', 'sow_date', 'transplant_date', 'harvest_start', 'harvest_end', 'lifespan_start', 'lifespan_end']; // CHANGE
-        return JSON.stringify([cell.getGeometry(), cell.getStyle?.() || cell.style || '', names.map(name => cell.getAttribute(name))]); // CHANGE
+        const names = ['plant_id', 'variety_id', 'growth_stage_key', 'spacing_x_cm', 'spacing_y_cm', 'veg_diameter_cm', 'allowed_overhang_pct', 'layout_alignment', 'layout_base_offset_x_cm', 'layout_base_offset_y_cm', 'layout_offset_x_cm', 'layout_offset_y_cm', 'disabled_plants', 'plant_count', 'plant_yield', 'sow_date', 'transplant_date', 'harvest_start', 'harvest_end', 'lifespan_start', 'lifespan_end']; // CHANGE
+        const children = []; // CHANGE: manual movement changes the accepted centering bounds even when the group attributes are unchanged.
+        for (let index = 0; index < (cell.getChildCount?.() || 0); index++) { // CHANGE
+            const child = cell.getChildAt(index); children.push([child.id, child.getGeometry(), ['auto', 'dirty', 'tile_r', 'tile_c'].map(name => child.getAttribute?.(name))]); // CHANGE
+        } // CHANGE
+        return JSON.stringify([cell.getGeometry(), cell.getStyle?.() || cell.style || '', names.map(name => cell.getAttribute(name)), cell.getAttribute('lod_layout_snapshot_v1'), children]); // CHANGE
     } // CHANGE
 
     /** Generate touching rows in a common local frame; effective diameters are frozen in the resulting draft. */ // CHANGE
@@ -17334,6 +17341,7 @@ Draw.loadPlugin(function (ui) {
                 offsetXCm: offsets.x,
                 offsetYCm: offsets.y,
                 allowedOverhangPct: cropAllowedOverhangPct(cell.getAttribute?.('allowed_overhang_pct')), // CHANGE: legacy plantings retain 30%, independently of crop defaults.
+                layoutAlignment: cell.getAttribute?.('layout_alignment') || '', layoutBaseOffsetXCm: layoutNumberOrNull(cell.getAttribute?.('layout_base_offset_x_cm')) ?? 0, layoutBaseOffsetYCm: layoutNumberOrNull(cell.getAttribute?.('layout_base_offset_y_cm')) ?? 0, // CHANGE
                 plantDefaultLayout: spacingPlantDefaultLayout(plant), plant, // CHANGE
                 vegDiameterCm: layoutNumberOrNull(cell.getAttribute?.('veg_diameter_cm')) ?? defaults.vegDiameterCm, // CHANGE
                 rotationDeg: Number(activeGraph.getCellStyle?.(cell)?.rotation || 0), // CHANGE
@@ -17366,7 +17374,7 @@ Draw.loadPlugin(function (ui) {
 
     /** A percentage draft can resize only persisted bed-fitting axes, never a companion footprint. */ // CHANGE
     function prepareSpacingBedFitRows(activeGraph, rows) { // CHANGE
-        const prepare = window.USL?.tiler?.prepareBedFitSpacingDraft; // CHANGE
+        const prepare = window.USL?.tiler?.prepareCenteredSpacingDraft || window.USL?.tiler?.prepareBedFitSpacingDraft; // CHANGE
         return (rows || []).map(row => row.enabled && prepare ? prepare(graphCellById(activeGraph, row.cellId), row) : row); // CHANGE
     } // CHANGE
 
@@ -17490,16 +17498,17 @@ Draw.loadPlugin(function (ui) {
         const activeGraph = Array.isArray(activeGraphOrRows) ? graph : activeGraphOrRows;
         const sourceRows = prepareSpacingBedFitRows(activeGraph, Array.isArray(activeGraphOrRows) ? activeGraphOrRows : maybeRows); // CHANGE
         const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
-        const previewRows = normalizeSpacingDraftRows(sourceRows).filter(row => row.enabled || row.previewOnly).map(row => { // CHANGE: bed previews include unchanged plantings as upright context.
+        const previewRows = normalizeSpacingDraftRows(sourceRows).filter(row => row.enabled || row.previewOnly).map(row => { // CHANGE: bed previews include unchanged plantings at their saved angles.
             const cell = activeGraph && row.cellId ? graphCellById(activeGraph, row.cellId) : null; // CHANGE
             if (tiler && typeof tiler.buildDraftTilerGroupPreview === 'function' && (cell || row.proposed)) { // CHANGE
                 const fallbackRect = row.rect || { x: 0, y: 0, width: 120, height: 80 };
-                const previewOpts = row.previewUnrotated ? { rotationDeg: 0 } : { rotationDeg: row.rotationDeg }; // CHANGE // CHANGE: bed-scoped spacing previews render upright even when the diagram bed is rotated.
+                const previewOpts = { rotationDeg: row.rotationDeg }; // CHANGE: preserve group angles; tiler circles are already rotated.
                 const draft = Object.assign({}, row, { rect: fallbackRect, maxCircles: 1000 }); // CHANGE
                 const preview = cell ? tiler.buildDraftTilerGroupPreview(activeGraph, cell, draft, previewOpts) // CHANGE
                     : tiler.buildUnsavedTilerGroupPreview(activeGraph, { cellId: row.cellId, rect: fallbackRect, attributes: row.attributes || {} }, draft, previewOpts); // CHANGE // CHANGE: spacing drafts use a read-only copy of the real tiler layout.
                 if (preview && preview.status === 'ok') {
                     const dots = { circles: preview.circles || [], total: preview.total || 0, summarized: !!preview.capped, clamped: false };
+                    if (preview.centeringInvalid) return Object.assign({}, row, { dots, groupPreview: preview, invalid: true, warning: 'The circle footprint exceeds the planting area. Adjust spacing or manual positions.' }); // CHANGE
                     if (row.strictFootprint && (preview.omitted > 0 || preview.clipped > 0)) return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, groupPreview: preview, invalid: true, warning: 'Saved layout exceeds the chosen planting footprint. Adjust its spacing or offsets.' }); // CHANGE
                     if (Number(preview.actual != null ? preview.actual : preview.total) <= 0) {
                         return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, invalid: !row.previewOnly, warning: row.previewOnly ? '' : 'No plants remain inside the planting area.' }); // CHANGE: preview-only bed rows cannot block Apply.
@@ -17509,11 +17518,11 @@ Draw.loadPlugin(function (ui) {
             }
             return fallbackSpacingPreviewRow(row);
         });
-        const bedRow = previewRows.find(row => row.previewUnrotated && row.bedId && row.bedRect) || null;
+        const bedRow = previewRows.find(row => row.previewBedContext && row.bedId && row.bedRect) || null; // CHANGE
         return {
             status: previewRows.some(row => row.invalid) ? 'invalid' : 'ok',
             rows: previewRows,
-            bedPreview: bedRow ? { cellId: bedRow.bedId, rect: bedRow.bedRect } : null, // CHANGE: preview renderer can replace the actual rotated bed.
+            bedPreview: bedRow ? { cellId: bedRow.bedId, rect: bedRow.bedRect, rotationDeg: Number(activeGraph.getCellStyle?.(graphCellById(activeGraph, bedRow.bedId))?.rotation || 0) } : null, // CHANGE: the replacement bed keeps its current angle.
             warning: previewRows.filter(row => row.warning).map(row => (row.label || row.cellId) + ': ' + row.warning).join(' ')
         };
     }
@@ -17531,6 +17540,7 @@ Draw.loadPlugin(function (ui) {
                 maxCircles: 1
             }));
             const actual = preview ? Number(preview.actual != null ? preview.actual : preview.total) : 1;
+            if (preview?.centeringInvalid) errors.push((row.label || row.cellId || 'Planting') + ': The circle footprint exceeds the planting area. Adjust spacing or manual positions.'); // CHANGE
             if (Number.isFinite(actual) && actual <= 0) errors.push((row.label || row.cellId || 'Planting') + ': No plants remain inside the planting area.');
         });
         return { ok: errors.length === 0, errors };
@@ -17571,7 +17581,7 @@ Draw.loadPlugin(function (ui) {
                 const patch = plantingLayoutAttributePatch(row); // CHANGE
                 if (row.bedFitGeometry) model.setGeometry(cell, row.bedFitGeometry.clone()); // CHANGE: commit precisely the frame used by the preview.
                 if (row.clipBounds && result) patch.disabled_plants = JSON.stringify(result.disabledSlots); // CHANGE
-                if (row.generatedPattern) { patch.companion_layout_interplant = ''; patch.companion_layout_template = ''; patch.bed_fit_width = '0'; patch.bed_fit_height = '0'; patch.bed_auto_fit = '0'; } // CHANGE
+                if (row.generatedPattern) { patch.companion_layout_interplant = ''; patch.companion_layout_template = ''; patch.layout_alignment = ''; patch.layout_base_offset_x_cm = '0'; patch.layout_base_offset_y_cm = '0'; patch.bed_fit_width = '0'; patch.bed_fit_height = '0'; patch.bed_auto_fit = '0'; } // CHANGE
                 if (row.modelRect && row.generatedPattern) { // CHANGE
                     const geometry = cell.getGeometry().clone(); // CHANGE
                     Object.assign(geometry, row.modelRect); model.setGeometry(cell, geometry); // CHANGE

@@ -2295,8 +2295,8 @@ Draw.loadPlugin(function (ui) {
         const lines = [
             "You have been invited to collaborate on a Trellis garden canvas.",
             "",
-            "1. Add the sender in Syncthing using the device and folder details below.",
-            "2. Wait for the sender to approve your Syncthing device/share.",
+            "1. In Trellis Studio, choose Join Shared Canvas and paste the invitation block below.", // CHANGE
+            "2. Send the prepared device reply to the sender and wait for an admin to approve it.", // CHANGE
             "3. Open the synced diagram in Trellis Studio.",
             "4. In People & Access, choose Accept Invite and enter your email, invite code, display name, and PIN.",
             "",
@@ -2308,7 +2308,6 @@ Draw.loadPlugin(function (ui) {
             "Syncthing device ID: " + (info.deviceId || "(unavailable)"),
             "Syncthing folder ID: " + (info.folderId || "(unavailable)"),
             "Syncthing folder label: " + (info.folderLabel || "(unavailable)"),
-            "Syncthing folder path: " + (info.folderPath || "(unavailable)"),
             "",
             "This is a low-security local workflow invite. Access can be revoked from the People & Access panel."
         ];
@@ -3276,6 +3275,10 @@ Draw.loadPlugin(function (ui) {
         card.appendChild(authStatusNode);
         if (!isEnabled()) appendAuthEnableForm(card);
         else { appendAuthLoginForm(card); appendAuthInviteForm(card); }
+        card.appendChild(makeButton("Join Shared Canvas", function () { // NEW: joining must work before a diagram login.
+            const sharing = window.Trellis && window.Trellis.sharing;
+            if (sharing) sharing.showJoinDialog();
+        }, "neutral", "Join a shared canvas using its invitation."));
         authOverlay.appendChild(card);
         host.appendChild(authOverlay);
         if (blocking) setGraphAuthBlocked(true);
@@ -3574,7 +3577,9 @@ Draw.loadPlugin(function (ui) {
             row.appendChild(makeButton("Resend", function () {
                 const result = resendInvite(invite.id, {});
                 if (!result.ok) { showStatus(result.reason); return; }
-                openEmailDraft(result.emailDraft);
+                const sharing = window.Trellis && window.Trellis.sharing; // NEW: resends carry the rotated code in a fresh setup block.
+                if (sharing && sharing.getInfo()) sharing.prepareInvite(result).then(openEmailDraft).catch(function (err) { showStatus(err.message); });
+                else openEmailDraft(result.emailDraft);
             }, "open", 'Renew this invitation and open an email draft for ' + invite.email + '.')); // CHANGE: explicit action tooltip.
             row.appendChild(makeButton("Revoke", function () {
                 const result = revokeInvite(invite.id);
@@ -4886,6 +4891,12 @@ Draw.loadPlugin(function (ui) {
     window.Trellis.users = {
         isEnabled,
         getCurrentUser: function () { return publicUser(currentUser()); },
+        revalidateCurrentSession: function () { // NEW: preserve a valid session across trusted remote reloads.
+            if (currentUserId && !userById(currentUserId)) { currentUserId = ""; forgetRememberedLogin(); }
+            updateToolbarButton();
+            applyAuthGateIfNeeded();
+            if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent("trellisUsersSessionChanged"));
+        },
         isLoggedIn,
         isAdmin,
         canEditCell,

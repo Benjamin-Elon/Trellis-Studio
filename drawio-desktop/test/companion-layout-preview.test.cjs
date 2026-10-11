@@ -17,9 +17,9 @@ function setup({ saved = null, legacy = null, diameters = [20, 20], rotation = 0
             : sql.includes('FROM CompanionSetLayoutDefaults') && saved ? [{ crop_set_key: params[0], layout_json: JSON.stringify(saved) }] : [] }) }; // CHANGE
     window.__TRELLIS_PLANTING_SCHEDULER_TEST__ = true; // CHANGE
     let dialog = null, onClose = null; // CHANGE
-    const ui = { editor: { graph, undoManager: h.undoManager }, actions: { get: () => null }, // CHANGE
+    const ui = Object.assign(h.ui, { // CHANGE: use the same editor instance intercepted by the planting owner.
         showDialog(node, w, height, modal, closable, close) { dialog = node; onClose = close; window.document.body.appendChild(node); }, // CHANGE
-        hideDialog() { dialog?.remove(); dialog = null; const close = onClose; onClose = null; close?.(); } }; // CHANGE
+        hideDialog() { dialog?.remove(); dialog = null; const close = onClose; onClose = null; close?.(); } }); // CHANGE
     window.Draw = { loadPlugin: callback => callback(ui) }; // CHANGE
     for (const name of ['Garden_Scheduler_Shared_Core.js', 'Garden_Scheduler_Annual_Core.js', 'Garden_Scheduler_Perennial_Core.js', 'Garden_Scheduler_Dialog.js', 'Vertex_Linking_Standalone.js']) window.eval(fs.readFileSync(path.join(plugins, name), 'utf8')); // CHANGE
     const bed = h.bed(240, 350, rotation); // CHANGE
@@ -73,6 +73,67 @@ test('an open Spacing editor restores the latest committed crop percentage witho
         body.querySelector('[aria-label="Restore plant defaults"]').click(); // CHANGE
         assert.equal(Number(draft[0].allowedOverhangPct), 12.5); assert.equal(h.source.value.outerHTML, before); // CHANGE
         assert.equal(h.undoManager.history.length, 0); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+test('Spacing centers manual and generated circles together, preserves offsets, and previews the exact commit', async () => { // CHANGE
+    const h = setup({ rotation: 30 }); // CHANGE
+    try { // CHANGE
+        const tile = h.graph.getChildVertices(h.source).find(cell => cell.getAttribute('plant_tiler') === '1'); // CHANGE
+        const geometry = tile.geometry.clone(); geometry.x -= 15; // CHANGE
+        h.graph.getModel().setGeometry(tile, geometry); tile.value.setAttribute('dirty', '1'); // CHANGE
+        const context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(item => item.cellId === h.source.id); // CHANGE
+        const draft = { ...row, offsetXCm: 0, offsetYCm: 0, spacingXCm: 31 }; // CHANGE
+        const before = h.source.value.outerHTML, preview = h.tools.buildSpacingPreviewModel(h.graph, [draft]).rows[0].groupPreview; // CHANGE
+        assert.equal(h.source.value.outerHTML, before); assert.equal(preview.layoutAlignment, 'centered'); // CHANGE
+        h.undoManager.clear(); await h.tools.applySpacingDraft(h.graph, [draft]); // CHANGE
+        assert.equal(h.source.getAttribute('layout_alignment'), 'centered'); // CHANGE
+        assert.equal(h.source.getAttribute('layout_offset_x_cm'), '0'); // CHANGE
+        for (const circle of preview.circles) { // CHANGE
+            const child = h.graph.getChildVertices(h.source).find(cell => Number(cell.getAttribute('tile_r')) === circle.row && Number(cell.getAttribute('tile_c')) === circle.col); // CHANGE
+            assert.ok(child); assert.ok(Math.abs(h.source.geometry.x + child.geometry.x + child.geometry.width / 2 - circle.x) < 1e-6); // CHANGE
+            assert.ok(Math.abs(h.source.geometry.y + child.geometry.y + child.geometry.height / 2 - circle.y) < 1e-6); // CHANGE
+        } // CHANGE
+        const centered = h.source.value.outerHTML; h.undoManager.undo(); assert.equal(h.source.value.outerHTML, before); h.undoManager.redo(); assert.equal(h.source.value.outerHTML, centered); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+test('centered bounds exclude disabled slots and remain balanced through fitting, resizing, and LOD', async () => { // CHANGE
+    for (const rotation of [0, 30, 45, 90, -30]) { // CHANGE
+        const h = setup({ rotation }); // CHANGE
+        try { // CHANGE
+            h.source.value.setAttribute('bed_fit_height', '1'); // CHANGE
+            const tile = h.graph.getChildVertices(h.source).find(cell => cell.getAttribute('tile_r') === '0' && cell.getAttribute('tile_c') === '1'); // CHANGE
+            tile.value.setAttribute('dirty', '1'); const geometry = tile.geometry.clone(); geometry.x += 2; h.graph.getModel().setGeometry(tile, geometry); // CHANGE
+            const disabled = h.graph.getChildVertices(h.source).filter(cell => cell.getAttribute('tile_c') === '0').map(cell => [Number(cell.getAttribute('tile_r')), 0]); // CHANGE
+            h.source.value.setAttribute('disabled_plants', JSON.stringify(disabled)); // CHANGE
+            const context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(item => item.cellId === h.source.id); // CHANGE
+            await h.tools.applySpacingDraft(h.graph, [{ ...row, allowedOverhangPct: 50, offsetXCm: 0, offsetYCm: 0 }]); // CHANGE
+            const balanced = () => { // CHANGE
+                const footprint = h.tiler.readPlantingFootprint(h.source), bed = h.bed.geometry; // CHANGE
+                assert.ok(Math.abs(footprint.x + footprint.width / 2 - bed.x - bed.width / 2) < 1e-6, `${rotation}: x`); // CHANGE
+                assert.ok(Math.abs(footprint.y + footprint.height / 2 - bed.y - bed.height / 2) < 1e-6, `${rotation}: y`); // CHANGE
+            }; // CHANGE
+            balanced(); // CHANGE
+            for (let pass = 0; pass < 3; pass++) { h.tiler.retileAndFitToContainingBed(h.graph, h.source); balanced(); } // CHANGE
+            h.tiler.retileGroup(h.graph, h.source, { forceCollapse: true }); h.tiler.retileGroup(h.graph, h.source, { forceExpand: true }); balanced(); // CHANGE
+            assert.equal(h.source.getAttribute('disabled_plants'), JSON.stringify(disabled)); // CHANGE
+            const bounds = h.bed.geometry.clone(); bounds.width += 50; bounds.height += 20; h.graph.resizeCells([h.bed], [bounds]); balanced(); // CHANGE
+        } finally { h.close(); } // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('centering rejects an oversized manual footprint and revalidates a moved circle before commit', async () => { // CHANGE
+    const h = setup(); // CHANGE
+    try { // CHANGE
+        const context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(item => item.cellId === h.source.id); // CHANGE
+        const tile = h.graph.getChildVertices(h.source)[0], geometry = tile.geometry.clone(); geometry.x -= 10000; tile.value.setAttribute('dirty', '1'); h.graph.getModel().setGeometry(tile, geometry); // CHANGE
+        const draft = { ...row, offsetXCm: 0, offsetYCm: 0 }, before = h.source.value.outerHTML, writes = h.writes.length; // CHANGE
+        const preview = h.tools.buildSpacingPreviewModel(h.graph, [draft]); assert.equal(preview.status, 'invalid'); assert.match(preview.warning, /footprint exceeds/); // CHANGE
+        await assert.rejects(h.tools.applySpacingDraft(h.graph, [draft]), /footprint exceeds/); // CHANGE
+        assert.equal(h.source.value.outerHTML, before); assert.equal(h.writes.length, writes); // CHANGE
+        geometry.x += 10001; h.graph.getModel().setGeometry(tile, geometry); // CHANGE
+        await assert.rejects(h.tools.applySpacingDraft(h.graph, [{ ...row, spacingXCm: 31 }]), /planting changed/); // CHANGE
     } finally { h.close(); } // CHANGE
 }); // CHANGE
 
@@ -137,21 +198,23 @@ test('Allocate overhang edits remain drafts until Create and persist even withou
     } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
 }); // CHANGE
 
-test('percentage fitting preserves manual logical positions and explicit disabled slots', async () => { // CHANGE
+test('percentage fitting translates manual and generated logical positions together and preserves disabled slots', async () => { // CHANGE
     const h = setup({ rotation: -30 }); // CHANGE
     try { // CHANGE
         const tile = h.graph.getChildVertices(h.source).find(cell => cell.getAttribute('plant_tiler') === '1'); // CHANGE
         const angle = -30 * Math.PI / 180; // CHANGE
-        function logicalCenter() { // CHANGE
+        function logicalCenter(target = tile) { // CHANGE
             const center = { x: h.source.geometry.width / 2, y: h.source.geometry.height / 2 }; // CHANGE
-            const dx = tile.geometry.x + tile.geometry.width / 2 - center.x, dy = tile.geometry.y + tile.geometry.height / 2 - center.y; // CHANGE
+            const dx = target.geometry.x + target.geometry.width / 2 - center.x, dy = target.geometry.y + target.geometry.height / 2 - center.y; // CHANGE
             return { x: center.x + dx * Math.cos(angle) + dy * Math.sin(angle), y: center.y - dx * Math.sin(angle) + dy * Math.cos(angle) }; // CHANGE
         } // CHANGE
         tile.value.setAttribute('dirty', '1'); const geometry = tile.geometry.clone(); geometry.x += 1; h.graph.getModel().setGeometry(tile, geometry); // CHANGE
         h.source.value.setAttribute('disabled_plants', '[[1,1]]'); // CHANGE
-        const before = logicalCenter(), context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(item => item.cellId === h.source.id); // CHANGE
+        const auto = h.graph.getChildVertices(h.source).find(cell => cell !== tile && cell.getAttribute('plant_tiler') === '1' && cell.getAttribute('tile_r') === '0'); // CHANGE
+        const before = logicalCenter(), beforeAuto = logicalCenter(auto), context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(item => item.cellId === h.source.id); // CHANGE
         await h.tools.applySpacingDraft(h.graph, [{ ...row, allowedOverhangPct: 50 }]); // CHANGE
-        const after = logicalCenter(); assert.ok(Math.abs(after.x - before.x) < 1e-6); assert.ok(Math.abs(after.y - before.y) < 1e-6); // CHANGE
+        const after = logicalCenter(), afterAuto = logicalCenter(auto); // CHANGE
+        assert.ok(Math.abs(after.x - before.x - afterAuto.x + beforeAuto.x) < 1e-6); assert.ok(Math.abs(after.y - before.y - afterAuto.y + beforeAuto.y) < 1e-6); // CHANGE
         assert.equal(tile.getAttribute('dirty'), '1'); assert.match(h.source.getAttribute('disabled_plants'), /1,1/); // CHANGE
     } finally { h.close(); } // CHANGE
 }); // CHANGE
@@ -438,13 +501,13 @@ test('shared spacing editor previews an unsaved row and toggles without graph or
     } finally { h.close(); } // CHANGE
 }); // CHANGE
 
-test('Allocate displays a fractional Y offset as zero without moving plants and commits its exact preview', async () => { // CHANGE
+test('Allocate keeps fractional automatic centering separate from zero user offsets and commits its exact preview', async () => { // CHANGE
     const h = setup(); // CHANGE
     try { // CHANGE
         const bedGeometry = h.bed.getGeometry().clone(); bedGeometry.width = 500; bedGeometry.height = 125; h.graph.getModel().setGeometry(h.bed, bedGeometry); // CHANGE: force a fractional automatic Y centering offset that rounds to zero.
         h.graph.getModel().execute(new h.window.mxCellAttributeChange(h.source, 'sow_date', '2026-04-01')); h.graph.getModel().execute(new h.window.mxCellAttributeChange(h.source, 'harvest_end', '2026-07-01')); // CHANGE: this fixture's new allocation has no occupied lifecycle overlap.
         const { state } = await startAllocate(h); await allocationWait(() => state.draft && !state.spacingPending); // CHANGE
-        const original = state.draft.geometry; assert.ok(original.layoutOffsetYCm > 0 && original.layoutOffsetYCm < 0.5); // CHANGE
+        const original = state.draft.geometry; assert.ok(original.layoutBaseOffsetYCm > 0 && original.layoutBaseOffsetYCm < 0.5); assert.equal(original.layoutOffsetYCm, 0); // CHANGE
         h.window.document.querySelector('[data-allocation-view="spacing"]').click(); await allocationWait(() => state.draft && !state.spacingPending); // CHANGE
         const fields = state.spacingBody.querySelectorAll('input[type=number]'); assert.equal(fields[3].value, '0'); // CHANGE
         fields[3].focus(); fields[3].blur(); fields[3].dispatchEvent(new h.window.Event('change')); // CHANGE
@@ -457,6 +520,7 @@ test('Allocate displays a fractional Y offset as zero without moving plants and 
         const previewCount = state.draft.plantCount; state.hudRefs.create.click(); await allocationWait(() => !state.reviewing); // CHANGE
         const group = Object.values(h.graph.getModel().cells).find(cell => cell.getAttribute?.('allocation_source') === 'year_plan'); assert.ok(group, state.noticeMessage); // CHANGE
         assert.equal(Number(group.getAttribute('layout_offset_y_cm')), original.layoutOffsetYCm); assert.equal(Number(group.getAttribute('plant_count')), previewCount); // CHANGE
+        assert.equal(Number(group.getAttribute('layout_base_offset_y_cm')), original.layoutBaseOffsetYCm); // CHANGE
         const rendered = h.tiler.buildDraftTilerGroupPreview(h.graph, group); assert.equal(rendered.actual, previewCount); // CHANGE
         assert.equal(h.undoManager.history.length, 1); h.undoManager.undo(); assert.equal(h.graph.getModel().getCell(group.id), undefined); // CHANGE
     } finally { h.window.USL.allocate?.close(); h.close(); } // CHANGE
@@ -522,7 +586,7 @@ test('saved-group apply and undo preserve untouched fractional offsets behind ro
         const fields = body.querySelectorAll('input[type=number]'), apply = Array.from(body.querySelectorAll('button')).find(button => button.textContent === 'Apply'); // CHANGE
         assert.equal(fields[2].value, '0'); assert.equal(fields[3].value, '0'); assert.equal(apply.disabled, true); // CHANGE
         fields[0].value = '31'; fields[0].dispatchEvent(new h.window.Event('input')); assert.equal(apply.disabled, false); apply.click(); // CHANGE
-        await allocationWait(() => h.undoManager.history.length > 0); // CHANGE
+        await allocationWait(() => body.textContent.includes('Spacing applied.')); // CHANGE: wait for the Apply action to finish clearing its preview, not just its first graph write.
         assert.equal(Number(h.source.getAttribute('layout_offset_x_cm')), 1 / 3); assert.equal(Number(h.source.getAttribute('layout_offset_y_cm')), -1 / 3); // CHANGE
         assert.equal(Number(h.source.getAttribute('spacing_x_cm')), 31); assert.equal(h.undoManager.history.length, 1); // CHANGE
         h.undoManager.undo(); assert.equal(h.source.value.outerHTML, before); assert.equal(JSON.stringify(h.source.geometry), geometry); // CHANGE
@@ -805,4 +869,162 @@ test('Allocate perennial badges include companion occupancy after the first harv
         assert.equal(summary.companion.length, 1); assert.equal(summary.companion[0].overlapStartISO, '2028-04-01'); // CHANGE
         assert.equal(state.hudRefs.companion.disabled, false); h.window.USL.allocate.close(); // CHANGE
     } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+
+/** Create one unrelated history edit before installing an allocation proposal. */ // CHANGE
+async function allocationHistoryFixture(companion = false) { // CHANGE
+    const h = await allocationSetup(); // CHANGE
+    h.historyStyle = h.source.getStyle(); h.graph.setCellStyles('fillColor', '#abcdef', [h.source]); // CHANGE: presentation history does not trigger a planning refresh before Undo.
+    if (companion) { h.state.hudRefs.companion.click(); await allocationWait(() => h.state.draft?.companionLayout && !h.state.reviewing && !h.state.spacingPending); } // CHANGE
+    return h; // CHANGE
+} // CHANGE
+
+/** Let delayed reloads, fitting promises and renderer refreshes drain before asserting absence. */ // CHANGE
+async function assertAllocationWaiting(h, crop, week) { // CHANGE
+    await new Promise(resolve => setTimeout(resolve, 250)); // CHANGE
+    h.graph.__trellisPlantingGroup.preview.refresh(); // CHANGE
+    const state = h.state; assert.equal(state.awaitingBedSelection, true); assert.equal(state.draft, null); assert.equal(state.targetBedId, ''); // CHANGE
+    assert.equal(state.selectedCropId, crop); assert.equal(state.weekIndex, week); assert.equal(h.window.USL.allocate.isActive(), true); // CHANGE
+    assert.equal(state.spacingOverrides, null); assert.equal(state.companionRows, null); assert.equal(state.spacingBody, null); assert.equal(state.spacingSaveDefaults, false); // CHANGE
+    assert.equal(h.window.document.querySelector('.trellis-allocate-ghost'), null); assert.equal(state.hudRefs.create.disabled, true); assert.equal(state.hudRefs.rotate.disabled, true); // CHANGE
+    assert.equal(h.window.document.querySelector('[data-allocation-view="spacing"]'), null); // CHANGE
+} // CHANGE
+
+for (const companion of [false, true]) test(`history clears ${companion ? 'companion' : 'ordinary'} allocation and a same-bed click resumes it`, async () => { // CHANGE
+    const h = await allocationHistoryFixture(companion); // CHANGE
+    try { // CHANGE
+        const state = h.state, crop = state.selectedCropId, week = state.weekIndex; // CHANGE
+        state.spacingSaveDefaults = true; const history = h.undoManager.history.length, writes = h.writes.length; // CHANGE
+        assert.ok(h.window.document.querySelector('.trellis-allocate-ghost')); // CHANGE
+        const index = h.undoManager.indexOfNextAdd, style = h.source.getStyle(); // CHANGE
+        h.undoManager.undo(); await assertAllocationWaiting(h, crop, week); // CHANGE
+        assert.equal(h.undoManager.indexOfNextAdd, index); assert.equal(h.source.getStyle(), style); // CHANGE: dismissal does not advance history.
+        h.undoManager.undo(); assert.equal(h.source.getStyle(), h.historyStyle); assert.equal(h.undoManager.indexOfNextAdd, index - 1); // CHANGE: the next command undoes the real edit.
+        h.graph.fireEvent(new h.window.mxEventObject(h.window.mxEvent.CLICK, 'cell', h.bed)); // CHANGE
+        await allocationWait(() => state.draft && !state.spacingPending); assert.equal(state.draft.bed, h.bed); assert.equal(state.companionMode, false); // CHANGE
+        h.undoManager.redo(); await assertAllocationWaiting(h, crop, week); // CHANGE
+        assert.equal(h.undoManager.indexOfNextAdd, index - 1); assert.equal(h.source.getStyle(), h.historyStyle); // CHANGE
+        h.undoManager.redo(); assert.equal(h.undoManager.indexOfNextAdd, index); assert.equal(h.source.getStyle(), style); // CHANGE: the next command redoes the real edit.
+        assert.equal(h.undoManager.history.length, history); assert.equal(h.writes.length, writes); // CHANGE
+        state.hudRefs.findBest.click(); await allocationWait(() => state.draft && !state.findingBed); // CHANGE
+        assert.equal(state.awaitingBedSelection, false); // CHANGE
+        const listeners = h.undoManager.eventListeners.length; h.window.USL.allocate.close(); // CHANGE
+        assert.ok(h.undoManager.eventListeners.length < listeners); // CHANGE
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
+}); // CHANGE
+
+test('Undo cancels a pending allocation spacing fit without republishing its result', async () => { // CHANGE
+    const h = await allocationHistoryFixture(); // CHANGE
+    try { // CHANGE
+        const state = h.state, scheduler = h.window.USL.scheduler, crop = state.selectedCropId, week = state.weekIndex; // CHANGE
+        h.window.document.querySelector('[data-allocation-view="spacing"]').click(); await allocationWait(() => !state.spacingPending); // CHANGE
+        const relationships = scheduler.listAllocationOverlapRelationships; let release, reached = false; // CHANGE: ordinary spacing reuses lifecycle but still awaits relationship lookup. // CHANGE
+        const pending = new Promise(resolve => { release = resolve; }); // CHANGE
+        scheduler.listAllocationOverlapRelationships = async (...args) => { reached = true; await pending; return relationships(...args); }; // CHANGE // CHANGE
+        state.relationshipCache.clear(); state.bedResultCache.clear(); // CHANGE
+        const field = state.spacingBody.querySelector('input[type=number]'); field.value = '19'; field.dispatchEvent(new h.window.Event('input')); // CHANGE
+        await allocationWait(() => reached); const index = h.undoManager.indexOfNextAdd; h.undoManager.undo(); scheduler.listAllocationOverlapRelationships = relationships; release(); // CHANGE
+        assert.equal(h.undoManager.indexOfNextAdd, index); // CHANGE: cancelling an outstanding fit must not undo its unrelated graph edit.
+        await assertAllocationWaiting(h, crop, week); // CHANGE
+        assert.equal(state.spacingPending, false); assert.equal(h.writes.length, 0); // CHANGE
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
+}); // CHANGE
+
+test('Undo dismisses allocation review and obsolete review cannot create a planting', async () => { // CHANGE
+    const h = await allocationHistoryFixture(true); // CHANGE
+    try { // CHANGE
+        const state = h.state; state.draft.warnings = ['Review this proposal']; // CHANGE
+        state.hudRefs.create.click(); await allocationWait(() => h.getDialog()?.textContent.includes('Generated tasks')); // CHANGE
+        const create = dialogButton(h, 'Create anyway') || dialogButton(h, 'Create'), writes = h.writes.length; // CHANGE // CHANGE
+        h.undoManager.undo(); create.click(); await assertAllocationWaiting(h, state.selectedCropId, state.weekIndex); // CHANGE
+        assert.equal(h.getDialog(), null); assert.equal(state.reviewing, false); // CHANGE
+        assert.notEqual(h.source.getStyle(), h.historyStyle); // CHANGE: cancelling review leaves graph history untouched.
+        h.undoManager.undo(); assert.equal(h.source.getStyle(), h.historyStyle); // CHANGE: the next Undo restores the committed style.
+        assert.equal(h.tiler.listPlantingFootprints(h.moduleCell, { includeUndatedOccupancy: true }).filter(item => item.plantId === '2').length, 0); // CHANGE
+        assert.equal(h.writes.length, writes); // CHANGE // CHANGE
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
+}); // CHANGE
+
+
+test('history-invalidated defaults setup cannot unlock a newer allocation review', async () => { // CHANGE
+    const h = await allocationHistoryFixture(); // CHANGE
+    try { // CHANGE
+        const state=h.state,scheduler=h.window.USL.scheduler,resolveDefaults=scheduler.resolveAllocationDefaultStatus; // CHANGE
+        scheduler.resolveAllocationDefaultStatus=async()=>({complete:false,missing:['tasks']});state.defaultsLookup=null; // CHANGE
+        h.graph.fireEvent(new h.window.mxEventObject('trellisPlantingGroupReady')); // CHANGE
+        await allocationWait(()=>state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]')); // CHANGE
+        let release,setupOptions;const setup=new Promise(resolve=>{release=resolve;}); // CHANGE
+        scheduler.openAllocationScheduleDialog=async(_ui,_draft,options)=>{setupOptions=options;return setup;}; // CHANGE
+        state.hudRefs.defaultsBox.querySelector('[data-allocation-missing-default="tasks"]').click(); // CHANGE
+        await allocationWait(()=>setupOptions);assert.equal(state.reviewing,true); // CHANGE
+        h.undoManager.undo();assert.equal(setupOptions.isCurrent(),false);scheduler.resolveAllocationDefaultStatus=resolveDefaults; // CHANGE
+        await assertAllocationWaiting(h,state.selectedCropId,state.weekIndex); // CHANGE
+        h.graph.fireEvent(new h.window.mxEventObject(h.window.mxEvent.CLICK,'cell',h.bed)); // CHANGE
+        await allocationWait(()=>state.draft&&state.defaultsLookup?.status?.complete); // CHANGE
+        state.draft.warnings=['Review this proposal'];state.hudRefs.create.click();await allocationWait(()=>h.getDialog()); // CHANGE
+        release({action:'cancel'});await new Promise(resolve=>setTimeout(resolve,20)); // CHANGE
+        assert.equal(state.reviewing,true);assert.ok(h.getDialog()); // CHANGE
+        dialogButton(h,'Cancel').click();await allocationWait(()=>!state.reviewing); // CHANGE
+        assert.equal(h.writes.length,0); // CHANGE
+    } finally {h.window.USL.allocate.close();h.close();} // CHANGE
+}); // CHANGE
+
+
+for (const direction of ['undo', 'redo']) test(`${direction} dismisses simultaneous spacing and allocation owners without touching either history stack`, async () => { // CHANGE
+    const h = await allocationHistoryFixture(); // CHANGE
+    try { // CHANGE
+        const { graph, window: w, state } = h, overlay = graph.__trellisPlantingGroup.overlay; // CHANGE
+        graph.setSelectionCell(h.source); overlay.setMode('spacing'); // CHANGE
+        await allocationWait(() => overlay.registry.get(h.source.id)?.panel?.querySelector('input[type=number]') && state.draft); // CHANGE
+        const entry = overlay.registry.get(h.source.id), field = entry.panel.querySelector('input[type=number]'); // CHANGE
+        field.value = '31'; field.dispatchEvent(new w.Event('input')); // CHANGE
+        assert.ok(w.document.querySelector('.manual-link-spacing-preview')); assert.ok(w.document.querySelector('.trellis-allocate-ghost')); // CHANGE
+        const history = Array.from(h.undoManager.history), index = h.undoManager.indexOfNextAdd, style = h.source.getStyle(), writes = h.writes.length; // CHANGE
+        const crop = state.selectedCropId, week = state.weekIndex; // CHANGE
+        h.undoManager[direction](); await assertAllocationWaiting(h, crop, week); // CHANGE
+        assert.equal(entry.spacingDraftByCellId.size, 0); assert.equal(w.document.querySelector('.manual-link-spacing-preview'), null); // CHANGE
+        assert.equal(h.undoManager.indexOfNextAdd, index); assert.deepEqual(Array.from(h.undoManager.history), history); assert.equal(h.source.getStyle(), style); assert.equal(h.writes.length, writes); // CHANGE
+        h.undoManager.undo(); assert.equal(h.source.getStyle(), h.historyStyle); // CHANGE: open allocation's waiting state does not swallow another command.
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
+}); // CHANGE
+
+test('allocation dismissal enables both commands with empty history and unregisters on close/reopen', async () => { // CHANGE
+    const h = await allocationSetup(); // CHANGE
+    try { // CHANGE
+        const { ui, state } = h; assert.equal(h.undoManager.history.length, 0); // CHANGE
+        assert.equal(ui.canUndo(), true); assert.equal(ui.canRedo(), true); // CHANGE
+        ui.actions.get('redo').funct(); await assertAllocationWaiting(h, state.selectedCropId, state.weekIndex); // CHANGE
+        assert.equal(ui.canUndo(), false); assert.equal(ui.canRedo(), false); // CHANGE
+        assert.equal(ui.actions.get('undo').isEnabled(), false); assert.equal(ui.actions.get('redo').isEnabled(), false); // CHANGE
+        h.window.USL.allocate.close(); assert.equal(h.graph.__trellisPlantingPreviewDrafts.size, 1); // CHANGE: only regular spacing remains registered.
+        const undo = h.undoManager.undo, redo = h.undoManager.redo; // CHANGE
+        const reopened = (await startAllocate(h)).state; await allocationWait(() => reopened.draft); // CHANGE
+        assert.equal(h.undoManager.undo, undo); assert.equal(h.undoManager.redo, redo); assert.equal(h.graph.__trellisPlantingPreviewDrafts.size, 2); // CHANGE
+        h.ui.undo(); assert.equal(reopened.awaitingBedSelection, true); assert.equal(h.undoManager.history.length, 0); // CHANGE
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
+}); // CHANGE
+
+
+for (const direction of ['undo', 'redo']) test(`${direction} cancels a pending deliberate bed search while allocation waits without unlocking its replacement`, async () => { // CHANGE
+    const h = await allocationHistoryFixture(); // CHANGE
+    try { // CHANGE
+        const { state, ui } = h, scheduler = h.window.USL.scheduler; h.undoManager.undo(); // CHANGE
+        await assertAllocationWaiting(h, state.selectedCropId, state.weekIndex); // CHANGE
+        const resolvePlant = scheduler.resolvePlantForPlanCrop; let release, reached = false; // CHANGE
+        const pending = new Promise(resolve => { release = resolve; }); // CHANGE
+        scheduler.resolvePlantForPlanCrop = async (...args) => { if (state.findingBed) { reached = true; await pending; } return resolvePlant(...args); }; // CHANGE
+        state.bedResultCache.clear(); state.hudRefs.findBest.click(); await allocationWait(() => reached); // CHANGE
+        assert.equal(state.awaitingBedSelection, true); assert.equal(ui.canUndo(), true); assert.equal(ui.canRedo(), true); // CHANGE
+        const index = h.undoManager.indexOfNextAdd, history = Array.from(h.undoManager.history); // CHANGE
+        h.undoManager[direction](); assert.equal(h.undoManager.indexOfNextAdd, index); assert.equal(state.findingBed, false); // CHANGE
+        let releaseNext, nextReached = false; const next = new Promise(resolve => { releaseNext = resolve; }); // CHANGE
+        scheduler.resolvePlantForPlanCrop = async (...args) => { if (state.findingBed) { nextReached = true; await next; } return resolvePlant(...args); }; // CHANGE
+        state.bedResultCache.clear(); state.hudRefs.findBest.click(); await allocationWait(() => nextReached); // CHANGE
+        release(); await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(state.findingBed, true); // CHANGE: the discarded job's finally cannot alter the replacement's busy state.
+        h.undoManager[direction](); releaseNext(); scheduler.resolvePlantForPlanCrop = resolvePlant; // CHANGE
+        await assertAllocationWaiting(h, state.selectedCropId, state.weekIndex); // CHANGE
+        assert.equal(h.undoManager.indexOfNextAdd, index); assert.deepEqual(Array.from(h.undoManager.history), history); // CHANGE
+        h.undoManager.undo(); assert.equal(h.source.getStyle(), h.historyStyle); assert.equal(h.writes.length, 0); // CHANGE
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
 }); // CHANGE

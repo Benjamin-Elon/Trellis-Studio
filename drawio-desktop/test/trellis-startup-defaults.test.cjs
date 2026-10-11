@@ -17,6 +17,7 @@ const trellisDefaultPluginIds = [
     "trellisDatabaseTools",
     "trellisUiCleanup",
     "trellisUsers",
+    "trellisSyncthing", // NEW
     "trellisContextMenu",
     "gardenSuccession",
     "plantingGroup",
@@ -44,6 +45,7 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Trellis_Database_Tools.js",
     "plugins/garden_planner_plugins/Trellis_UI_Cleanup.js",
     "plugins/garden_planner_plugins/Trellis_Users.js",
+    "plugins/garden_planner_plugins/Trellis_Syncthing.js", // NEW
     "plugins/garden_planner_plugins/Trellis_Context_Menu.js",
     "plugins/garden_planner_plugins/Bed_Succession_Navigator.js",
     "plugins/garden_planner_plugins/Planting_Group.js",

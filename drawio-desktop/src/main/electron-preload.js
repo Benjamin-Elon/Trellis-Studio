@@ -146,6 +146,29 @@ contextBridge.exposeInMainWorld('trellisApp', {
 });
 
 contextBridge.exposeInMainWorld('trellisShare', {
+	setContext: payload => sharingRequest('setContext', payload), // NEW
+	setupCanvas: payload => sharingRequest('setupCanvas', payload), // NEW
+	createInviteBlock: payload => sharingRequest('createInviteBlock', payload), // NEW
+	createDeviceInvite: payload => sharingRequest('createDeviceInvite', payload), // NEW
+	joinCanvas: payload => sharingRequest('joinCanvas', payload), // NEW
+	requestMembership: payload => sharingRequest('requestMembership', payload), // NEW
+	listRequests: payload => sharingRequest('listRequests', payload), // NEW
+	getStatus: () => sharingRequest('getStatus', {}), // NEW
+	setPaused: payload => sharingRequest('setPaused', payload), // NEW
+	inspectConflict: payload => sharingRequest('inspectConflict', payload), // NEW
+	setConflictState: payload => sharingRequest('setConflictState', payload), // NEW
+	saveRecoveryCopy: payload => sharingRequest('saveRecoveryCopy', payload), // NEW
+	openAsset: payload => sharingRequest('openAsset', payload), // NEW
+	resolveConflict: payload => sharingRequest('resolveConflict', payload), // NEW
+	exportHistory: payload => sharingRequest('exportHistory', payload), // NEW
+	importHistory: payload => sharingRequest('importHistory', payload), // NEW
+	recovery: payload => sharingRequest('recovery', payload), // NEW
+	onStatus(listener) { // NEW: return explicit subscription cleanup to each plugin.
+		if (typeof listener !== 'function') throw new Error('A sharing status listener is required.');
+		const receive = (_event, status) => listener(status);
+		ipcRenderer.on('trellisShareStatus', receive);
+		return () => ipcRenderer.removeListener('trellisShareStatus', receive);
+	},
 	getSyncthingShareInfo(opts = {}) {
 		return new Promise((resolve, reject) => {
 			requestViaIPC(
@@ -165,6 +188,9 @@ contextBridge.exposeInMainWorld('trellisShare', {
 		});
 	}
 });
+function sharingRequest(method, payload = {}) { // NEW
+	return new Promise((resolve, reject) => requestViaIPC({ action: 'trellisShare', method, payload }, resolve, message => reject(new Error(message || 'Sharing request failed'))));
+}
   
 
 contextBridge.exposeInMainWorld(

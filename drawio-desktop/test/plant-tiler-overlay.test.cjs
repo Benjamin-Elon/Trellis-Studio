@@ -209,7 +209,7 @@ test('Garden bed path snapping evaluates direct neighbors and closest path prese
 test('Garden bed path snapping hooks creation, move, resize, Alt bypass, and overlay badges', () => { // NEW
     const source = readPlantTilerSource(); // NEW
     const snapSource = sourceSlice(source, 'function normalizeRotationDeg', 'function bedAtGraphPoint'); // NEW
-    const resizeSource = sourceSlice(source, 'graph.resizeCells = function (cells, bounds, recurse)', '// ---- Public API export'); // NEW
+    const resizeSource = sourceSlice(source, 'const resizeAndRetile = function (cells, bounds, recurse)', '// ---- Public API export'); // CHANGE: resize orchestration delegates to the complete placement pipeline.
 
     assert.match(source, /applyBedPathSnapNoTxn\(model, bed, \{ source: "bed-created" \}\);/); // NEW
     assert.match(source, /function installBedPathSnapMoveWrapper\(\)[\s\S]*const oldMoveCells = graph\.moveCells;[\s\S]*const snapContext = resolveBedPathSnapMoveContext\(cells, evt, clone, target\);[\s\S]*if \(!snapContext\) return oldMoveCells\.call\(this, cells, dx, dy, clone, target, evt, mapping\);[\s\S]*applyBedPathSnapEvaluationNoTxn\(model, snapContext, \{ source: "bed-moved", event: evt \}\);/); // CHANGE
@@ -532,10 +532,10 @@ test('Bed fit persists per-axis intent and bed resize consumes only persisted ax
     assert.match(source, /fitOnDrag \? \{ fitWidth: true, fitHeight: true \} : inferBedAssemblyFitAxes\(assembly, bed\)/);
     assert.match(source, /syncBedAssemblyFitToBed\(parent, assembly, bed, axes, \{ inTransaction: true \}\)/);
     assert.match(fitSource, /const usePersistedFitAxes = !!\(debugCtx && debugCtx\.usePersistedFitAxes\);/);
-    assert.match(fitSource, /const fitWidth = usePersistedFitAxes \? forcedFitWidth : \(widthClose \|\| canDragFit\);/);
-    assert.match(fitSource, /const fitHeight = usePersistedFitAxes \? forcedFitHeight : \(heightClose \|\| canDragFit\);/);
-    assert.match(fitSource, /if \(persistAxisIntent\) writeBedFitAxesNoTxn\(model, tg, fitWidth, fitHeight\);/);
-    assert.match(fitSource, /if \(persistAxisIntent\) writeBedFitAxesNoTxn\(model, tg, false, false\);/);
+    assert.match(fitSource, /const fitWidth = !\(resizeIntent && resizeIntent\.axes\.fitWidth\) && \(usePersistedFitAxes \? forcedFitWidth : \(widthClose \|\| canDragFit\)\);/); // CHANGE
+    assert.match(fitSource, /const fitHeight = !\(resizeIntent && resizeIntent\.axes\.fitHeight\) && \(usePersistedFitAxes \? forcedFitHeight : \(heightClose \|\| canDragFit\)\);/); // CHANGE
+    assert.match(fitSource, /if \(persistAxisIntent\) writeBedFitAxesNoTxn\(model, tg, fitWidth \|\| retainWidth, fitHeight \|\| retainHeight\);/); // CHANGE
+    assert.match(fitSource, /if \(persistAxisIntent\) writeBedFitAxesNoTxn\(model, tg, retainWidth, retainHeight\);/); // CHANGE: unchanged fitted axes survive a direct resize of the other axis.
     assert.match(normalizeSource, /const persistAxisIntent = !!\(opts && opts\.persistAxisIntent\);/);
     assert.match(listenerSource, /source: "cells-moved"[\s\S]*persistAxisIntent: true/);
     assert.match(listenerSource, /source: "cells-resized"[\s\S]*persistAxisIntent: true[\s\S]*clearFitAxisIntentOnNoBed: true/);

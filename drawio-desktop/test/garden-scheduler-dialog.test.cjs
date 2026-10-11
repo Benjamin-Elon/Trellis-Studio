@@ -1121,12 +1121,13 @@ test('spacing preview model uses tiler-faithful draft group copies with a 1000 c
     assert.equal(model.rows[0].groupPreview.lodCollapsed, false);
 });
 
-test('spacing preview model supports upright bed context rows without status noise', () => {
+test('spacing preview model preserves rotated bed context rows without status noise', () => {
     let calls = [];
     const bed = { id: 'bed-1', getAttribute: key => ({ garden_bed: '1', label: 'Bed 1' }[key] || '') };
     const edited = { id: 'carrot-group', getAttribute: key => ({ tiler_group: '1', plant_abbr: 'CAR', label: 'Carrot' }[key] || '') };
     const context = { id: 'lettuce-group', getAttribute: key => ({ tiler_group: '1', plant_abbr: 'LET', label: 'Lettuce' }[key] || '') };
     const graph = {
+        getCellStyle: cell => ({ rotation: cell === bed ? -30 : 0 }), // CHANGE: the bed angle is independent of the planting angles.
         getModel() {
             return {
                 getCell(id) {
@@ -1159,20 +1160,20 @@ test('spacing preview model supports upright bed context rows without status noi
 
     const model = hooks.layoutTools.buildSpacingPreviewModel(graph, [
         {
-            cellId: 'carrot-group',
+            cellId: 'carrot-group', rotationDeg: 37, // CHANGE
             bedId: 'bed-1',
             enabled: true,
-            previewUnrotated: true,
+            previewBedContext: true,
             label: 'Carrot',
             rect: { x: 10, y: 20, width: 90, height: 70 },
             bedRect: { x: 0, y: 0, width: 200, height: 100 }
         },
         {
-            cellId: 'lettuce-group',
+            cellId: 'lettuce-group', rotationDeg: 90, // CHANGE
             bedId: 'bed-1',
             enabled: false,
             previewOnly: true,
-            previewUnrotated: true,
+            previewBedContext: true,
             label: 'Lettuce',
             rect: { x: 100, y: 20, width: 70, height: 70 },
             bedRect: { x: 0, y: 0, width: 200, height: 100 }
@@ -1180,9 +1181,9 @@ test('spacing preview model supports upright bed context rows without status noi
     ]);
 
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].opts.rotationDeg, 0);
-    assert.equal(calls[1].opts.rotationDeg, 0);
-    assert.equal(JSON.stringify(model.bedPreview), JSON.stringify({ cellId: 'bed-1', rect: { x: 0, y: 0, width: 200, height: 100 } }));
+    assert.equal(calls[0].opts.rotationDeg, 37); // CHANGE: retain the edited group angle.
+    assert.equal(calls[1].opts.rotationDeg, 90); // CHANGE: retain unchanged context group angles.
+    assert.equal(JSON.stringify(model.bedPreview), JSON.stringify({ cellId: 'bed-1', rect: { x: 0, y: 0, width: 200, height: 100 }, rotationDeg: -30 }));
     assert.equal(model.status, 'invalid');
     assert.match(model.warning, /Carrot: No plants remain inside the planting area/);
     assert.doesNotMatch(model.warning, /Lettuce/);

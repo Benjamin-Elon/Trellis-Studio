@@ -1,0 +1,171 @@
+<!-- NEW: integration contract, operational behavior, and release acceptance checklist. -->
+# Trellis Managed Canvas Sharing
+
+## Architecture
+
+`src/main/trellis-syncthing-service.js` owns one isolated Syncthing daemon per Trellis
+installation. The private profile, API key, signing key, registry, and recovery
+copies live under the existing application's local data directory in
+`trellis-sharing/`. Neither the key material nor the live SQLite database enters
+a synchronized directory. The control API uses an allocated loopback port; sync
+listeners use a separate allocated port, with public discovery and relay fallback.
+
+`trellis-share-protocol.js` defines XML parsing, versioned invite/reply blocks,
+permission preservation, canonical signed records, and identity validation.
+`trellis-sharing-tray.js` owns tray controls and launch-at-sign-in registration.
+`Trellis_Syncthing.js` orchestrates the existing Users, ChangeMap, file watcher,
+and desktop file APIs through the narrow preload bridge.
+
+No renderer API permits arbitrary Syncthing REST calls, arbitrary configuration,
+or retrieval of credentials. Mutation requests are bound to a window's watched
+file and diagram identity. Users/PIN permissions remain soft workflow enforcement;
+an approved device still receives the full XML and can tamper with it externally.
+The existing generic filesystem bridge and diagram asset relocation also reject
+private service-profile paths, including directory aliases. Local recovery
+documents are the only user-accessible exception within that profile.
+The application file-request filter permits image requests for registered canvas
+assets only; other local-file requests retain the existing application/plugin
+directory restriction. Scripts and fetch requests cannot use the asset exception.
+
+## Bundling
+
+Run from `drawio-desktop` after installing dependencies:
+
+```text
+npm run syncthing:prepare
+npm run syncthing:prepare -- win32 arm64
+npm run syncthing:prepare -- --all
+```
+
+The preparation script pins version 2.1.6 and the checksum-list digest, checks
+each archive, and stages the executable and upstream notices in ignored
+`vendor/syncthing/<platform>-<arch>/`. No runtime downloads occur.
+
+The existing `afterPack` hook copies only the matching binary into
+`resources/syncthing/<platform>-<arch>/`, outside ASAR, and verifies its manifest.
+Supported targets without prepared binaries fail the build explicitly. Legacy
+32-bit and unsupported runtime targets report sharing unavailable.
+
+On macOS the packaging hook also records a signature-stripped program hash and
+registers the helper for release signing. Runtime permits signature-byte changes
+only after Apple's signature validation and a matching stripped program hash.
+The build must run on macOS for this signing path. Updates ship through Trellis
+releases; independent Syncthing upgrades are disabled.
+
+The release workflow prepares all six distributions and runs an isolated native
+transport smoke test before packaging. Windows ARM64 installers are built on the
+Windows runner; that runner tests its own x64 service, not ARM64 execution.
+
+## First Share And Join
+
+1. Enable Users and log in. Select eligible module, board, or garden-bed scopes.
+2. Share confirms that editing grants do not limit what recipients download.
+   Save pending edits; then move the XML into an isolated folder under
+   `Documents/Trellis/Shared Canvases/<share-id>/`.
+3. Explicit local images and file links are copied to hashed `assets/` filenames.
+   XML receives relative references, while rendering resolves them locally.
+   Missing files or directory references block setup with the affected paths.
+   Destination contents and the unchanged source are verified before deletion.
+4. The existing Users invitation and prepared email gain a versioned invite block.
+   It contains identities/codes, not local paths or service credentials.
+5. The recipient chooses **Extras > Join Shared Canvas** (also available from the
+   login gate), pastes the block, and returns the prepared device-approval reply.
+6. An admin pastes that reply in **Canvas Sync**. After approval and synchronization,
+   the recipient opens the arrived file and uses **Accept Invite** for name/PIN.
+   Opening a pending/missing file is blocked rather than creating a blank canvas.
+
+Admins can issue separate one-time device-setup invitations for existing users
+with an email and effective access. This never creates a second account or resets
+its PIN. Ordinary invitation resends invalidate device replies carrying the old
+token fingerprint. New Users invitations still expire after 14 days.
+
+## Membership
+
+Each canvas has a fixed coordinator device and pinned Ed25519 public key.
+Immutable device-signed admin requests and coordinator-signed acknowledgements
+are transported in `.trellis/`. The coordinator publishes monotonically versioned
+membership manifests. Requests require the expected version, an approved signing
+device, a currently active admin, and a still-valid invitation/effective access.
+
+Peers configure a full per-canvas mesh of approved devices. Native introducer and
+automatic-folder-accept flags remain off. Existing peer sync continues while the
+coordinator is offline; membership requests wait. Reconnection does not elect a
+new coordinator. Explicit admin recovery creates a new share/folder ID and requires
+collaborators to join again. Failed recovery restores the original registration.
+
+The coordinator reevaluates saved ownership, inherited grants, open scopes, account
+disablement, and invitation expiry/revocation. Partial grant removal does not revoke
+a device that still has access. Devices without effective access are removed from
+folder configurations. Removal cannot erase downloaded content. A disconnected
+removed device may retain stale local membership until it receives a new signed
+manifest, even though updated peers no longer share with it.
+
+## Conflicts And History
+
+Clean incoming replacements reload through trusted graph changes and revalidate
+the existing user. Missing/disabled users lose their session and return to the
+opaque auth gate. Receiving changes does not create a local-actor revision.
+
+Unsaved local work or native conflict copies block shared saves. Unsaved XML is
+retained in local recovery storage, membership changes pause, and everyone can
+inspect versions, save another recovery copy, or explicitly reload the shared
+version. Only a logged-in admin may publish a reviewed version. Both the current
+and reviewed hashes are checked again; existing Users/ownership/access metadata
+is preserved instead of restoring stale permissions from the chosen content.
+Inputs and unresolved native conflicts are retained until explicit resolution.
+Conflict review shows added, changed, and removed cells (up to 100 detailed rows),
+as well as the selected XML. Page reordering preserves permissions by page ID,
+not position. Multi-page canvases require unique page IDs and consistent Users
+stores; full multi-page Users/ChangeMap workflow acceptance remains outstanding.
+
+Successful saves publish their stable ChangeMap checkpoint as immutable revision
+and snapshot JSON with a unique ID, checksum, actor, and parent. Intermediate work
+that was never saved remains local. No pre-sharing history is backfilled. Import
+is idempotent into local SQLite, tolerates missing/out-of-order parents, keeps
+divergent revision IDs, validates exports, and never republishes imported records.
+The live SQLite database, drafts, and unrelated neighboring files are excluded
+by a folder allowlist. Received versions use local Syncthing simple versioning.
+
+## Background Behavior And Presence
+
+The first successful Share/Join enables launch-at-sign-in when supported, returning
+an explicit warning otherwise. Background startup creates no canvas or diagram
+login session. Closing the last window keeps the tray and daemon alive; explicit
+Quit shuts down the child. If no usable Linux tray is detected, an application
+window remains accessible instead of an invisible background process.
+After the first successful startup registration, later Shares/Joins respect a
+user's decision to turn launch-at-sign-in off.
+
+The dashboard and tray show distinct active remote users with connected approved
+devices. Multiple devices for one person count once; pending users and the local
+actor are excluded. Counts reflect this installation's observed connections,
+including tray-only peers. Unavailable services show unknown counts, never stale
+online claims.
+
+## Verification
+
+```text
+npm run test:syncthing
+```
+
+Real process tests are opt-in and use disposable profiles without modifying the
+user's Syncthing installations or startup settings:
+
+```powershell
+$env:TRELLIS_SYNCTHING_RUNTIME_TEST='1'
+node --test test/trellis-syncthing-runtime.test.mjs
+```
+
+Automated Windows verification covers native daemon startup/shutdown and actual
+three-device transfer after coordinator shutdown, plus service and renderer edge
+cases. Release acceptance still requires native ARM64, macOS signing/notarization,
+Linux desktop tray/startup, packaged Windows close-to-tray/Quit, and internet/relay
+testing on separate machines. Disk-full and cross-volume failures need injected
+or manual acceptance checks; failures must never be presented as successful sync.
+Packaging tests cover resource placement for all six targets, vendor exclusion,
+integrity failures, tray dispatch, and persistent AppImage startup commands without
+altering local login settings. Service tests cover bounded crash retries and Quit
+while startup requests are still pending.
+
+Git controls, live co-editing, automatic coordinator takeover, planned coordinator
+transfer, mobile clients, and historical backfill remain intentionally deferred.

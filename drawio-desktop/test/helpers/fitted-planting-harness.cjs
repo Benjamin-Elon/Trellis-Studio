@@ -20,8 +20,8 @@ function loadFittedPlantingGeometry() { // CHANGE
     const names = ['toPx', 'clamp', 'groupLabelMetrics', 'resolveAllowedOverhangPct', 'allowedOverhangForDiameter', 'bedFitLabelBandPxForSize', 'solveOuterHeightForPlantingFrame', // CHANGE
         'nearlySameNumber', 'toRad', 'rotateVectorModel', 'rotatePointAround', 'positionGeometryForLocalPoint', 'modelPointForLocalPoint', 'getTilerRotationDeg', // CHANGE
         'ymdValue', 'ymdIntervalsOverlap', 'plantingProposalConflictRank', 'computeGridStatsXY', 'classifyPlantingSlots', 'getXmlAttr', 'finiteNumberOrNull', // CHANGE
-        'layoutGridOffsetPx', 'shiftedSlotCenterLocal', 'interplantSlotCenterLocal', 'logicalSlotCenterLocal', 'isInterplantLayoutGroup', // CHANGE
-        'plantingContentBoundsLocal', 'isPointInPlantingContentArea', 'readDisabledSet', 'safeJsonParse', 'applyCounts', 'writeDisabledSet', // CHANGE
+        'layoutGridOffsetPx', 'layoutGridBaseOffsetPx', 'plantingLayoutDiameterPx', 'shiftedSlotCenterLocal', 'interplantSlotCenterLocal', 'logicalSlotCenterLocal', 'isInterplantLayoutGroup', // CHANGE
+        'plantingContentBoundsLocal', 'isPointInPlantingContentArea', 'snapshotTileMap', 'readDisabledSet', 'safeJsonParse', 'applyCounts', 'writeDisabledSet', // CHANGE
         'writeBedFitAxesNoTxn', 'createPlantingFromProposal', 'readPlantingFootprint']; // CHANGE
     const geometryCode = source.slice(source.indexOf('    /** Returns the corners of a planting footprint'), source.indexOf('    function previewDraftNumber')); // CHANGE
     vm.runInContext(config + names.map(sourceFunction).join('\n') + geometryCode, context); // CHANGE

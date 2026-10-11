@@ -740,11 +740,13 @@ Draw.loadPlugin(function (ui) {
       return rows[0] || null;
     }
 
-    async function recordRevision(revision, snapshot) {
+    async function recordRevision(revision, snapshot, imported) { // CHANGE
       if (!store.ready) return false;
+      if ((await query('SELECT id FROM history_events WHERE id = ? LIMIT 1', [revision.id])).length) return false; // NEW: shared history imports are idempotent.
       await exec('INSERT OR IGNORE INTO history_snapshots (snapshot_id, diagram_id, hash, compressed_kind, compressed_xml, byte_size, checksum, created_at, snapshot_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [snapshot.snapshotId, revision.diagramHistoryId, revision.diagramHash, snapshot.compressedKind, snapshot.compressedXml, snapshot.byteSize, snapshot.checksum, revision.timestamp, 'full']);
       await exec('INSERT INTO history_events (id, diagram_id, timestamp, category, action, origin, title, affected_cell_ids, change_types, counts_json, snapshot_id, parent_revision_id, restored_from_revision_id, tags_json, metadata_json, checkpoint, diagram_hash, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [revision.id, revision.diagramHistoryId, revision.timestamp, revision.category, revision.action, revision.origin, revision.title, JSON.stringify(revision.affectedCellIds || []), JSON.stringify(revision.changeTypes || []), JSON.stringify(revision.counts || {}), revision.snapshotId, revision.parentRevisionId || null, revision.restoredFromRevisionId || null, JSON.stringify(revision.tags || []), JSON.stringify(revision), revision.checkpoint ? 1 : 0, revision.diagramHash, HISTORY_SCHEMA_VERSION]);
-      await thinHistoryIfNeeded(revision.diagramHistoryId);
+      const sharing = graph.__trellisSharing; // NEW: shared history is retained for this release, not thinned by the local quota.
+      if (!imported && !(sharing && sharing.getInfo && sharing.getInfo() && sharing.getInfo().managed)) await thinHistoryIfNeeded(revision.diagramHistoryId); // CHANGE
       return true;
     }
 
@@ -814,6 +816,8 @@ Draw.loadPlugin(function (ui) {
     let latestXml = null;
     let latestRevisionId = null;
     let recording = false;
+    let latestEntry = null; // NEW: only saved checkpoints are eligible for sharing.
+    let generation = 0; // NEW: a remote replacement invalidates pending local recorder state.
 
     function normalizeMetadata(metadata) {
       const meta = actorMetadata(metadata || {});
@@ -908,10 +912,11 @@ Draw.loadPlugin(function (ui) {
       const meta = pending || normalizeMetadata({ category: 'System', action: 'baseline', origin: 'history', title: 'Opened diagram baseline' });
       pending = null;
       recording = true;
+      const recordGeneration = generation; // NEW
       try {
         const xml = serializeActivePageXml();
         const hash = hashString(xml);
-        if (!force && latestHash === hash && !meta.checkpoint) return;
+        if (!force && latestHash === hash && !meta.checkpoint) return latestEntry; // CHANGE
         const compressed = compressSnapshotXml(xml);
         const diagramId = getDiagramHistoryId();
         const snapshotId = makeHistoryId('snap');
@@ -946,11 +951,14 @@ Draw.loadPlugin(function (ui) {
         };
         const snapshot = { snapshotId, compressedXml: compressed.compressed, compressedKind: compressed.compressedKind, byteSize: String(compressed.compressed).length, checksum: hashString(compressed.compressed) };
         const saved = await store.recordRevision(revision, snapshot);
-        if (saved) {
+        if (saved && recordGeneration === generation) { // CHANGE
           latestHash = hash;
           latestXml = xml;
           latestRevisionId = revision.id;
+          latestEntry = { revision, snapshot }; // NEW
+          if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisHistoryRevisionRecorded', { detail: { revision, snapshot } })); // NEW: sharing publishes after a successful save.
           await refreshHistoryRevisions();
+          return latestEntry; // NEW
         }
       } catch (e) {
         graph.__ccHistoryWarning = 'History record failed: ' + (e && e.message ? e.message : String(e));
@@ -1006,7 +1014,28 @@ Draw.loadPlugin(function (ui) {
       await recordStableRevision(true);
     }
 
-    return { initializeBaseline, recordModelChange, captureActiveTransactionMetadata, run, createCheckpoint, recordRestore, recordStableRevision };
+    async function flushForSharing() { // NEW: await any active write, then capture the actual saved checkpoint.
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = null;
+      while (recording) await new Promise(resolve => setTimeout(resolve, 10));
+      await recordStableRevision(false);
+      return latestHash === hashString(serializeActivePageXml()) ? latestEntry : null;
+    }
+
+    function applyRemoteBaseline() { // NEW: receiving content must not be attributed to the local actor.
+      generation++;
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = null;
+      pending = null;
+      latestXml = serializeActivePageXml();
+      latestHash = hashString(latestXml);
+      const matching = (graph.__ccHistoryRevisions || []).find(revision => revision.diagramHash === latestHash); // CHANGE
+      latestRevisionId = matching ? matching.id : null;
+      latestEntry = null;
+      return !!matching; // NEW: sharing can retry parent attribution when history arrives after XML.
+    }
+
+    return { initializeBaseline, recordModelChange, captureActiveTransactionMetadata, run, createCheckpoint, recordRestore, recordStableRevision, flushForSharing, applyRemoteBaseline }; // CHANGE
   }
 
   const historyStore = createHistoryStore();
@@ -2497,6 +2526,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   model.addListener(mxEvent.CHANGE, function (sender, evt) {
+    if (graph.__trellisSharingApplying) return; // NEW: incoming saved diagrams retain original actor attribution.
     if (graph.__ccMapInternalChange) return;
     if (graph.__trellisUsersRejecting || graph.__trellisUsersInternalChange) return;
 
@@ -2527,6 +2557,16 @@ Draw.loadPlugin(function (ui) {
     window.Trellis = window.Trellis || {};
     window.Trellis.history = window.Trellis.history || {};
     window.Trellis.history.run = historyRecorder.run;
+    window.Trellis.history.getDiagramId = getDiagramHistoryId; // NEW
+    window.Trellis.history.flushForSharing = historyRecorder.flushForSharing; // CHANGE
+    window.Trellis.history.applyRemoteBaseline = historyRecorder.applyRemoteBaseline; // NEW
+    window.Trellis.history.importShared = async function (entry) { // NEW: import through the existing local database.
+      const revision = entry && entry.revision;
+      const snapshot = entry && entry.snapshot;
+      if (!revision || revision.diagramHistoryId !== getDiagramHistoryId() || !snapshot || revision.snapshotId !== snapshot.snapshotId || snapshot.checksum !== hashString(snapshot.compressedXml) || ['plain', 'graph-compress'].indexOf(snapshot.compressedKind) < 0) throw new Error('Invalid shared ChangeMap revision.');
+      await historyStore.recordRevision(revision, snapshot, true); // CHANGE: imported immutable revisions are retained locally too.
+      await refreshHistoryRevisions();
+    };
     window.Trellis.history.createCheckpoint = historyRecorder.createCheckpoint;
     window.Trellis.history.list = function () { return (graph.__ccHistoryRevisions || []).slice(); };
     window.Trellis.history.isRestoring = function () { return !!graph.__ccHistoryRestoring; };

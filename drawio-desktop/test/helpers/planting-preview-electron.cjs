@@ -20,7 +20,8 @@ app.whenReady().then(async () => { // CHANGE
             window.graph = new mxGraph(document.getElementById('graph')); // CHANGE
             graph.isSpecialColor=()=>false; // CHANGE
             graph.convertValueToString=cell=>cell.value && cell.value.getAttribute ? cell.value.getAttribute('label') || '' : String(cell.value || ''); // CHANGE
-            window.Draw={loadPlugin:callback=>callback({editor:{graph},actions:{get:()=>null},hideDialog(){}})}; // CHANGE
+            window.previewUndoManager=new mxUndoManager(); graph.getModel().addListener(mxEvent.UNDO,(_sender,event)=>previewUndoManager.undoableEditHappened(event.getProperty('edit'))); // CHANGE
+            window.Draw={loadPlugin:callback=>callback({editor:{graph,undoManager:previewUndoManager},actions:{get:()=>null},hideDialog(){}})}; // CHANGE
             void 0; // CHANGE: Electron IPC cannot clone a callback object.
         `); // CHANGE
         await win.webContents.executeJavaScript(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Planting_Group.js'), 'utf8')); // CHANGE
@@ -206,7 +207,7 @@ app.whenReady().then(async () => { // CHANGE
                 const entry=await fixture.open(),before=fixture.serialize(),field=fixture.edit(entry); // CHANGE
                 const context=await fixture.tools.buildSpacingLayoutRows(graph,fixture.groups[0]); // CHANGE
                 const bedScoped=context.scope==='bed'&&context.rows.some(row=>row.bedId); // CHANGE
-                const draft=context.rows.map(row=>{const changed=row.cellId===fixture.groups[0].id;return {...row,spacingXCm:changed?33:row.spacingXCm,enabled:changed,previewOnly:bedScoped&&!changed,previewUnrotated:bedScoped};}); // CHANGE
+                const draft=context.rows.map(row=>{const changed=row.cellId===fixture.groups[0].id;return {...row,spacingXCm:changed?33:row.spacingXCm,enabled:changed,previewOnly:bedScoped&&!changed,previewBedContext:bedScoped};}); // CHANGE
                 const preview=fixture.tools.buildSpacingPreviewModel(graph,draft); // CHANGE: the actual navigator may include unchanged neighboring plantings as bed context.
                 const savedOuter=fixture.outer.getGeometry(),projectedOuter=graph.getCellGeometry(fixture.outer); // CHANGE
                 const displaced=savedOuter.x!==projectedOuter.x||savedOuter.y!==projectedOuter.y; // CHANGE
@@ -266,7 +267,105 @@ app.whenReady().then(async () => { // CHANGE
             })(); // CHANGE
         `); // CHANGE
         for(const check of result.overhangControls) assert.ok(check.count>0&&check.allFit&&check.labels&&check.hint,JSON.stringify(check)); // CHANGE
-        if(process.env.TRELLIS_OVERHANG_SCREENSHOT)fs.writeFileSync(process.env.TRELLIS_OVERHANG_SCREENSHOT,(await win.webContents.capturePage()).toPNG()); // CHANGE
+        result.centeredOverhang = await win.webContents.executeJavaScript(` // CHANGE
+            (async()=>{ // CHANGE
+                graph.__trellisPlantingGroup.overlay.clear();graph.__trellisPlantingSpacingEditor.clear();graph.getModel().clear(); // CHANGE: isolate the final visual fixture from the earlier projection scenarios.
+                document.querySelectorAll('body>div:not(#graph)').forEach(node=>node.remove()); // CHANGE
+                graph.container.style.width='1000px';graph.container.scrollLeft=0;graph.container.scrollTop=0;graph.view.scaleAndTranslate(1,0,0); // CHANGE
+                const xml=attrs=>{const node=mxUtils.createXmlDocument().createElement('object');Object.entries(attrs).forEach(([key,value])=>node.setAttribute(key,String(value)));return node;}; // CHANGE
+                const garden=graph.insertVertex(null,null,xml({garden_module:'1',label:'Garden'}),0,0,1000,680,'fillColor=#b6d99c;module=1;container=1;'); // CHANGE
+                const checks=[]; // CHANGE
+                for(const [index,live]of [false,true].entries()){ // CHANGE
+                    const bed=graph.insertVertex(garden,null,xml({garden_bed:'1',label:'Bed'}),75+index*500,400,300,180,'fillColor=#afb576;'); // CHANGE: graph units reflect the production 0.9 units/cm drawing scale.
+                    const proposal=USL.tiler.proposePlantingGeometry({bedCell:bed,fillAvailableBed:true,spacingXCm:85,spacingYCm:120,vegDiameterCm:110,allowedOverhangPct:50,offsetXCm:0,offsetYCm:0}); // CHANGE
+                    const group=USL.tiler.createPlantingFromProposal({moduleCell:garden,proposal,attributes:{plant_name:'Zucchini',plant_abbr:'ZUC'},source:'centering-visual'}, {select:false}); // CHANGE
+                    const row={cellId:group.id,enabled:true,label:'Zucchini',spacingXCm:85,spacingYCm:120,vegDiameterCm:110,allowedOverhangPct:50,offsetXCm:0,offsetYCm:0,rect:{...group.geometry}}; // CHANGE
+                    const preview=USL.scheduler.layoutTools.buildSpacingPreviewModel(graph,[row]).rows[0].groupPreview; // CHANGE
+                    const minX=Math.min(...preview.circles.map(dot=>dot.x-dot.r)),maxX=Math.max(...preview.circles.map(dot=>dot.x+dot.r)); // CHANGE
+                    const minY=Math.min(...preview.circles.map(dot=>dot.y-dot.r)),maxY=Math.max(...preview.circles.map(dot=>dot.y+dot.r)); // CHANGE
+                    const host=document.createElement('div');host.style.cssText='position:fixed;top:24px;left:'+(index?530:24)+'px;width:420px;padding:12px;background:white;border:1px solid #777;z-index:10040;';document.body.appendChild(host); // CHANGE
+                    graph.__trellisPlantingSpacingEditor.render(host,{selectedId:row.cellId,rows:[row]},{live,fitToDemand:live,onChange:()=>{}}); // CHANGE
+                    const title=document.createElement('h3');title.textContent=live?'Allocate · Spacing':'Planting · Spacing';host.prepend(title); // CHANGE
+                    checks.push({live,deltaX:(minX+maxX)/2-bed.geometry.x-bed.geometry.width/2,deltaY:(minY+maxY)/2-bed.geometry.y-bed.geometry.height/2,count:preview.actual,offsetX:host.querySelectorAll('input[type=number]')[2].value,offsetY:host.querySelectorAll('input[type=number]')[3].value}); // CHANGE
+                } // CHANGE
+                await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))); // CHANGE
+                return checks; // CHANGE
+            })(); // CHANGE
+        `); // CHANGE
+        for(const check of result.centeredOverhang) assert.ok(Math.abs(check.deltaX)<1e-6&&Math.abs(check.deltaY)<1e-6&&check.count===8&&check.offsetX==='0'&&check.offsetY==='0',JSON.stringify(check)); // CHANGE
+        await win.webContents.executeJavaScript('graph.setSelectionCells([]); graph.__trellisPlantingGroup.overlay.clear(); void 0;'); // CHANGE: keep the comparison unobstructed by selection-triggered floating panels.
+        if(process.env.TRELLIS_OVERHANG_SCREENSHOT) { // CHANGE
+            await win.webContents.capturePage(); // CHANGE: request a fresh compositor frame for the hidden test window.
+            await new Promise(resolve=>setTimeout(resolve,300)); // CHANGE
+            fs.writeFileSync(process.env.TRELLIS_OVERHANG_SCREENSHOT,(await win.webContents.capturePage()).toPNG()); // CHANGE
+        } // CHANGE
+        const rotatedSpacing={checks:[],undoCleared:true,redoCleared:true}; // CHANGE
+        for(const [angle,bedAngle] of [[0,37],[37,-30],[90,0],[-30,90]]){ // CHANGE
+            const angleWindow=new BrowserWindow({show:false,width:1000,height:750,webPreferences:{sandbox:false,backgroundThrottling:false}}); // CHANGE
+            try { // CHANGE
+                await angleWindow.loadURL('data:text/html,'+encodeURIComponent('<!doctype html><body style="margin:0"><div id="graph" style="position:relative;width:900px;height:650px;overflow:auto"></div></body>')); // CHANGE
+                await angleWindow.webContents.executeJavaScript('window.mxLoadResources=false;window.mxLoadStylesheets=false;'); // CHANGE
+                await angleWindow.webContents.executeJavaScript(fs.readFileSync(path.join(webapp,'mxgraph/mxClient.js'),'utf8')); // CHANGE
+                await angleWindow.webContents.executeJavaScript(` // CHANGE
+                    window.graph=new mxGraph(document.getElementById('graph'));graph.isSpecialColor=()=>false; // CHANGE
+                    graph.convertValueToString=cell=>cell.value?.getAttribute?cell.value.getAttribute('label')||'':String(cell.value||''); // CHANGE
+                    window.previewUndoManager=new mxUndoManager();graph.model.addListener(mxEvent.UNDO,(_sender,event)=>previewUndoManager.undoableEditHappened(event.getProperty('edit'))); // CHANGE
+                    window.Draw={loadPlugin:callback=>callback({editor:{graph,undoManager:previewUndoManager},actions:{get:()=>null},hideDialog(){}})}; // CHANGE
+                    window.dbBridge={resolvePath:async()=>({dbPath:'angles'}),open:async()=>({dbId:'angles'}),close:async()=>{},query:async()=>({rows:[]}),exec:async()=>{throw new Error('Preview attempted a database write');}}; // CHANGE
+                    void 0; // CHANGE
+                `); // CHANGE
+                for(const name of ['Planting_Group.js','Garden_Roadmap_Core.js','Garden_Roadmap_Manager.js','Modules_Standalone.js','Garden_Scheduler_Shared_Core.js','Garden_Scheduler_Annual_Core.js','Garden_Scheduler_Perennial_Core.js','Garden_Scheduler_Dialog.js']){ // CHANGE
+                    await angleWindow.webContents.executeJavaScript(fs.readFileSync(path.join(webapp,'plugins/garden_planner_plugins',name),'utf8')); // CHANGE
+                } // CHANGE
+                const angleResult=await angleWindow.webContents.executeJavaScript(` // CHANGE
+                    (async()=>{const checks=[];const angle=${angle},bedAngle=${bedAngle}; // CHANGE
+                        const fixture=await (${createRegularSpacingFixture.toString()})(window,graph,${JSON.stringify({groupAngle: angle, bedAngle})}); // CHANGE: initialize saved angles independently of rotation gestures.
+                        const entry=await fixture.open(),context=await fixture.tools.buildSpacingLayoutRows(graph,fixture.groups[0]); // CHANGE
+                        const body=document.createElement('div');entry.panel.replaceChildren(body); // CHANGE
+                        graph.__trellisPlantingSpacingEditor.render(body,{...context,scope:'bed'}); // CHANGE
+                        const before=fixture.serialize(),field=body.querySelector('[data-spacing-row-cell="'+fixture.groups[0].id+'"] input[type=number]'); // CHANGE
+                        field.value='33';field.dispatchEvent(new Event('input')); // CHANGE
+                        const draft=context.rows.map(row=>{const changed=row.cellId===fixture.groups[0].id;return {...row,spacingXCm:changed?33:row.spacingXCm,enabled:changed,previewOnly:!changed,previewBedContext:true};}); // CHANGE
+                        const preview=fixture.tools.buildSpacingPreviewModel(graph,draft); // CHANGE
+                        for(const scale of [1.35,1.75]){ // CHANGE
+                            graph.view.scaleAndTranslate(scale,5,10);graph.container.scrollLeft=200;graph.container.scrollTop=160;await fixture.settle(); // CHANGE
+                            const host=document.querySelector('.manual-link-spacing-preview'),hostBounds=host.getBoundingClientRect(); // CHANGE
+                            const dots=[...host.querySelectorAll('.manual-link-spacing-preview-plant')];let index=0,maxDelta=0; // CHANGE
+                            for(const row of preview.rows){ // CHANGE
+                                const frame=host.querySelector('[data-spacing-preview-cell="'+row.cellId+'"]'); // CHANGE
+                                const baseX=hostBounds.x+parseFloat(frame.style.left),baseY=hostBounds.y+parseFloat(frame.style.top); // CHANGE
+                                for(const dot of row.groupPreview.circles){ // CHANGE
+                                    const bounds=dots[index++].getBoundingClientRect(); // CHANGE
+                                    maxDelta=Math.max(maxDelta,Math.abs(bounds.x+bounds.width/2-baseX-(dot.x-row.rect.x)*scale),Math.abs(bounds.y+bounds.height/2-baseY-(dot.y-row.rect.y)*scale)); // CHANGE
+                                } // CHANGE
+                            } // CHANGE
+                            const frame=host.querySelector('[data-spacing-preview-cell="'+fixture.groups[0].id+'"]'),bedFrame=host.querySelector('.manual-link-spacing-preview-bed-frame'); // CHANGE
+                            checks.push({angle,bedAngle,scale,maxDelta,circleCount:dots.length,expectedCount:index,frameTransform:frame.style.transform,bedTransform:bedFrame.style.transform,unchanged:fixture.serialize()===before}); // CHANGE
+                        } // CHANGE
+                        graph.__trellisPlantingSpacingEditor.clear(); graph.setCellStyles('fillColor','#abcdef',[fixture.roadmapModule]); // CHANGE
+                        const historyEntry=await fixture.open();fixture.edit(historyEntry); // CHANGE: await the editor rebuilt by the model change before editing.
+                        const historyIndex=previewUndoManager.indexOfNextAdd,committedStyle=fixture.roadmapModule.getStyle(); // CHANGE
+                        previewUndoManager.undo();await fixture.settle();graph.__trellisPlantingGroup.preview.refresh(); // CHANGE
+                        const undoCleared=!document.querySelector('.manual-link-spacing-preview')&&graph.view.getState(fixture.groups[0]).shape.node.style.opacity!=='0'&&previewUndoManager.indexOfNextAdd===historyIndex&&fixture.roadmapModule.getStyle()===committedStyle; // CHANGE
+                        previewUndoManager.undo();await fixture.settle();const undoneStyle=fixture.roadmapModule.getStyle(); // CHANGE
+                        if(previewUndoManager.indexOfNextAdd!==historyIndex-1||undoneStyle===committedStyle)throw new Error('Second Undo did not advance graph history'); // CHANGE
+                        const redoEntry=await fixture.open();fixture.edit(redoEntry);previewUndoManager.redo();await fixture.settle(); // CHANGE
+                        const redoCleared=!document.querySelector('.manual-link-spacing-preview')&&previewUndoManager.indexOfNextAdd===historyIndex-1&&fixture.roadmapModule.getStyle()===undoneStyle; // CHANGE
+                        previewUndoManager.redo();await fixture.settle(); // CHANGE
+                        if(previewUndoManager.indexOfNextAdd!==historyIndex||fixture.roadmapModule.getStyle()!==committedStyle)throw new Error('Second Redo did not advance graph history'); // CHANGE
+                        return {checks,undoCleared,redoCleared}; // CHANGE
+                    })(); // CHANGE
+                `); // CHANGE
+                rotatedSpacing.checks.push(...angleResult.checks);rotatedSpacing.undoCleared&&=angleResult.undoCleared;rotatedSpacing.redoCleared&&=angleResult.redoCleared; // CHANGE
+            } finally { angleWindow.destroy(); } // CHANGE
+        } // CHANGE
+        for(const check of rotatedSpacing.checks){ // CHANGE
+            assert.equal(check.frameTransform,check.angle?'rotate('+check.angle+'deg)':'',JSON.stringify(check)); // CHANGE
+            assert.equal(check.bedTransform,check.bedAngle?'rotate('+check.bedAngle+'deg)':'',JSON.stringify(check)); // CHANGE
+            assert.ok(check.maxDelta<=2&&check.circleCount===check.expectedCount&&check.unchanged,JSON.stringify(check)); // CHANGE
+        } // CHANGE
+        assert.ok(rotatedSpacing.undoCleared&&rotatedSpacing.redoCleared,JSON.stringify(rotatedSpacing)); // CHANGE
+        result.rotatedSpacing=rotatedSpacing; // CHANGE
         process.stdout.write('PREVIEW_RESULT:' + JSON.stringify(result) + '\n'); // CHANGE
     } finally { win.destroy(); } // CHANGE
     app.quit(); // CHANGE

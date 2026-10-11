@@ -10,3 +10,4 @@ trellis_seed_runs/
 test-results/
 __pycache__/
 *.pyc
+/vendor/syncthing/

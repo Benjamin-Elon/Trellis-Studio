@@ -4,7 +4,8 @@
   "asar": true,
   "files": [
     "**/*",
-    "!**/WEB-INF{,/**}"
+    "!**/WEB-INF{,/**}",
+    "!vendor{,/**}"
   ],
   "artifactName": "${productName}-${arch}-${version}.${ext}",
   "directories": {
