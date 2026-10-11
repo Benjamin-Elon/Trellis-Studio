@@ -7,6 +7,12 @@ Draw.loadPlugin(function (ui) {
     if (graph.__trellisPlantingGroupInstalled) return; // CHANGE: legacy and canonical plugin names install once.
     graph.__trellisPlantingGroupInstalled = true; // CHANGE
     const model = graph.getModel(); // CHANGE
+    // Plant children use visual local coordinates; their rotated extents do not define the frame. // CHANGE
+    const originalCellsAdded = graph.cellsAdded; // CHANGE
+    graph.cellsAdded = function (cells, parent, index, source, target, absolute, constrain, extend) { // CHANGE
+        const plantingParent = isTilerGroup(parent); // CHANGE
+        return originalCellsAdded.call(this, cells, parent, index, source, target, absolute, plantingParent ? false : constrain, plantingParent ? false : extend); // CHANGE
+    }; // CHANGE: preserve mxGraph events and transactions without changing graph-wide options.
 
     // -------------------- Config --------------------
     const PX_PER_CM = 5;
@@ -105,7 +111,12 @@ Draw.loadPlugin(function (ui) {
     const GROUP_LABEL_FONT_MAX_PX = 18;
     const BED_FIT_TOLERANCE = 0.25;
     const BED_FIT_RESIZE_SUPPRESS_MS = 250;
-    const EDGE_CIRCLE_CENTER_CONTAINED_PCT = 0.40;
+    const DEFAULT_ALLOWED_OVERHANG_PCT = 30; // CHANGE: percentage of circle diameter per bed edge.
+    const savedCropOverhangDefaults = new Map(); // CHANGE: open editors must restore defaults saved after their rows were loaded.
+    window.addEventListener('usl:cropOverhangSaved', event => { // CHANGE
+        const detail = event.detail; // CHANGE
+        if (detail?.plantId != null) savedCropOverhangDefaults.set(String(detail.plantId), resolveAllowedOverhangPct(detail.allowedOverhangPct)); // CHANGE: success events only; failed writes never become defaults.
+    }); // CHANGE
     const BED_AUTO_FIT_ATTR = "bed_auto_fit";
     const BED_FIT_WIDTH_ATTR = "bed_fit_width";
     const BED_FIT_HEIGHT_ATTR = "bed_fit_height";
@@ -3964,9 +3975,16 @@ Draw.loadPlugin(function (ui) {
         return Number.isFinite(vegDiameterCm) && vegDiameterCm > 0 ? toPx(vegDiameterCm) : 0;
     }
 
-    function allowedOverhangForDiameter(diameter) {
-        return Math.max(0, diameter) * (1 - EDGE_CIRCLE_CENTER_CONTAINED_PCT) / 2;
-    }
+    /** Saved legacy groups retain 30%; crop defaults are resolved only for new plantings. */ // CHANGE
+    function resolveAllowedOverhangPct(value) { // CHANGE
+        const raw = value && typeof value.getAttribute === 'function' ? value.getAttribute('allowed_overhang_pct') : value; // CHANGE
+        const number = raw == null || String(raw).trim() === '' ? NaN : Number(raw); // CHANGE
+        return Number.isFinite(number) && number >= 0 && number <= 50 ? number : DEFAULT_ALLOWED_OVERHANG_PCT; // CHANGE
+    } // CHANGE
+
+    function allowedOverhangForDiameter(diameter, percentage) { // CHANGE
+        return Math.max(0, diameter) * resolveAllowedOverhangPct(percentage) / 100; // CHANGE
+    } // CHANGE
 
     function bedFitLabelBandPxForSize(width, height) {
         return groupLabelMetrics({ getGeometry: () => ({ width, height }) }).bandPx;
@@ -4067,18 +4085,22 @@ Draw.loadPlugin(function (ui) {
         return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
     }
 
-    function shiftPlantCircleChildrenLogical(tg, dx, dy) {
-        if (nearlySameNumber(dx, 0) && nearlySameNumber(dy, 0)) return false;
+    function shiftPlantCircleChildrenLogical(tg, dx, dy, nextGroupGeometry) { // CHANGE
         const model = graph.getModel();
         const rotationDeg = getTilerRotationDeg(tg);
         let changed = false;
         const childCount = model.getChildCount(tg);
+        const snapshots = []; // CHANGE: read every logical position before changing the rotation pivot.
         for (let i = 0; i < childCount; i++) {
             const child = model.getChildAt(tg, i);
             if (!model.isVertex(child) || !isPlantCircle(child)) continue;
             const logicalGeo = childLogicalGeometryFromVisual(tg, child, rotationDeg);
             if (!logicalGeo) continue;
             if ((Number(logicalGeo.w) || 0) <= 0 || (Number(logicalGeo.h) || 0) <= 0) continue;
+            snapshots.push({ child, logicalGeo }); // CHANGE
+        } // CHANGE
+        if (nextGroupGeometry) model.setGeometry(tg, nextGroupGeometry); // CHANGE: transforms below use the final pivot, including zero-shift trims.
+        for (const { child, logicalGeo } of snapshots) { // CHANGE
             const next = visualGeometryFromLogicalGeometry(tg, {
                 x: (Number(logicalGeo.x) || 0) + dx,
                 y: (Number(logicalGeo.y) || 0) + dy,
@@ -4086,8 +4108,7 @@ Draw.loadPlugin(function (ui) {
                 h: Number(logicalGeo.h) || 0
             });
             if (!next) continue;
-            model.setGeometry(child, next);
-            changed = true;
+            changed = setGeometryIfChanged(model, child, next) || changed; // CHANGE
         }
         return changed;
     }
@@ -4207,9 +4228,8 @@ Draw.loadPlugin(function (ui) {
         if (!next) return false;
         const dx = fitWidth ? GROUP_PADDING_PX - bbox.x : 0;
         const dy = fitHeight ? GROUP_PADDING_PX + solved.bandPx - bbox.y : 0;
-        const childrenChanged = shiftPlantCircleChildrenLogical(tg, dx, dy);
         const groupChanged = !(nearlySameNumber(current.x, next.x) && nearlySameNumber(current.y, next.y) && nearlySameNumber(current.width, next.width) && nearlySameNumber(current.height, next.height));
-        if (groupChanged) model.setGeometry(tg, next);
+        const childrenChanged = shiftPlantCircleChildrenLogical(tg, dx, dy, groupChanged ? next : null); // CHANGE
         bedFitLog("trim", {
             txnId: debugCtx && debugCtx.txnId,
             groupId: bedFitCellId(tg),
@@ -4262,7 +4282,7 @@ Draw.loadPlugin(function (ui) {
             return null;
         }
         const diameter = getPlantCircleDiameterPx(tg);
-        const overhang = allowedOverhangForDiameter(diameter);
+        const overhang = allowedOverhangForDiameter(diameter, tg); // CHANGE
         const frameRect = getPlantingFrameRectModel(tgRect);
         if (!frameRect) return null;
         const targetFrameWidth = bedRect.w + overhang * 2;
@@ -4272,10 +4292,13 @@ Draw.loadPlugin(function (ui) {
         const canDragFit = allowDragIntoBedFit && diameter < bedRect.w && diameter < bedRect.h;
         const forcedFitWidth = !!(debugCtx && debugCtx.forceFitWidth);
         const forcedFitHeight = !!(debugCtx && debugCtx.forceFitHeight);
-        const fitWidth = usePersistedFitAxes ? forcedFitWidth : (widthClose || canDragFit);
-        const fitHeight = usePersistedFitAxes ? forcedFitHeight : (heightClose || canDragFit);
+        const resizeIntent = debugCtx && debugCtx.resizeIntent; // CHANGE: fitted axes keep their accepted geometry during a direct resize.
+        const fitWidth = !(resizeIntent && resizeIntent.axes.fitWidth) && (usePersistedFitAxes ? forcedFitWidth : (widthClose || canDragFit)); // CHANGE
+        const fitHeight = !(resizeIntent && resizeIntent.axes.fitHeight) && (usePersistedFitAxes ? forcedFitHeight : (heightClose || canDragFit)); // CHANGE
+        const retainWidth = !!(resizeIntent && resizeIntent.axes.fitWidth && !resizeIntent.releaseWidth); // CHANGE
+        const retainHeight = !!(resizeIntent && resizeIntent.axes.fitHeight && !resizeIntent.releaseHeight); // CHANGE
         if (!fitWidth && !fitHeight) {
-            if (persistAxisIntent) writeBedFitAxesNoTxn(model, tg, false, false);
+            if (persistAxisIntent) writeBedFitAxesNoTxn(model, tg, retainWidth, retainHeight); // CHANGE
             bedFitLog("fit-skip", {
                 txnId: debugCtx && debugCtx.txnId,
                 groupId: bedFitCellId(tg),
@@ -4313,7 +4336,7 @@ Draw.loadPlugin(function (ui) {
         positionGeometryForLocalPointAxisAware(next, frameCenter, bedCenter, bedRotation, fitWidth, fitHeight);
         const geometryChanged = !(nearlySameNumber(g.x, next.x) && nearlySameNumber(g.y, next.y) && nearlySameNumber(g.width, next.width) && nearlySameNumber(g.height, next.height));
         const rotationChanged = setCellRotationDeg(tg, bedRotation);
-        if (persistAxisIntent) writeBedFitAxesNoTxn(model, tg, fitWidth, fitHeight);
+        if (persistAxisIntent) writeBedFitAxesNoTxn(model, tg, fitWidth || retainWidth, fitHeight || retainHeight); // CHANGE
         if (geometryChanged) model.setGeometry(tg, next);
         const afterBandPx = groupLabelMetrics(tg).bandPx;
         const bandDeltaY = (Number(afterBandPx) || 0) - (Number(beforeBandPx) || 0);
@@ -4408,7 +4431,7 @@ Draw.loadPlugin(function (ui) {
             bedFitLog("normalize-skip", { txnId, source, reason: "in-progress" });
             return 0;
         }
-        const groups = getTilerGroupsFromEventCells(cells);
+        const groups = getTilerGroupsFromEventCells(cells).filter(cell => !graph.__trellisBedTransforms || !graph.__trellisBedTransforms.isCarried(cell)); // CHANGE: carried layouts must not be refitted during movement.
         const movedCells = (cells || []).filter(Boolean);
         if (!groups.length) {
             bedFitLog("normalize-skip", {
@@ -4419,7 +4442,7 @@ Draw.loadPlugin(function (ui) {
             });
             return 0;
         }
-        if (shouldSuppressBedFitResize(source, groups)) {
+        if (!(opts && opts.resizeIntents && opts.resizeIntents.size) && shouldSuppressBedFitResize(source, groups)) { // CHANGE: recent automatic fits must not swallow a new direct resize.
             bedFitLog("normalize-skip", {
                 txnId,
                 source,
@@ -4476,7 +4499,8 @@ Draw.loadPlugin(function (ui) {
                 });
                 if (sameBedMove) continue;
                 if (!bed && persistAxisIntent && clearFitAxisIntentOnNoBed && tg.getAttribute(BED_AUTO_FIT_ATTR) !== "0") writeBedFitAxesNoTxn(model, tg, false, false);
-                const fitResult = applyBedFitGeometry(tg, bed, allowDragIntoBedFit, { txnId, source, persistAxisIntent });
+                const resizeIntent = opts && opts.resizeIntents && opts.resizeIntents.get(tg.id); // CHANGE
+                const fitResult = applyBedFitGeometry(tg, bed, allowDragIntoBedFit, { txnId, source, persistAxisIntent, resizeIntent }); // CHANGE
                 if (fitResult) changed.push({
                     tg: tg,
                     bed: fitResult.bed,
@@ -4528,7 +4552,7 @@ Draw.loadPlugin(function (ui) {
     function normalizeMovedBedAssembliesToBeds(cells, opts) {
         const txnId = ++bedFitTxnSeq;
         const source = (opts && opts.source) || "unknown";
-        const assemblies = getBedAssembliesFromEventCells(cells);
+        const assemblies = getBedAssembliesFromEventCells(cells).filter(cell => !graph.__trellisBedTransforms || !graph.__trellisBedTransforms.isCarried(cell)); // CHANGE: carry irrigation without refitting its frame.
         if (!assemblies.length || bedFitInProgress || shouldSuppressBedFitResize(source, assemblies.map(function (assembly) { return { id: assembly.id }; }))) return 0;
         const model = graph.getModel();
         const fitOnDrag = !!(opts && opts.fitOnDrag);
@@ -5737,8 +5761,8 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     /** Shared fitted-frame sizing. Slot counts are never forced to one when no physical row fits. */ // CHANGE
-    function plantingProposalFrame(maxW, maxH, sx, sy, diameter) { // CHANGE
-        const overhang = allowedOverhangForDiameter(diameter); // CHANGE
+    function plantingProposalFrame(maxW, maxH, sx, sy, diameter, percentage) { // CHANGE
+        const overhang = allowedOverhangForDiameter(diameter, percentage); // CHANGE
         const width = maxW + overhang * 2, height = maxH + overhang * 2; // CHANGE
         const count = (length, spacing) => Math.max(0, Math.min(Math.floor((length + 1e-7) / spacing), Math.floor((length - diameter + 1e-7) / spacing) + 1)); // CHANGE
         return { width, height, overhang, cols: count(width, sx), rows: count(height, sy) }; // CHANGE
@@ -5754,7 +5778,7 @@ Draw.loadPlugin(function (ui) {
 
     /** Fit demand in complete surviving rows without normalizing away the user's grid offsets. */ // CHANGE
     function fittedOffsetPlantingProposalCandidate(input, axis, sx, sy, diameter, bedRect, rotation) { // CHANGE
-        const frame = plantingProposalFrame(bedRect.width, bedRect.height, sx, sy, diameter); // CHANGE
+        const frame = plantingProposalFrame(bedRect.width, bedRect.height, sx, sy, diameter, input.allowedOverhangPct); // CHANGE
         const ox = toPx(Number(input.offsetXCm) || 0), oy = toPx(Number(input.offsetYCm) || 0); // CHANGE
         const maxX = fittedOffsetAxisRange(frame.width, sx, ox, frame.cols, diameter); // CHANGE
         const maxY = fittedOffsetAxisRange(frame.height, sy, oy, frame.rows, diameter); // CHANGE
@@ -5789,7 +5813,7 @@ Draw.loadPlugin(function (ui) {
     /** Creates a read-only fitted lattice; group bounds retain grid pitch while occupancy trims to circles. */ // CHANGE
     function fittedPlantingProposalCandidate(input, axis, sx, sy, diameter, bedRect, rotation) { // CHANGE
         if (input.offsetXCm != null || input.offsetYCm != null) return fittedOffsetPlantingProposalCandidate(input, axis, sx, sy, diameter, bedRect, rotation); // CHANGE: explicit offsets use the committed tiler's center-in-bounds rule.
-        const frame = plantingProposalFrame(bedRect.width, bedRect.height, sx, sy, diameter); // CHANGE
+        const frame = plantingProposalFrame(bedRect.width, bedRect.height, sx, sy, diameter, input.allowedOverhangPct); // CHANGE
         const requested = Math.max(0, Math.trunc(Number(input.plantCount) || 0)); // CHANGE
         const fullBed = input.fillAvailableBed === true; // CHANGE
         const perRow = axis === "width" ? frame.cols : frame.rows; // CHANGE
@@ -5864,6 +5888,7 @@ Draw.loadPlugin(function (ui) {
      * Slots, offsets, diameter and count are authoritative inputs to createPlantingFromProposal. // CHANGE
      */ // CHANGE
     function proposePlantingGeometry(input = {}) { // CHANGE
+        if (input.allowedOverhangPct != null && (String(input.allowedOverhangPct).trim() === '' || !Number.isFinite(Number(input.allowedOverhangPct)) || Number(input.allowedOverhangPct) < 0 || Number(input.allowedOverhangPct) > 50)) throw new Error('Allowed overhang must be between 0% and 50%.'); // CHANGE
         const fillAvailableBed = input.fillAvailableBed === true; // CHANGE
         const spacingXCm = Number(input.spacingXCm ?? input.spacingCm ?? 30); // CHANGE
         const spacingYCm = Number(input.spacingYCm ?? input.spacingCm ?? 30); // CHANGE
@@ -5902,6 +5927,7 @@ Draw.loadPlugin(function (ui) {
             return (kind === "companion" ? "Companion" : kind === "incompatible" ? "Incompatible" : "Unknown relationship:") + " overlap with " + label + "."; // CHANGE
         }); // CHANGE
         return Object.assign({}, best, { // CHANGE
+            allowedOverhangPct: resolveAllowedOverhangPct(input.allowedOverhangPct), // CHANGE
             ok: !blocked && best.capacity > 0 && (fillAvailableBed || best.complete), // CHANGE
             status: blocked ? "blocked" : (conflicts.length ? "warning" : "compatible"), // CHANGE
             reason: blocked ? "incompatible_overlap" : !best.capacity ? "no_row_capacity" : !best.complete ? "insufficient_space" : "", // CHANGE
@@ -5941,6 +5967,7 @@ Draw.loadPlugin(function (ui) {
 
     function previewDraftAttrs(groupCell, draft) { // NEW: overlays can render an uncommitted tiler-faithful copy.
         const attrs = {};
+        if (draft && draft.allowedOverhangPct != null) attrs.allowed_overhang_pct = String(draft.allowedOverhangPct); // CHANGE
         if (draft && draft.spacingXCm != null) attrs.spacing_x_cm = String(draft.spacingXCm);
         if (draft && draft.spacingYCm != null) attrs.spacing_y_cm = String(draft.spacingYCm);
         if (draft && draft.spacingXCm != null && draft.spacingYCm != null && Number(draft.spacingXCm) === Number(draft.spacingYCm)) attrs.spacing_cm = String(draft.spacingXCm);
@@ -5971,6 +5998,27 @@ Draw.loadPlugin(function (ui) {
         const fallback = match ? Number(match[1]) : 0;
         return Number.isFinite(fallback) ? fallback : 0;
     }
+
+    /** Resolve a percentage edit without mutating the graph; preview and Apply consume this same geometry. */ // CHANGE
+    function prepareBedFitSpacingDraft(groupCell, draft) { // CHANGE
+        if (!groupCell || draft.allowedOverhangPct == null || Number(draft.allowedOverhangPct) === resolveAllowedOverhangPct(groupCell) || draft.generatedPattern || draft.strictFootprint || groupCell.getAttribute('bed_auto_fit') === '0') return draft; // CHANGE
+        const fitWidth = groupCell.getAttribute(BED_FIT_WIDTH_ATTR) === '1', fitHeight = groupCell.getAttribute(BED_FIT_HEIGHT_ATTR) === '1'; // CHANGE
+        if (!fitWidth && !fitHeight) return draft; // CHANGE
+        const footprint = readPlantingFootprint(groupCell); // CHANGE: shallow headers can put the group center outside its bed.
+        const bed = footprint && findSmallestContainingBedModel(model.getParent(groupCell), { x: footprint.x + footprint.width / 2, y: footprint.y + footprint.height / 2 }); // CHANGE
+        const bedRect = getModelRect(bed), current = groupCell.getGeometry(); // CHANGE
+        if (!bedRect || !current) return draft; // CHANGE
+        const diameter = draft.vegDiameterCm > 0 ? toPx(draft.vegDiameterCm) : getPlantCircleDiameterPx(groupCell); // CHANGE
+        const overhang = allowedOverhangForDiameter(diameter, draft.allowedOverhangPct), next = current.clone(); // CHANGE
+        if (fitWidth) next.width = bedRect.w + overhang * 2 + GROUP_PADDING_PX * 2; // CHANGE
+        if (fitHeight) next.height = solveOuterHeightForPlantingFrame(bedRect.h + overhang * 2, next.width, next.height).outerHeight; // CHANGE
+        const rotation = getTilerRotationDeg(groupCell), frameCenter = plantingFrameLocalCenter(next.width, next.height); // CHANGE
+        const preserved = modelPointForLocalPoint(current, plantingFrameLocalCenter(current.width, current.height), rotation); // CHANGE
+        positionGeometryForLocalPointAxisAware(next, frameCenter, rectCenterModel(bedRect), rotation, fitWidth, fitHeight, preserved); // CHANGE
+        const rect = Object.assign({}, draft.rect, { x: (draft.rect?.x ?? current.x) + next.x - current.x, y: (draft.rect?.y ?? current.y) + next.y - current.y, width: next.width, height: next.height }); // CHANGE
+        const bounds = plantingContentBoundsLocal({ getGeometry: () => next }, frameCenter.bandPx); // CHANGE
+        return Object.assign({}, draft, { rect, bedFitGeometry: next, bedFitLayoutSnapshot: captureBedFitLayoutSnapshot(groupCell), clipBounds: bounds, strictFootprint: false }); // CHANGE
+    } // CHANGE
 
     function makeDraftPreviewCell(groupCell, rect, attrs) { // NEW: tiny cell facade lets preview reuse tiler geometry helpers.
         const width = Math.max(0, Number(rect && rect.width) || 0);
@@ -6029,12 +6077,14 @@ Draw.loadPlugin(function (ui) {
         const label = getGroupDisplayName(previewCell, previewCell.getAttribute("plant_abbr") || "?");
         const abbr = previewCell.getAttribute("plant_abbr") || "?";
         const circles = [];
+        const manualSlots = snapshotTileMap(draft.bedFitLayoutSnapshot); // CHANGE: manual plants keep logical positions when a percentage changes the frame.
         for (let r = 0; r < grid.rows; r++) {
             for (let c = 0; c < grid.cols; c++) {
                 const slotKey = `${r},${c}`;
                 if (!slotStats.renderedKeys.has(slotKey)) continue; // CHANGE: draft preview omits outside and disabled slots.
                 if (circles.length >= maxCircles) continue;
-                const shifted = shiftedSlotCenterLocal(previewCell, r, c, spacingXpx, spacingYpx, bandPx);
+                const saved = manualSlots.get(slotKey); // CHANGE
+                const shifted = saved ? { x: saved.x + iconDiam / 2, y: saved.y + iconDiam / 2 } : shiftedSlotCenterLocal(previewCell, r, c, spacingXpx, spacingYpx, bandPx); // CHANGE
                 const center = rotatePointAround(shifted, groupCenterLocal(previewCell), rotationDeg);
                 circles.push({ row: r, col: c, x: rect.x + center.x, y: rect.y + center.y, r: iconDiam / 2, label: abbr, fontPx: tileFont });
             }
@@ -6046,6 +6096,7 @@ Draw.loadPlugin(function (ui) {
         const draftExpectedYield = slotStats.actual * perYield;
         return {
             status: "ok",
+            allowedOverhangPct: resolveAllowedOverhangPct(previewCell), // CHANGE
             rect,
             label,
             abbr,
@@ -6193,6 +6244,7 @@ Draw.loadPlugin(function (ui) {
         const group = createEmptyTilerGroup(activeGraphArg, moduleCell, (moduleGeo ? Number(moduleGeo.x) || 0 : 0) + centerX, (moduleGeo ? Number(moduleGeo.y) || 0 : 0) + centerY, { source: input.source || "allocate-create", select: opts.select !== false }); // CHANGE: transactional callers can defer selection until the planting and tasks succeed.
         const model = activeGraphArg.getModel && activeGraphArg.getModel();
         const attrs = Object.assign({}, input.attributes || proposal.attributes || {}, {
+            allowed_overhang_pct: String(resolveAllowedOverhangPct(proposal.allowedOverhangPct)), // CHANGE
             plant_count: String(Math.max(0, Math.trunc(Number(proposal.plantCount) || 0))),
             spacing_x_cm: String(proposal.spacingXCm || 30),
             spacing_y_cm: String(proposal.spacingYCm || 30),
@@ -6538,31 +6590,37 @@ Draw.loadPlugin(function (ui) {
             if (!groupCell || !groupCell.id) return;
             if (!queue.has(groupCell.id)) queue.set(groupCell.id, { groupCell, layoutSnapshot });
             if (timer) clearTimeout(timer);
-            timer = setTimeout(function () {
-                const items = Array.from(queue.values());
-                queue.clear();
-                timer = null;
-                guard = true;
-                const groupsNeedingRefresh = [];
-                try {
-                    withUndoSuppressed(function () {
-                        model.beginUpdate();
-                        try {
-                            for (const item of items) {
-                                if (!item.groupCell || !isTilerGroup(item.groupCell)) continue;
-                                retileGroup(graph, item.groupCell, { layoutSnapshot: item.layoutSnapshot, useLiveSnapshot: false, preferInPlace: true, inTransaction: true });
-                                groupsNeedingRefresh.push(item.groupCell);
-                            }
-                        } finally {
-                            model.endUpdate();
-                        }
-                    });
-                } finally {
-                    guard = false;
-                }
-                for (const group of groupsNeedingRefresh) graph.refresh(group);
-            }, ROTATION_RETILE_DEBOUNCE_MS);
-        }
+            timer = setTimeout(flushRotationLayouts, ROTATION_RETILE_DEBOUNCE_MS); // CHANGE
+        } // CHANGE
+
+        /** Flush the prior committed rotation before another edit captures its child positions. */ // CHANGE
+        function flushRotationLayouts() { // CHANGE
+            if (timer) clearTimeout(timer); // CHANGE
+            if (!queue.size) { timer = null; return; } // CHANGE
+            const items = Array.from(queue.values()); // CHANGE
+            queue.clear(); // CHANGE
+            timer = null; // CHANGE
+            guard = true; // CHANGE
+            const groupsNeedingRefresh = []; // CHANGE
+            try { // CHANGE
+                withUndoSuppressed(function () { // CHANGE
+                    model.beginUpdate(); // CHANGE
+                    try { // CHANGE
+                        for (const item of items) { // CHANGE
+                            if (!item.groupCell || !isTilerGroup(item.groupCell)) continue; // CHANGE
+                            retileGroup(graph, item.groupCell, { layoutSnapshot: item.layoutSnapshot, useLiveSnapshot: false, preferInPlace: true, inTransaction: true }); // CHANGE
+                            groupsNeedingRefresh.push(item.groupCell); // CHANGE
+                        } // CHANGE
+                    } finally { // CHANGE
+                        model.endUpdate(); // CHANGE
+                    } // CHANGE
+                }); // CHANGE
+            } finally { // CHANGE
+                guard = false; // CHANGE
+            } // CHANGE
+            for (const group of groupsNeedingRefresh) graph.refresh(group); // CHANGE
+        } // CHANGE
+        graph.__plantTilerFlushRotationLayouts = flushRotationLayouts; // CHANGE: the bed controller calls this before starting a subsequent transaction.
 
         model.addListener(mxEvent.CHANGE, function (_sender, evt) {
             if (guard) return;
@@ -6572,6 +6630,10 @@ Draw.loadPlugin(function (ui) {
             for (const change of changes) {
                 const rotationChange = rotationChangedFromStyleChange(change);
                 if (!rotationChange) continue;
+                if (edit.__trellisBedTransformGroups && edit.__trellisBedTransformGroups.has(rotationChange.cell.id)) { // CHANGE: this edit already carries the exact child layout, including undo/redo.
+                    queue.delete(rotationChange.cell.id); // CHANGE
+                    continue; // CHANGE
+                } // CHANGE
                 if (rotationChange.cell && rotationChange.cell.id && queue.has(rotationChange.cell.id)) {
                     schedule(rotationChange.cell, null);
                     continue;
@@ -6581,6 +6643,425 @@ Draw.loadPlugin(function (ui) {
             }
         });
     })();
+
+    /**
+     * Carry spatial bed contents as a rigid unit. Snapshots belong to the current
+     * mxGraph edit, not the view, so hidden cells and undo/redo share the same data.
+     * Model execution captures old state; the outer endUpdate commits companions
+     * after snapping and before notifications. Preview never writes to the model.
+     */
+    function installBedTransformController() { // CHANGE
+        const geometryChange = change => change instanceof mxGeometryChange; // CHANGE
+        const styleChange = change => change instanceof mxStyleChange; // CHANGE
+        const childChange = change => change instanceof mxChildChange; // CHANGE
+        let applying = false, copying = 0, loading = 0, flushing = false; // CHANGE
+        let gestureSnapshots = new Map(); // CHANGE
+        const snapshots = new WeakMap(); // CHANGE
+
+        /** Read the first previous value in an edit, including independently selected contents. */
+        function originalReader(edit) { // CHANGE
+            const geometries = new Map(), styles = new Map(), parents = new Map(); // CHANGE
+            for (const change of edit && edit.changes || []) { // CHANGE
+                if (geometryChange(change) && !geometries.has(change.cell)) geometries.set(change.cell, change.previous); // CHANGE
+                if (styleChange(change) && !styles.has(change.cell)) styles.set(change.cell, change.previous); // CHANGE
+                if (childChange(change) && !parents.has(change.child)) parents.set(change.child, change.previous); // CHANGE
+            } // CHANGE
+            return { // CHANGE
+                geometry: cell => geometries.has(cell) ? geometries.get(cell) : model.getGeometry(cell), // CHANGE
+                style: cell => styles.has(cell) ? styles.get(cell) : model.getStyle(cell), // CHANGE
+                parent: cell => parents.has(cell) ? parents.get(cell) : model.getParent(cell), // CHANGE
+                previousParents: parents // CHANGE
+            }; // CHANGE
+        } // CHANGE
+
+        const live = { geometry: cell => model.getGeometry(cell), style: cell => model.getStyle(cell), parent: cell => model.getParent(cell) }; // CHANGE
+
+        /** Finish a previous independent rotation before the next transaction snapshots its layout. */
+        function flushPendingLayouts() { // CHANGE
+            if (flushing || applying || !graph.__plantTilerFlushRotationLayouts) return; // CHANGE
+            flushing = true; // CHANGE
+            try { graph.__plantTilerFlushRotationLayouts(); } finally { flushing = false; } // CHANGE
+        } // CHANGE
+
+        function angle(cell, reader) { // CHANGE
+            const sheet = graph.getStylesheet(); // CHANGE
+            const defaults = model.isEdge(cell) ? sheet.getDefaultEdgeStyle() : sheet.getDefaultVertexStyle(); // CHANGE
+            return Number(sheet.getCellStyle(reader.style(cell), defaults).rotation) || 0; // CHANGE
+        } // CHANGE
+
+        /** mxGraph children have untranslated local coordinates; parent rotation is not inherited. */
+        function origin(cell, reader) { // CHANGE
+            if (!cell) return { x: 0, y: 0 }; // CHANGE
+            const parent = reader.parent(cell), base = origin(parent, reader), geo = reader.geometry(cell); // CHANGE
+            if (!geo || model.isEdge(cell)) return base; // CHANGE
+            const pg = parent && reader.geometry(parent); // CHANGE
+            return { // CHANGE
+                x: base.x + (geo.relative && pg ? geo.x * pg.width + (geo.offset && geo.offset.x || 0) : geo.x), // CHANGE
+                y: base.y + (geo.relative && pg ? geo.y * pg.height + (geo.offset && geo.offset.y || 0) : geo.y) // CHANGE
+            }; // CHANGE
+        } // CHANGE
+
+        function center(cell, reader) { // CHANGE
+            const geo = reader.geometry(cell), point = origin(cell, reader); // CHANGE
+            return geo ? { x: point.x + geo.width / 2, y: point.y + geo.height / 2 } : point; // CHANGE
+        } // CHANGE
+
+        function children(parent, reader) { // CHANGE
+            // Model traversal deliberately includes invisible vertices, unlike view-based queries.
+            const candidates = new Set(model.getChildren(parent) || []); // CHANGE
+            if (reader.previousParents) reader.previousParents.forEach((previous, cell) => { if (previous === parent) candidates.add(cell); }); // CHANGE
+            return Array.from(candidates).filter(cell => reader.parent(cell) === parent); // CHANGE
+        } // CHANGE
+
+        function containingBed(cell, reader) { // CHANGE
+            const parent = reader.parent(cell); // CHANGE
+            if (isGardenBed(parent)) return parent; // CHANGE
+            const point = center(cell, reader); // CHANGE
+            let chosen = null, area = Infinity; // CHANGE
+            for (const candidate of children(parent, reader)) { // CHANGE
+                if (!isGardenBed(candidate)) continue; // CHANGE
+                const geo = reader.geometry(candidate); // CHANGE
+                if (!geo || geo.width <= 0 || geo.height <= 0) continue; // CHANGE
+                const c = center(candidate, reader), p = rotatePointAround(point, c, -angle(candidate, reader)); // CHANGE
+                const o = origin(candidate, reader); // CHANGE
+                if (p.x >= o.x - ROTATION_EPS_DEG && p.x <= o.x + geo.width + ROTATION_EPS_DEG && // CHANGE
+                    p.y >= o.y - ROTATION_EPS_DEG && p.y <= o.y + geo.height + ROTATION_EPS_DEG && geo.width * geo.height < area) { // CHANGE
+                    chosen = candidate; area = geo.width * geo.height; // CHANGE
+                } // CHANGE
+            } // CHANGE
+            return chosen; // CHANGE
+        } // CHANGE
+
+        function resolve(cell, reader = live) { // CHANGE
+            while (cell && !isGardenBed(cell) && !isTilerGroup(cell) && !isIrrigationBedAssembly(cell)) cell = reader.parent(cell); // CHANGE
+            const bed = isGardenBed(cell) ? cell : cell && containingBed(cell, reader); // CHANGE
+            if (!bed) return null; // CHANGE
+            const candidates = children(reader.parent(bed), reader).concat(children(bed, reader)); // CHANGE
+            const plantingGroups = [], bedAssemblies = []; // CHANGE
+            for (const member of candidates) { // CHANGE
+                if (!(isTilerGroup(member) || isIrrigationBedAssembly(member)) || containingBed(member, reader) !== bed) continue; // CHANGE
+                (isTilerGroup(member) ? plantingGroups : bedAssemblies).push(member); // CHANGE
+            } // CHANGE
+            return { bed, plantingGroups, bedAssemblies, cells: [bed].concat(bedAssemblies, plantingGroups) }; // CHANGE
+        } // CHANGE
+
+        function capture(bed, reader) { // CHANGE
+            const unit = resolve(bed, reader), geo = reader.geometry(bed); // CHANGE
+            if (!unit || !geo) return null; // CHANGE
+            const records = new Map(); // CHANGE
+            function visit(cell) { // CHANGE
+                if (records.has(cell)) return; // CHANGE
+                const g = reader.geometry(cell); // CHANGE
+                if (g) records.set(cell, { cell, geometry: g.clone(), parent: reader.parent(cell), parentOrigin: origin(reader.parent(cell), reader), center: center(cell, reader), rotation: angle(cell, reader) }); // CHANGE
+                for (const child of children(cell, reader)) visit(child); // CHANGE
+            } // CHANGE
+            for (const member of unit.cells.slice(1)) visit(member); // CHANGE
+            return { unit, parent: reader.parent(bed), geometry: geo.clone(), center: center(bed, reader), rotation: angle(bed, reader), records }; // CHANGE
+        } // CHANGE
+
+        /** Permissions are independent of draw.io locks. Carrying never modifies a lock style. */
+        function deniedMember(snapshot, rotation) { // CHANGE
+            const users = window.Trellis && window.Trellis.users; // CHANGE
+            if (!users) return null; // CHANGE
+            // Production Users exposes canEditCell; geometry-specific checks may be supplied by an adapter.
+            const canMove = users.canMoveCell || users.canEditCell; // CHANGE
+            const parent = model.getParent(snapshot.unit.bed); // CHANGE
+            if (parent !== snapshot.parent && users.canAddCell && !users.canAddCell(parent)) return parent; // CHANGE
+            return [snapshot.unit.bed].concat(Array.from(snapshot.records.keys())).find(cell => // CHANGE
+                canMove && !canMove(cell) || // CHANGE
+                rotation && !model.isEdge(cell) && users.canEditCell && !users.canEditCell(cell)) || null; // CHANGE
+        } // CHANGE
+
+        function canCarry(unit) { // CHANGE
+            const snapshot = unit && capture(unit.bed, live); // CHANGE
+            return !!snapshot && !deniedMember(snapshot, false); // CHANGE
+        } // CHANGE
+
+        function isCarried(cell) { // CHANGE
+            const units = snapshots.get(model.currentEdit); // CHANGE
+            return !!units && Array.from(units.values()).some(snapshot => snapshot.records.has(cell)); // CHANGE
+        } // CHANGE
+
+        function transformPoint(point, snapshot, targetCenter, delta) { // CHANGE
+            const rotated = rotatePointAround(point, snapshot.center, delta); // CHANGE
+            return { x: rotated.x + targetCenter.x - snapshot.center.x, y: rotated.y + targetCenter.y - snapshot.center.y }; // CHANGE
+        } // CHANGE
+
+        /** Convert the transformed world position back to the current parent coordinate system. */
+        function transformedGeometry(record, snapshot, targetCenter, delta) { // CHANGE
+            const cell = record.cell, geo = record.geometry.clone(), parent = model.getParent(cell), po = origin(parent, live); // CHANGE
+            const convert = point => { // CHANGE
+                const result = transformPoint({ x: point.x + record.parentOrigin.x, y: point.y + record.parentOrigin.y }, snapshot, targetCenter, delta); // CHANGE
+                return new mxPoint(result.x - po.x, result.y - po.y); // CHANGE
+            }; // CHANGE
+            if (model.isEdge(cell)) { // CHANGE
+                if (geo.sourcePoint) geo.sourcePoint = convert(geo.sourcePoint); // CHANGE
+                if (geo.targetPoint) geo.targetPoint = convert(geo.targetPoint); // CHANGE
+                if (geo.points) geo.points = geo.points.map(point => point && convert(point)); // CHANGE
+                if (geo.offset && delta) { // CHANGE
+                    const offset = rotatePointAround(geo.offset, { x: 0, y: 0 }, delta); // CHANGE
+                    geo.offset = new mxPoint(offset.x, offset.y); // CHANGE
+                } // CHANGE
+            } else { // CHANGE
+                const c = transformPoint(record.center, snapshot, targetCenter, delta); // CHANGE
+                const x = c.x - po.x - geo.width / 2, y = c.y - po.y - geo.height / 2; // CHANGE
+                if (geo.relative) { // CHANGE
+                    const pg = model.getGeometry(parent); // CHANGE
+                    geo.offset = new mxPoint(x - geo.x * (pg && pg.width || 0), y - geo.y * (pg && pg.height || 0)); // CHANGE
+                } else { geo.x = x; geo.y = y; } // CHANGE
+            } // CHANGE
+            return geo; // CHANGE
+        } // CHANGE
+
+        function finalize(edit) { // CHANGE
+            const units = snapshots.get(edit); // CHANGE
+            if (!units || applying) return; // CHANGE
+            snapshots.delete(edit); // CHANGE
+            const active = Array.from(units.values()).filter(snapshot => { // CHANGE
+                const geo = model.getGeometry(snapshot.unit.bed); // CHANGE
+                return model.contains(snapshot.unit.bed) && geo && nearlySameNumber(geo.width, snapshot.geometry.width) && nearlySameNumber(geo.height, snapshot.geometry.height); // CHANGE
+            }); // CHANGE
+            const denied = active.map(snapshot => deniedMember(snapshot, !nearlySameNumber(angle(snapshot.unit.bed, live), snapshot.rotation))).find(Boolean); // CHANGE
+            if (denied) { // CHANGE
+                // Roll back before publication; an empty edit produces no undo entry or partial save.
+                applying = true; // CHANGE
+                try { for (let i = edit.changes.length - 1; i >= 0; i--) edit.changes[i].execute(); edit.changes.length = 0; } // CHANGE
+                finally { applying = false; } // CHANGE
+                if (ui.handleError) ui.handleError(new Error('Cannot move or rotate this bed: access is required for ' + graph.convertValueToString(denied) + '.')); // CHANGE
+                graph.refresh(); // CHANGE
+                return; // CHANGE
+            } // CHANGE
+            applying = true; // CHANGE
+            edit.__trellisBedTransformGroups = new Set(); // CHANGE
+            try { // CHANGE
+                const carried = new Set(); // CHANGE
+                for (const snapshot of active) { // CHANGE
+                    const bed = snapshot.unit.bed, targetCenter = center(bed, live), delta = angle(bed, live) - snapshot.rotation; // CHANGE
+                    const parent = model.getParent(bed); // CHANGE
+                    if (parent !== snapshot.parent) for (const member of snapshot.unit.cells.slice(1)) { // CHANGE
+                        const record = snapshot.records.get(member); // CHANGE
+                        if (record && record.parent === snapshot.parent && model.getParent(member) === snapshot.parent) model.add(parent, member); // CHANGE
+                    } // CHANGE
+                    for (const record of snapshot.records.values()) { // CHANGE
+                        const cell = record.cell; // CHANGE
+                        if (!model.contains(cell) || carried.has(cell)) continue; // CHANGE
+                        carried.add(cell); // CHANGE
+                        const next = transformedGeometry(record, snapshot, targetCenter, delta); // CHANGE
+                        if (!model.getGeometry(cell).equals(next)) model.setGeometry(cell, next); // CHANGE
+                        if (!model.isEdge(cell)) setCellRotationDeg(cell, record.rotation + delta); // CHANGE
+                        if (isTilerGroup(cell)) edit.__trellisBedTransformGroups.add(cell.id); // CHANGE
+                    } // CHANGE
+                } // CHANGE
+            } finally { applying = false; } // CHANGE
+        } // CHANGE
+
+        const execute = model.execute; // CHANGE
+        model.execute = function (change) { // CHANGE
+            if (this.updateLevel === 0) flushPendingLayouts(); // CHANGE
+            const bed = change.cell; // CHANGE
+            if (!applying && !copying && !loading && !ui.openingFile && isGardenBed(bed) && model.contains(bed) && (geometryChange(change) || styleChange(change))) { // CHANGE
+                const before = model.getGeometry(bed), next = geometryChange(change) && change.geometry; // CHANGE
+                const moving = before && next && nearlySameNumber(before.width, next.width) && nearlySameNumber(before.height, next.height) && (!nearlySameNumber(before.x, next.x) || !nearlySameNumber(before.y, next.y)); // CHANGE
+                const rotating = styleChange(change) && angle(bed, live) !== angle(bed, { style: () => change.style }); // CHANGE
+                if (moving || rotating) { // CHANGE
+                    let units = snapshots.get(this.currentEdit); // CHANGE
+                    if (!units) { units = new Map(); snapshots.set(this.currentEdit, units); } // CHANGE
+                    if (!units.has(bed)) { // CHANGE
+                        const snapshot = gestureSnapshots.get(bed) || capture(bed, originalReader(this.currentEdit)); // CHANGE
+                        if (snapshot) units.set(bed, snapshot); // CHANGE
+                    } // CHANGE
+                } // CHANGE
+            } // CHANGE
+            return execute.apply(this, arguments); // CHANGE
+        }; // CHANGE
+        const beginUpdate = model.beginUpdate; // CHANGE
+        model.beginUpdate = function () { // CHANGE
+            if (this.updateLevel === 0) flushPendingLayouts(); // CHANGE
+            return beginUpdate.apply(this, arguments); // CHANGE
+        }; // CHANGE
+        const endUpdate = model.endUpdate; // CHANGE
+        model.endUpdate = function () { // CHANGE
+            if (this.updateLevel === 1 && !this.endingUpdate) finalize(this.currentEdit); // CHANGE
+            return endUpdate.apply(this, arguments); // CHANGE
+        }; // CHANGE
+
+        const moveCells = graph.moveCells; // CHANGE
+        graph.moveCells = function (cells, dx, dy, clone) { // CHANGE
+            if (clone) copying++; // CHANGE
+            try { return moveCells.apply(this, arguments); } // CHANGE
+            finally { if (clone) copying--; } // CHANGE
+        }; // CHANGE
+        if (graph.setGraphXml) { // CHANGE
+            const setGraphXml = graph.setGraphXml; // CHANGE
+            graph.setGraphXml = function () { loading++; try { return setGraphXml.apply(this, arguments); } finally { loading--; } }; // CHANGE
+        } // CHANGE
+
+        /** Clone rendered SVG/HTML once per gesture; transform wrappers without touching live states. */
+        function createPreview(beds, extraCells = []) { // CHANGE
+            flushPendingLayouts(); // CHANGE
+            const units = Array.from(new Set(beds)).map(bed => capture(bed, live)).filter(Boolean); // CHANGE
+            if (extraCells.length) { // CHANGE
+                const records = new Map(); // CHANGE
+                function visit(cell) { records.set(cell, { cell }); for (const child of model.getChildren(cell) || []) visit(child); } // CHANGE
+                extraCells.forEach(visit); // CHANGE
+                units.push({ unit: { bed: { id: 'selection' } }, center: { x: 0, y: 0 }, records }); // CHANGE
+            } // CHANGE
+            const wrappers = [], hidden = [], seen = new Set(); // CHANGE
+            let frame = null, pending = null; // CHANGE
+            for (const snapshot of units) { // CHANGE
+                // Calibrate the pivot from the view so drilling into a module uses its local origin.
+                const state = graph.view.getState(snapshot.unit.bed), view = graph.view; // CHANGE
+                snapshot.previewCenter = state ? { x: state.getCenterX() / view.scale - view.translate.x, y: state.getCenterY() / view.scale - view.translate.y } : snapshot.center; // CHANGE
+                const parents = new Map(); // CHANGE
+                const cells = [snapshot.unit.bed].concat(Array.from(snapshot.records.keys())); // CHANGE
+                for (const cell of cells) { // CHANGE
+                    const state = graph.view.getState(cell); // CHANGE
+                    if (!state || !graph.isCellVisible(cell)) continue; // CHANGE
+                    for (const rendered of [state.shape, state.text]) { // CHANGE
+                        const node = rendered && rendered.node; // CHANGE
+                        if (!node || !node.parentNode || seen.has(node)) continue; // CHANGE
+                        seen.add(node); // CHANGE
+                        const svg = node.namespaceURI === 'http://www.w3.org/2000/svg'; // CHANGE
+                        let wrapper = parents.get(node.parentNode); // CHANGE
+                        if (!wrapper) { // CHANGE
+                            wrapper = svg ? document.createElementNS(node.namespaceURI, 'g') : document.createElement('div'); // CHANGE
+                            wrapper.setAttribute('data-trellis-bed-transform-preview', snapshot.unit.bed.id); // CHANGE
+                            wrapper.style.pointerEvents = 'none'; // CHANGE
+                            if (!svg) wrapper.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;transform-origin:0 0;'; // CHANGE
+                            node.parentNode.appendChild(wrapper); // CHANGE
+                            parents.set(node.parentNode, wrapper); // CHANGE
+                            wrappers.push({ wrapper, svg, snapshot }); // CHANGE
+                        } // CHANGE
+                        const copy = node.cloneNode(true); // CHANGE
+                        copy.removeAttribute('id'); copy.style.visibility = 'visible'; copy.style.pointerEvents = 'none'; // CHANGE
+                        for (const child of copy.querySelectorAll('*')) child.style.pointerEvents = 'none'; // CHANGE
+                        copy.setAttribute('data-trellis-bed-preview-cell', cell.id); // CHANGE
+                        copy.setAttribute('data-trellis-bed-preview-kind', rendered === state.shape ? 'shape' : 'text'); // CHANGE
+                        wrapper.appendChild(copy); // CHANGE
+                        hidden.push({ node, visibility: node.style.visibility }); node.style.visibility = 'hidden'; // CHANGE
+                    } // CHANGE
+                } // CHANGE
+            } // CHANGE
+            function paint() { // CHANGE
+                frame = null; // CHANGE
+                if (!pending) return; // CHANGE
+                const view = graph.view, scale = view.scale, tr = view.translate; // CHANGE
+                for (const { wrapper, svg, snapshot } of wrappers) { // CHANGE
+                    const target = pending(snapshot), c = snapshot.previewCenter; // CHANGE
+                    const x = (c.x + tr.x) * scale, y = (c.y + tr.y) * scale; // CHANGE
+                    const tx = x + (target.dx || 0) * scale, ty = y + (target.dy || 0) * scale; // CHANGE
+                    const transform = 'translate(' + tx + (svg ? ' ' : 'px,') + ty + (svg ? ')' : 'px)') + // CHANGE
+                        ' rotate(' + (target.delta || 0) + (svg ? ')' : 'deg)') + // CHANGE
+                        ' translate(' + -x + (svg ? ' ' : 'px,') + -y + (svg ? ')' : 'px)'); // CHANGE
+                    if (svg) wrapper.setAttribute('transform', transform); else wrapper.style.transform = transform; // CHANGE
+                } // CHANGE
+            } // CHANGE
+            return { // CHANGE
+                snapshots: units, // CHANGE
+                update(target) { pending = target; if (frame == null) frame = window.requestAnimationFrame(paint); }, // CHANGE
+                clear() { // CHANGE
+                    if (frame != null) window.cancelAnimationFrame(frame); // CHANGE
+                    for (const { wrapper } of wrappers) wrapper.remove(); // CHANGE
+                    for (const { node, visibility } of hidden) node.style.visibility = visibility; // CHANGE
+                    pending = null; frame = null; // CHANGE
+                } // CHANGE
+            }; // CHANGE
+        } // CHANGE
+
+        function clearHandlerPreview(handler) { // CHANGE
+            if (handler.__trellisBedPreview) handler.__trellisBedPreview.clear(); // CHANGE
+            handler.__trellisBedPreview = null; // CHANGE
+        } // CHANGE
+
+        /** Freeze preview membership through mouse-up; nested handlers restore the previous operation. */
+        function beginGestureCommit(handler) { // CHANGE
+            const previous = gestureSnapshots; // CHANGE
+            gestureSnapshots = new Map(); // CHANGE
+            if (handler.__trellisBedPreview && !handler.cloning) for (const snapshot of handler.__trellisBedPreview.snapshots) { // CHANGE
+                if (isGardenBed(snapshot.unit.bed)) gestureSnapshots.set(snapshot.unit.bed, snapshot); // CHANGE
+            } // CHANGE
+            return previous; // CHANGE
+        } // CHANGE
+
+        /** Preview adapter is installed per graph; global prototypes dispatch to the owning service. */
+        function previewMove(handler) { // CHANGE
+            const beds = (handler.cells || []).filter(isGardenBed); // CHANGE
+            if (!beds.length || handler.cloning || handler.suspended) { clearHandlerPreview(handler); return false; } // CHANGE
+            if (!handler.__trellisBedPreview) handler.__trellisBedPreview = createPreview(beds, (handler.cells || []).filter(cell => !isGardenBed(cell))); // CHANGE
+            const scale = graph.view.scale; // CHANGE
+            handler.__trellisBedPreview.update(snapshot => { // CHANGE
+                let dx = handler.roundLength((handler.currentDx || 0) / scale), dy = handler.roundLength((handler.currentDy || 0) / scale); // CHANGE
+                const bed = snapshot.unit.bed, module = isAxisAlignedPathSnapBed(bed) && findGardenModuleAncestor(graph, bed); // CHANGE
+                if (module && beds.length === 1 && (handler.cells || []).length === 1 && !isBedPathSnapAltBypassActive() && (!handler.target || graph.__trellisWorkspaceHandleDragActive)) { // CHANGE
+                    const rect = movedRect(getModelRect(bed), dx, dy), snap = evaluateBedPathSnap(module, bed, rect); // CHANGE
+                    if (snap) { dx += snap.dx || 0; dy += snap.dy || 0; } // CHANGE
+                } // CHANGE
+                return { dx, dy }; // CHANGE
+            }); // CHANGE
+            return true; // CHANGE
+        } // CHANGE
+
+        function previewRotation(handler) { // CHANGE
+            const bed = handler.state && handler.state.cell; // CHANGE
+            if (!isGardenBed(bed)) return; // CHANGE
+            if (!handler.__trellisBedPreview) handler.__trellisBedPreview = createPreview([bed]); // CHANGE
+            handler.__trellisBedPreview.update(snapshot => ({ delta: (handler.currentAlpha || 0) - snapshot.rotation })); // CHANGE
+        } // CHANGE
+
+        graph.__trellisBedTransforms = { resolve, canCarry, isCarried, createPreview, previewMove, previewRotation, clearHandlerPreview, beginGestureCommit, endGestureCommit: previous => { gestureSnapshots = previous; } }; // CHANGE
+
+        if (!mxGraphHandler.prototype.__trellisBedPreviewInstalled) { // CHANGE
+            mxGraphHandler.prototype.__trellisBedPreviewInstalled = true; // CHANGE
+            const updatePreview = mxGraphHandler.prototype.updatePreview, resetMove = mxGraphHandler.prototype.reset; // CHANGE
+            mxGraphHandler.prototype.updatePreview = function () { // CHANGE
+                const service = this.graph && this.graph.__trellisBedTransforms; // CHANGE
+                if (service && service.previewMove(this)) { // CHANGE
+                    // mouseUp requires a native preview marker even though our ghosts do the drawing.
+                    if (!this.shape && this.pBounds) this.shape = this.createPreviewShape(this.pBounds); // CHANGE
+                    this.livePreviewUsed = false; this.livePreviewActive = false; // CHANGE
+                    if (this.shape && this.shape.node) this.shape.node.style.visibility = 'hidden'; // CHANGE
+                    return; // CHANGE
+                } // CHANGE
+                if (this.shape && this.shape.node) this.shape.node.style.visibility = ''; // CHANGE
+                return updatePreview.apply(this, arguments); // CHANGE
+            }; // CHANGE
+            mxGraphHandler.prototype.reset = function () { // CHANGE
+                const service = this.graph && this.graph.__trellisBedTransforms; // CHANGE
+                if (service) { // CHANGE
+                    if (this.__trellisBedPreview && this.graph.selectionCellsHandler) this.setHandlesVisibleForCells(this.graph.selectionCellsHandler.getHandledSelectionCells(), true); // CHANGE
+                    service.clearHandlerPreview(this); // CHANGE
+                } // CHANGE
+                return resetMove.apply(this, arguments); // CHANGE
+            }; // CHANGE
+            const rotate = mxVertexHandler.prototype.rotateVertex, resetRotation = mxVertexHandler.prototype.reset; // CHANGE
+            mxVertexHandler.prototype.rotateVertex = function () { // CHANGE
+                const result = rotate.apply(this, arguments), service = this.graph && this.graph.__trellisBedTransforms; // CHANGE
+                if (service) service.previewRotation(this); // CHANGE
+                return result; // CHANGE
+            }; // CHANGE
+            mxVertexHandler.prototype.reset = function () { // CHANGE
+                const service = this.graph && this.graph.__trellisBedTransforms; // CHANGE
+                if (service) service.clearHandlerPreview(this); // CHANGE
+                return resetRotation.apply(this, arguments); // CHANGE
+            }; // CHANGE
+            for (const prototype of [mxGraphHandler.prototype, mxVertexHandler.prototype]) { // CHANGE
+                const mouseUp = prototype.mouseUp, destroy = prototype.destroy; // CHANGE
+                prototype.mouseUp = function () { // CHANGE
+                    const service = this.graph && this.graph.__trellisBedTransforms; // CHANGE
+                    const previous = service && service.beginGestureCommit(this); // CHANGE
+                    if (service) service.clearHandlerPreview(this); // CHANGE
+                    try { return mouseUp.apply(this, arguments); } // CHANGE
+                    finally { if (service) service.endGestureCommit(previous); } // CHANGE
+                }; // CHANGE
+                prototype.destroy = function () { // CHANGE
+                    const service = this.graph && this.graph.__trellisBedTransforms; // CHANGE
+                    if (service) service.clearHandlerPreview(this); // CHANGE
+                    return destroy.apply(this, arguments); // CHANGE
+                }; // CHANGE
+            } // CHANGE
+        } // CHANGE
+    } // CHANGE
+    installBedTransformController(); // CHANGE
 
     let REORDER_GUARD = false;
 
@@ -6637,6 +7118,7 @@ Draw.loadPlugin(function (ui) {
 
                     // Only mark plant circles
                     if (!isPlantCircle(cell)) continue;
+                    if (graph.__trellisBedTransforms && graph.__trellisBedTransforms.isCarried(cell)) continue; // CHANGE: moving with a bed is not an independent manual tile edit.
 
                     // If it was auto-placed and user moved it, set as dirty
                     if (cell.getAttribute("auto") === "1" && cell.getAttribute("dirty") !== "1") {
@@ -6651,6 +7133,47 @@ Draw.loadPlugin(function (ui) {
             for (const cell of cells) graph.refresh(cell);
         });
     })();
+
+    let activeBedFitResizeIntents = null; // CHANGE: scoped to the current resize call, including nested bed refitting.
+    let bedFitResizeGestureIntents = null; // CHANGE: the original fit state survives repeated events in one pointer gesture.
+
+    /** Capture only directly resized groups; children and internal fits cannot release a parent's axes. */ // CHANGE
+    function captureBedFitResizeIntents(cells, previous, intents) { // CHANGE
+        const result = intents || new Map(); // CHANGE
+        if (bedFitInProgress) return result; // CHANGE
+        (cells || []).forEach(function (cell, index) { // CHANGE
+            if (!isTilerGroup(cell) || cell.getAttribute(BED_AUTO_FIT_ATTR) === "0" || result.has(cell.id)) return; // CHANGE
+            const geometry = previous ? previous[index] : graph.getModel().getGeometry(cell); // CHANGE
+            if (geometry) result.set(cell.id, { geometry: geometry.clone(), axes: bedFitAxesForGroup(cell), releaseWidth: false, releaseHeight: false }); // CHANGE
+        }); // CHANGE
+        return result; // CHANGE
+    } // CHANGE
+
+    /** Release once per gesture, even if later events return to the original size. */ // CHANGE
+    function releaseResizedBedFitAxes(cells, intents) { // CHANGE
+        if (bedFitInProgress) return; // CHANGE
+        const model = graph.getModel(); // CHANGE
+        for (const cell of (cells || [])) { // CHANGE
+            const intent = cell && intents.get(cell.id), geometry = cell && model.getGeometry(cell); // CHANGE
+            if (!intent || !geometry) continue; // CHANGE
+            intent.releaseWidth = intent.releaseWidth || (intent.axes.fitWidth && !nearlySameNumber(intent.geometry.width, geometry.width)); // CHANGE
+            intent.releaseHeight = intent.releaseHeight || (intent.axes.fitHeight && !nearlySameNumber(intent.geometry.height, geometry.height)); // CHANGE
+            if (intent.releaseWidth || intent.releaseHeight) { // CHANGE
+                const axes = bedFitAxesForGroup(cell); // CHANGE
+                writeBedFitAxesNoTxn(model, cell, axes.fitWidth && !intent.releaseWidth, axes.fitHeight && !intent.releaseHeight); // CHANGE
+            } // CHANGE
+        } // CHANGE
+    } // CHANGE
+
+    graph.addListener(mxEvent.FIRE_MOUSE_EVENT, function (_sender, evt) { // CHANGE: snapshot before handlers commit resize geometry on mouse-up.
+        const eventName = evt.getProperty("eventName"); // CHANGE
+        if (eventName === mxEvent.MOUSE_DOWN) { // CHANGE
+            bedFitResizeGestureIntents = captureBedFitResizeIntents(graph.getSelectionCells()); // CHANGE
+        } else if (eventName === mxEvent.MOUSE_UP) { // CHANGE
+            const gesture = bedFitResizeGestureIntents; // CHANGE
+            setTimeout(function () { if (bedFitResizeGestureIntents === gesture) bedFitResizeGestureIntents = null; }, 0); // CHANGE: handlers run after FIRE_MOUSE_EVENT.
+        } // CHANGE
+    }); // CHANGE
 
     (function installBedAutoFitListeners() {
         if (graph.__plantTilerBedAutoFitInstalled) return;
@@ -6671,7 +7194,9 @@ Draw.loadPlugin(function (ui) {
 
         graph.addListener(mxEvent.CELLS_RESIZED, function (_sender, evt) {
             const cells = evt.getProperty("cells");
-            normalizeMovedTilerGroupsToBeds(cells, { source: "cells-resized", allowDragIntoBedFit: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true });
+            const resizeIntents = activeBedFitResizeIntents || captureBedFitResizeIntents(cells, evt.getProperty("previous"), bedFitResizeGestureIntents); // CHANGE
+            releaseResizedBedFitAxes(cells, resizeIntents); // CHANGE: flags change inside the same transaction as geometry.
+            normalizeMovedTilerGroupsToBeds(cells, { source: "cells-resized", allowDragIntoBedFit: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true, resizeIntents }); // CHANGE
             normalizeMovedBedAssembliesToBeds(cells, { source: "cells-resized", fitOnDrag: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true });
         });
     })();
@@ -7122,12 +7647,13 @@ Draw.loadPlugin(function (ui) {
         if (ownsTransaction) model.beginUpdate();
         try {
             for (const item of targetByGroupId.values()) {
+                const resizeIntent = activeBedFitResizeIntents && activeBedFitResizeIntents.get(item.tg.id); // CHANGE: an old bed snapshot cannot restore an axis released in this batch.
                 const fitResult = applyBedFitGeometry(item.tg, item.bed, false, {
                     txnId,
                     source,
                     usePersistedFitAxes: true,
-                    forceFitWidth: !!(item.axes && item.axes.fitWidth),
-                    forceFitHeight: !!(item.axes && item.axes.fitHeight)
+                    forceFitWidth: !!(item.axes && item.axes.fitWidth) && !(resizeIntent && resizeIntent.releaseWidth), // CHANGE
+                    forceFitHeight: !!(item.axes && item.axes.fitHeight) && !(resizeIntent && resizeIntent.releaseHeight) // CHANGE
                 });
                 if (fitResult) changed.push({
                     tg: item.tg,
@@ -7166,7 +7692,7 @@ Draw.loadPlugin(function (ui) {
 
         const oldResizeCells = graph.resizeCells;
 
-        graph.resizeCells = function (cells, bounds, recurse) {
+        const resizeAndRetile = function (cells, bounds, recurse) { // CHANGE: orchestration below scopes gesture intent around the complete existing pipeline.
             const model = graph.getModel();
             const duringResize = !!graph.isMouseDown;
 
@@ -7294,6 +7820,22 @@ Draw.loadPlugin(function (ui) {
             for (const g of groupsNeedingRefresh) graph.refresh(g);
             return res;
         };
+
+        graph.resizeCells = function (cells, bounds, recurse) { // CHANGE
+            const previousIntents = activeBedFitResizeIntents; // CHANGE
+            if (graph.isMouseDown && !bedFitResizeGestureIntents) bedFitResizeGestureIntents = new Map(); // CHANGE
+            const captured = bedFitInProgress ? new Map() : captureBedFitResizeIntents(cells, null, bedFitResizeGestureIntents); // CHANGE
+            activeBedFitResizeIntents = new Map(); // CHANGE: a selected parent is not a directly resized group when only its child changes.
+            for (const cell of (cells || [])) { // CHANGE
+                if (cell && captured.has(cell.id)) activeBedFitResizeIntents.set(cell.id, captured.get(cell.id)); // CHANGE
+            } // CHANGE
+            try { // CHANGE
+                return resizeAndRetile.call(this, cells, bounds, recurse); // CHANGE
+            } finally { // CHANGE
+                activeBedFitResizeIntents = previousIntents; // CHANGE
+                if (!graph.isMouseDown) bedFitResizeGestureIntents = null; // CHANGE: numeric edits and completed drags start fresh next time.
+            } // CHANGE
+        }; // CHANGE
     })();
 
 
@@ -8909,6 +9451,7 @@ Draw.loadPlugin(function (ui) {
             return (rowStates || []).map(state => Object.assign({}, state.row, { // CHANGE: migrated planting overlay.
                 spacingXCm: state.spacingX.value, // CHANGE: migrated planting overlay.
                 spacingYCm: state.spacingY.value, // CHANGE: migrated planting overlay.
+                allowedOverhangPct: state.overhang.value, overhangEdited: state.overhangEdited, // CHANGE
                 offsetXCm: readSpacingOffsetValue(state.offsetX), // CHANGE: drafts consume exact offsets, never rounded display text.
                 offsetYCm: readSpacingOffsetValue(state.offsetY) // CHANGE
             })); // CHANGE: migrated planting overlay.
@@ -8934,6 +9477,7 @@ Draw.loadPlugin(function (ui) {
                         layoutMetadata: { rect: state.row.rect, modelRect: state.row.modelRect, rotationDeg: state.row.rotationDeg, vegDiameterCm: state.row.vegDiameterCm, clipBounds: state.row.clipBounds, resetDisabled: state.row.resetDisabled, generatedPattern: state.row.generatedPattern, strictFootprint: state.row.strictFootprint }, // CHANGE
                         spacingXCm: state.spacingX.value, // CHANGE: migrated planting overlay.
                         spacingYCm: state.spacingY.value, // CHANGE: migrated planting overlay.
+                        allowedOverhangPct: state.overhang.value, overhangEdited: state.overhangEdited, // CHANGE
                         offsetXCm: readSpacingOffsetValue(state.offsetX), // CHANGE: view refreshes retain exact offset drafts.
                         offsetYCm: readSpacingOffsetValue(state.offsetY) // CHANGE
                     }); // CHANGE: migrated planting overlay.
@@ -8951,6 +9495,7 @@ Draw.loadPlugin(function (ui) {
             const row = state.row; // CHANGE: migrated planting overlay.
             const offsetX = readSpacingOffsetValue(state.offsetX), offsetY = readSpacingOffsetValue(state.offsetY); // CHANGE: include incomplete offset drafts even when the original offset was zero.
             return Number(state.spacingX.value) !== Number(row.spacingXCm) || // CHANGE: migrated planting overlay.
+                state.overhangEdited || state.overhang.value.trim() === '' || Number(state.overhang.value) !== resolveAllowedOverhangPct(row.allowedOverhangPct) || // CHANGE
                 Number(state.spacingY.value) !== Number(row.spacingYCm) || // CHANGE: migrated planting overlay.
                 offsetX.trim() === '' || Number(offsetX) !== Number(row.offsetXCm) || // CHANGE: rounding alone cannot mark a layout Custom or changed; blank is not zero.
                 offsetY.trim() === '' || Number(offsetY) !== Number(row.offsetYCm) || !!row.generatedPattern; // CHANGE: generated patterns also update the shared planting frame.
@@ -8962,9 +9507,10 @@ Draw.loadPlugin(function (ui) {
             state.spacingY.value = row.spacingYCm == null ? '' : String(Math.round(Number(row.spacingYCm) * 10) / 10); // CHANGE: migrated planting overlay.
             setSpacingOffsetValue(state.offsetX, row.offsetXCm); // CHANGE: reset restores the exact layout and its rounded display together.
             setSpacingOffsetValue(state.offsetY, row.offsetYCm); // CHANGE
+            state.overhang.value = String(savedCropOverhangDefaults.get(String(state.row.plantId)) ?? resolveAllowedOverhangPct(row.allowedOverhangPct)); state.overhangEdited = true; // CHANGE: restore the current committed crop default, even in an already-open editor.
         } // CHANGE: migrated planting overlay.
 
-        const SPACING_ROW_GRID_COLUMNS = 'minmax(92px,1fr) repeat(4,minmax(42px,46px)) 24px'; // CHANGE: companion template column is gone; rows are uniform planting layout rows.
+        const SPACING_ROW_GRID_COLUMNS = 'minmax(72px,1fr) repeat(5,minmax(36px,46px)) 24px'; // CHANGE: percentage joins the four centimeter fields without widening the overlay.
 
         function createSpacingGridRow(className) { // CHANGE: migrated planting overlay.
             const row = document.createElement('div'); // CHANGE: migrated planting overlay.
@@ -8986,6 +9532,11 @@ Draw.loadPlugin(function (ui) {
             wrap.style.display = 'flex'; // CHANGE: migrated planting overlay.
             wrap.style.flexDirection = 'column'; // CHANGE: migrated planting overlay.
             wrap.style.gap = '6px'; // CHANGE: migrated planting overlay.
+            const overhangHint = document.createElement('div'); // CHANGE
+            overhangHint.className = 'manual-link-overhang-hint'; overhangHint.style.cssText = 'font-size:10px;line-height:13px;color:#5f6368;'; // CHANGE
+            overhangHint.textContent = 'Allowed overhang (%) is circle diameter per bed edge (0–50%). Committed edits update the crop default.'; // CHANGE
+            if (context.rows?.some(row => row.clipBounds || row.generatedPattern || row.strictFootprint) || options.live && !options.fitToDemand) overhangHint.textContent += ' Companion layouts keep the existing planting area.'; // CHANGE
+            wrap.appendChild(overhangHint); // CHANGE
 
             const patternBar = document.createElement('div'); // CHANGE
             patternBar.className = 'manual-link-spacing-pattern'; patternBar.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;'; // CHANGE
@@ -9011,8 +9562,8 @@ Draw.loadPlugin(function (ui) {
             rowsWrap.style.width = '100%'; // CHANGE: migrated planting overlay.
             rowsWrap.style.minWidth = '0'; // CHANGE: migrated planting overlay.
             const headerRow = createSpacingGridRow('manual-link-spacing-header'); // CHANGE: migrated planting overlay.
-            if (options.live) headerRow.style.gridTemplateColumns = 'minmax(44px,1.4fr) repeat(4,minmax(0,1fr)) 18px'; // CHANGE: allocation fields shrink with the reachable above-bed panel.
-            ['Planting', 'Space X', 'Space Y', 'Off X', 'Off Y', ''].forEach(text => { // CHANGE: migrated planting overlay.
+            if (options.live) headerRow.style.gridTemplateColumns = 'minmax(44px,1.4fr) repeat(5,minmax(0,1fr)) 18px'; // CHANGE
+            ['Planting', 'Space X', 'Space Y', 'Off X', 'Off Y', 'Overhang %', ''].forEach(text => { // CHANGE
                 const head = document.createElement('div'); // CHANGE: migrated planting overlay.
                 head.textContent = text; // CHANGE: migrated planting overlay.
                 head.style.fontSize = '9px'; // CHANGE: migrated planting overlay.
@@ -9032,7 +9583,7 @@ Draw.loadPlugin(function (ui) {
                 const storedDraft = readStoredSpacingDraft(entry, row); // CHANGE: migrated planting overlay.
                 const displayRow = storedDraft ? Object.assign({}, row, storedDraft) : row; // CHANGE: migrated planting overlay.
                 const rowEl = createSpacingGridRow('manual-link-spacing-row'); // CHANGE: migrated planting overlay.
-                if (options.live) rowEl.style.gridTemplateColumns = 'minmax(44px,1.4fr) repeat(4,minmax(0,1fr)) 18px'; // CHANGE: keep all four inputs inside narrow allocation panels.
+                if (options.live) rowEl.style.gridTemplateColumns = 'minmax(44px,1.4fr) repeat(5,minmax(0,1fr)) 18px'; // CHANGE
                 rowEl.dataset.spacingRowCell = row.cellId || ''; // CHANGE: migrated planting overlay.
                 const labelCell = document.createElement('div'); // CHANGE: migrated planting overlay.
                 labelCell.style.minWidth = '0'; // CHANGE: migrated planting overlay.
@@ -9057,9 +9608,13 @@ Draw.loadPlugin(function (ui) {
                 const spacingY = spacingNumberInput(displayRow.spacingYCm, enabled); // CHANGE: migrated planting overlay.
                 const offsetX = spacingNumberInput(displayRow.offsetXCm, enabled); // CHANGE: migrated planting overlay.
                 const offsetY = spacingNumberInput(displayRow.offsetYCm, enabled); // CHANGE: migrated planting overlay.
+                const overhang = spacingNumberInput(displayRow.allowedOverhangPct == null ? 30 : displayRow.allowedOverhangPct, enabled); // CHANGE
+                overhang.min = '0'; overhang.max = '50'; overhang.step = 'any'; overhang.setAttribute('aria-label', (row.label || 'Planting') + ' Allowed overhang (%)'); // CHANGE
+                overhang.title = 'Percentage of circle diameter allowed beyond each bed edge. Apply/Create also saves the crop default.'; // CHANGE
                 setSpacingOffsetValue(offsetX, displayRow.offsetXCm); setSpacingOffsetValue(offsetY, displayRow.offsetYCm); // CHANGE: all shared Spacing editors round only offset displays.
                 [spacingX, spacingY, offsetX, offsetY].forEach((input, index) => input.setAttribute('aria-label', (row.label || 'Planting') + ' ' + ['Spacing X (cm)', 'Spacing Y (cm)', 'Offset X (cm)', 'Offset Y (cm)'][index])); // CHANGE: numeric fields remain identifiable in either overlay host.
                 [spacingX, spacingY, offsetX, offsetY].forEach(input => rowEl.appendChild(input)); // CHANGE: migrated planting overlay.
+                rowEl.appendChild(overhang); // CHANGE
 
                 const revert = document.createElement('button'); // CHANGE: migrated planting overlay.
                 revert.type = 'button'; // CHANGE: migrated planting overlay.
@@ -9077,7 +9632,7 @@ Draw.loadPlugin(function (ui) {
                 revert.style.padding = '2px 0'; // CHANGE: override shared compact padding to fit the icon column.
                 rowEl.appendChild(revert); // CHANGE: migrated planting overlay.
 
-                const state = { row, spacingX, spacingY, offsetX, offsetY, revert }; // CHANGE: migrated planting overlay.
+                const state = { row, spacingX, spacingY, offsetX, offsetY, overhang, overhangEdited: !!displayRow.overhangEdited, revert }; // CHANGE
                 rowStates.push(state); // CHANGE: migrated planting overlay.
                 rowsWrap.appendChild(rowEl); // CHANGE: migrated planting overlay.
             }); // CHANGE: migrated planting overlay.
@@ -9176,8 +9731,9 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE: migrated planting overlay.
 
             rowStates.forEach(state => { // CHANGE: migrated planting overlay.
-                [state.spacingX, state.spacingY, state.offsetX, state.offsetY].filter(Boolean).forEach(control => { // CHANGE: migrated planting overlay.
+                [state.spacingX, state.spacingY, state.offsetX, state.offsetY, state.overhang].filter(Boolean).forEach(control => { // CHANGE
                     const edit = event => { // CHANGE
+                        if (control === state.overhang) synchronizeCropOverhang(state); // CHANGE
                         if (control === state.offsetX || control === state.offsetY) readSpacingOffsetValue(control, event.type === 'input'); // CHANGE: typing zero over a rounded zero is an edit; unchanged change events retain precision.
                         refreshPatternSource(); refreshDraftState(); refreshPatterns(); // CHANGE
                     }; // CHANGE
@@ -9190,9 +9746,17 @@ Draw.loadPlugin(function (ui) {
                 state.revert.addEventListener('click', function (evt) { // CHANGE: migrated planting overlay.
                     consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
                     revertSpacingRowState(state); refreshPatternSource(); // CHANGE
+                    synchronizeCropOverhang(state); // CHANGE: restoring crop defaults updates matching active drafts too.
                     refreshDraftState(); // CHANGE: migrated planting overlay.
                 }); // CHANGE: migrated planting overlay.
             }); // CHANGE: migrated planting overlay.
+            /** Same-crop active drafts share one explicit default edit; inactive plantings are untouched. */ // CHANGE
+            function synchronizeCropOverhang(source) { // CHANGE
+                rowStates.forEach(state => { // CHANGE
+                    if (state.row.enabled === false || state !== source && (source.row.plantId == null || String(state.row.plantId) !== String(source.row.plantId))) return; // CHANGE
+                    state.overhang.value = source.overhang.value; state.overhangEdited = true; // CHANGE
+                }); // CHANGE
+            } // CHANGE
             saveDefaults.addEventListener('change', refreshDraftState); // CHANGE: allocation's opt-in remains in memory until creation succeeds.
 
             /** Regenerate only the selected pair; unrelated bed rows remain unchanged. */ // CHANGE
@@ -10286,6 +10850,8 @@ Draw.loadPlugin(function (ui) {
         buildDraftTilerGroupPreview, buildUnsavedTilerGroupPreview, // CHANGE
         listPlantingFootprints,
         readPlantingFootprint, // CHANGE: allocation timeline clustering can use the same header-free occupancy as placement.
+        resolveAllowedOverhangPct, // CHANGE: shared scheduler and Allocate defaults use the same percentage policy.
+        prepareBedFitSpacingDraft, // CHANGE: pure fitting shared by saved-planting previews and commits.
         proposePlantingGeometry,
         createPlantingFromProposal,
         reorderModuleChildrenForLayering

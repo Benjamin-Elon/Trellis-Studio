@@ -1657,6 +1657,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     function resolveOccupiedBedMoveUnit(cell) {
+        const transforms = graph.__trellisBedTransforms; // CHANGE: shared model membership includes date-hidden and actual child contents.
+        if (transforms) { // CHANGE
+            const unit = transforms.resolve(cell); // CHANGE
+            return unit && unit.cells.length > 1 ? unit : null; // CHANGE
+        } // CHANGE: retain compatibility when the planting plugin is unavailable.
         const bed = resolveOccupiedBedAnchor(cell);
         if (!bed) return null;
         const bedAssemblies = containedBedAssembliesForBed(bed);

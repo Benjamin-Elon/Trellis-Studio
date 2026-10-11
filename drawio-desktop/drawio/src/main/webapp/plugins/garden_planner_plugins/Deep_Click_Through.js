@@ -240,7 +240,10 @@ Draw.loadPlugin(function (ui) {
         const unit = resolve(cell);
         if (!unit || !unit.bed || !Array.isArray(unit.cells) || unit.cells.length < 2) return null;
         if (!graph.isCellVisible(unit.bed) || !graph.isCellMovable(unit.bed) || !graph.view || !graph.view.getState(unit.bed)) return null;
-        for (let i = 0; i < unit.cells.length; i++) {
+        const transforms = graph.__trellisBedTransforms; // CHANGE: content locks protect independent edits, not movement with their bed.
+        if (transforms) { // CHANGE
+            if (!transforms.canCarry(unit)) return null; // CHANGE
+        } else for (let i = 0; i < unit.cells.length; i++) { // CHANGE
             if (!unit.cells[i] || !graph.isCellMovable(unit.cells[i])) return null;
         }
         return unit;
@@ -893,8 +896,9 @@ Draw.loadPlugin(function (ui) {
         if (!cell || !graph.isCellMovable(cell)) return; // CHANGE
         const dragCells = getWorkspaceHandleDragCells(cell);
         const occupiedBedDrag = isOccupiedBedHandleCell(cell);
+        const nativeDragCells = occupiedBedDrag && graph.__trellisBedTransforms ? [cell] : dragCells; // CHANGE: shared commit/preview carries contents without unlocking or changing copy semantics.
         restoreWorkspaceCursor();
-        if (graph.setSelectionCells) graph.setSelectionCells(dragCells); // CHANGE
+        if (graph.setSelectionCells) graph.setSelectionCells(nativeDragCells); // CHANGE: select the bed; the controller carries its complete unit.
         else if (graph.setSelectionCell) graph.setSelectionCell(cell); // CHANGE
         workspaceDraggingHandleCell = cell;
         workspaceHoveredCell = cell;
@@ -907,7 +911,7 @@ Draw.loadPlugin(function (ui) {
             handler.mouseDownY = mxEvent.getClientY(evt);
             handler.delayedSelection = true;
             handler.cell = cell;
-            handler.__trellisWorkspaceHandleDragCells = dragCells; // CHANGE
+            handler.__trellisWorkspaceHandleDragCells = nativeDragCells; // CHANGE: unit contents belong to the shared transform controller.
             graph.__trellisWorkspaceHandleDragActive = true; // NEW
             handler.__trellisWorkspaceHandleDragActive = true; // NEW
             const move = function (moveEvt) {

@@ -1395,6 +1395,110 @@ test("admin planting creation allows generated plant tile churn in the same edit
     assert.equal(undone, false);
 });
 
+/** Model summary replacements with executed child-change source/destination history. */ // NEW
+function summaryLifecycleChanges(summary, planting) { // NEW
+    return [ // NEW
+        { constructor: { name: "mxChildChange" }, child: summary, parent: planting, previous: null }, // NEW
+        { constructor: { name: "mxGeometryChange" }, cell: summary }, // NEW
+        { constructor: { name: "mxStyleChange" }, cell: summary }, // NEW
+        { constructor: { name: "mxValueChange" }, cell: summary, previous: summary.value.cloneNode(true), value: summary.value }, // NEW
+        { constructor: { name: "mxCellAttributeChange" }, cell: summary, attribute: "label" }, // NEW
+        { constructor: { name: "mxCollapseChange" }, cell: summary }, // NEW
+        { constructor: { name: "mxVisibleChange" }, cell: summary }, // NEW
+        { constructor: { name: "mxChildChange" }, child: summary, parent: null, previous: planting } // NEW
+    ]; // NEW
+} // NEW
+
+/** Execute a complete permission inspection and expose its atomic rejection decision. */ // NEW
+function summaryEditWasRejected(harness, changes) { // NEW
+    const edit = { changes, undo() { this.wasUndone = true; } }; // NEW
+    harness.model.fireChange(edit); // NEW
+    return !!edit.wasUndone; // NEW
+} // NEW
+
+/** Own the enclosing scope as admin, then optionally switch to a regular grant recipient. */ // NEW
+function summaryPermissionFixture(preset, ownPlanting = false) { // NEW
+    const harness = loadUsersPlugin(), users = harness.context.window.Trellis.users; // NEW
+    users.enableUsers("Alice", "1234"); // NEW
+    harness.module.style = "module=1"; users.stampCreatedOwner(harness.module); // NEW
+    const adminId = users.getCurrentUser().id; // NEW
+    const bob = users.createUser("Bob", "5678", false).user; // NEW
+    const planting = appendChild(harness.module, makeXmlCell(harness.document, "summary-planting", { tiler_group: "1", [users.attrs.owner]: ownPlanting ? bob.id : adminId })); // NEW
+    if (preset) { // NEW
+        assert.equal(users.setScopeGrant(harness.module, { userId: bob.id, preset }).ok, true); // NEW
+        users.logout(); assert.equal(users.login("Bob", "5678").ok, true); // NEW
+    } // NEW
+    const summary = makeXmlCell(harness.document, "temporary-summary", { lod_summary: "1", label: "× 572" }); // NEW
+    return { harness, users, planting, summary, adminId }; // NEW
+} // NEW
+
+for (const [preset, ownPlanting, allowed] of [[null, false, true], ["gardener", true, true], ["coordinator", false, true], ["visitor", false, false], ["visitor", true, true], ["gardener", false, false]]) { // NEW: existing planting ownership independently grants management even with a visitor preset.
+    test(`${preset || "admin"} summary lifecycle ${ownPlanting ? "owned" : "other-owned"} planting follows existing permissions`, () => { // NEW
+        const { harness, planting, summary } = summaryPermissionFixture(preset, ownPlanting); // NEW
+        assert.equal(summaryEditWasRejected(harness, summaryLifecycleChanges(summary, planting)), !allowed); // NEW
+    }); // NEW
+} // NEW
+
+test("gardener can initialize summaries of a planting created in the same edit before ownership stamping", () => { // NEW
+    const { harness, users, summary } = summaryPermissionFixture("gardener"); // NEW
+    const created = appendChild(harness.module, makeXmlCell(harness.document, "created-summary-planting", { tiler_group: "1" })); // NEW
+    const changes = [{ constructor: { name: "mxChildChange" }, child: created, parent: harness.module, previous: null }].concat(summaryLifecycleChanges(summary, created)); // NEW
+    assert.equal(summaryEditWasRejected(harness, changes), false); // NEW
+    assert.equal(created.getAttribute(users.attrs.owner), users.getCurrentUser().id); // NEW
+}); // NEW
+
+test("attached summaries use their current planting even without child-change history", () => { // NEW
+    const { harness, planting, summary } = summaryPermissionFixture("gardener", true); // NEW
+    appendChild(planting, summary); // NEW
+    assert.equal(summaryEditWasRejected(harness, [{ constructor: { name: "mxGeometryChange" }, cell: summary }]), false); // NEW
+}); // NEW
+
+test("isolated summaries and unrelated orphan summaries cannot borrow authorized planting context", () => { // NEW
+    const { harness, planting, summary } = summaryPermissionFixture(null); // NEW
+    assert.equal(summaryEditWasRejected(harness, [{ constructor: { name: "mxChildChange" }, child: summary }]), true); // NEW
+    const other = makeXmlCell(harness.document, summary.id, { lod_summary: "1" }); // NEW: duplicate ID must not share authorization across different cell objects.
+    const changes = summaryLifecycleChanges(summary, planting).concat({ constructor: { name: "mxGeometryChange" }, cell: other }); // NEW
+    assert.equal(summaryEditWasRejected(harness, changes), true); // NEW
+}); // NEW
+
+test("every summary parent in a mixed planting edit must be authorized", () => { // NEW
+    const { harness, planting, summary, users, adminId } = summaryPermissionFixture("gardener", true); // NEW
+    const otherPlanting = appendChild(harness.module, makeXmlCell(harness.document, "unauthorized-summary-planting", { tiler_group: "1", [users.attrs.owner]: adminId })); // NEW
+    const changes = summaryLifecycleChanges(summary, planting); // NEW
+    changes.push({ constructor: { name: "mxChildChange" }, child: summary, parent: planting, previous: otherPlanting }); // NEW
+    assert.equal(summaryEditWasRejected(harness, changes), true); // NEW
+    const otherSummary = makeXmlCell(harness.document, "other-summary", { lod_summary: "1" }); // NEW
+    assert.equal(summaryEditWasRejected(harness, summaryLifecycleChanges(summary, planting).concat(summaryLifecycleChanges(otherSummary, otherPlanting))), true); // NEW
+}); // NEW
+
+test("summary histories referencing a non-planting parent reject even for admins", () => { // NEW
+    const { harness, planting, summary } = summaryPermissionFixture(null); // NEW
+    const changes = summaryLifecycleChanges(summary, planting); // NEW
+    changes.push({ constructor: { name: "mxChildChange" }, child: summary, parent: planting, previous: harness.module }); // NEW
+    assert.equal(summaryEditWasRejected(harness, changes), true); // NEW
+}); // NEW
+
+for (const attrName of ["owner", "accessGrants", "roleUser"]) { // NEW
+    test(`summary lifecycle does not bypass protected ${attrName} attribute permissions`, () => { // NEW
+        const { harness, planting, summary, users } = summaryPermissionFixture("gardener", true); // NEW
+        const before = summary.value.cloneNode(true), attribute = users.attrs[attrName]; // NEW
+        assert.ok(attribute); summary.setAttribute(attribute, "unauthorized"); // NEW
+        const changes = summaryLifecycleChanges(summary, planting); // NEW
+        changes.push({ constructor: { name: "mxValueChange" }, cell: summary, previous: before, value: summary.value }); // NEW
+        assert.equal(summaryEditWasRejected(harness, changes), true); // NEW
+        const directChanges = summaryLifecycleChanges(summary, planting); // NEW
+        directChanges.push({ constructor: { name: "mxCellAttributeChange" }, cell: summary, attribute }); // NEW
+        assert.equal(summaryEditWasRejected(harness, directChanges), true); // NEW
+    }); // NEW
+} // NEW
+
+test("ordinary detached children remain rejected alongside authorized summary rebuilding", () => { // NEW
+    const { harness, planting, summary } = summaryPermissionFixture(null); // NEW
+    const ordinary = makeXmlCell(harness.document, "ordinary-summary-neighbor", { label: "Ordinary" }); // NEW
+    const changes = summaryLifecycleChanges(summary, planting).concat({ constructor: { name: "mxChildChange" }, child: ordinary }); // NEW
+    assert.equal(summaryEditWasRejected(harness, changes), true); // NEW
+}); // NEW
+
 test("gardener grant creates and manages only owned planting groups", () => {
     const harness = loadUsersPlugin();
     const users = harness.context.window.Trellis.users;

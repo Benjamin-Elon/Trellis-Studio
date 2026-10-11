@@ -948,6 +948,11 @@ Draw.loadPlugin(function (ui) {
         return getAttr(cell, "auto") === "1" || !!getAttr(cell, "tile_r") || !!getAttr(cell, "tile_c");
     }
 
+    /** Summaries are generated presentation children, distinct from individual plant tiles. */ // NEW
+    function isPlantingSummary(cell) { // NEW
+        return !!cell && getAttr(cell, "lod_summary") === "1"; // NEW
+    } // NEW
+
     function isTaskBoard(cell) {
         const key = String(getAttr(cell, "board_key") || "");
         return key === "KANBAN_BOARD" || key === "MAIN_KANBAN_BOARD" || getAttr(cell, "roadmap_type") === "board"; // CHANGE: board membership/access policies also apply to project roadmaps.
@@ -2679,6 +2684,36 @@ Draw.loadPlugin(function (ui) {
         return !!nearestCreatedPlantingForGeneratedTile(cellFromChange(change), context);
     }
 
+    /** Recover each summary's complete parent history before rejection or undo mutates the changes. */ // NEW
+    function collectAuthorizedSummaryGroups(changes, createdPlantingIds) { // NEW
+        const summaryGroups = new Map(); // NEW: object identity isolates unrelated or reused cell IDs.
+        changes.forEach(function (change) { // NEW
+            const cell = cellFromChange(change); // NEW
+            if (!isPlantingSummary(cell)) return; // NEW
+            let parents = summaryGroups.get(cell); // NEW
+            if (!parents) { parents = new Set(); summaryGroups.set(cell, parents); } // NEW
+            const references = [parentOf(cell)]; // NEW
+            if (change.constructor && change.constructor.name === "mxChildChange") { // NEW
+                // Executed mxChildChange.parent is that change's destination; previous is its source. // NEW
+                references.push(change.parent, change.previous); // NEW
+            } // NEW
+            references.forEach(function (parent) { if (parent) parents.add(parent); }); // NEW
+        }); // NEW
+        summaryGroups.forEach(function (parents, summary) { // NEW
+            const allowed = parents.size > 0 && Array.from(parents).every(function (parent) { // NEW
+                return isTilerGroup(parent) && (canManagePlanting(parent) || createdPlantingIds.has(cellStableId(parent))); // NEW
+            }); // NEW
+            if (!allowed) summaryGroups.delete(summary); // NEW: one unauthorized or non-planting parent invalidates the association.
+        }); // NEW
+        return summaryGroups; // NEW
+    } // NEW
+
+    /** Limit the association exception to child churn and ordinary summary initialization. */ // NEW
+    function isPlantingSummaryLifecycleChange(change) { // NEW
+        const name = change && change.constructor && change.constructor.name; // NEW
+        return isPlantingSummary(cellFromChange(change)) && (name === "mxChildChange" || name === "mxCellAttributeChange" || name === "mxValueChange" || name === "mxStyleChange" || name === "mxGeometryChange" || name === "mxCollapseChange" || name === "mxVisibleChange"); // NEW
+    } // NEW
+
     function plantingContextAllowsGeneratedTileChurn(change) {
         const name = change && change.constructor && change.constructor.name;
         const cell = cellFromChange(change);
@@ -2699,6 +2734,7 @@ Draw.loadPlugin(function (ui) {
     function editPermissionContext(changes) {
         const source = Array.isArray(changes) ? changes : [];
         const createdPlantingIds = collectAllowedCreatedPlantingIds(source);
+        const summaryGroups = collectAuthorizedSummaryGroups(source, createdPlantingIds); // NEW
         const roadmapDeletedIds = new Set(), roadmapTransfers = new Map(); // CHANGE
         function roadmapBoard(cell) { for (let cur = cell; cur; cur = model.getParent(cur)) if (getAttr(cur, 'roadmap_type') === 'board') return cur; return null; } // NEW
         source.forEach(function (change) { // NEW
@@ -2711,7 +2747,7 @@ Draw.loadPlugin(function (ui) {
             if (!previousParent || destination || !canDeleteFromPreviousParent(cell, previousParent)) return; // CHANGE
             traverseCells(cell, function (removed) { if (getAttr(removed, 'roadmap_type') || isTaskCard(removed)) roadmapDeletedIds.add(String(cellStableId(removed))); }); // NEW
         }); // NEW
-        return { createdPlantingIds, roadmapDeletedIds, roadmapTransfers, allowGeneratedPlantTileChurn: createdPlantingIds.size > 0 || source.some(plantingContextAllowsGeneratedTileChurn) }; // CHANGE
+        return { createdPlantingIds, summaryGroups, roadmapDeletedIds, roadmapTransfers, allowGeneratedPlantTileChurn: createdPlantingIds.size > 0 || source.some(plantingContextAllowsGeneratedTileChurn) }; // CHANGE: summary authorization is per cell; existing tile churn semantics remain intact.
     }
 
     /** Permit only the source-board navigation repair caused by an authorized object transfer. */ // NEW
@@ -2761,6 +2797,7 @@ Draw.loadPlugin(function (ui) {
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && PROTECTED_ATTRS.has(String(change.key || "")) && !canManageAccess(cell)) return false;
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && protectedAttrsChanged(change) && !canManageAccess(cell)) return false;
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && isModuleCell(cell)) return canEditCell(cell);
+        if (isPlantingSummaryLifecycleChange(change)) return !!(context && context.summaryGroups && context.summaryGroups.has(cell)); // NEW: fail closed, after all protected metadata checks.
         if (name === "mxChildChange") {
             const currentParent = currentParentOfChange(change);
             const previousParent = previousParentOfChange(change);

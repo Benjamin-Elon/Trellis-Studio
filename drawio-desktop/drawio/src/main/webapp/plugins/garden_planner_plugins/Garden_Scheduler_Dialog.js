@@ -749,7 +749,8 @@ Draw.loadPlugin(function (ui) {
         killtemp_c: 'REAL',
         diagnostic_policy: 'TEXT',
         spacing_x_cm: 'REAL',
-        spacing_y_cm: 'REAL'
+        spacing_y_cm: 'REAL', // CHANGE
+        allowed_overhang_pct: 'REAL' // CHANGE: nullable legacy values resolve to 30% without rewriting crop records.
     });
     const PHYSIOLOGY_CITY_COLUMNS = Object.freeze({ // CHANGED: scheduler owns lightweight city geography columns for grouped city selection.
         country_name: 'TEXT',
@@ -882,7 +883,7 @@ Draw.loadPlugin(function (ui) {
                  tmin_c, topt_low_c, topt_high_c, tmax_c, tbase_c, killtemp_c,
                  harvest_window_days, days_maturity, days_transplant, days_germ,
                  direct_sow, transplant, default_planting_method_category, default_planting_method, overwinter_ok, start_cooling_threshold_c,
-                  soil_temp_min_plant_c, annual, biennial, perennial, lifespan_years, veg_diameter_cm, spacing_cm, spacing_x_cm, spacing_y_cm,
+                  soil_temp_min_plant_c, annual, biennial, perennial, lifespan_years, veg_diameter_cm, spacing_cm, spacing_x_cm, spacing_y_cm, allowed_overhang_pct, -- CHANGE: include the crop overhang default.
                  establishment_temp_max_c, establishment_heat_window_days, establishment_heat_policy,
                  quality_temp_max_c, heat_stress_stage, quality_heat_policy,
                  photoperiod_response, critical_daylength_hours, photoperiod_stage, photoperiod_policy,
@@ -3987,6 +3988,7 @@ Draw.loadPlugin(function (ui) {
     }
     function plantingLayoutAttributePatch(layout) { // ADDED: persist current layout rows independently of reusable defaults.
         const patch = {};
+        if (layout?.allowedOverhangPct != null) patch.allowed_overhang_pct = String(layout.allowedOverhangPct); // CHANGE
         if (layout?.spacingXCm != null) patch.spacing_x_cm = String(layout.spacingXCm);
         if (layout?.spacingYCm != null) patch.spacing_y_cm = String(layout.spacingYCm);
         if (layout?.spacingXCm != null && layout?.spacingYCm != null && layout.spacingXCm === layout.spacingYCm) patch.spacing_cm = String(layout.spacingXCm);
@@ -15940,6 +15942,7 @@ Draw.loadPlugin(function (ui) {
             spacingYCm: spacing.spacingYCm,
             vegHeightCm: spacing.vegHeightCm,
             vegDiameterCm: spacing.vegDiameterCm, // CHANGE: fitted overhang uses the diameter that will be saved on the planting.
+            allowedOverhangPct: cropAllowedOverhangPct(inputs?.plant?.allowed_overhang_pct), // CHANGE
             entryISO: startISO,
             harvestEndISO: endISO,
             occupancy: annotatedOccupancy
@@ -17174,7 +17177,7 @@ Draw.loadPlugin(function (ui) {
 
     function spacingPlantDefaultLayout(plant) {
         const defaults = plantSpacingDefaults(plant);
-        return { spacingXCm: defaults.spacingXCm, spacingYCm: defaults.spacingYCm, offsetXCm: 0, offsetYCm: 0 }; // CHANGE: plant-default reset delegates final geometry normalization to the tiler.
+        return { spacingXCm: defaults.spacingXCm, spacingYCm: defaults.spacingYCm, offsetXCm: 0, offsetYCm: 0, allowedOverhangPct: cropAllowedOverhangPct(plant?.allowed_overhang_pct) }; // CHANGE
     }
 
     function spacingIdentityForCell(cell) {
@@ -17236,7 +17239,7 @@ Draw.loadPlugin(function (ui) {
 
     /** Relevant graph state guards read-only previews across asynchronous relationship lookups. */ // CHANGE
     function spacingCellRevision(cell) { // CHANGE
-        const names = ['plant_id', 'variety_id', 'growth_stage_key', 'spacing_x_cm', 'spacing_y_cm', 'veg_diameter_cm', 'layout_offset_x_cm', 'layout_offset_y_cm', 'disabled_plants', 'plant_count', 'plant_yield', 'sow_date', 'transplant_date', 'harvest_start', 'harvest_end', 'lifespan_start', 'lifespan_end']; // CHANGE
+        const names = ['plant_id', 'variety_id', 'growth_stage_key', 'spacing_x_cm', 'spacing_y_cm', 'veg_diameter_cm', 'allowed_overhang_pct', 'layout_offset_x_cm', 'layout_offset_y_cm', 'disabled_plants', 'plant_count', 'plant_yield', 'sow_date', 'transplant_date', 'harvest_start', 'harvest_end', 'lifespan_start', 'lifespan_end']; // CHANGE
         return JSON.stringify([cell.getGeometry(), cell.getStyle?.() || cell.style || '', names.map(name => cell.getAttribute(name))]); // CHANGE
     } // CHANGE
 
@@ -17330,6 +17333,7 @@ Draw.loadPlugin(function (ui) {
                 spacingYCm: layoutNumberOrNull(cell.getAttribute?.('spacing_y_cm')) ?? layoutNumberOrNull(cell.getAttribute?.('spacing_cm')) ?? defaults.spacingYCm,
                 offsetXCm: offsets.x,
                 offsetYCm: offsets.y,
+                allowedOverhangPct: cropAllowedOverhangPct(cell.getAttribute?.('allowed_overhang_pct')), // CHANGE: legacy plantings retain 30%, independently of crop defaults.
                 plantDefaultLayout: spacingPlantDefaultLayout(plant), plant, // CHANGE
                 vegDiameterCm: layoutNumberOrNull(cell.getAttribute?.('veg_diameter_cm')) ?? defaults.vegDiameterCm, // CHANGE
                 rotationDeg: Number(activeGraph.getCellStyle?.(cell)?.rotation || 0), // CHANGE
@@ -17352,12 +17356,82 @@ Draw.loadPlugin(function (ui) {
         }); // CHANGE: spacing context carries anchorless set-default availability for the overlay.
     }
 
+    /** Use the planting owner's policy, including zero and nullable legacy crop defaults. */ // CHANGE
+    function cropAllowedOverhangPct(value) { // CHANGE
+        const resolve = window.USL?.tiler?.resolveAllowedOverhangPct; // CHANGE
+        if (resolve) return resolve(value); // CHANGE
+        const n = layoutNumberOrNull(value); // CHANGE
+        return n != null && n >= 0 && n <= 50 ? n : 30; // CHANGE: scheduler can load before the planting plugin.
+    } // CHANGE
+
+    /** A percentage draft can resize only persisted bed-fitting axes, never a companion footprint. */ // CHANGE
+    function prepareSpacingBedFitRows(activeGraph, rows) { // CHANGE
+        const prepare = window.USL?.tiler?.prepareBedFitSpacingDraft; // CHANGE
+        return (rows || []).map(row => row.enabled && prepare ? prepare(graphCellById(activeGraph, row.cellId), row) : row); // CHANGE
+    } // CHANGE
+
+    const cropOverhangWrites = new Map(); // CHANGE: serialize writes per crop and invalidate obsolete retry actions.
+
+    /** Write a captured commit after earlier writes; a newer commit always wins over an old retry. */ // CHANGE
+    async function writeCropOverhangDefault(record) { // CHANGE
+        const previous = record.pending || Promise.resolve(); // CHANGE
+        const operation = previous.catch(() => {}).then(async () => { // CHANGE
+            if (cropOverhangWrites.get(record.plantId) !== record) return; // CHANGE
+            await PlantModel.update(record.plantId, { allowed_overhang_pct: record.percentage }); // CHANGE
+            record.error = null; // CHANGE
+            record.rows.forEach(row => { if (row.plant) row.plant.allowed_overhang_pct = record.percentage; }); // CHANGE
+            window.dispatchEvent(new CustomEvent('usl:cropOverhangSaved', { detail: { plantId: record.plantId, allowedOverhangPct: record.percentage } })); // CHANGE
+        }); // CHANGE
+        record.pending = operation; // CHANGE
+        try { await operation; } catch (error) { record.error = error; } // CHANGE: the diagram edit already succeeded.
+        return record; // CHANGE
+    } // CHANGE
+
+    /** Keep default-write failures visible across overlay refreshes, with a database-only retry. */ // CHANGE
+    function showOverhangDefaultFailures(activeGraph, records) { // CHANGE
+        if (!activeGraph?.container || !records.some(record => record.error && cropOverhangWrites.get(record.plantId) === record)) return; // CHANGE
+        const notice = document.createElement('div'), message = document.createElement('span'), retry = document.createElement('button'); // CHANGE
+        notice.className = 'trellis-overhang-default-notice'; notice.style.cssText = 'position:fixed;bottom:36px;right:24px;max-width:360px;padding:8px;background:#fff;border:1px solid #b45309;border-radius:4px;z-index:10030;'; // CHANGE
+        notice.appendChild(message); retry.textContent = 'Retry crop default'; notice.appendChild(retry); document.body.appendChild(notice); // CHANGE
+        const update = () => { // CHANGE
+            const failed = records.filter(record => record.error && cropOverhangWrites.get(record.plantId) === record); // CHANGE
+            if (!failed.length) { notice.remove(); window.removeEventListener('usl:cropOverhangCommitted', update); return; } // CHANGE
+            message.textContent = 'Planting saved. Crop overhang default could not be saved: ' + failed.map(record => record.error.message || String(record.error)).join('; ') + ' '; // CHANGE
+        }; // CHANGE
+        window.addEventListener('usl:cropOverhangCommitted', update); // CHANGE
+        retry.addEventListener('click', async () => { // CHANGE
+            retry.disabled = true; // CHANGE
+            await Promise.all(records.filter(record => record.error && cropOverhangWrites.get(record.plantId) === record).map(writeCropOverhangDefault)); // CHANGE
+            retry.disabled = false; update(); // CHANGE
+        }); // CHANGE
+        update(); // CHANGE
+    } // CHANGE
+
+    /** Persist only explicit overhang edits, independently of companion/spacing-default opt-in. */ // CHANGE
+    async function saveOverhangDefaultsForRows(rows, activeGraph) { // CHANGE
+        const byCrop = new Map(); // CHANGE
+        for (const row of normalizeSpacingDraftRows(rows)) { // CHANGE
+            if (!row.enabled || !row.overhangEdited || row.plantId == null) continue; // CHANGE
+            if (row.allowedOverhangPct == null || row.allowedOverhangPct < 0 || row.allowedOverhangPct > 50) throw new Error('Allowed overhang must be between 0% and 50%.'); // CHANGE
+            const id = String(row.plantId), existing = byCrop.get(id); // CHANGE
+            if (existing && existing.percentage !== row.allowedOverhangPct) throw new Error('Active rows for the same crop must use one overhang default.'); // CHANGE
+            if (existing) existing.rows.push(row); // CHANGE
+            else byCrop.set(id, { plantId: id, percentage: row.allowedOverhangPct, rows: [row], error: null, pending: cropOverhangWrites.get(id)?.pending }); // CHANGE
+        } // CHANGE
+        for (const record of byCrop.values()) cropOverhangWrites.set(record.plantId, record); // CHANGE
+        window.dispatchEvent(new CustomEvent('usl:cropOverhangCommitted')); // CHANGE
+        const records = await Promise.all(Array.from(byCrop.values(), writeCropOverhangDefault)); // CHANGE
+        showOverhangDefaultFailures(activeGraph, records); // CHANGE
+        return { failedCropIds: records.filter(record => record.error && cropOverhangWrites.get(record.plantId) === record).map(record => record.plantId) }; // CHANGE
+    } // CHANGE
+
     function normalizeSpacingDraftRows(rows) {
         return (rows || []).map(row => Object.assign({}, row, {
             spacingXCm: layoutNumberOrNull(row.spacingXCm),
             spacingYCm: layoutNumberOrNull(row.spacingYCm),
             offsetXCm: layoutNumberOrNull(row.offsetXCm),
-            offsetYCm: layoutNumberOrNull(row.offsetYCm)
+            offsetYCm: layoutNumberOrNull(row.offsetYCm), // CHANGE
+            allowedOverhangPct: row.allowedOverhangPct == null ? 30 : layoutNumberOrNull(row.allowedOverhangPct) // CHANGE: explicit blank input remains invalid; omitted legacy callers retain 30%.
         }));
     }
 
@@ -17370,6 +17444,7 @@ Draw.loadPlugin(function (ui) {
             if (!(row.spacingYCm > 0)) errors.push(label + ': Spacing Y must be a positive number.');
             if (row.offsetXCm == null) errors.push(label + ': Offset X must be a finite number.');
             if (row.offsetYCm == null) errors.push(label + ': Offset Y must be a finite number.');
+            if (row.allowedOverhangPct == null || row.allowedOverhangPct < 0 || row.allowedOverhangPct > 50) errors.push(label + ': Allowed overhang must be between 0% and 50%.'); // CHANGE
         });
         return { ok: errors.length === 0, errors };
     }
@@ -17413,7 +17488,7 @@ Draw.loadPlugin(function (ui) {
 
     function buildSpacingPreviewModel(activeGraphOrRows, maybeRows) {
         const activeGraph = Array.isArray(activeGraphOrRows) ? graph : activeGraphOrRows;
-        const sourceRows = Array.isArray(activeGraphOrRows) ? activeGraphOrRows : maybeRows;
+        const sourceRows = prepareSpacingBedFitRows(activeGraph, Array.isArray(activeGraphOrRows) ? activeGraphOrRows : maybeRows); // CHANGE
         const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
         const previewRows = normalizeSpacingDraftRows(sourceRows).filter(row => row.enabled || row.previewOnly).map(row => { // CHANGE: bed previews include unchanged plantings as upright context.
             const cell = activeGraph && row.cellId ? graphCellById(activeGraph, row.cellId) : null; // CHANGE
@@ -17480,7 +17555,7 @@ Draw.loadPlugin(function (ui) {
     function applyLayoutRowsToGraph(activeGraph, rows) { // CHANGE: synchronous edits can join the atomic allocation transaction.
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         if (!activeGraph || !model) throw new Error('Graph is unavailable.');
-        const editable = normalizeSpacingDraftRows(rows).filter(row => row.enabled);
+        const editable = prepareSpacingBedFitRows(activeGraph, normalizeSpacingDraftRows(rows)).filter(row => row.enabled); // CHANGE
         const geometryValidation = validateSpacingDraftGeometry(activeGraph, editable); // CHANGE
         const preview = buildSpacingPreviewModel(activeGraph, editable); // CHANGE
         if (preview.status === 'invalid') throw new Error(preview.warning || 'Invalid planting layout.'); // CHANGE
@@ -17494,6 +17569,7 @@ Draw.loadPlugin(function (ui) {
                 if (!cell || row.cellRevision && row.cellRevision !== spacingCellRevision(cell)) throw new Error('The planting changed. Reopen Spacing.'); // CHANGE
                 const result = preview.rows.find(item => item.cellId === row.cellId)?.groupPreview; // CHANGE
                 const patch = plantingLayoutAttributePatch(row); // CHANGE
+                if (row.bedFitGeometry) model.setGeometry(cell, row.bedFitGeometry.clone()); // CHANGE: commit precisely the frame used by the preview.
                 if (row.clipBounds && result) patch.disabled_plants = JSON.stringify(result.disabledSlots); // CHANGE
                 if (row.generatedPattern) { patch.companion_layout_interplant = ''; patch.companion_layout_template = ''; patch.bed_fit_width = '0'; patch.bed_fit_height = '0'; patch.bed_auto_fit = '0'; } // CHANGE
                 if (row.modelRect && row.generatedPattern) { // CHANGE
@@ -17502,7 +17578,7 @@ Draw.loadPlugin(function (ui) {
                     activeGraph.setCellStyles?.('rotation', String(row.rotationDeg || 0), [cell]); // CHANGE
                 } // CHANGE
                 applyCellAttributePatch(cell, patch, model); // CHANGE
-                if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(activeGraph, cell, { inTransaction: true, preferInPlace: true });
+                if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(activeGraph, cell, { inTransaction: true, preferInPlace: true, ...(row.bedFitLayoutSnapshot ? { layoutSnapshot: row.bedFitLayoutSnapshot, useLiveSnapshot: false } : {}) }); // CHANGE
             });
         } catch (error) { // CHANGE
             if (edit?.changes) { const changes = edit.changes.splice(start); for (let index = changes.length - 1; index >= 0; index--) changes[index].execute(); } // CHANGE
@@ -17606,6 +17682,7 @@ Draw.loadPlugin(function (ui) {
         const validation = validateSpacingDraft(normalized);
         if (!validation.ok) throw new Error(validation.errors.join('\n'));
         const result = applyLayoutRowsToGraph(activeGraph, normalized); // CHANGE
+        result.overhangDefaults = await saveOverhangDefaultsForRows(normalized, activeGraph); // CHANGE: a database failure never rolls back a valid diagram edit.
         if (options.saveDefaults) await saveSpacingDefaultsForRows(normalized, activeGraph, model); // CHANGE: only persist reusable defaults after a successful graph commit.
         return result; // CHANGE
     }
@@ -17613,6 +17690,7 @@ Draw.loadPlugin(function (ui) {
     const layoutTools = {
         buildSpacingLayoutRows, // CHANGE
         summarizeBedRelationships, prepareCompanionPair, generateCompanionPairLayout, saveSpacingDefaultsForRows, applyLayoutRowsToGraph, setDefaultRowForSpacingRow, // CHANGE
+        saveOverhangDefaultsForRows, // CHANGE: automatic crop-only defaults run after successful Apply/Create.
         validateSpacingDraft,
         buildSpacingPreviewModel,
         applySpacingDraft,

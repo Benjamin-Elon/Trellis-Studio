@@ -2657,6 +2657,13 @@ ArrangePanel.prototype.addGeometryHandler = function(input, fn)
 								
 								if (!fn(geo, value, cells[i]))
 								{
+									var previous = graph.getCellGeometry(cells[i]); // CHANGE: planting size fields must use the same fitting, tiling and undo pipeline as handles.
+									if (graph.__plantTilerResizeCellsWrapped && cells[i].getAttribute('tiler_group') === '1' && // CHANGE
+										(previous.width != geo.width || previous.height != geo.height)) // CHANGE
+									{ // CHANGE
+										graph.resizeCell(cells[i], geo, false); // CHANGE
+										continue; // CHANGE: the resize pipeline handles child layout and constraints.
+									} // CHANGE
 									var state = graph.view.getState(cells[i]);
 									
 									if (state != null && graph.isRecursiveVertexResize(state))

@@ -15,9 +15,9 @@ function sourceFunction(name) { // CHANGE
 function loadFittedPlantingGeometry() { // CHANGE
     const model = { getChildCount: cell => (cell.children || []).length, getChildAt: (cell, i) => cell.children[i], isVertex: () => true }; // CHANGE
     const graph = { getModel: () => model, getCellStyle: cell => ({ rotation: cell.rotation || 0 }) }; // CHANGE
-    const context = vm.createContext({ graph, mxConstants: { STYLE_ROTATION: 'rotation' }, console }); // CHANGE
+    const context = vm.createContext({ graph, mxConstants: { STYLE_ROTATION: 'rotation' }, console, window: { addEventListener() {} } }); // CHANGE: pure geometry fixtures do not dispatch crop-default UI events.
     const config = source.slice(source.indexOf('    const PX_PER_CM'), source.indexOf('    // -------------------- Debug helper')); // CHANGE
-    const names = ['toPx', 'clamp', 'groupLabelMetrics', 'allowedOverhangForDiameter', 'bedFitLabelBandPxForSize', 'solveOuterHeightForPlantingFrame', // CHANGE
+    const names = ['toPx', 'clamp', 'groupLabelMetrics', 'resolveAllowedOverhangPct', 'allowedOverhangForDiameter', 'bedFitLabelBandPxForSize', 'solveOuterHeightForPlantingFrame', // CHANGE
         'nearlySameNumber', 'toRad', 'rotateVectorModel', 'rotatePointAround', 'positionGeometryForLocalPoint', 'modelPointForLocalPoint', 'getTilerRotationDeg', // CHANGE
         'ymdValue', 'ymdIntervalsOverlap', 'plantingProposalConflictRank', 'computeGridStatsXY', 'classifyPlantingSlots', 'getXmlAttr', 'finiteNumberOrNull', // CHANGE
         'layoutGridOffsetPx', 'shiftedSlotCenterLocal', 'interplantSlotCenterLocal', 'logicalSlotCenterLocal', 'isInterplantLayoutGroup', // CHANGE

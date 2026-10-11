@@ -71,7 +71,7 @@ test("spacing editor isolates each plant in a fixed-width row and labels inactiv
     const source = readSource();
     const editorSource = sourceBetween(source, "function renderSpacingEditor", "function renderSpacingView");
 
-    assert.match(source, /const SPACING_ROW_GRID_COLUMNS = 'minmax\(92px,1fr\) repeat\(4,minmax\(42px,46px\)\) 24px';/); // CHANGE: companion template column is removed; all rows use ordinary layout fields.
+    assert.match(source, /const SPACING_ROW_GRID_COLUMNS = 'minmax\(72px,1fr\) repeat\(5,minmax\(36px,46px\)\) 24px';/); // CHANGE: percentage joins the four centimeter fields within the fixed overlay width.
     assert.match(source, /function createSpacingGridRow\(className\)[\s\S]*row\.style\.gridTemplateColumns = SPACING_ROW_GRID_COLUMNS;[\s\S]*return row;/); // CHANGE: each plant owns one grid row.
     assert.match(editorSource, /const rowsWrap = document\.createElement\('div'\);/);
     assert.match(editorSource, /const headerRow = createSpacingGridRow\('manual-link-spacing-header'\);/);

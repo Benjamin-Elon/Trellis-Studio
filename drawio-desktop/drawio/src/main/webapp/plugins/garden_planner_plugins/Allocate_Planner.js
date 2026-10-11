@@ -893,6 +893,7 @@ Draw.loadPlugin(function (ui) {
             offsetXCm: layout.offsetXCm, offsetYCm: layout.offsetYCm, // CHANGE: undefined keeps the existing automatic centered lattice.
             vegHeightCm: context.plantResolution.plant.veg_height_cm || null,
             vegDiameterCm: context.plantResolution.plant.veg_diameter_cm || null, // CHANGE
+            allowedOverhangPct: layout.allowedOverhangPct ?? context.plantResolution.plant.allowed_overhang_pct ?? 30, // CHANGE
             fillCompleteRows: true, overlapPolicy: "warn", // CHANGE: Allocate fits complete rows and reviews every relationship overlap.
             occupancy: context.occupancy || state.occupancy || [], // CHANGE
             entryISO: context.lifecycle.primaryDateISO || context.actionStartISO,
@@ -2065,6 +2066,7 @@ Draw.loadPlugin(function (ui) {
                 spacingXCm: layout.spacingXCm ?? geometry?.spacingXCm ?? plant.spacing_x_cm ?? plant.spacing_cm ?? 30, // CHANGE
                 spacingYCm: layout.spacingYCm ?? geometry?.spacingYCm ?? plant.spacing_y_cm ?? plant.spacing_cm ?? 30, // CHANGE
                 offsetXCm: layout.offsetXCm ?? geometry?.layoutOffsetXCm ?? 0, offsetYCm: layout.offsetYCm ?? geometry?.layoutOffsetYCm ?? 0, // CHANGE
+                allowedOverhangPct: layout.allowedOverhangPct ?? geometry?.allowedOverhangPct ?? plant.allowed_overhang_pct ?? 30, overhangEdited: !!layout.overhangEdited, // CHANGE
                 vegDiameterCm: plant.veg_diameter_cm, bedId: cellId(base.bed), // CHANGE
                 attributes: { label: base.crop.label + ' group', plant_name: plant.plant_name, plant_abbr: plant.plant_abbr || '?', plant_yield: String(base.kgPerPlant), growth_stage_key: base.crop.growthStageKey === 'mature' ? '' : base.crop.growthStageKey || '' } }; // CHANGE
         } // CHANGE
@@ -2095,7 +2097,7 @@ Draw.loadPlugin(function (ui) {
                 if (!isCurrent()) return; // CHANGE
                 if (state.companionRows) context = Object.assign({}, context, { rows: context.rows.map(row => { // CHANGE: retain edits while refreshing geometry, dates, and neighbor revisions after navigation.
                     const previous = state.companionRows.find(item => item.cellId === row.cellId); // CHANGE
-                    return previous ? Object.assign({}, row, { spacingXCm: previous.spacingXCm, spacingYCm: previous.spacingYCm, offsetXCm: previous.offsetXCm, offsetYCm: previous.offsetYCm }) : row; // CHANGE
+                    return previous ? Object.assign({}, row, { spacingXCm: previous.spacingXCm, spacingYCm: previous.spacingYCm, offsetXCm: previous.offsetXCm, offsetYCm: previous.offsetYCm, allowedOverhangPct: previous.allowedOverhangPct, overhangEdited: previous.overhangEdited }) : row; // CHANGE
                 }) }); // CHANGE
                 state.spacingEditorHandle = editor.render(content, context, { live: true, proposed: true, fitToDemand: !state.companionMode, saveDefaults: state.spacingSaveDefaults, isCurrent, // CHANGE
                     onChange: (rows, preview, valid, options) => { if (isCurrent()) void updateAllocationSpacing(state, base, context, rows, preview, valid, options); } }); // CHANGE
@@ -2119,7 +2121,7 @@ Draw.loadPlugin(function (ui) {
             const proposed = rows.find(row => row.proposed), tools = window.USL.scheduler.layoutTools; // CHANGE
             const token = ++state.spacingRevision, body = state.spacingBody, refresh = state.refreshJobId; // CHANGE
             state.draftVersion++; state.overlayVersion++; state.spacingSaveDefaults = !!options.saveDefaults; // CHANGE
-            state.spacingOverrides = { spacingXCm: proposed.spacingXCm, spacingYCm: proposed.spacingYCm, offsetXCm: proposed.offsetXCm, offsetYCm: proposed.offsetYCm }; // CHANGE: retain raw values, including incomplete input, across view changes.
+            state.spacingOverrides = { spacingXCm: proposed.spacingXCm, spacingYCm: proposed.spacingYCm, offsetXCm: proposed.offsetXCm, offsetYCm: proposed.offsetYCm, allowedOverhangPct: proposed.allowedOverhangPct, overhangEdited: proposed.overhangEdited }; // CHANGE
             if (state.companionTargetId) state.companionRows = rows; // CHANGE
             state.spacingValid = valid; state.spacingPending = valid; state.noticeMessage = valid ? 'Updating spacing preview...' : preview?.warning || 'Enter positive spacing and finite offsets.'; // CHANGE
             clearGhost(state); renderHud(state); renderTimelinePreview(state); // CHANGE
@@ -2286,6 +2288,7 @@ Draw.loadPlugin(function (ui) {
             const simulation = window.USL.planningCore.simulateCandidatePlanting({ moduleCell: state.moduleCell, year: state.year, plan: state.plan, plantingCountOverrides: overrides, // CHANGE
                 candidate: { cropId: base.crop.cropId || base.crop.id, harvestStart: base.harvestStart, harvestEnd: base.harvestEnd, kgPerPlant: base.kgPerPlant, plantCount: count } }); // CHANGE
             const geometry = { ok: true, sharedFootprint: true, geometry: Object.assign({}, proposed.modelRect), rotation: proposed.rotationDeg || 0, // CHANGE
+                allowedOverhangPct: proposed.allowedOverhangPct ?? 30, // CHANGE: fixed companion geometry retains the crop's explicit percentage.
                 plantCount: count, spacingXCm: Number(proposed.spacingXCm), spacingYCm: Number(proposed.spacingYCm), vegDiameterCm: proposed.vegDiameterCm, // CHANGE
                 layoutOffsetXCm: Number(proposed.offsetXCm), layoutOffsetYCm: Number(proposed.offsetYCm), disabledSlots: proposedPreview.disabledSlots, // CHANGE
                 lodCollapsed: proposedPreview.capped, slots: proposedPreview.circles.map(circle => { // CHANGE: keep the accepted companion visible after closing Spacing.
@@ -2522,6 +2525,17 @@ Draw.loadPlugin(function (ui) {
             const tasks = window.USL && window.USL.tasks;
             if (!tiler || !tasks || typeof tasks.applySchedulerTaskReplacement !== "function") return;
             const history = window.Trellis && window.Trellis.history;
+            if (!draft.companionLayout && !state.spacingOverrides?.overhangEdited && draft.geometry.allowedOverhangPct != null && window.USL.scheduler.resolvePlantForPlanCrop) { // CHANGE
+                const fresh = await window.USL.scheduler.resolvePlantForPlanCrop({ plantId: draft.crop.plantId, varietyId: draft.crop.varietyId, growthStageKey: draft.crop.growthStageKey || 'mature' }); // CHANGE
+                if (state.closed || state.draft !== draft) return; // CHANGE
+                if (!fresh?.ok) throw new Error('Could not recheck the crop overhang default. Try creating again.'); // CHANGE
+                const percentage = tiler.resolveAllowedOverhangPct ? tiler.resolveAllowedOverhangPct(fresh.plant.allowed_overhang_pct) : fresh.plant.allowed_overhang_pct ?? 30; // CHANGE
+                if (Number(draft.geometry.allowedOverhangPct) !== percentage) { // CHANGE
+                    state.spacingOverrides = Object.assign({}, state.spacingOverrides, { allowedOverhangPct: percentage }); // CHANGE
+                    state.spacingBody = null; state.spacingContextKey = ''; scheduleStateRefresh(state); // CHANGE
+                    throw new Error('Crop overhang default changed. Select the crop again to review its new preview.'); // CHANGE
+                } // CHANGE
+            } // CHANGE: unchanged defaults are reread before creation; explicit percentage drafts retain their own value.
             if (draft.companionLayout) { // CHANGE
                 const freshOccupancy = tiler.listPlantingFootprints(state.moduleCell, { includeUndatedOccupancy: true }); // CHANGE
                 const freshState = Object.assign({}, state, { occupancy: freshOccupancy, relationshipCache: new Map() }); // CHANGE
@@ -2596,6 +2610,7 @@ Draw.loadPlugin(function (ui) {
                 if (history && typeof history.run === "function" && !(history.isRestoring && history.isRestoring())) {
                     history.run({ category: "Garden scheduling", action: "allocateCreate", origin: "Allocate_Planner", title: "Create allocated planting", affectedCellIds: [cellId(state.moduleCell)], tags: ["Allocate", "Tasks"] }, operation);
                 } else { operation(); }
+                await window.USL.scheduler.layoutTools?.saveOverhangDefaultsForRows?.(draft.companionLayout?.rows || draft.spacingDefaultRows || [], graph); // CHANGE: only successful creations save explicit percentage edits.
                 if (draft.companionLayout?.saveDefaults) { // CHANGE
                     try { await window.USL.scheduler.layoutTools.saveSpacingDefaultsForRows(draft.companionLayout.rows, graph, model); } // CHANGE
                     catch (error) { state.noticeMessage = 'Companion created, but its reusable layout could not be saved: ' + error.message; } // CHANGE
@@ -2632,6 +2647,16 @@ Draw.loadPlugin(function (ui) {
                 if (state.requiredDefaultsSetup && event?.type === 'usl:growthStagesSaved' && String(event.detail?.plantId) === String(allocationDefaultsDraft(state)?.crop?.plantId)) { state.lifecycleCache.clear(); state.bedResultCache.clear(); return; } // CHANGE: this setup's stage save is revalidated on return, rather than cancelling its own modal.
                 scheduleStateRefresh(state);
             };
+            const overhangRefresh = event => { // CHANGE
+                state.lifecycleCache.clear(); state.bedResultCache.clear(); // CHANGE
+                if (!state.spacingOverrides?.overhangEdited && String(event.detail?.plantId) === String(allocationDefaultsDraft(state)?.crop?.plantId)) { // CHANGE
+                    if (state.spacingOverrides) delete state.spacingOverrides.allowedOverhangPct; // CHANGE
+                    state.spacingBody = null; state.spacingContextKey = ''; // CHANGE
+                } // CHANGE
+                if (!state.committing) refresh(event); // CHANGE: invalidate stale fitted previews after a crop-default update.
+            }; // CHANGE
+            window.addEventListener('usl:cropOverhangSaved', overhangRefresh); // CHANGE
+            state.cleanups.push(() => window.removeEventListener('usl:cropOverhangSaved', overhangRefresh)); // CHANGE
             const selectionRefresh = function () {
                 if (state.closed) return;
                 syncSelectionTarget(state); // CHANGE

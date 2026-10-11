@@ -40,6 +40,160 @@ async function allocationSetup({ noFit = false } = {}) { // CHANGE
     catch (error) { h.window.USL.allocate?.close(); h.close(); throw error; } // CHANGE
 } // CHANGE
 
+test('percentage controls synchronize active same-crop drafts, reject invalid input, and retain canceled edits without writes', async () => { // CHANGE
+    const h = setup(); // CHANGE
+    try { // CHANGE
+        const context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), source = context.rows.find(row => row.cellId === h.source.id); // CHANGE
+        const rows = [source, { ...source, cellId: 'same-crop', selected: false }, { ...source, cellId: 'inactive', enabled: false }]; // CHANGE
+        const body = h.window.document.createElement('div'); let draft, valid; // CHANGE
+        h.graph.__trellisPlantingSpacingEditor.render(body, { selectedId: source.cellId, rows }, { live: true, fitToDemand: true, onChange: (value, preview, ok) => { draft = value; valid = ok; } }); // CHANGE
+        const fields = body.querySelectorAll('input[aria-label$="Allowed overhang (%)"]'); // CHANGE
+        assert.equal(fields.length, 3); assert.equal(fields[0].value, '30'); // CHANGE
+        const before = h.source.value.outerHTML, history = h.undoManager.history.length, writes = h.writes.length; // CHANGE
+        for (const value of ['12.5', '0', '50']) { // CHANGE
+            fields[0].value = value; fields[0].dispatchEvent(new h.window.Event('input')); // CHANGE
+            assert.equal(valid, true); assert.equal(fields[1].value, value); assert.equal(fields[2].value, '30'); // CHANGE
+            assert.equal(draft[0].overhangEdited, true); assert.equal(draft[1].overhangEdited, true); // CHANGE
+        } // CHANGE
+        for (const value of ['', '-1', '51', 'invalid']) { // CHANGE
+            fields[0].value = value; fields[0].dispatchEvent(new h.window.Event('input')); assert.equal(valid, false); // CHANGE
+        } // CHANGE
+        assert.equal(h.source.value.outerHTML, before); assert.equal(h.undoManager.history.length, history); assert.equal(h.writes.length, writes); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+test('an open Spacing editor restores the latest committed crop percentage without changing its planting', async () => { // CHANGE
+    const h = setup(); // CHANGE
+    try { // CHANGE
+        const context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(item => item.cellId === h.source.id); // CHANGE
+        const body = h.window.document.createElement('div'); let draft; // CHANGE
+        h.graph.__trellisPlantingSpacingEditor.render(body, { selectedId: row.cellId, rows: [row] }, { live: true, fitToDemand: true, onChange: rows => { draft = rows; } }); // CHANGE
+        const before = h.source.value.outerHTML; // CHANGE
+        await h.tools.saveOverhangDefaultsForRows([{ ...row, allowedOverhangPct: 12.5, overhangEdited: true }], h.graph); // CHANGE
+        body.querySelector('[aria-label="Restore plant defaults"]').click(); // CHANGE
+        assert.equal(Number(draft[0].allowedOverhangPct), 12.5); assert.equal(h.source.value.outerHTML, before); // CHANGE
+        assert.equal(h.undoManager.history.length, 0); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+test('saved percentage edits use the exact fitted preview, persist crop defaults, and undo only the diagram', async () => { // CHANGE
+    const h = setup({ rotation: 45 }); // CHANGE
+    try { // CHANGE
+        const context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(row => row.cellId === h.source.id); // CHANGE
+        const before = JSON.stringify(h.source.geometry), initialPct = h.source.getAttribute('allowed_overhang_pct'); // CHANGE
+        const draft = { ...row, allowedOverhangPct: 12.5, overhangEdited: true }; // CHANGE
+        const preview = h.tools.buildSpacingPreviewModel(h.graph, [draft]).rows[0].groupPreview; // CHANGE
+        assert.notEqual(JSON.stringify(preview.rect), JSON.stringify(row.rect)); // CHANGE
+        const result = await h.tools.applySpacingDraft(h.graph, [draft]); // CHANGE
+        assert.equal(result.overhangDefaults.failedCropIds.length, 0); assert.equal(h.source.getAttribute('allowed_overhang_pct'), '12.5'); // CHANGE
+        assert.ok(h.writes.some(sql => /UPDATE Plants SET allowed_overhang_pct/.test(sql))); // CHANGE
+        assert.equal(Number(h.source.getAttribute('plant_count_actual')), preview.actual); // CHANGE
+        for (const circle of preview.circles) { // CHANGE
+            const tile = h.graph.getChildVertices(h.source).find(cell => Number(cell.getAttribute('tile_r')) === circle.row && Number(cell.getAttribute('tile_c')) === circle.col); // CHANGE
+            assert.ok(Math.abs(h.source.geometry.x + tile.geometry.x + tile.geometry.width / 2 - circle.x) < 1e-6); // CHANGE
+            assert.ok(Math.abs(h.source.geometry.y + tile.geometry.y + tile.geometry.height / 2 - circle.y) < 1e-6); // CHANGE
+        } // CHANGE
+        const writes = h.writes.length; h.undoManager.undo(); // CHANGE
+        assert.equal(JSON.stringify(h.source.geometry), before); assert.equal(h.source.getAttribute('allowed_overhang_pct'), initialPct); assert.equal(h.writes.length, writes); // CHANGE
+        h.undoManager.redo(); assert.equal(h.source.getAttribute('allowed_overhang_pct'), '12.5'); // CHANGE
+        const legacy = row.plant; legacy.allowed_overhang_pct = 50; h.source.value.removeAttribute('allowed_overhang_pct'); // CHANGE
+        const legacyRows = await h.tools.buildSpacingLayoutRows(h.graph, h.source); // CHANGE
+        assert.equal(legacyRows.rows.find(item => item.cellId === h.source.id).allowedOverhangPct, 30); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+test('crop default failures preserve the planting, retry only the database, and invalidate stale retries', async () => { // CHANGE
+    const h = setup(); // CHANGE
+    try { // CHANGE
+        const context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(row => row.cellId === h.source.id); // CHANGE
+        const exec = h.window.dbBridge.exec; let fail = true, updates = 0; // CHANGE
+        h.window.dbBridge.exec = async (...args) => { if (/UPDATE Plants SET allowed_overhang_pct/.test(args[1])) { updates++; if (fail) throw new Error('test database locked'); } return exec(...args); }; // CHANGE
+        const result = await h.tools.applySpacingDraft(h.graph, [{ ...row, allowedOverhangPct: 20, overhangEdited: true }]); // CHANGE
+        assert.equal(result.overhangDefaults.failedCropIds.length, 1); assert.equal(h.source.getAttribute('allowed_overhang_pct'), '20'); // CHANGE
+        const geometry = JSON.stringify(h.source.geometry), history = h.undoManager.history.length; // CHANGE
+        let notice = h.window.document.querySelector('.trellis-overhang-default-notice'); assert.match(notice.textContent, /Planting saved.*test database locked/); // CHANGE
+        fail = false; notice.querySelector('button').click(); await allocationWait(() => !h.window.document.querySelector('.trellis-overhang-default-notice')); // CHANGE
+        assert.equal(updates, 2); assert.equal(JSON.stringify(h.source.geometry), geometry); assert.equal(h.undoManager.history.length, history); // CHANGE
+        fail = true; await h.tools.saveOverhangDefaultsForRows([{ ...row, allowedOverhangPct: 10, overhangEdited: true }], h.graph); // CHANGE
+        notice = h.window.document.querySelector('.trellis-overhang-default-notice'); const staleButton = notice.querySelector('button'); // CHANGE
+        fail = false; await h.tools.saveOverhangDefaultsForRows([{ ...row, allowedOverhangPct: 25, overhangEdited: true }], h.graph); // CHANGE
+        const count = updates; staleButton.click(); await Promise.resolve(); assert.equal(updates, count); assert.equal(notice.isConnected, false); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+test('Allocate overhang edits remain drafts until Create and persist even without Save as default', async () => { // CHANGE
+    const h = await allocationSetup(); // CHANGE
+    try { // CHANGE
+        h.window.document.querySelector('[data-allocation-view="spacing"]').click(); await allocationWait(() => h.state.draft && !h.state.spacingPending); // CHANGE
+        const field = h.state.spacingBody.querySelector('input[aria-label$="Allowed overhang (%)"]'); // CHANGE
+        const writes = h.writes.length; field.value = '12.5'; field.dispatchEvent(new h.window.Event('input')); // CHANGE
+        await allocationWait(() => h.state.draft && !h.state.spacingPending); // CHANGE
+        const draft = h.state.draft; assert.equal(draft.geometry.allowedOverhangPct, 12.5); assert.equal(h.writes.length, writes); // CHANGE
+        assert.equal(h.state.spacingBody.querySelector('input[type=checkbox]').checked, false); // CHANGE
+        h.state.hudRefs.create.click(); await allocationWait(() => !h.state.committing && !h.state.draft); // CHANGE
+        const group = Object.values(h.graph.getModel().cells).find(cell => cell.getAttribute?.('allocation_source') === 'year_plan'); // CHANGE
+        assert.equal(group.getAttribute('allowed_overhang_pct'), '12.5'); assert.equal(Number(group.getAttribute('plant_count_actual')), draft.plantCount); // CHANGE
+        assert.ok(h.writes.some(sql => /UPDATE Plants SET allowed_overhang_pct/.test(sql))); // CHANGE
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
+}); // CHANGE
+
+test('percentage fitting preserves manual logical positions and explicit disabled slots', async () => { // CHANGE
+    const h = setup({ rotation: -30 }); // CHANGE
+    try { // CHANGE
+        const tile = h.graph.getChildVertices(h.source).find(cell => cell.getAttribute('plant_tiler') === '1'); // CHANGE
+        const angle = -30 * Math.PI / 180; // CHANGE
+        function logicalCenter() { // CHANGE
+            const center = { x: h.source.geometry.width / 2, y: h.source.geometry.height / 2 }; // CHANGE
+            const dx = tile.geometry.x + tile.geometry.width / 2 - center.x, dy = tile.geometry.y + tile.geometry.height / 2 - center.y; // CHANGE
+            return { x: center.x + dx * Math.cos(angle) + dy * Math.sin(angle), y: center.y - dx * Math.sin(angle) + dy * Math.cos(angle) }; // CHANGE
+        } // CHANGE
+        tile.value.setAttribute('dirty', '1'); const geometry = tile.geometry.clone(); geometry.x += 1; h.graph.getModel().setGeometry(tile, geometry); // CHANGE
+        h.source.value.setAttribute('disabled_plants', '[[1,1]]'); // CHANGE
+        const before = logicalCenter(), context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(item => item.cellId === h.source.id); // CHANGE
+        await h.tools.applySpacingDraft(h.graph, [{ ...row, allowedOverhangPct: 50 }]); // CHANGE
+        const after = logicalCenter(); assert.ok(Math.abs(after.x - before.x) < 1e-6); assert.ok(Math.abs(after.y - before.y) < 1e-6); // CHANGE
+        assert.equal(tile.getAttribute('dirty'), '1'); assert.match(h.source.getAttribute('disabled_plants'), /1,1/); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+test('crop overhang schema adds a nullable column once without rewriting legacy records', async () => { // CHANGE
+    const h = setup(); // CHANGE
+    try { // CHANGE
+        const query = h.window.dbBridge.query; // CHANGE
+        h.window.dbBridge.query = async (id, sql, params) => { // CHANGE
+            if (sql.includes('sqlite_master') && params?.[0] === 'Plants') return { rows: [{ name: 'Plants' }] }; // CHANGE
+            if (sql.includes('PRAGMA table_info(Plants)')) return { rows: [{ name: 'spacing_x_cm' }, { name: 'spacing_y_cm' }] }; // CHANGE
+            return query(id, sql, params); // CHANGE
+        }; // CHANGE
+        await h.tools.buildSpacingLayoutRows(h.graph, h.source); await h.tools.buildSpacingLayoutRows(h.graph, h.source); // CHANGE
+        const additions = h.writes.filter(sql => /ALTER TABLE Plants ADD COLUMN allowed_overhang_pct/.test(sql)); // CHANGE
+        assert.equal(additions.length, 1); assert.match(additions[0], /allowed_overhang_pct REAL;/); assert.equal(h.writes.some(sql => /UPDATE Plants/.test(sql)), false); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+test('a changed crop default cannot create an obsolete Allocate preview', async () => { // CHANGE
+    const h = await allocationSetup(); // CHANGE
+    try { // CHANGE
+        assert.equal(h.state.draft.geometry.allowedOverhangPct, 30); h.plants[1].allowed_overhang_pct = 10; // CHANGE: simulate a database default change with no browser event.
+        h.state.hudRefs.create.click(); // CHANGE
+        await allocationWait(() => /Crop overhang default changed/.test(h.state.noticeMessage)); assert.equal(h.state.draft, null); // CHANGE
+        assert.equal(Object.values(h.graph.getModel().cells).some(cell => cell.getAttribute?.('allocation_source') === 'year_plan'), false); // CHANGE
+        assert.equal(h.undoManager.history.length, 0); // CHANGE
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
+}); // CHANGE
+
+test('companion percentage changes save their crop default without enlarging the existing shared area', async () => { // CHANGE
+    const h = setup({ rotation: 45 }); // CHANGE
+    try { // CHANGE
+        const context = await h.tools.prepareCompanionPair(h.graph, h.source, h.row); // CHANGE
+        const row = { ...context.rows[0], allowedOverhangPct: 50, overhangEdited: true }; // CHANGE
+        const before = ['x', 'y', 'width', 'height'].map(key => h.source.geometry[key]), preview = h.tools.buildSpacingPreviewModel(h.graph, [row]).rows[0].groupPreview; // CHANGE
+        await h.tools.applySpacingDraft(h.graph, [row]); // CHANGE
+        assert.deepEqual(['x', 'y', 'width', 'height'].map(key => h.source.geometry[key]), before); assert.equal(h.source.getAttribute('allowed_overhang_pct'), '50'); // CHANGE
+        assert.equal(Number(h.source.getAttribute('plant_count_actual')), preview.actual); assert.ok(h.writes.some(sql => /UPDATE Plants SET allowed_overhang_pct/.test(sql))); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
 /** Await asynchronous production reconciliation without depending on a fixed scheduling delay. */ // CHANGE
 async function allocationWait(predicate) { // CHANGE
     const end = Date.now() + 5000; // CHANGE
@@ -122,7 +276,7 @@ test('inline ordinary spacing updates live, retains focus and raw input, recover
         assert.equal(state.spacingPending, true); assert.equal(published.at(-1).geometry, null); assert.match(published.at(-1).message, /Updating spacing preview/); // CHANGE: initial editor mounting must not republish the previous geometry while pending.
         await allocationWait(() => state.draft && !state.spacingPending); // CHANGE
         const body = state.spacingBody, fields = body.querySelectorAll('input[type="number"]'), field = fields[0]; // CHANGE
-        assert.equal(fields.length, 4); assert.equal(body.querySelector('input[type="checkbox"]').checked, false); // CHANGE
+        assert.equal(fields.length, 5); assert.equal(body.querySelector('input[type="checkbox"]').checked, false); // CHANGE: overhang joins spacing and offsets.
         const initialGeometry = JSON.stringify(state.draft.geometry.geometry); // CHANGE
         field.focus(); field.value = '60'; field.dispatchEvent(new Event('input', { bubbles: true })); // CHANGE
         assert.equal(state.hudRefs.create.disabled, true); // CHANGE
@@ -160,7 +314,7 @@ test('inline companion controls preview both crops without mutation and commit t
         state.hudRefs.companion.click(); // CHANGE
         await allocationWait(() => state.draft?.companionLayout && !state.spacingPending && !state.reviewing); // CHANGE
         assert.equal(h.getDialog(), null); assert.equal(state.allocationView, 'spacing'); // CHANGE
-        const body = state.spacingBody; assert.equal(body.querySelectorAll('input[type="number"]').length, 8); // CHANGE
+        const body = state.spacingBody; assert.equal(body.querySelectorAll('input[type="number"]').length, 10); // CHANGE
         body.querySelector('[data-spacing-pattern="aligned"]').click(); // CHANGE
         await allocationWait(() => state.draft?.companionLayout && !state.spacingPending); // CHANGE
         assert.equal(h.source.getAttribute('plant_count'), before); assert.equal(h.undoManager.history.length, 0); assert.equal(h.writes.some(sql => /^\s*(?:INSERT|UPDATE|DELETE)\b/.test(sql)), false); // CHANGE
@@ -387,7 +541,7 @@ test('generated patterns, revert and saved defaults retain fractional offsets wh
             const fields = body.querySelectorAll('input[type=number]'); // CHANGE
             draft.forEach((row, index) => { // CHANGE
                 assert.equal(Number(row.offsetXCm), generated[index].offsetXCm); assert.equal(Number(row.offsetYCm), generated[index].offsetYCm); // CHANGE
-                assert.equal(fields[index * 4 + 2].value, String(Math.round(row.offsetXCm) || 0)); assert.equal(fields[index * 4 + 3].value, String(Math.round(row.offsetYCm) || 0)); // CHANGE
+                assert.equal(fields[index * 5 + 2].value, String(Math.round(row.offsetXCm) || 0)); assert.equal(fields[index * 5 + 3].value, String(Math.round(row.offsetYCm) || 0)); // CHANGE
             }); // CHANGE
             assert.equal(preview.status, 'ok'); assert.equal(body.querySelector('.manual-link-spacing-pattern-source').textContent, pattern === 'aligned' ? 'Aligned' : 'Staggered'); // CHANGE
             const x = fields[2]; x.dispatchEvent(new h.window.Event('blur')); x.dispatchEvent(new h.window.Event('change')); // CHANGE
@@ -511,7 +665,7 @@ test('Allocate disables incompatible beds and requires a target chooser for repe
         assert.equal(state.spacingBody.querySelector('[data-spacing-pattern]'), null); choose.value = h.source.id; choose.dispatchEvent(new h.window.Event('change')); // CHANGE
         await until(() => state.draft?.companionLayout && !state.spacingPending); assert.equal(h.getDialog(), null); // CHANGE
         const initialSpacing = state.companionRows.map(row => Number(row.spacingXCm)); // CHANGE: generated companion defaults can differ from each crop's ordinary spacing.
-        const fields = state.spacingBody.querySelectorAll('input[type=number]'); fields[0].value = '45'; fields[4].value = '15'; fields[4].dispatchEvent(new h.window.Event('input')); // CHANGE
+        const fields = state.spacingBody.querySelectorAll('input[type=number]'); fields[0].value = '45'; fields[5].value = '15'; fields[5].dispatchEvent(new h.window.Event('input')); // CHANGE
         await until(() => state.draft?.companionLayout && !state.spacingPending); // CHANGE
         const nextTarget = choose.options[2].value, nextChooser = state.spacingBody.querySelector('[aria-label="Companion footprint"]'); // CHANGE
         nextChooser.value = nextTarget; nextChooser.dispatchEvent(new h.window.Event('change')); // CHANGE

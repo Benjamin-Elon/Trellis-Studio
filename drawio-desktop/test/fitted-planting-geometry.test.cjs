@@ -13,6 +13,19 @@ function occupancy(rect, overrides = {}) { // CHANGE
 } // CHANGE
 function close(actual, expected, tolerance = 1e-6) { assert.ok(Math.abs(actual - expected) < tolerance, `${actual} != ${expected}`); } // CHANGE
 
+test('percentage overhang is precise, diameter-relative, validated, and persisted including zero', () => { // CHANGE
+    const api = loadFittedPlantingGeometry(); // CHANGE
+    for (const percentage of [0, 30, 50, 12.5]) for (const diameter of [10, 20]) { // CHANGE
+        const p = api.proposePlantingGeometry(input({ bedCell: bed(100, 250, 45), spacingXCm: 15, spacingYCm: 15, vegDiameterCm: diameter, allowedOverhangPct: percentage, fillAvailableBed: true })); // CHANGE
+        assert.equal(p.allowedOverhangPct, percentage); // CHANGE
+        close(p.geometry.width, 100 + 2 * api.toPx(diameter) * percentage / 100 + 8); // CHANGE
+        const group = api.createPlantingFromProposal({ moduleCell: {}, proposal: p }); // CHANGE
+        assert.equal(Number(group.attrs.allowed_overhang_pct), percentage); // CHANGE
+    } // CHANGE
+    assert.equal(api.proposePlantingGeometry(input()).allowedOverhangPct, 30); // CHANGE
+    for (const percentage of ['', 'invalid', -1, 51, Infinity]) assert.throws(() => api.proposePlantingGeometry(input({ allowedOverhangPct: percentage })), /overhang/); // CHANGE
+}); // CHANGE
+
 test('offset-aware demand fitting agrees with committed circles on both axes and rotated beds', () => { // CHANGE
     const api = loadFittedPlantingGeometry(); // CHANGE
     for (const axis of ['width', 'height']) for (const rotation of [0, 37, 90]) for (const [x, y] of [[0, 0], [-25, 12], [35, -40], [2.5, 7.25]]) { // CHANGE

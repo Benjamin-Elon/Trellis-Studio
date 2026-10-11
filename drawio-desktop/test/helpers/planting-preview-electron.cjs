@@ -202,7 +202,7 @@ app.whenReady().then(async () => { // CHANGE
         } // CHANGE
         const regularSpacing = await win.webContents.executeJavaScript(` // CHANGE
             (async()=>{ // CHANGE
-                const fixture=await (${createRegularSpacingFixture.toString()})(window,graph),checks=[]; // CHANGE
+                const fixture=await (${createRegularSpacingFixture.toString()})(window,graph),checks=[]; window.regularSpacingFixture=fixture; // CHANGE
                 const entry=await fixture.open(),before=fixture.serialize(),field=fixture.edit(entry); // CHANGE
                 const context=await fixture.tools.buildSpacingLayoutRows(graph,fixture.groups[0]); // CHANGE
                 const bedScoped=context.scope==='bed'&&context.rows.some(row=>row.bedId); // CHANGE
@@ -248,6 +248,25 @@ app.whenReady().then(async () => { // CHANGE
         } // CHANGE
         assert.ok(regularSpacing.displaced && regularSpacing.unchanged && regularSpacing.restored, JSON.stringify(regularSpacing)); // CHANGE
         result.regularSpacing = regularSpacing; // CHANGE
+        win.setSize(1000,750); // CHANGE
+        result.overhangControls = await win.webContents.executeJavaScript(` // CHANGE
+            (async()=>{ // CHANGE
+                const fixture=regularSpacingFixture,context=await fixture.tools.buildSpacingLayoutRows(graph,fixture.groups[0]); // CHANGE
+                graph.__trellisPlantingGroup.overlay.clear(); // CHANGE
+                const checks=[]; // CHANGE
+                for(const [index,live]of [false,true].entries()){ // CHANGE
+                    const host=document.createElement('div');host.style.cssText='position:fixed;top:24px;left:'+(index?530:24)+'px;width:'+(live?300:420)+'px;padding:12px;background:white;border:1px solid #777;z-index:10040;'; // CHANGE
+                    const title=document.createElement('h3');title.textContent=live?'Allocate · Spacing':'Planting · Spacing';host.appendChild(title);document.body.appendChild(host); // CHANGE
+                    graph.__trellisPlantingSpacingEditor.render(host,context,{live,fitToDemand:live,onChange:()=>{}}); // CHANGE
+                    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))); // CHANGE
+                    const controls=[...host.querySelectorAll('input[aria-label$="Allowed overhang (%)"]')],bounds=host.getBoundingClientRect(); // CHANGE
+                    checks.push({live,count:controls.length,allFit:controls.every(input=>{const rect=input.getBoundingClientRect();return rect.left>=bounds.left&&rect.right<=bounds.right;}),labels:controls.every(input=>input.title.includes('Percentage')),hint:host.textContent.includes('Committed edits update the crop default')}); // CHANGE
+                } // CHANGE
+                return checks; // CHANGE
+            })(); // CHANGE
+        `); // CHANGE
+        for(const check of result.overhangControls) assert.ok(check.count>0&&check.allFit&&check.labels&&check.hint,JSON.stringify(check)); // CHANGE
+        if(process.env.TRELLIS_OVERHANG_SCREENSHOT)fs.writeFileSync(process.env.TRELLIS_OVERHANG_SCREENSHOT,(await win.webContents.capturePage()).toPNG()); // CHANGE
         process.stdout.write('PREVIEW_RESULT:' + JSON.stringify(result) + '\n'); // CHANGE
     } finally { win.destroy(); } // CHANGE
     app.quit(); // CHANGE
