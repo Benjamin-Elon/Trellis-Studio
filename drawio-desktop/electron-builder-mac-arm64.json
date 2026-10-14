@@ -5,7 +5,9 @@
   "files": [
     "**/*",
     "!**/WEB-INF{,/**}",
-    "!vendor{,/**}"
+    "!vendor{,/**}",
+    "!android-companion{,/**}",
+    "!.test-artifacts{,/**}"
   ],
   "artifactName": "${productName}-${arch}-${version}.${ext}",
   "npmRebuild": true,

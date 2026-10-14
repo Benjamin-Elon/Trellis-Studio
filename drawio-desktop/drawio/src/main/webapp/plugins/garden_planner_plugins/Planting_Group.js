@@ -89,6 +89,12 @@ Draw.loadPlugin(function (ui) {
 
     // ---------- LOD settings ----------
     const LOD_TILE_THRESHOLD = 300; // collapse if rows*cols > this
+    const ATTR_CIRCLE_MAX_GROUP = 'plant_circle_max_per_planting'; // NEW: absent garden attributes retain legacy LOD until Settings is saved.
+    const ATTR_CIRCLE_MAX_TOTAL = 'plant_circle_max_total'; // NEW
+    const ATTR_DETAIL_MODE = 'plant_circle_detail_mode'; // NEW: requested presentation is independent of budget-forced summary rendering.
+    const DEFAULT_CIRCLE_MAX_GROUP = 200, DEFAULT_CIRCLE_MAX_TOTAL = 1000; // NEW
+    let reconcilingCircleLimits = false, circleBudgetSelection = null, circleLimitsRestoring = false, circleToggleTarget = null; // NEW
+    const derivedCircleChanges = new WeakMap(); // NEW: exact generated changes, never a transaction-wide permission bypass.
     const LOD_SUMMARY_MIN_SIZE = 24; // min px size of summary marker
 
     // ----------- Yield ---------------
@@ -804,7 +810,8 @@ Draw.loadPlugin(function (ui) {
     function shouldCollapseLOD(graph, groupCell, spacingXpx, spacingYpx) {
         const { bandPx } = groupLabelMetrics(groupCell);
         const stats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, readDisabledSet(groupCell));
-        return stats.actual > LOD_TILE_THRESHOLD; // CHANGE: outside omitted slots do not force summary LOD.
+        const mode = getXmlAttr(groupCell, ATTR_DETAIL_MODE, ''); // CHANGE
+        return mode === 'collapsed' || (mode !== 'expanded' && stats.actual > LOD_TILE_THRESHOLD) || !plantCircleAdmission(groupCell, stats.actual, true).ok; // CHANGE: aggregate allocation finishes atomically before the edit is published.
     }
 
     function isCollapsedLOD(groupCell) {
@@ -1262,9 +1269,7 @@ Draw.loadPlugin(function (ui) {
 
 
     function shouldExpandLOD(graph, groupCell, spacingXpx, spacingYpx) {
-        const { bandPx } = groupLabelMetrics(groupCell);
-        const stats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, readDisabledSet(groupCell));
-        return stats.actual <= LOD_TILE_THRESHOLD; // CHANGE: LOD follows visible in-bounds circles.
+        return !shouldCollapseLOD(graph, groupCell, spacingXpx, spacingYpx); // CHANGE: a saved manual collapse cannot be undone by automatic retiling.
     }
 
     function expandTiles(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiamPx, opts = {}) {
@@ -1287,7 +1292,7 @@ Draw.loadPlugin(function (ui) {
             const { actual } = applyCounts(model, groupCell, slotStats, disabledSet2); // CHANGE: expanded rebuild count matches omitted outside slots.
             updateGroupYield(model, groupCell, { abbr, countOverride: actual });
 
-            if (slotStats.actual > MAX_TILES) {
+            if (!plantCircleAdmission(groupCell, slotStats.actual, true).ok) { // CHANGE: every expansion path observes both garden budgets and the safety ceiling.
                 collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: snapObj, useLiveSnapshot: false });
                 return;
             }
@@ -2248,6 +2253,17 @@ Draw.loadPlugin(function (ui) {
         gardenNameInput.value = curGardenName;
         gardenNameInput.style.flex = "1";
         row("Garden name:", gardenNameInput);
+        const existingCircleLimits = readPlantCircleLimits(moduleCell); // NEW
+        const circleInputs = [ // NEW
+            { key: ATTR_CIRCLE_MAX_GROUP, label: 'Max circles per planting:', value: existingCircleLimits.active ? existingCircleLimits.perPlanting : DEFAULT_CIRCLE_MAX_GROUP, max: MAX_TILES }, // NEW
+            { key: ATTR_CIRCLE_MAX_TOTAL, label: 'Max circles in garden:', value: existingCircleLimits.active ? existingCircleLimits.total : DEFAULT_CIRCLE_MAX_TOTAL, max: Number.MAX_SAFE_INTEGER } // NEW
+        ].map(setting => { // NEW
+            const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = String(setting.max); input.step = '1'; input.value = String(setting.value); input.style.flex = '1'; // NEW
+            input.disabled = !canConfigurePlantCircleLimits(moduleCell); // NEW
+            input.dataset.plantCircleLimit = setting.key; // NEW
+            input.title = 'Maximum rendered plant circles. Zero shows summaries only. Only the garden owner or an admin can change this setting.'; // NEW
+            row(setting.label, input); return { ...setting, input }; // NEW
+        }); // NEW
 
         // City (mandatory)
         const citySel = makeCityTreePicker(cities, curCityId);
@@ -2551,6 +2567,12 @@ Draw.loadPlugin(function (ui) {
             const chosenModuleExternalMargin = readModuleMarginInput(moduleExternalMarginInput, chosenUnits); // NEW
             const chosenGardenWidthUnits = chosenGardenDimsCm ? cmToGraphUnits(chosenGardenDimsCm.widthCm) : null; // CHANGE
             const chosenGardenHeightUnits = chosenGardenDimsCm ? cmToGraphUnits(chosenGardenDimsCm.lengthCm) : null; // CHANGE
+            const circleAttrs = {}; // NEW: disabled inputs must not silently activate limits in a legacy garden.
+            if (canConfigurePlantCircleLimits(moduleCell)) for (const setting of circleInputs) { // NEW
+                const raw = setting.input.value.trim(), value = Number(raw); // NEW
+                if (!raw || !Number.isSafeInteger(value) || value < 0 || value > setting.max) { showError(`${setting.label} must be a whole number from 0 to ${setting.max}.`); setting.input.focus(); return; } // NEW
+                circleAttrs[setting.key] = String(value); // NEW
+            } // NEW
 
             if (!chosenCity) { showError("City is required."); citySel.focus(); return; }
             if (!chosenUnits) { showError("Units are required."); unitsSel.focus(); return; }
@@ -2585,6 +2607,7 @@ Draw.loadPlugin(function (ui) {
                     pathAttrs[pathPresetWidthAttr(preset.id)] = formatBedCmAttr(preset.widthCm); // NEW
                 }); // NEW
                 setCellAttrsNoTxn(model, moduleCell, pathAttrs); // NEW
+                setCellAttrsNoTxn(model, moduleCell, circleAttrs); // NEW: END_UPDATE reconciles the garden within this same undoable edit.
                 setGardenModuleExternalMargin(moduleCell, chosenModuleExternalMargin); // NEW
             } finally {
                 model.endUpdate();
@@ -2597,7 +2620,7 @@ Draw.loadPlugin(function (ui) {
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
 
-        ui.showDialog(div, 460, 560, true, true, notifyClose); // CHANGE
+        ui.showDialog(div, 460, 640, true, true, notifyClose); // CHANGE: allow space for the two circle-budget fields.
         elevateTrellisDialog();
         gardenNameInput.focus();
     }
@@ -2673,6 +2696,11 @@ Draw.loadPlugin(function (ui) {
         let gardenSettingsOverlaySuppressed = false;
         let manuallyHiddenModuleCell = null;
         let pendingSelectedModuleToggle = null;
+        let manuallyHiddenBedCell = null; // CHANGE: one dismissal owner for actions and bed conditions.
+        let pendingSelectedBedToggle = null; // CHANGE: capture eligibility before mxGraph changes selection.
+        let gestureActive = false; // CHANGE: ignore unmatched releases and moves.
+        let gestureMoved = false; // CHANGE: a drag remains a drag when the pointer returns to its origin.
+        const BED_OVERLAY_VISIBILITY_EVENT = "trellisBedOverlayVisibilityChanged"; // CHANGE: graph-local notification; no diagram attributes are written.
 
         function getOverlayHost() {
             return graph.container;
@@ -2890,9 +2918,73 @@ Draw.loadPlugin(function (ui) {
 
         function isPlainPrimaryMouseEvent(evt) {
             if (!evt) return false;
-            if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || evt.button === 2) return false;
-            return !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && Number(evt.detail || 1) <= 1;
+            if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || (evt.button != null && evt.button !== 0)) return false; // CHANGE: middle/right presses never toggle panels.
+            return !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && !mxEvent.isAltDown(evt) && Number(evt.detail || 1) <= 1; // CHANGE: retain selection/clone gestures and second double-click presses.
         }
+
+        /** Manual dismissal only: Garden_Beds retains its own drag and mode suppression. */ // CHANGE
+        graph.__plantTilerIsBedOverlayHidden = function (cell) { return !!cell && cell === manuallyHiddenBedCell; }; // CHANGE
+
+        function setHiddenBed(cell) { // CHANGE
+            if (manuallyHiddenBedCell === cell) return; // CHANGE
+            manuallyHiddenBedCell = cell; // CHANGE
+            if (refreshTimer != null) clearTimeout(refreshTimer); // CHANGE: commit action visibility in this event turn, before notifying conditions.
+            refreshForSelection(); // CHANGE: neither panel waits for a deferred refresh to complete the toggle.
+            graph.fireEvent(new mxEventObject(BED_OVERLAY_VISIBILITY_EVENT)); // CHANGE: both plugins reread the same state synchronously.
+        } // CHANGE
+
+        /** Panel controls must never start a canvas visibility gesture. */ // CHANGE
+        function isOverlayControlEvent(evt) { // CHANGE
+            const source = evt && mxEvent.getSource(evt); // CHANGE
+            if (!source) return false; // CHANGE
+            if (toolbar && toolbar.contains(source)) return true; // CHANGE
+            const element = source.nodeType === 1 ? source : source.parentElement; // CHANGE
+            return !!(element && element.closest && element.closest(".trellis-bed-conditions-overlay, input, select, textarea, button, [contenteditable='true']")); // CHANGE
+        } // CHANGE
+
+        /** Snapshot selection before mxGraph's mouse listeners select the pressed cell. */ // CHANGE
+        function captureBedToggleBeforeSelection(_sender, event) { // CHANGE
+            if (event.getProperty("eventName") !== mxEvent.MOUSE_DOWN) return; // CHANGE
+            cancelOverlayGesture(); // CHANGE: recover any incomplete previous gesture first.
+            const me = event.getProperty("event"); // CHANGE
+            const evt = me && me.getEvent ? me.getEvent() : null; // CHANGE
+            if (!evt || isOverlayControlEvent(evt)) return; // CHANGE
+            gestureActive = true; // CHANGE
+            const target = getSingleSelectedOverlayTarget(); // CHANGE
+            if (!target || target.mode !== "bed" || !isPlainPrimaryMouseEvent(evt)) return; // CHANGE
+            if (gardenSettingsOverlaySuppressed || isIrrigationModeActiveForOverlay() || isTeamPermissionModeActiveForOverlay()) return; // CHANGE
+            if (mouseEventCell(me, evt) === target.bedCell) pendingSelectedBedToggle = target.bedCell; // CHANGE
+        } // CHANGE
+
+        function toggleHiddenBedAfterSimpleClick(evt) { // CHANGE
+            const pending = pendingSelectedBedToggle; // CHANGE
+            pendingSelectedBedToggle = null; // CHANGE
+            const target = getSingleSelectedOverlayTarget(); // CHANGE
+            if (!pending || !isPlainPrimaryMouseEvent(evt) || !isSimpleAnchorClick(evt)) return false; // CHANGE
+            if (!target || target.mode !== "bed" || target.bedCell !== pending) return false; // CHANGE
+            if (gardenSettingsOverlaySuppressed || isIrrigationModeActiveForOverlay() || isTeamPermissionModeActiveForOverlay()) return false; // CHANGE
+            setHiddenBed(manuallyHiddenBedCell === pending ? null : pending); // CHANGE
+            return true; // CHANGE
+        } // CHANGE
+
+        /** Cancel suppression without treating outside releases or focus loss as a click. */ // CHANGE
+        function cancelOverlayGesture() { // CHANGE
+            if (!gestureActive) return; // CHANGE
+            gestureActive = false; // CHANGE
+            gestureMoved = false; // CHANGE
+            gestureHidden = false; // CHANGE
+            pendingSelectedBedToggle = null; // CHANGE
+            pendingSelectedModuleToggle = null; // CHANGE
+            scheduleRefresh(); // CHANGE
+        } // CHANGE
+
+        function refreshOverlaySelection() { // CHANGE
+            const target = getSingleSelectedOverlayTarget(); // CHANGE
+            clearHiddenModuleIfTargetChanged(target); // CHANGE
+            if (manuallyHiddenBedCell && (!target || target.mode !== "bed" || target.bedCell !== manuallyHiddenBedCell)) setHiddenBed(null); // CHANGE
+            if (pendingSelectedBedToggle && (!target || target.bedCell !== pendingSelectedBedToggle)) pendingSelectedBedToggle = null; // CHANGE: returning before a deferred refresh does not restore an old gesture.
+            scheduleRefresh(); // CHANGE
+        } // CHANGE
 
         function mouseEventCell(me, evt) {
             const cell = me && me.getCell ? me.getCell() : null;
@@ -3047,10 +3139,10 @@ Draw.loadPlugin(function (ui) {
         }
 
         function isSimpleAnchorClick(evt) {
-            if (!evt || !lastMouseAnchor || !lastMouseAnchor.client) return false;
+            if (!evt || gestureMoved || !lastMouseAnchor || !lastMouseAnchor.client) return false; // CHANGE: remember movement throughout the gesture.
             const dx = mxEvent.getClientX(evt) - lastMouseAnchor.client.x;
             const dy = mxEvent.getClientY(evt) - lastMouseAnchor.client.y;
-            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX;
+            return Math.sqrt(dx * dx + dy * dy) < SIMPLE_CLICK_MAX_MOVE_PX; // CHANGE: reaching four pixels matches bed-conditions drag suppression.
         }
 
         function updateAnchorFromSimpleClick(evt) {
@@ -3066,6 +3158,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function positionToolbar() {
+            if (gestureHidden || (activeOverlayMode === "module" && activeModuleCell === manuallyHiddenModuleCell) || (activeOverlayMode === "bed" && graph.__plantTilerIsBedOverlayHidden(activeBedCell))) { hideToolbar(); return; } // CHANGE: repaint cannot bypass gesture suppression or manual dismissal.
             if (gardenSettingsOverlaySuppressed) { hideToolbar(); return; }
             if (isIrrigationModeActiveForOverlay()) { hideToolbar(); return; }
             if (isTeamPermissionModeActiveForOverlay()) { hideToolbar(); return; } // NEW
@@ -3143,6 +3236,7 @@ Draw.loadPlugin(function (ui) {
             activeBedCell = target.bedCell || null;
             activeOverlayMode = target.mode;
             if (target.mode === "module" && target.moduleCell === manuallyHiddenModuleCell) { hideToolbar(); return; }
+            if (target.mode === "bed" && graph.__plantTilerIsBedOverlayHidden(target.bedCell)) { hideToolbar(); return; } // CHANGE: queued refreshes preserve the shared bed dismissal.
             if (target.mode === "bed" && isAllocationModeActiveForOverlay()) { hideToolbar(); return; } // CHANGE: keep target state current before hiding bed controls.
             ensureToolbar();
             syncToolbarState();
@@ -3155,11 +3249,12 @@ Draw.loadPlugin(function (ui) {
         }
 
         graph.__plantTilerRefreshGardenModuleOverlay = scheduleRefresh;
+        graph.addListener(mxEvent.FIRE_MOUSE_EVENT, captureBedToggleBeforeSelection); // CHANGE: mouseDown listeners run after native selection handlers.
 
         graph.addMouseListener({
             mouseDown: function (_sender, me) {
                 const evt = me && me.getEvent ? me.getEvent() : null;
-                if (evt && toolbar && toolbar.contains(mxEvent.getSource(evt))) return;
+                if (!gestureActive || isOverlayControlEvent(evt)) return; // CHANGE: skip presses on either panel's controls.
                 pendingSelectedModuleToggle = selectedGardenModulePlainClickTarget(me, evt);
                 if (evt) {
                     const modelPt = graph.getPointForEvent(evt, false);
@@ -3170,20 +3265,32 @@ Draw.loadPlugin(function (ui) {
                         t: Date.now()
                     };
                 }
-                gestureHidden = true;
-                hideToolbar();
+                gestureHidden = false; // CHANGE: a press alone must not dismiss visible controls.
             },
-            mouseMove: function () { },
+            mouseMove: function (_sender, me) { // CHANGE
+                const evt = me && me.getEvent ? me.getEvent() : null; // CHANGE
+                if (!gestureActive || gestureMoved || !evt || !lastMouseAnchor) return; // CHANGE
+                if (isSimpleAnchorClick(evt)) return; // CHANGE
+                gestureMoved = true; // CHANGE: latch movement even if the pointer returns.
+                gestureHidden = true; // CHANGE
+                hideToolbar(); // CHANGE
+            }, // CHANGE
             mouseUp: function (_sender, me) {
+                if (!gestureActive) return; // CHANGE: cancellation or a bubbled release cannot toggle twice.
                 const evt = me && me.getEvent ? me.getEvent() : null;
+                const source = evt && mxEvent.getSource(evt); // CHANGE: mxGraph also forwards document releases from outside its canvas.
+                if (!source || !graph.container.contains(source)) { cancelOverlayGesture(); return; } // CHANGE: an outside release cancels even when its coordinates match the press.
+                gestureActive = false; // CHANGE
                 gestureHidden = false;
                 updateAnchorFromSimpleClick(evt);
                 toggleHiddenModuleAfterSimpleClick(evt);
+                toggleHiddenBedAfterSimpleClick(evt); // CHANGE
+                gestureMoved = false; // CHANGE
                 scheduleRefresh();
             }
         });
 
-        graph.getSelectionModel().addListener(mxEvent.CHANGE, scheduleRefresh);
+        graph.getSelectionModel().addListener(mxEvent.CHANGE, refreshOverlaySelection); // CHANGE: dismissal resets synchronously on selection changes.
         graph.addListener(mxEvent.CELLS_MOVED, scheduleRefresh);
         graph.addListener(mxEvent.CELLS_RESIZED, scheduleRefresh);
         graph.getView().addListener(mxEvent.SCALE, scheduleRefresh);
@@ -3193,6 +3300,7 @@ Draw.loadPlugin(function (ui) {
         graph.getModel().addListener(mxEvent.UNDO, scheduleRefresh);
         graph.getModel().addListener(mxEvent.REDO, scheduleRefresh);
         mxEvent.addListener(window, "resize", scheduleRefresh);
+        ["mouseup", "pointerup", "pointercancel", "blur"].forEach(function (name) { mxEvent.addListener(window, name, cancelOverlayGesture); }); // CHANGE: outside release/cancellation restores the prior manual state without toggling.
         mxEvent.addListener(window, "trellisIrrigationModeChanged", scheduleRefresh);
         mxEvent.addListener(window, "trellisInteractionModeChanged", scheduleRefresh); // CHANGE: mode exit restores controls without reselection.
         mxEvent.addListener(window, "trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) hideToolbar(); else scheduleRefresh(); }); // NEW
@@ -5274,17 +5382,7 @@ Draw.loadPlugin(function (ui) {
             return Array.from(out.values());
         }
 
-        function selectionGroupState(groups) {
-            let anyCollapsed = false;
-            let anyExpanded = false;
-            for (const g of groups) {
-                const collapsed = isCollapsedLOD(g);
-                if (collapsed) anyCollapsed = true;
-                else anyExpanded = true;
-                if (anyCollapsed && anyExpanded) break;
-            }
-            return { anyCollapsed, anyExpanded };
-        }
+        // CHANGE: detail actions now belong to the selected planting header.
 
 
         registerTrellisContextMenuContributor({
@@ -5375,10 +5473,8 @@ Draw.loadPlugin(function (ui) {
                 } catch (_) { }
 
 
-                // ----- Expand/Collapse (selection-aware) ---------------------------------- 
+                // ----- Other planting actions remain selection-aware --------------------- // CHANGE
                 const selectedGroups = collectSelectedTilerGroups(graph, target);
-                const n = selectedGroups.length;
-                const noun = n > 1 ? "plantings" : "planting";
 
 
                 // ----- Trim to Garden Bed (selection-aware) --------------------------------------- 
@@ -5421,39 +5517,7 @@ Draw.loadPlugin(function (ui) {
                     }
                 } catch (_) { }
 
-                if (selectedGroups.length) {
-                    const st = selectionGroupState(selectedGroups);
-
-                    if (st.anyCollapsed) {
-                        menu.addItem(`Expand ${noun}`, null, function () {
-                            const model = graph.getModel();
-                            model.beginUpdate();
-                            try {
-                                for (const g of selectedGroups) {
-                                    retileGroup(graph, g, { forceExpand: true });
-                                    graph.refresh(g); // refresh each
-                                }
-                            } finally {
-                                model.endUpdate();
-                            }
-                        });
-                    }
-
-                    if (st.anyExpanded) {
-                        menu.addItem(`Collapse ${noun}`, null, function () {
-                            const model = graph.getModel();
-                            model.beginUpdate();
-                            try {
-                                for (const g of selectedGroups) {
-                                    retileGroup(graph, g, { forceCollapse: true });
-                                    graph.refresh(g); // refresh each
-                                }
-                            } finally {
-                                model.endUpdate();
-                            }
-                        });
-                    }
-                }
+                // CHANGE: use the header detail control; preserve other selection-aware actions.
 
                 // ----- Disable/Restore plant circles (selection-aware) ----------------------------- 
                 try {
@@ -5522,6 +5586,28 @@ Draw.loadPlugin(function (ui) {
         const ok = !!cell && cell.getAttribute && cell.getAttribute("tiler_group") === "1";
         return ok;
     }
+
+    /** Keep native title anchors on the rotated header while painting their glyphs upright. */ // CHANGE
+    function installPlantingTitleRenderer() { // CHANGE
+        const renderer = graph.cellRenderer; // CHANGE
+        if (!renderer || renderer.__trellisUprightPlantingTitles || typeof renderer.createTextShape !== 'function' || typeof renderer.rotateLabelBounds !== 'function') return; // CHANGE: lightweight graph hosts may not have a renderer.
+        renderer.__trellisUprightPlantingTitles = true; // CHANGE: hooks belong to this graph, never shared mxGraph prototypes.
+        const createTextShape = renderer.createTextShape, rotateLabelBounds = renderer.rotateLabelBounds; // CHANGE
+        renderer.createTextShape = function (state) { // CHANGE
+            const text = createTextShape.apply(this, arguments); // CHANGE
+            if (isTilerGroup(state.cell)) text.getTextRotation = () => 0; // CHANGE: rotation is a view rule, not a new diagram attribute.
+            return text; // CHANGE
+        }; // CHANGE
+        renderer.rotateLabelBounds = function (state, bounds, text, margin, disableRotation) { // CHANGE
+            if (isTilerGroup(state.cell) && !disableRotation) { // CHANGE
+                const anchoredText = Object.create(text); // CHANGE: preserve native spacing and alignment without mutating the rendered text.
+                anchoredText.getTextRotation = () => state.shape ? state.shape.getTextRotation() : 0; // CHANGE: the anchor follows the frame even though glyphs have zero rotation.
+                return rotateLabelBounds.call(this, state, bounds, anchoredText, margin, disableRotation); // CHANGE
+            } // CHANGE
+            return rotateLabelBounds.apply(this, arguments); // CHANGE: other labels and explicitly unrotated editor bounds retain native behavior.
+        }; // CHANGE
+        graph.refresh(); // CHANGE: existing saved titles receive the same rendering rule without model or history writes.
+    } // CHANGE
 
     function getNumberAttr(cell, name, def = 0) {
         const v = cell && cell.getAttribute ? cell.getAttribute(name) : null;
@@ -6504,6 +6590,122 @@ Draw.loadPlugin(function (ui) {
         return false;
     }
 
+    /** Read persisted budgets without migrating legacy gardens or changing graph history. */ // NEW
+    function readPlantCircleLimits(moduleCell) { // NEW
+        const read = (key, fallback, ceiling) => { // NEW
+            const raw = getXmlAttr(moduleCell, key, ''), n = Number(raw); // NEW
+            return raw !== '' && Number.isSafeInteger(n) && n >= 0 && n <= ceiling ? n : fallback; // NEW
+        }; // NEW
+        const active = !!moduleCell && (getXmlAttr(moduleCell, ATTR_CIRCLE_MAX_GROUP, '') !== '' || getXmlAttr(moduleCell, ATTR_CIRCLE_MAX_TOTAL, '') !== ''); // NEW
+        return { active, perPlanting: active ? read(ATTR_CIRCLE_MAX_GROUP, DEFAULT_CIRCLE_MAX_GROUP, MAX_TILES) : MAX_TILES, total: active ? read(ATTR_CIRCLE_MAX_TOTAL, DEFAULT_CIRCLE_MAX_TOTAL, Number.MAX_SAFE_INTEGER) : Infinity }; // NEW
+    } // NEW
+
+    /** Settings authorization is narrower than general garden-content editing. */ // NEW
+    function canConfigurePlantCircleLimits(moduleCell) { // NEW
+        const file = ui.getCurrentFile && ui.getCurrentFile(); // NEW
+        if (file && file.isEditable && !file.isEditable()) return false; // NEW
+        const users = window.Trellis && window.Trellis.users; // NEW
+        if (!users || !users.isEnabled || !users.isEnabled()) return true; // NEW
+        const actor = users.getCurrentUser && users.getCurrentUser(); // NEW
+        return !!actor && (users.isAdmin() || getXmlAttr(moduleCell, users.attrs.owner, '') === actor.id); // NEW
+    } // NEW
+
+    /** Enumerate the entire owning garden, excluding nested gardens and their independent budgets. */ // NEW
+    function gardenPlantingGroups(moduleCell) { // NEW
+        return allDescendantsOf(moduleCell).filter(cell => isTilerGroup(cell) && findGardenModuleAncestor(graph, cell) === moduleCell); // NEW
+    } // NEW
+
+    /** Use the tiler's slot classifier, including manual layout snapshots and disabled slots. */ // NEW
+    function plantCircleCount(group) { // NEW
+        const sx = toPx(Number(getXmlAttr(group, 'spacing_x_cm', '') || getXmlAttr(group, 'spacing_cm', '30'))); // NEW
+        const sy = toPx(Number(getXmlAttr(group, 'spacing_y_cm', '') || getXmlAttr(group, 'spacing_cm', '30'))); // NEW
+        return classifyPlantingSlots(group, sx, sy, groupLabelMetrics(group).bandPx, readDisabledSet(group)).actual; // NEW
+    } // NEW
+
+    /** Admission for a direct expansion never displaces another group's existing detail. */ // NEW
+    function plantCircleAdmission(group, count = plantCircleCount(group), deferTotal = false) { // NEW
+        const garden = findGardenModuleAncestor(graph, group), limits = readPlantCircleLimits(garden); // NEW
+        if (limits.perPlanting === 0 || count > limits.perPlanting) return { ok: false, reason: `This planting needs ${count} circles; the per-planting limit is ${limits.perPlanting}.` }; // NEW
+        if (circleBudgetSelection) return { ok: circleBudgetSelection.has(group), reason: 'The garden plant-circle budget is full.' }; // NEW
+        if (deferTotal && model.updateLevel > 0 && limits.total > 0) return { ok: true }; // NEW: unpublished layout edits are allocated together in END_UPDATE; user commands always preflight the full total.
+        const used = garden && limits.active ? gardenPlantingGroups(garden).filter(cell => cell !== group).reduce((sum, cell) => sum + (graph.getChildVertices(cell) || []).filter(child => getXmlAttr(child, 'plant_tiler', '') === '1').length, 0) : 0; // NEW
+        return limits.total === 0 || count + used > limits.total ? { ok: false, reason: `This planting needs ${count} circles; the garden limit is ${limits.total} with ${used} circles already shown.` } : { ok: true }; // NEW
+    } // NEW
+
+    /** Preserve manual intent while deriving a deterministic, complete-garden rendering allocation. */ // NEW
+    function reconcilePlantCircleLimits(garden, edit, triggers) { // NEW
+        const limits = readPlantCircleLimits(garden); // NEW
+        if (!limits.active) return; // NEW
+        const rows = gardenPlantingGroups(garden).map(group => ({ group, count: plantCircleCount(group), mode: getXmlAttr(group, ATTR_DETAIL_MODE, '') })); // NEW
+        const policyChanged = triggers.some(change => (change.cell || change.child) === garden && [ATTR_CIRCLE_MAX_GROUP, ATTR_CIRCLE_MAX_TOTAL].some(key => { // NEW
+            if (change.constructor.name === 'mxCellAttributeChange') return change.attribute === key; // NEW
+            return change.constructor.name === 'mxValueChange' && change.previous && change.previous.getAttribute && change.value && change.value.getAttribute && change.previous.getAttribute(key) !== change.value.getAttribute(key); // NEW
+        })); // NEW: unrelated garden metadata edits do not restore automatic detail.
+        const candidates = rows.filter(row => row.mode !== 'collapsed' && (row.mode === 'expanded' || ((!isCollapsedLOD(row.group) || policyChanged) && row.count <= LOD_TILE_THRESHOLD)) && limits.perPlanting > 0 && row.count <= limits.perPlanting && (!circleToggleTarget || row.group === circleToggleTarget || !isCollapsedLOD(row.group))); // NEW: a header toggle changes only its target; settings may restore automatic detail.
+        candidates.sort((a, b) => a.count - b.count || (String(a.group.id) < String(b.group.id) ? -1 : String(a.group.id) > String(b.group.id) ? 1 : 0)); // NEW
+        const retained = new Set(); let remaining = limits.total; // NEW
+        const current = candidates.filter(row => !isCollapsedLOD(row.group)); // NEW
+        const overBudget = current.reduce((sum, row) => sum + row.count, 0) > limits.total || rows.some(row => !isCollapsedLOD(row.group) && (limits.perPlanting === 0 || row.count > limits.perPlanting)); // NEW
+        const allocation = overBudget ? candidates : current.concat(candidates.filter(row => isCollapsedLOD(row.group))); // NEW: a successful expansion does not displace another group; waiting manual detail uses spare capacity.
+        for (const row of allocation) if (limits.total > 0 && row.count <= remaining) { retained.add(row.group); remaining -= row.count; } // NEW
+        circleBudgetSelection = retained; // NEW
+        try { // NEW
+            // Remove excess detail before adding newly eligible circles, so intermediate states fit too. // NEW
+            const ordered = rows.filter(row => !retained.has(row.group)).concat(rows.filter(row => retained.has(row.group))); // NEW
+            for (const row of ordered) { // NEW
+                const expanded = retained.has(row.group), children = graph.getChildVertices(row.group) || []; // NEW
+                const rendered = children.filter(child => getXmlAttr(child, 'plant_tiler', '') === '1').length; // NEW
+                const summaries = children.filter(child => getXmlAttr(child, 'lod_summary', '') === '1').length; // NEW
+                const renderingMatches = expanded ? rendered === row.count && summaries === 0 : rendered === 0 && summaries === 1; // NEW: a cloned collapsed sibling has saved flags but still needs its generated summary.
+                if (expanded === !isCollapsedLOD(row.group) && renderingMatches && Number(getXmlAttr(row.group, ATTR_PLANT_COUNT_ACT, '-1')) === row.count) continue; // NEW
+                const start = edit.changes.length; // NEW
+                if (expanded) expandGroupDetail(graph, row.group); else collapseGroupDetail(graph, row.group); // NEW
+                const record = { garden, group: row.group, triggers }; // NEW
+                edit.changes.slice(start).forEach(change => derivedCircleChanges.set(change, record)); // NEW
+            } // NEW
+        } finally { circleBudgetSelection = null; } // NEW
+    } // NEW
+
+    /** Reconcile inside END_UPDATE, before mxGraph publishes the outer edit, including derived changes in Undo. */ // NEW
+    function installPlantCircleBudgetLifecycle() { // NEW
+        if (!model.addListener || !mxEvent.END_UPDATE) return; // NEW
+        model.addListener(mxEvent.END_UPDATE, (_sender, event) => { // NEW
+            const edit = event.getProperty('edit'); // NEW
+            if (model.updateLevel !== 0 || reconcilingCircleLimits || circleLimitsRestoring || ui.openingFile || !edit || edit.undone || edit.redone || !edit.changes.length) return; // NEW
+            const gardens = new Map(); // NEW
+            for (const change of edit.changes.slice()) { // NEW
+                if (derivedCircleChanges.has(change)) continue; // NEW
+                const cell = change.cell || change.child; // NEW
+                for (const target of [cell, change.parent, change.previous && change.previous.vertex != null ? change.previous : null]) { // NEW
+                    const garden = target && findGardenModuleAncestor(graph, target); // NEW
+                    if (garden) { if (!gardens.has(garden)) gardens.set(garden, []); gardens.get(garden).push(change); } // NEW
+                } // NEW
+            } // NEW
+            reconcilingCircleLimits = true; // NEW
+            try { gardens.forEach((triggers, garden) => reconcilePlantCircleLimits(garden, edit, triggers)); } // NEW
+            finally { reconcilingCircleLimits = false; } // NEW
+        }); // NEW
+        window.addEventListener('trellisHistoryBeforeRestore', () => { circleLimitsRestoring = true; }); // NEW
+        window.addEventListener('trellisHistoryAfterRestore', () => { circleLimitsRestoring = false; }); // NEW
+    } // NEW
+
+    /** One user action records intent and presentation together; failed admission performs no edits. */ // NEW
+    function setPlantingGroupDetail(group, expanded) { // NEW
+        const users = window.Trellis && window.Trellis.users, file = ui.getCurrentFile && ui.getCurrentFile(); // NEW
+        if (!isTilerGroup(group) || (graph.isEnabled && !graph.isEnabled()) || (graph.isCellLocked && graph.isCellLocked(group)) || (file && file.isEditable && !file.isEditable()) || (users && users.canEditCell && !users.canEditCell(group))) return { ok: false, reason: 'This planting is read-only.' }; // NEW
+        const admission = expanded ? plantCircleAdmission(group) : { ok: true }; // NEW
+        if (!admission.ok) return admission; // NEW
+        circleToggleTarget = group; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            graph.setSelectionCell(group); // NEW
+            setCellAttrsNoTxn(model, group, { [ATTR_DETAIL_MODE]: expanded ? 'expanded' : 'collapsed' }); // NEW
+            retileGroup(graph, group, expanded ? { forceExpand: true } : { forceCollapse: true }); // NEW
+        } finally { try { model.endUpdate(); } finally { circleToggleTarget = null; } } // NEW
+        graph.refresh(group); // NEW
+        return { ok: getXmlAttr(group, ATTR_DETAIL_MODE, '') === (expanded ? 'expanded' : 'collapsed') }; // NEW
+    } // NEW
+
     // expand/collapse helpers
     function expandGroupDetail(graph, groupCell, opts = {}) {
         const abbr = groupCell.getAttribute("plant_abbr") || "?";
@@ -6587,6 +6789,7 @@ Draw.loadPlugin(function (ui) {
         const layoutSnapshot = resolveLayoutSnapshot(graph, groupCell, opts); // CHANGE: capture manual positions before rebuilding clears the children.
         activePlantingLayoutSnapshots.set(groupCell, layoutSnapshot); // CHANGE
         opts = Object.assign({}, opts, { layoutSnapshot, useLiveSnapshot: false }); // CHANGE
+        graph.getModel().beginUpdate(); // NEW: titles, generated children and budget reconciliation belong to one edit.
         try { // CHANGE: snapshot scope includes counts, LOD classification, and child insertion.
             const model = graph.getModel();
             const ownsTitleUpdate = !opts.inTransaction;
@@ -6656,6 +6859,7 @@ Draw.loadPlugin(function (ui) {
             }
         } finally { // CHANGE
             if (previousSnapshot) activePlantingLayoutSnapshots.set(groupCell, previousSnapshot); else activePlantingLayoutSnapshots.delete(groupCell); // CHANGE
+            graph.getModel().endUpdate(); // NEW
         } // CHANGE
     }
 
@@ -6990,7 +7194,7 @@ Draw.loadPlugin(function (ui) {
             graph.setGraphXml = function () { loading++; try { return setGraphXml.apply(this, arguments); } finally { loading--; } }; // CHANGE
         } // CHANGE
 
-        /** Clone bed contents except plant circles; hide all originals until read-only preview cleanup. */ // CHANGE
+        /** Clone bed contents except plant circles and planting titles; restore hidden originals on cleanup. */ // CHANGE
         function createPreview(beds, extraCells = []) { // CHANGE
             flushPendingLayouts(); // CHANGE
             const units = Array.from(new Set(beds)).map(bed => capture(bed, live)).filter(Boolean); // CHANGE
@@ -7016,7 +7220,7 @@ Draw.loadPlugin(function (ui) {
                         if (!node || !node.parentNode || seen.has(node)) continue; // CHANGE
                         seen.add(node); // CHANGE
                         hidden.push({ node, visibility: node.style.visibility }); node.style.visibility = 'hidden'; // CHANGE: restore exact visibility for SVG and HTML nodes on every exit path.
-                        if (isPlantCircle(cell)) continue; // CHANGE: omit circles and their labels visually while retaining them in the commit snapshot.
+                        if (isPlantCircle(cell) || (isTilerGroup(cell) && rendered === state.text)) continue; // CHANGE: omit circles and planting titles visually while retaining the full commit snapshot.
                         const svg = node.namespaceURI === 'http://www.w3.org/2000/svg'; // CHANGE
                         let wrapper = parents.get(node.parentNode); // CHANGE
                         if (!wrapper) { // CHANGE
@@ -7867,7 +8071,7 @@ Draw.loadPlugin(function (ui) {
                     const abbr = g.getAttribute("plant_abbr") || "?";
 
                     // LOD thresholds
-                    if (slotStats.actual > MAX_TILES || slotStats.actual > LOD_TILE_THRESHOLD) {
+                    if (shouldCollapseLOD(graph, g, snap.spacingXpx, snap.spacingYpx)) { // CHANGE: resize honors saved manual intent and the shared circle admission rules.
                         collapseToSummary(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.rotated ? { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false } : {});
                         groupsNeedingRefresh.push(g);
                         continue;
@@ -7988,6 +8192,7 @@ Draw.loadPlugin(function (ui) {
     /** Draw transient planting copies. Inputs use current-view model coordinates; circles are already rotated. */ // CHANGE
     function createPlantingPreviewRenderer() { // CHANGE
         const owners = new Map(); // CHANGE: cleanup belongs to one graph and one workflow.
+        const frameBorderPx = 2; // CHANGE: title anchors retain the frame's existing inner-header inset.
 
         function modelRectToViewRect(rect) { // CHANGE
             const view = graph.getView(); // CHANGE
@@ -7995,8 +8200,38 @@ Draw.loadPlugin(function (ui) {
             return { x: (Number(rect.x) + translate.x) * scale, y: (Number(rect.y) + translate.y) * scale, width: rect.width * scale, height: rect.height * scale, scale }; // CHANGE
         } // CHANGE
 
+        /** Position the upright title beside the rotated header without inheriting frame clipping. */ // CHANGE
+        function appendTitle(host, row, rect) { // CHANGE
+            const fontSize = Math.max(8, Math.round(Number(row.groupLabelFontPx || 12) * rect.scale)); // CHANGE
+            const paddingY = Math.max(1, Math.round(2 * rect.scale)), paddingX = Math.max(2, Math.round(4 * rect.scale)); // CHANGE
+            const height = fontSize * 1.2 + 2 * paddingY + 1; // CHANGE: retain the original title height and anchor after removing its underline.
+            const anchor = modelPointForLocalPoint(row.rect, { x: row.rect.width / 2, y: (frameBorderPx + height / 2) / rect.scale }, row.rotationDeg || 0); // CHANGE: follow the original title center just inside the frame border.
+            const point = modelRectToViewRect({ x: anchor.x, y: anchor.y, width: 0, height: 0 }); // CHANGE: reuse the circles' model/view projection for zoom and drilled-in modules.
+            const title = document.createElement('div'); // CHANGE
+            title.className = 'manual-link-spacing-preview-group-title'; title.dataset.spacingPreviewTitle = row.cellId || ''; // CHANGE
+            title.textContent = row.label || row.abbr || ''; // CHANGE
+            Object.assign(title.style, { // CHANGE
+                position: 'absolute', left: point.x + 'px', top: point.y + 'px', width: Math.max(0, rect.width - 2 * frameBorderPx) + 'px', height: height + 'px', // CHANGE: retain the former header's inner width.
+                transform: 'translate(-50%, -50%)', boxSizing: 'border-box', padding: paddingY + 'px ' + paddingX + 'px', // CHANGE
+                fontFamily: 'Arial, sans-serif', fontWeight: '700', fontSize: fontSize + 'px', lineHeight: '1.2', textAlign: 'center', color: '#111827', // CHANGE
+                background: 'rgba(255,255,255,0.88)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', // CHANGE: the usable footprint's top edge delineates header space.
+            }); // CHANGE
+            host.appendChild(title); // CHANGE: an upright title may extend beyond the frame without changing planting geometry.
+        } // CHANGE
+
         function appendFrame(host, row, bedFrame = false) { // CHANGE
-            const rect = modelRectToViewRect(row.rect); // CHANGE
+            const groupRect = modelRectToViewRect(row.rect); // CHANGE: titles and circles retain the full group's coordinate reference.
+            let frameRect = row.rect; // CHANGE: bed context still outlines its entire rectangle.
+            if (!bedFrame) { // CHANGE
+                const cell = { getGeometry: () => row.rect }; // CHANGE: reuse native header and usable-area calculations without creating an mxCell.
+                const bandPx = row.groupLabelBandPx ?? groupLabelMetrics(cell).bandPx; // CHANGE
+                const bounds = row.contentBounds || plantingContentBoundsLocal(cell, bandPx); // CHANGE: fitted bounds already include permitted overhang.
+                const width = Math.max(0, bounds.maxX - bounds.minX), height = Math.max(0, bounds.maxY - bounds.minY); // CHANGE
+                if (!(width > 0 && height > 0)) { appendTitle(host, row, groupRect); return; } // CHANGE: an empty usable area has a title but no misleading border.
+                const center = modelPointForLocalPoint(row.rect, { x: bounds.minX + width / 2, y: bounds.minY + height / 2 }, row.rotationDeg || 0); // CHANGE: rotate the usable center around the original group pivot exactly once.
+                frameRect = { x: center.x - width / 2, y: center.y - height / 2, width, height }; // CHANGE: CSS rotates the footprint around its projected center.
+            } // CHANGE
+            const rect = modelRectToViewRect(frameRect); // CHANGE
             const color = bedFrame ? '#15803d' : row.tone === 'warning' ? '#d97706' : '#2563eb'; // CHANGE
             const frame = document.createElement('div'); // CHANGE
             frame.className = bedFrame ? 'manual-link-spacing-preview-bed-frame' : 'manual-link-spacing-preview-group-frame'; // CHANGE: preserve existing CSS hooks.
@@ -8008,7 +8243,7 @@ Draw.loadPlugin(function (ui) {
                 width: Math.round(rect.width) + 'px', // CHANGE
                 height: Math.round(rect.height) + 'px', // CHANGE
                 boxSizing: 'border-box', // CHANGE
-                border: '2px ' + (bedFrame ? 'solid ' : 'dashed ') + color, // CHANGE
+                border: frameBorderPx + 'px ' + (bedFrame ? 'solid ' : 'dashed ') + color, // CHANGE
                 background: bedFrame ? 'rgba(22,163,74,0.035)' : 'rgba(37,99,235,0.04)', // CHANGE
                 boxShadow: '0 0 0 3px rgba(37,99,235,0.16)', // CHANGE
                 color: '#111827', // CHANGE
@@ -8023,10 +8258,6 @@ Draw.loadPlugin(function (ui) {
                 pointerEvents: 'none', // CHANGE
             }); // CHANGE
             if (!bedFrame) { // CHANGE
-                const label = document.createElement('div'); // CHANGE
-                label.textContent = row.label || row.abbr || ''; // CHANGE
-                Object.assign(label.style, { padding: Math.max(1, Math.round(2 * rect.scale)) + 'px ' + Math.max(2, Math.round(4 * rect.scale)) + 'px', background: 'rgba(255,255,255,0.88)', borderBottom: '1px solid ' + color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }); // CHANGE
-                frame.appendChild(label); // CHANGE
                 if (row.summaryText) { // CHANGE
                     const summary = document.createElement('div'); // CHANGE
                     summary.className = 'planting-preview-summary'; summary.textContent = row.summaryText; // CHANGE
@@ -8035,6 +8266,7 @@ Draw.loadPlugin(function (ui) {
                 } // CHANGE
             } // CHANGE
             host.appendChild(frame); // CHANGE
+            if (!bedFrame) appendTitle(host, row, groupRect); // CHANGE: summaries center in the usable footprint; titles stay at the original header anchor.
         } // CHANGE
 
         function appendCircle(host, dot, tone) { // CHANGE
@@ -9306,6 +9538,7 @@ Draw.loadPlugin(function (ui) {
             subtitle.style.fontSize = '10px'; // CHANGE: migrated planting overlay.
             titleWrap.appendChild(title); // CHANGE: migrated planting overlay.
             titleWrap.appendChild(subtitle); // CHANGE: migrated planting overlay.
+            appendPlantGrowthDetails(titleWrap, model.getCell(entry.sourceId)); // NEW
             header.appendChild(titleWrap); // CHANGE: migrated planting overlay.
 
             const actions = document.createElement('div'); // CHANGE: migrated planting overlay.
@@ -9350,6 +9583,7 @@ Draw.loadPlugin(function (ui) {
             title.style.textOverflow = 'ellipsis'; // CHANGE: migrated planting overlay.
             title.style.whiteSpace = 'nowrap'; // CHANGE: migrated planting overlay.
             header.appendChild(title); // CHANGE: migrated planting overlay.
+            appendPlantGrowthDetails(header, model.getCell(entry.sourceId)); // NEW
 
             const toggle = document.createElement('div'); // CHANGE: migrated planting overlay.
             toggle.style.cssText = 'display:inline-flex;align-items:center;gap:0;border:1px solid #c7c7cc;border-radius:4px;overflow:hidden;box-sizing:border-box;'; // CHANGE: schedule-only groups use the same joined mode selector.
@@ -10934,11 +11168,211 @@ Draw.loadPlugin(function (ui) {
         else { graph.setSelectionCell(cell); if (graph.scrollCellToVisible) graph.scrollCellToVisible(cell); } // CHANGE
     } // CHANGE
 
+    /** A DOM control is anchored to the rotated header but painted upright and omitted from graph exports. */ // NEW
+    function createPlantingDetailControl() { // NEW
+        let button = null, target = null; // NEW
+        function hide() { target = null; if (button) button.style.display = 'none'; } // NEW
+        function refresh() { // NEW
+            const selected = graph.getSelectionCells ? graph.getSelectionCells() : []; // NEW
+            const group = selected.length === 1 ? findTilerGroupAncestor(graph, selected[0]) : null; // NEW
+            const state = group && graph.view.getState(group), users = window.Trellis && window.Trellis.users; // NEW
+            const file = ui.getCurrentFile && ui.getCurrentFile(); // NEW
+            if (!state || graph.isMouseDown || (graph.isEnabled && !graph.isEnabled()) || (graph.isCellLocked && graph.isCellLocked(group)) || (users && users.canEditCell && !users.canEditCell(group)) || (file && file.isEditable && !file.isEditable()) || (users && users.isTeamPermissionModeActive && users.isTeamPermissionModeActive())) { hide(); return; } // NEW
+            if (!button) { // NEW
+                const layer = ensureGraphOverlayHtmlLayer('control'); if (!layer) return; // NEW
+                button = document.createElement('button'); button.type = 'button'; button.className = 'trellis-planting-detail-toggle'; // NEW
+                button.style.cssText = 'position:absolute;width:22px;height:20px;padding:0;line-height:18px;font:bold 14px Arial,sans-serif;border-radius:3px;pointer-events:auto;'; // NEW
+                applyTilerButtonStyle(button, 'neutral', { compact: true }); // NEW
+                for (const eventName of ['pointerdown', 'mousedown', 'dblclick']) button.addEventListener(eventName, event => { event.stopPropagation(); if (eventName !== 'pointerdown') event.preventDefault(); }); // NEW
+                button.addEventListener('click', event => { // NEW
+                    event.preventDefault(); event.stopPropagation(); // NEW
+                    if (!target) return; // NEW
+                    const result = setPlantingGroupDetail(target, isCollapsedLOD(target)); // NEW
+                    if (!result.ok && result.reason) mxUtils.alert(result.reason); // NEW
+                    refresh(); // NEW
+                }); // NEW
+                layer.appendChild(button); // NEW
+            } // NEW
+            target = group; // NEW
+            const collapsed = isCollapsedLOD(group), admission = collapsed ? plantCircleAdmission(group) : { ok: true }; // NEW
+            const action = collapsed ? 'Show plant circles' : 'Show planting summary'; // NEW
+            button.textContent = collapsed ? '+' : '−'; button.setAttribute('aria-label', action); button.setAttribute('aria-expanded', collapsed ? 'false' : 'true'); // NEW
+            button.disabled = !admission.ok; button.title = admission.ok ? action : action + ': ' + admission.reason; // NEW
+            const scale = graph.view.scale || 1, x = state.x + (graph.panDx || 0), y = state.y + (graph.panDy || 0); // NEW
+            const center = { x: x + state.width / 2, y: y + state.height / 2 }; // NEW
+            const anchor = rotatePointAround({ x: x + state.width - 13, y: y + Math.max(12, groupLabelMetrics(group).bandPx * scale / 2) }, center, previewStyleRotationDeg(graph, group)); // NEW
+            Object.assign(button.style, { display: 'block', left: Math.round(anchor.x - 11) + 'px', top: Math.round(anchor.y - 10) + 'px' }); // NEW
+        } // NEW
+        return { refresh, hide }; // NEW
+    } // NEW
+
+    /** Add the same estimated stage description to both selected-group panel variants. */ // NEW
+    function appendPlantGrowthDetails(header, cell) { // NEW
+        if (!isTilerGroup(cell)) return; // NEW
+        const detail = document.createElement('div'); // NEW
+        detail.dataset.trellisGrowthDetails = cell.id; // NEW
+        detail.style.cssText = 'font:11px Arial,sans-serif;color:#374151;'; // NEW
+        header.appendChild(detail); // NEW
+        graph.__trellisPlantingGroup?.growth?.updateDetail(detail, cell); // NEW
+    } // NEW
+
+    /** Own transient estimates, paint hooks and badges without changing model cells or global prototypes. */ // NEW
+    function createPlantGrowthController() { // NEW
+        const entries = new Map(), outlines = new Map(), labelStyles = new Map(), listeners = []; // NEW
+        const labels = { planned: 'Planned', seed: 'Seed', growing: 'Growing', harvest: 'Harvest window', complete: 'Complete', establishing: 'Establishing', established: 'Established', unavailable: 'Progress unavailable' }; // NEW
+        const colors = { seed: '#fb923c', growing: '#fde047', harvest: '#86efac', establishing: '#fde047', established: '#86efac' }; // NEW
+        let scheduled = false, disposed = false, revision = 0, rolloverTimer = null; // NEW
+        const todayISO = () => { const date = new Date(); return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0'); }; // NEW
+        const attributes = cell => Object.fromEntries(Array.from(cell?.value?.attributes || []).map(attr => [attr.name, attr.value])); // NEW
+        function groupFor(cell) { // NEW
+            for (let current = cell; current; current = model.getParent(current)) if (isTilerGroup(current)) return current; // NEW
+            return null; // NEW
+        } // NEW
+        function gardenFor(cell) { // NEW
+            for (let current = cell; current; current = model.getParent(current)) if (getXmlAttr(current, 'garden_module', '') === '1') return current; // NEW
+            return null; // NEW
+        } // NEW
+        function estimate(cell) { // NEW
+            const core = window.USL?.scheduler?.sharedCore, entry = entries.get(cell?.id); // NEW
+            return entry?.state || core?.calculatePlantGrowthState(attributes(cell), {}, todayISO()) || { stage: 'unavailable', percentage: null, areaRatio: 1, basis: 'unavailable', reason: 'Scheduler growth calculations unavailable.', todayISO: todayISO() }; // NEW
+        } // NEW
+        function description(cell) { // NEW
+            const state = estimate(cell); // NEW
+            return labels[state.stage] + (state.percentage == null ? '' : ' · ' + state.percentage + '%'); // NEW
+        } // NEW
+        function tooltip(cell) { // NEW
+            const state = estimate(cell), diameter = getPlantCircleDiameterPx(cell) / toPx(1); // NEW
+            return description(cell) + '\nEstimated for ' + state.todayISO + '\nBasis: ' + state.basis + '\nTarget harvest diameter: ' + Math.round(diameter * 10) / 10 + ' cm' + (state.reason ? '\n' + state.reason : ''); // NEW
+        } // NEW
+        function updateDetail(node, cell) { node.textContent = description(cell) + ' (estimated)'; node.title = tooltip(cell); } // NEW
+        function showOutline(cell) { // NEW
+            const group = groupFor(cell), garden = group && gardenFor(group); // NEW
+            return !!group && outlines.get(garden) === true; // CHANGE: the garden checkbox is authoritative, including selected plantings.
+        } // NEW
+        function diameterRatio(state) { // NEW
+            const group = groupFor(state.cell), full = Math.min(state.width, state.height); // NEW
+            return group && full > 0 ? Math.min(1, Math.max(Math.sqrt(estimate(group).areaRatio), Math.min(4, full) / full)) : 1; // NEW
+        } // NEW
+        function attachPaint(shape, state) { // NEW
+            if (!shape || !isPlantCircle(state.cell) || shape.__trellisGrowthPaint) return shape; // NEW
+            shape.__trellisGrowthPaint = true; // NEW
+            const paint = shape.paintVertexShape; // NEW
+            shape.paintVertexShape = function (canvas, x, y, width, height) { // NEW
+                if (disposed || canvas.root !== this.node) return paint.apply(this, arguments); // NEW: export canvases keep the saved harvest footprint.
+                if (showOutline(state.cell)) { // NEW
+                    canvas.save(); canvas.setAlpha(1); canvas.setFillColor(null); canvas.setStrokeColor('#2563eb'); canvas.setStrokeWidth(2.5 / (this.scale || 1)); // NEW
+                    canvas.setDashed(true); canvas.setDashPattern('3 3'); // CHANGE: standard dashes follow the outline's fixed screen-size stroke width.
+                    canvas.ellipse(x, y, width, height); canvas.stroke(); canvas.restore(); // NEW
+                } // NEW
+                const ratio = diameterRatio(state); // NEW
+                canvas.save(); canvas.setStrokeColor('#111827'); canvas.setDashed(false); // CHANGE: black growth circles remain solid independently of outline styling.
+                paint.call(this, canvas, x + width * (1 - ratio) / 2, y + height * (1 - ratio) / 2, width * ratio, height * ratio); // NEW
+                canvas.restore(); // NEW
+            }; // NEW
+            return shape; // NEW
+        } // NEW
+        const renderer = graph.cellRenderer; // NEW
+        const original = renderer && { createShape: renderer.createShape }; // NEW
+        if (original) { // NEW
+            renderer.createShape = function (state) { return attachPaint(original.createShape.apply(this, arguments), state); }; // NEW
+        } // NEW
+        function visible(cell) { // NEW
+            for (let current = cell; current; current = model.getParent(current)) if (!graph.isCellVisible(current)) return false; // NEW
+            return !!graph.view?.getState?.(cell); // NEW
+        } // NEW
+        function refreshGroup(cell, entry) { // NEW
+            const state = graph.view?.getState?.(cell); // NEW
+            if (!state || !visible(cell)) { if (entry.badge) entry.badge.style.display = 'none'; return; } // NEW
+            for (const child of graph.getChildVertices(cell) || []) { // NEW
+                const childState = graph.view.getState(child); // NEW
+                if (childState && isPlantCircle(child) && renderer) { // NEW
+                    attachPaint(childState.shape, childState); renderer.redraw(childState, true); // NEW
+                    const node = childState.text?.node, ratio = diameterRatio(childState); // NEW
+                    if (node) { // NEW: scale only the live label DOM so export text retains its native size and content.
+                        if (!labelStyles.has(node)) labelStyles.set(node, { visibility: node.style.visibility, transform: node.style.transform, transformOrigin: node.style.transformOrigin, transformBox: node.style.transformBox }); // NEW
+                        const saved = labelStyles.get(node); // NEW
+                        Object.assign(node.style, ratio < 1 ? { visibility: Math.min(childState.width, childState.height) * ratio < 18 ? 'hidden' : saved.visibility, transform: 'scale(' + ratio + ')', transformOrigin: 'center', transformBox: 'fill-box' } : saved); // NEW
+                    } // NEW
+                } // NEW
+            } // NEW
+            const layer = ensureGraphOverlayHtmlLayer('annotation'); // NEW
+            if (!layer) return; // NEW
+            if (!entry.badge) { // NEW
+                entry.badge = document.createElement('span'); entry.badge.dataset.trellisGrowthBadge = cell.id; // NEW
+                entry.badge.style.cssText = 'position:absolute;width:30px;height:30px;box-sizing:border-box;border:1px solid #6b7280;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 11px Arial,sans-serif;color:#111827;pointer-events:auto;'; // NEW
+                ['mousedown', 'pointerdown', 'click', 'dblclick'].forEach(name => entry.badge.addEventListener(name, event => event.stopPropagation())); // NEW
+                layer.appendChild(entry.badge); // NEW
+            } // NEW
+            const growth = estimate(cell), bounds = state.text?.boundingBox || state.text?.bounds || state; // NEW
+            entry.badge.textContent = growth.percentage == null ? (['complete', 'established'].includes(growth.stage) ? '✓' : '—') : growth.percentage + '%'; // NEW
+            entry.badge.title = tooltip(cell); entry.badge.setAttribute('aria-label', description(cell)); // NEW
+            Object.assign(entry.badge.style, { display: 'flex', background: colors[growth.stage] || '#e5e7eb', left: Math.round(bounds.x + bounds.width + 6 + (graph.panDx || 0)) + 'px', top: Math.round(bounds.y + bounds.height / 2 - 15 + (graph.panDy || 0)) + 'px' }); // NEW
+        } // NEW
+        function refresh() { // NEW
+            scheduled = false; if (disposed) return; // NEW
+            const core = window.USL?.scheduler?.sharedCore, date = todayISO(), live = new Set(); // NEW
+            for (const cell of Object.values(model.cells || {})) { // NEW
+                if (!isTilerGroup(cell)) continue; live.add(cell.id); // NEW
+                let entry = entries.get(cell.id); // NEW
+                if (!entry) { entry = {}; entries.set(cell.id, entry); } // NEW
+                const signature = JSON.stringify([attributes(cell), date, revision]); // NEW
+                if (core && signature !== entry.signature) { // NEW
+                    entry.signature = signature; entry.state = core.calculatePlantGrowthState(attributes(cell), {}, date); // NEW
+                    entry.contextRequested = false; // NEW
+                } // NEW
+                const resolver = window.USL?.scheduler?.resolvePlantGrowthContext; // NEW
+                if (core && resolver && visible(cell) && !entry.contextRequested) { // NEW
+                    entry.contextRequested = true; // NEW
+                    const requestRevision = revision; // NEW
+                    Promise.resolve().then(() => resolver(cell, date)).then(context => { // NEW
+                        if (disposed || revision !== requestRevision || entries.get(cell.id) !== entry || entry.signature !== signature) return; // NEW
+                        entry.state = core.calculatePlantGrowthState(attributes(cell), context || {}, date); schedule(); // NEW
+                    }).catch(() => { /* Keep the documented date-based fallback on unavailable reference data. */ }); // NEW
+                } // NEW
+                refreshGroup(cell, entry); // NEW
+            } // NEW
+            for (const [id, entry] of entries) if (!live.has(id)) { entry.badge?.remove(); entries.delete(id); } // NEW
+            for (const [node, styles] of labelStyles) if (!node.isConnected) { Object.assign(node.style, styles); labelStyles.delete(node); } // NEW
+            graph.container?.querySelectorAll('[data-trellis-growth-details]').forEach(node => { const cell = model.getCell(node.dataset.trellisGrowthDetails); if (cell) updateDetail(node, cell); }); // NEW
+        } // NEW
+        function schedule() { // NEW
+            if (disposed || scheduled) return; scheduled = true; // NEW
+            (window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (callback => setTimeout(callback, 0)))(refresh); // NEW
+        } // NEW
+        function invalidate() { revision++; schedule(); } // NEW
+        function listen(source, name, callback) { // NEW
+            if (!source?.addListener || !name) return; source.addListener(name, callback); listeners.push(() => source.removeListener(callback)); // NEW
+        } // NEW
+        listen(model, mxEvent.CHANGE, invalidate); listen(graph.getSelectionModel?.(), mxEvent.CHANGE, schedule); // NEW
+        [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE, mxEvent.UP, mxEvent.DOWN].forEach(name => listen(graph.view, name, schedule)); // NEW
+        [mxEvent.REFRESH, mxEvent.PAN].forEach(name => listen(graph, name, schedule)); // NEW
+        const events = ['resize', 'trellisPlantGrowthReady', 'usl:varietyEditorSaved', 'usl:growthStagesSaved', 'trellis:database-restored', 'trellisHistoryAfterRestore']; // NEW
+        if (window.addEventListener) events.forEach(name => { window.addEventListener(name, invalidate); listeners.push(() => window.removeEventListener(name, invalidate)); }); // NEW
+        if (graph.container) { graph.container.addEventListener('scroll', schedule); listeners.push(() => graph.container.removeEventListener('scroll', schedule)); } // NEW
+        function armRollover() { // NEW
+            if (!window.setTimeout) return; // NEW: lightweight non-browser graph hosts do not own browser timers.
+            const now = new Date(), next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1); // NEW
+            rolloverTimer = window.setTimeout(() => { invalidate(); armRollover(); }, next - now + 50); // NEW
+        } // NEW
+        const originalDestroy = graph.destroy; // NEW
+        function dispose() { // NEW
+            if (disposed) return; disposed = true; window.clearTimeout?.(rolloverTimer); listeners.splice(0).forEach(remove => remove()); // NEW
+            entries.forEach(entry => entry.badge?.remove()); entries.clear(); outlines.clear(); // NEW
+            labelStyles.forEach((styles, node) => Object.assign(node.style, styles)); labelStyles.clear(); // NEW
+            if (renderer) Object.assign(renderer, original); // NEW
+        } // NEW
+        graph.destroy = function () { dispose(); return originalDestroy?.apply(this, arguments); }; // NEW
+        armRollover(); schedule(); // NEW
+        return { refresh, invalidate, dispose, estimate, updateDetail, getShowHarvestSize: garden => outlines.get(garden) === true, setShowHarvestSize(garden, enabled) { outlines.set(garden, !!enabled); schedule(); } }; // NEW
+    } // NEW
+
     /** One controller owns selection, draft invalidation and presentation refreshes. */ // CHANGE
     function createPlantingOverlayLifecycle() { // CHANGE
         let restoringHistory = false; // CHANGE
+        const detailControl = createPlantingDetailControl(); // NEW
         function syncSelection() { // CHANGE
             if (restoringHistory) return; // CHANGE
+            detailControl.refresh(); // NEW
             const selected = graph.getSelectionCells ? graph.getSelectionCells() : []; // CHANGE
             const adapter = graph.__trellisPlantingLinking; // CHANGE
             let source = selected.length === 1 ? selected[0] : null; // CHANGE
@@ -10986,6 +11420,7 @@ Draw.loadPlugin(function (ui) {
             schedule(() => { // CHANGE
                 viewRefreshPending = false; // CHANGE
                 plantingPreview.refresh(); taskScheduleOverlay.refreshView(); // CHANGE: redraw ghosts without rebuilding the spacing form.
+                detailControl.refresh(); // NEW
             }); // CHANGE
         } // CHANGE
 
@@ -10996,6 +11431,7 @@ Draw.loadPlugin(function (ui) {
         if (view && view.addListener) [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE, mxEvent.UP, mxEvent.DOWN].filter(Boolean).forEach(name => view.addListener(name, onViewChange)); // CHANGE
         if (graph.addListener) { // CHANGE
             graph.addListener(mxEvent.REFRESH, onViewChange); // CHANGE: personal Roadmap projection changes refresh the graph without editing its model.
+            graph.addListener(mxEvent.PAN, onViewChange); // NEW: native panning translates the SVG canvas without changing view states.
             graph.addListener('linksChanged', syncSelection); // CHANGE
             graph.addListener('trellisPlantingLinkingReady', syncSelection); // CHANGE
             graph.addListener('trellisSelectionVisualsRefresh', syncSelection); // CHANGE
@@ -11008,21 +11444,27 @@ Draw.loadPlugin(function (ui) {
             }); // CHANGE
         } // CHANGE
         if (graph.container && graph.container.addEventListener) graph.container.addEventListener('scroll', onViewChange); // CHANGE
+        if (graph.addMouseListener) graph.addMouseListener({ mouseDown: () => detailControl.hide(), mouseMove() {}, mouseUp: onViewChange }); // NEW: hide during canvas gestures and restore after native handlers finish.
         if (window.addEventListener) { // CHANGE
             window.addEventListener('resize', onViewChange); // CHANGE
             window.addEventListener('trellisTeamPermissionModeChanged', syncSelection); // CHANGE
-            window.addEventListener('trellisHistoryBeforeRestore', () => { restoringHistory = true; taskScheduleOverlay.clear(); }); // CHANGE
+            window.addEventListener('trellisUsersSessionChanged', syncSelection); // NEW
+            window.addEventListener('trellisHistoryBeforeRestore', () => { restoringHistory = true; detailControl.hide(); taskScheduleOverlay.clear(); }); // CHANGE
             window.addEventListener('trellisHistoryAfterRestore', () => { restoringHistory = false; syncSelection(); }); // CHANGE
         } // CHANGE
-        return Object.assign({}, taskScheduleOverlay, { syncSelection }); // CHANGE
+        return Object.assign({}, taskScheduleOverlay, { syncSelection, detailControl }); // CHANGE
     } // CHANGE
 
     graph.__trellisPlantingGroup = { preview: plantingPreview, overlay: createPlantingOverlayLifecycle(), spacingEditor: graph.__trellisPlantingSpacingEditor }; // CHANGE
+    graph.__trellisPlantingGroup.growth = createPlantGrowthController(); // NEW: share the existing owner while keeping all growth state transient.
+    graph.__trellisPlantingGroup.circleLimits = { read: readPlantCircleLimits, admission: plantCircleAdmission, canConfigure: canConfigurePlantCircleLimits, getDerivedChange: change => derivedCircleChanges.get(change) }; // NEW: permissions inspect exact changes from this controller.
+    installPlantCircleBudgetLifecycle(); // NEW
 
     // ---- Public API export (for other plugins) ---------------------------------
     window.USL = window.USL || {};
     window.USL.plantingGroup = Object.assign({}, window.USL.plantingGroup || window.USL.tiler, { // CHANGE
         retileGroup,
+        setPlantingGroupDetail, readPlantCircleLimits, // NEW: commands and tests use the same admission and transaction paths as the header.
         retileAndFitToContainingBed,
         createSiblingTilerGroupFromSource,
         listGardenBeds,
@@ -11039,6 +11481,7 @@ Draw.loadPlugin(function (ui) {
     });
     graph.__trellisPlantingGroup.overlay.syncSelection(); // CHANGE: support linking-before-owner startup.
     window.USL.tiler = window.USL.plantingGroup; // CHANGE: identity alias preserves old callers.
+    installPlantingTitleRenderer(); // CHANGE: refresh only after the owning controller and all view listeners are ready.
     if (graph.fireEvent && typeof mxEventObject !== 'undefined') graph.fireEvent(new mxEventObject('trellisPlantingGroupReady')); // CHANGE
     installTrellisDebugSurface();
     bedFitLog("loaded", bedFitStatus());

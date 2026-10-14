@@ -19,6 +19,7 @@ function applyImmediateTaskReplacement({ targetGroupId, tasks, removeTasks, crea
 
 // -------------------- Constants and task attributes --------------------
 const CARD_NOTE_ATTR = 'card_note'; // NEW: user annotation kept separate from scheduler task notes
+const TASK_INSTRUCTION_OVERRIDE_ATTR = 'task_instruction_override'; // CHANGE: an empty local override is distinct from inheritance.
 const CARD_NOTE_MAX_LENGTH = 40;
 const TASK_VIEW_MODE_ATTR = 'task_view_mode';
 const TASK_SELECTED_DAY_ATTR = 'task_selected_day';
@@ -324,6 +325,7 @@ function isUserTouchedSchedulerCard(source) {
         isManualStagedSource(source) ||
         !!String(readAttributeValue(source, 'date_override') || '').trim() ||
         !!String(readAttributeValue(source, CARD_NOTE_ATTR) || '').trim() ||
+        readAttributeValue(source, TASK_INSTRUCTION_OVERRIDE_ATTR) != null || // CHANGE: retain instruction edits when a scheduler rule disappears.
         isSchedulerDateLocked(source) ||
         hasTaskAssignees(source);
 }
@@ -338,6 +340,7 @@ function isUserTouchedSchedulerRecord(record) {
         isManualStagedSource(source) ||
         !!String(readAttributeValue(source, 'date_override') || '').trim() ||
         !!String(readAttributeValue(source, CARD_NOTE_ATTR) || '').trim() ||
+        readAttributeValue(source, TASK_INSTRUCTION_OVERRIDE_ATTR) != null || // CHANGE: includes explicitly cleared instructions.
         isSchedulerDateLocked(source) ||
         hasTaskAssignees(source);
 }
@@ -838,6 +841,7 @@ function canParentKanbanCell(parent, child, opts) { // NEW: single source of tru
 
 // -------------------- Pure task policy: card metadata and scheduler sync --------------------
 function normalizeCardNote(value) { // NEW: normalize badge text and truncate by Unicode code point
+    if (typeof globalThis !== 'undefined' && globalThis.TrellisFieldProtocol) return globalThis.TrellisFieldProtocol.normalizeAnnotation(value); // NEW: Android shares the existing normalization policy.
     const collapsed = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
     return Array.from(collapsed).slice(0, CARD_NOTE_MAX_LENGTH).join('');
 }
@@ -930,6 +934,8 @@ function buildGeneratedTaskSyncAttributes(task) {
     const attrs = {
         title: String(source.title || 'Task'),
         notes: source.notes ? String(source.notes) : null,
+        task_instructions: typeof source.instructions === 'string' ? source.instructions : null, // CHANGE: inherited guidance refreshes without touching the local override.
+        task_instruction_provenance_json: source.instructionProvenance ? JSON.stringify(source.instructionProvenance) : null, // CHANGE
         method: source.method ? String(source.method) : null,
         plant_name: source.plant_name ? String(source.plant_name) : null,
         variety_name: source.variety_name ? String(source.variety_name) : null,
@@ -1028,9 +1034,10 @@ function planTaskAssignmentReplacement(existingRecords, tasks) { // NEW: full re
     existing.forEach(record => {
         const source = record && (record.source || record);
         const roleIds = normalizeTaskAssigneeRoleIds(readAttributeValue(source, TASK_ASSIGNEE_ROLE_IDS_ATTR));
-        if (!roleIds.length) return;
+        const instructionOverride = readAttributeValue(source, TASK_INSTRUCTION_OVERRIDE_ATTR); // CHANGE
+        if (!roleIds.length && instructionOverride == null) return; // CHANGE: full replacement also preserves local instruction edits.
         const key = existingKey(record);
-        if (key && existingCounts.get(key) === 1 && incomingCounts.get(key) === 1) preserved.push({ key, roleIds });
+        if (key && existingCounts.get(key) === 1 && incomingCounts.get(key) === 1) preserved.push({ key, roleIds, ...(instructionOverride != null ? { instructionOverride } : {}) }); // CHANGE
         else retainMissing.push(record); // NEW: unsafe mappings remain explicit instead of silently losing user assignments
     });
     return { preserved, retainMissing };
@@ -1098,20 +1105,42 @@ function buildRepeatSeriesKey(source) { // NEW: dates intentionally do not parti
     ]);
 }
 
-function compareRepeatCalendarValues(left, right) { // NEW: valid dates sort before missing or malformed dates
+function compareRepeatCalendarValues(left, right, latestFirst = false) { // CHANGE: reverse valid dates only; malformed dates always sort last
     const leftDate = parseTaskCalendarISO(left);
     const rightDate = parseTaskCalendarISO(right);
-    if (leftDate && rightDate) return leftDate.dayNumber - rightDate.dayNumber;
+    if (leftDate && rightDate) return (leftDate.dayNumber - rightDate.dayNumber) * (latestFirst ? -1 : 1); // CHANGE
     if (leftDate) return -1;
     if (rightDate) return 1;
     return 0;
 }
 
-function compareRepeatOccurrenceRecords(left, right) { // NEW: deterministic representative and badge ordering
-    return compareRepeatCalendarValues(left && left.startISO, right && right.startISO) ||
-        compareRepeatCalendarValues(left && left.endISO, right && right.endISO) ||
+function compareRepeatOccurrenceRecords(left, right, latestFirst = false) { // CHANGE: shared deterministic ordering for board representatives and connectors
+    return compareRepeatCalendarValues(left && left.startISO, right && right.startISO, latestFirst) || // CHANGE
+        compareRepeatCalendarValues(left && left.endISO, right && right.endISO, latestFirst) || // CHANGE
         String(left && left.id || '').localeCompare(String(right && right.id || ''));
 }
+
+/** Selects one connector per board/series without changing card or relationship state. */ // NEW
+function planRepeatSeriesLinkVisibility(records) { // NEW
+    const groups = new Map(); // NEW
+    const visibility = new Map(); // NEW: absent ids retain the ordinary non-repeating link policy
+    (Array.isArray(records) ? records : []).forEach(record => { // NEW
+        if (!record || !record.seriesKey) return; // NEW
+        const key = JSON.stringify([String(record.boardId || ''), record.seriesKey]); // NEW
+        if (!groups.has(key)) groups.set(key, []); // NEW
+        groups.get(key).push(record); // NEW
+    }); // NEW
+    groups.forEach(group => { // NEW
+        if (group.length < 2) return; // NEW
+        group.forEach(record => visibility.set(String(record.id), false)); // NEW
+        const eligible = group.filter(record => !record.yearHidden); // NEW
+        const unfinished = eligible.filter(record => record.workflowState !== 'DONE'); // NEW: staged work is unfinished too
+        const ordered = (unfinished.length ? unfinished : eligible).slice() // NEW
+            .sort((left, right) => compareRepeatOccurrenceRecords(left, right, unfinished.length === 0)); // NEW
+        if (ordered.length) visibility.set(String(ordered[0].id), true); // NEW
+    }); // NEW
+    return visibility; // NEW
+} // NEW
 
 function isCardVisibilityEligible(source) { // NEW: paging and lane counts share the same derived visibility rule
     return readAttributeValue(source, 'year_hidden') !== '1' &&
@@ -1471,6 +1500,7 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         normalizeRepeatLinkedIds,
         buildRepeatSeriesKey,
         compareRepeatOccurrenceRecords,
+        planRepeatSeriesLinkVisibility, // NEW: opt-in behavioral test seam for connector selection
         isCardVisibilityEligible,
         buildTaskLanePagePlan,
         planRepeatSeriesVisibility,
@@ -3193,6 +3223,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         const reflow = !opts || opts.reflow !== false;
         const assignmentIdsByTaskKey = opts && opts.assignmentIdsByTaskKey;
+        const instructionOverridesByTaskKey = opts && opts.instructionOverridesByTaskKey; // CHANGE
         const insideUpdate = !!(opts && opts.insideUpdate);
         const focusCreated = !opts || opts.focusCreated !== false; // NEW: scheduler saves can create cards without stealing graph focus
 
@@ -3226,7 +3257,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 if (t.variety_name) setAttrNoUndo(card, 'variety_name', t.variety_name);
                 const schedulerAttrs = buildSchedulerTaskMetadataAttributes(t);
                 Object.keys(schedulerAttrs).forEach(function (key) { setAttrNoUndo(card, key, schedulerAttrs[key]); });
+                if (typeof t.instructions === 'string') setAttrNoUndo(card, 'task_instructions', t.instructions); // CHANGE
+                if (t.instructionProvenance) setAttrNoUndo(card, 'task_instruction_provenance_json', JSON.stringify(t.instructionProvenance)); // CHANGE
                 const schedulerTaskKey = String(schedulerAttrs.scheduler_task_key || '');
+                if (instructionOverridesByTaskKey && instructionOverridesByTaskKey.has(schedulerTaskKey)) setAttrNoUndo(card, TASK_INSTRUCTION_OVERRIDE_ATTR, instructionOverridesByTaskKey.get(schedulerTaskKey)); // CHANGE
                 const preservedAssignees = schedulerTaskKey && assignmentIdsByTaskKey && assignmentIdsByTaskKey.get ? assignmentIdsByTaskKey.get(schedulerTaskKey) : null;
                 if (preservedAssignees && preservedAssignees.length) setAttrNoUndo(card, TASK_ASSIGNEE_ROLE_IDS_ATTR, serializeTaskAssigneeRoleIds(preservedAssignees), true);
 
@@ -3354,9 +3388,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const source = buildDifferentialTaskSyncRecords(targetGroupId);
             const preservation = planTaskAssignmentReplacement(source && source.records, normalizedTasks);
             const assignmentIdsByTaskKey = new Map(preservation.preserved.map(entry => [entry.key, entry.roleIds]));
+            const instructionOverridesByTaskKey = new Map(preservation.preserved.filter(entry => entry.instructionOverride != null).map(entry => [entry.key, entry.instructionOverride])); // CHANGE
             const preserveCardIds = new Set(preservation.retainMissing.map(record => String(record.card && (record.card.id || (record.card.getId && record.card.getId())) || '')));
             removeTasksLinkedOnlyTo(targetGroupId, { reflow: !normalizedTasks.length, preserveCardIds, insideUpdate: !!options.insideUpdate });
-            return normalizedTasks.length ? createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey, insideUpdate: !!options.insideUpdate, focusCreated: options.focusCreated !== false }) : [];
+            return normalizedTasks.length ? createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey, instructionOverridesByTaskKey, insideUpdate: !!options.insideUpdate, focusCreated: options.focusCreated !== false }) : []; // CHANGE
         };
         if (options.insideUpdate) return operation();
         return runTrellisHistoryTransaction({ category: "Tasks", action: "replace", origin: "Garden_Task_Manager", title: "Replace linked tasks", affectedCellIds: [targetGroupId].filter(Boolean) }, operation);
@@ -3502,6 +3537,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                     id: card.id,
                     card,
                     laneKey: snapshot.laneKey,
+                    boardId: String(board.id), // NEW: repeat connectors never merge occurrences across boards
+                    workflowState: getEffectiveWorkflowState(card.value, snapshot.laneKey), // NEW
                     seriesKey: buildRepeatSeriesKey(card.value),
                     startISO: getAttr(card, 'start'),
                     endISO: getAttr(card, 'end'),
@@ -5323,6 +5360,22 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return true;
     }
 
+    /** Returns id -> connector visibility for repeats in the linked cards' boards; singletons are omitted. */ // NEW
+    function getRepeatLinkVisibility(cards) { // NEW
+        const boards = new Set((cards || []).filter(isKanbanCard).map(findBoardAncestor).filter(Boolean)); // NEW
+        const records = []; // NEW
+        boards.forEach(board => records.push(...getBoardRepeatRecords(board))); // NEW
+        return planRepeatSeriesLinkVisibility(records); // NEW
+    } // NEW
+
+    /** Reveals an existing occurrence through normal repeat expansion and paging, without changing dates or links. */ // NEW
+    function revealLinkedTaskOccurrence(card) { // NEW
+        if (!isKanbanCard(card) || isYearHiddenCard(card)) return false; // NEW
+        if (isRepeatHiddenCard(card)) taskCommands.setRepeatSeriesExpanded(card, true); // NEW
+        const paging = graph.__trellisTaskPagingApi; // NEW
+        return !!(paging && paging.revealCard(card)); // NEW
+    } // NEW
+
     function collectBoardCards(board) {
         const cards = [];
         const lanes = boardLanes(board);
@@ -5912,6 +5965,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         schedulePolicy,
         transactions: taskTransactions
     });
+    window.Trellis = window.Trellis || {}; window.Trellis.taskCommands = { commitCardPatch: taskCommands.commitCardPatch }; // NEW: reuse the real task command; the companion preserves dates by supplying only field attributes.
 
     if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST__) {
         globalThis.__TRELLIS_TASK_MANAGER_RUNTIME_TEST_HOOKS__ = Object.freeze({
@@ -5969,6 +6023,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     } // NEW
 
     graph.__trellisTaskManager = Object.assign({}, graph.__trellisTaskManager || {}, {
+        getRepeatLinkVisibility, revealLinkedTaskOccurrence, // NEW: late-bound connector policy and normal task navigation
         createRoadmapTaskInBoard, getBoardRoleRoster, linkRoadmapAssigneesToBoard, // NEW
         listBoardsInTaskModule: function (moduleCell) { const boards = findBoardsIn(moduleCell); return [boards.main].concat(boards.secondary).filter(Boolean).map(board => ({ id: String(board.id), name: getAttr(board, 'label') || graph.convertValueToString(board), role: board === boards.main ? 'main' : 'secondary' })); }, // NEW
         openTaskCard: function (card) { const board = findBoardAncestor(card); if (!board) return null; setBoardPlanningView(board, 'FULL'); graph.setSelectionCell(card); if (graph.scrollCellToVisible) graph.scrollCellToVisible(card); return card; }, // NEW
@@ -7826,6 +7881,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         const editBtn = add('Edit', cards => cards.length === 1 ? taskDialogs.showEditCardDialog(cards[0]) : taskDialogs.showBulkEditCardsDialog(cards), 'open');
         editBtn.title = "Edit the selected task cards."; // CHANGE: explicit action tooltip.
+        const guideBtn = add('Guide', cards => { const guide = window.USL && window.USL.guide; if (cards.length === 1 && guide) guide.open(cards[0]); else ui.alert('The Task Guide plugin is unavailable.'); }, 'open'); // CHANGE
+        guideBtn.title = 'Read and customize instructions for this task. Changes save automatically.'; // CHANGE
         const assignBtn = add('Assign to', openAssignmentPicker, 'open');
         assignBtn.setAttribute('aria-haspopup', 'dialog');
         assignBtn.setAttribute('aria-expanded', 'false');
@@ -7861,6 +7918,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const showWorkflowButtons = selectionIsOnlyWeekDayLaneCards(cards);
             overlay.style.display = 'flex';
             editBtn.style.display = '';
+            guideBtn.style.display = single ? '' : 'none'; // CHANGE: guidance always targets exactly one task.
             assignBtn.style.display = assignmentContext ? '' : 'none';
             if (assignmentContext) {
                 const assignedCount = new Set(assignmentContext.cards.flatMap(getTaskAssigneeRoleIds)).size;
@@ -7998,6 +8056,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     });
 
     console.log('[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).');
+    graph.fireEvent(new mxEventObject('trellisSelectionVisualsRefresh')); // NEW: rebuild an existing planting selection when Task Manager loads second
 
     // -------------------- Garden-creation task board hook --------------------
     if (!graph.__uslKanbanGardenEventInstalled) {

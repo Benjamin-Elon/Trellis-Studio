@@ -15,6 +15,17 @@ import { assertSharingFileAccess } from './trellis-sharing-files.js'; // NEW
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const exists = async filename => { try { await fs.access(filename); return true; } catch (_) { return false; } };
 const samePath = (a, b) => process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
+/** Count complete serving devices, not people; incomplete telemetry is never zero. */ // NEW
+export async function countProjectSeeds({ members, deviceId, connections, hasLocalCopy, completion }) { // NEW
+    const candidates = [...new Set(members.map(member => member.deviceId))].filter(id => id === deviceId ? hasLocalCopy : connections[id]?.connected); // NEW
+    const results = await Promise.allSettled(candidates.map(async id => { // NEW
+        const status = await completion(id); // NEW
+        if (id !== deviceId && ['paused', 'notSharing'].includes(status.remoteState)) return false; // NEW
+        if (id !== deviceId && status.remoteState !== 'valid' || !Number.isFinite(status.completion) || !Number.isFinite(status.needItems) || !Number.isFinite(status.globalItems)) throw new Error('Seed availability is unknown.'); // NEW
+        return status.globalItems > 0 && status.completion === 100 && status.needItems === 0; // NEW
+    })); // NEW
+    return results.some(result => result.status === 'rejected') ? null : results.filter(result => result.value === true).length; // NEW
+} // NEW
 async function writeAtomic(filename, data) {
     await fs.mkdir(path.dirname(filename), { recursive: true });
     const temporary = filename + '.' + makeId() + '.tmp';
@@ -41,13 +52,13 @@ function localReference(value, base) {
     return path.resolve(base, decodeURIComponent(value));
 }
 /** Visit explicit image/link references through XML and HTML parsers, never directory scans. */
-async function relocateAssets(state, base, destination, profilePath) { // CHANGE: never export the installation's private service files as diagram assets.
+async function relocateAssets(state, base, destination, privatePaths) { // CHANGE: never export the installation's private service files as diagram assets.
     const copied = new Map();
     const missing = new Set();
     async function replace(value) {
         const source = localReference(value, base);
         if (!source) return value;
-        await assertSharingFileAccess(source, profilePath); // NEW
+        for (const privatePath of privatePaths) await assertSharingFileAccess(source, privatePath); // CHANGE: identity vaults and sibling transports are private too.
         const stat = await fs.stat(source).catch(() => null);
         if (!stat || !stat.isFile()) { missing.add(source); return value; }
         if (!copied.has(source)) {
@@ -89,8 +100,8 @@ async function relocateAssets(state, base, destination, profilePath) { // CHANGE
 
 export function createSyncthingService(options) {
     const events = new EventEmitter();
-    const profile = path.join(options.userDataPath, 'trellis-sharing');
-    const canvasesRoot = path.join(options.documentsPath, 'Trellis', 'Shared Canvases');
+    const profile = options.profilePath || path.join(options.userDataPath, 'trellis-sharing'); // CHANGE: isolate each portable identity's daemon and secrets.
+    const canvasesRoot = options.canvasesRoot || path.join(options.documentsPath, 'Trellis', 'Shared Canvases'); // CHANGE: retain legacy paths by default.
     const registryPath = path.join(profile, 'canvases.json');
     let registry = [];
     let keys;
@@ -102,6 +113,8 @@ export function createSyncthingService(options) {
     let lifecycleGeneration = 0;
     let initialization;
     let starting;
+    let stopping = null; // NEW: concurrent stops own the same child-exit observation.
+    const requests = new Set(); // NEW: shutdown aborts in-flight REST calls before they can mutate readiness.
     let stopped = true;
     let retries = 0;
     let restartTimer = null; // NEW: one bounded restart schedule per daemon lifecycle.
@@ -109,6 +122,8 @@ export function createSyncthingService(options) {
     let polling = false;
     let lastError = '';
     let runtimeReady = false;
+    let identitySync = null; // NEW: catalog/events have their own folder, independent of downloaded diagrams.
+    let configurationQueue = Promise.resolve(); // NEW: prevent concurrent folder configuration from losing unrelated updates.
     const sessions = new Map();
     const statuses = new Map();
     const localConflicts = new Map();
@@ -122,6 +137,7 @@ export function createSyncthingService(options) {
             await fs.mkdir(profile, { recursive: true, mode: 0o700 });
             registry = await fs.readFile(registryPath, 'utf8').then(JSON.parse).catch(err => { if (err.code === 'ENOENT') return []; throw err; });
             if (!Array.isArray(registry)) throw new Error('Invalid sharing registry.');
+            identitySync = await fs.readFile(path.join(profile, 'identity-sync.json'), 'utf8').then(JSON.parse).catch(err => { if (err.code === 'ENOENT') return null; throw err; }); // NEW
             const keyPath = path.join(profile, 'signing-key.json');
             if (await exists(keyPath)) keys = JSON.parse(await fs.readFile(keyPath, 'utf8'));
             else {
@@ -142,15 +158,23 @@ export function createSyncthingService(options) {
             const session = sessions.get(callerId);
             const localUserId = session && samePath(session.diagramPath, canvas.diagramPath) ? session.userId : canvas.members.find(member => member.deviceId === deviceId)?.userId;
             const collaborators = (status.collaborators || []).filter(user => user.id !== localUserId);
-            return { shareId: canvas.shareId, diagramId: canvas.diagramId, label: canvas.label, diagramPath: canvas.diagramPath, pending: !!canvas.pending, state: canvas.paused ? 'paused' : 'syncing', reason: lastError, ...status, collaborators, connectedCollaborators: status.connectedCollaborators == null ? null : collaborators.length, ...(!runtimeReady ? { state: 'unavailable', reason: lastError || 'Syncthing is not running.', connectedCollaborators: null } : {}) };
+            return { shareId: canvas.shareId, diagramId: canvas.diagramId, label: canvas.label, diagramPath: canvas.diagramPath, pending: !!canvas.pending, state: canvas.paused ? 'paused' : 'syncing', reason: lastError, ...status, collaborators, seeds: runtimeReady ? status.seeds ?? null : null, connectedCollaborators: status.connectedCollaborators == null ? null : collaborators.length, ...(!runtimeReady ? { state: 'unavailable', reason: lastError || 'Syncthing is not running.', connectedCollaborators: null } : {}) }; // CHANGE
         }); // CHANGE: counts exclude the current window's actor; tray-only devices use their associated account.
     }
-    async function api(endpoint, method = 'GET', data) {
+    async function api(endpoint, method = 'GET', data, timeoutMs = 10000) { // CHANGE: shutdown shares the application's graceful deadline.
         if (!apiAddress) throw new Error('Syncthing is not running.');
-        const response = await fetchApi(apiAddress + '/rest/' + endpoint, { method, headers: { 'X-API-Key': apiKey, ...(data === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(10000) });
-        if (!response.ok) throw new Error('Syncthing request failed (' + response.status + ').');
-        const text = await response.text();
-        return text ? JSON.parse(text) : null;
+        const generation = lifecycleGeneration, controller = new AbortController(); // NEW
+        const shutdown = endpoint === 'system/shutdown'; // NEW
+        if (!shutdown && stopped) throw new Error('Sharing startup was cancelled.'); // NEW
+        if (!shutdown) requests.add(controller); // NEW
+        const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs)); // NEW
+        try { // NEW
+            const response = await fetchApi(apiAddress + '/rest/' + endpoint, { method, headers: { 'X-API-Key': apiKey, ...(data === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: data === undefined ? undefined : JSON.stringify(data), signal: controller.signal }); // CHANGE
+            if (!response.ok) throw new Error('Syncthing request failed (' + response.status + ').'); // CHANGE
+            const text = await response.text(); // CHANGE
+            if (!shutdown && (stopped || generation !== lifecycleGeneration)) throw new Error('Sharing startup was cancelled.'); // NEW
+            return text ? JSON.parse(text) : null; // CHANGE
+        } finally { clearTimeout(timeout); requests.delete(controller); } // NEW
     }
     async function binaryPath() {
         const platform = options.platform || process.platform;
@@ -174,14 +198,17 @@ export function createSyncthingService(options) {
         restartTimer.unref();
     }
     async function start() {
+        if (stopping || options.canStart?.() === false) throw new Error('Sharing startup was cancelled.'); // NEW
+        if (stopped && !starting && (child || identityChild)) throw new Error('A previous Syncthing process has not exited.'); // NEW: never overlap a replacement with failed owned-child termination.
         const requestedGeneration = lifecycleGeneration; // NEW: initialization can overlap an explicit Quit too.
         await initialize();
         if (lifecycleGeneration !== requestedGeneration) throw new Error('Sharing startup was cancelled.');
         if (runtimeReady) return { ok: true, deviceId };
         if (starting) return starting;
         const startGeneration = lifecycleGeneration;
-        starting = (async () => {
+        const operation = (async () => {
             const executable = await binaryPath();
+            if (lifecycleGeneration !== startGeneration || options.canStart?.() === false) throw new Error('Sharing startup was cancelled.'); // NEW: do not launch generation after a slow binary integrity check.
             const syncthingHome = path.join(profile, 'syncthing'); // NEW: generate identity without starting an unrelated default folder.
             const configPath = path.join(syncthingHome, 'config.xml');
             if (!await exists(configPath)) {
@@ -190,10 +217,12 @@ export function createSyncthingService(options) {
                     const generator = launch(executable, ['generate', '--home=' + syncthingHome], { windowsHide: true, stdio: 'ignore' });
                     identityChild = generator;
                     const timeout = setTimeout(() => { generator.kill(); reject(new Error('Syncthing identity generation timed out.')); }, 15000);
-                    generator.once('error', err => { clearTimeout(timeout); reject(err); });
-                    generator.once('exit', code => { clearTimeout(timeout); identityChild = null; code === 0 ? resolve() : reject(new Error('Syncthing identity generation failed.')); });
+                    generator.once('error', err => { clearTimeout(timeout); if (identityChild === generator) identityChild = null; reject(err); }); // CHANGE
+                    generator.once('exit', code => { clearTimeout(timeout); if (identityChild === generator) identityChild = null; code === 0 ? resolve() : reject(new Error('Syncthing identity generation failed.')); }); // CHANGE
                 });
+                if (lifecycleGeneration !== startGeneration) throw new Error('Sharing startup was cancelled.'); // NEW
                 const config = parseXml(await fs.readFile(configPath, 'utf8'));
+                if (lifecycleGeneration !== startGeneration) throw new Error('Sharing startup was cancelled.'); // NEW
                 for (const folder of Array.from(config.getElementsByTagName('folder'))) if (folder.parentNode === config.documentElement) folder.parentNode.removeChild(folder);
                 await writeAtomic(configPath, new XMLSerializer().serializeToString(config));
             }
@@ -205,8 +234,10 @@ export function createSyncthingService(options) {
             const syncPort = await freePort();
             if (stopped || lifecycleGeneration !== startGeneration) throw new Error('Sharing startup was cancelled.'); // NEW: Quit can occur while port allocation is awaiting the OS.
             child = launch(executable, ['serve', '--home=' + path.join(profile, 'syncthing'), '--gui-address=127.0.0.1:' + port, '--no-browser', '--no-upgrade', '--no-restart', '--paused', '--log-file=' + path.join(profile, 'syncthing.log'), '--log-max-size=1048576', '--log-max-old-files=3'], { windowsHide: true, stdio: 'ignore', env: { ...process.env, STGUIAPIKEY: apiKey, STMONITORED: 'yes', STNOUPGRADE: '1' } });
-            child.on('error', err => { lastError = err.message; runtimeReady = false; emit(); });
-            child.on('exit', () => {
+            const running = child; // NEW: an old child's delayed exit cannot clear a replacement daemon.
+            running.on('error', err => { if (child !== running) return; if (!running.pid) child = null; lastError = err.message; runtimeReady = false; emit(); }); // CHANGE
+            running.once('exit', () => { // CHANGE
+                if (child !== running) return; // NEW
                 child = null;
                 const wasReady = runtimeReady;
                 runtimeReady = false;
@@ -223,7 +254,7 @@ export function createSyncthingService(options) {
             deviceId = status.myID;
             const config = await api('config');
             // Fresh instances must not share Syncthing's unrelated default Sync folder.
-            config.folders = config.folders.filter(folder => registry.some(canvas => canvas.folderId === folder.id));
+            config.folders = config.folders.filter(folder => registry.some(canvas => canvas.folderId === folder.id && !canvas.localRemoved) || folder.id === identitySync?.folderId); // CHANGE: preserve the identity catalog, never resurrect removed downloads.
             config.options.autoUpgradeIntervalH = 0;
             config.options.startBrowser = false;
             config.options.urAccepted = -1;
@@ -237,38 +268,73 @@ export function createSyncthingService(options) {
             if (stopped || lifecycleGeneration !== startGeneration) throw new Error('Sharing startup was cancelled.'); // NEW: configuration requests can overlap Quit.
             runtimeReady = true;
             lastError = '';
-            for (const canvas of registry) await configureCanvas(canvas);
+            for (const canvas of registry) if (!canvas.localRemoved) await configureCanvas(canvas); // CHANGE
+            if (identitySync) await configureMetadataFolder(); // NEW
+            if (stopped || lifecycleGeneration !== startGeneration) throw new Error('Sharing startup was cancelled.'); // NEW
             if (!timer) { timer = setInterval(() => poll().catch(err => { lastError = err.message; emit(); }), 5000); timer.unref(); }
             emit();
             return { ok: true, deviceId };
         })().catch(async err => { // CHANGE: transient startup failures retry without allowing Quit to resurrect the child.
-            const retry = !stopped && lifecycleGeneration === startGeneration;
+            if (lifecycleGeneration !== startGeneration) throw err; // NEW: an obsolete startup cannot clear replacement readiness.
+            const retry = !stopped && options.canStart?.() !== false;
             lastError = err.message;
             runtimeReady = false;
-            await stop();
-            if (retry) { stopped = false; scheduleRestart(); }
+            if (retry) { await stop(); stopped = false; scheduleRestart(); } // CHANGE: an obsolete startup must not stop a replacement or resurrect after Quit.
             throw err;
-        }).finally(() => { starting = null; });
-        return starting;
+        }).finally(() => { if (starting === operation) starting = null; }); // CHANGE
+        starting = operation; return operation; // CHANGE
     }
-    async function stop() {
-        lifecycleGeneration++;
+    /** Stop only children launched by this service; successful completion requires their exit. */ // NEW
+    function stop({ deadline = Date.now() + 10000 } = {}) { // CHANGE
+        if (stopping) return stopping; // NEW
+        lifecycleGeneration++; starting = null; // CHANGE: a canceled startup cannot block a later explicit restart.
         clearTimeout(restartTimer); // NEW: no scheduled launch survives explicit shutdown.
         restartTimer = null;
-        if (identityChild) { identityChild.kill(); identityChild = null; }
         stopped = true;
+        for (const controller of requests) controller.abort(); // NEW
         clearInterval(timer);
         timer = null;
-        if (child) {
-            const processToStop = child;
-            try { await api('system/shutdown', 'POST'); } catch (_) { processToStop.kill(); }
-            if (child === processToStop) await Promise.race([new Promise(resolve => processToStop.once('exit', resolve)), sleep(3000)]); // CHANGE: shutdown can finish before the response arrives.
-            if (child === processToStop) processToStop.kill();
-        }
         runtimeReady = false;
-        apiAddress = '';
-        emit();
-    }
+        const owned = [...new Set([child, identityChild].filter(Boolean))]; // NEW
+        stopping = Promise.resolve().then(async () => { // NEW
+            const observations = owned.map(process => observeExit(process)); // NEW: subscribe before REST or kill can synchronously emit exit.
+            let forced = false; const shutdownAvailable = !!apiAddress; // CHANGE
+            try { // NEW
+                if (identityChild) { forced = true; identityChild.kill(); } // NEW
+                if (child && Date.now() < deadline) { // NEW
+                    // A fake or broken REST implementation must not bypass the wall-clock bound. // NEW
+                    await bounded(api('system/shutdown', 'POST', undefined, deadline - Date.now()).catch(() => {}), deadline); // NEW
+                } // NEW
+                if (shutdownAvailable) await bounded(Promise.all(observations.map(observation => observation.exited)), deadline); // CHANGE // NEW
+                const remaining = observations.filter(observation => !observation.done); // NEW
+                if (remaining.length) { // NEW
+                    forced = true; options.onLifecycle?.({ phase: 'forced termination', pids: remaining.map(observation => observation.process.pid) }); // NEW
+                    for (const observation of remaining) observation.process.kill('SIGKILL'); // NEW
+                    await bounded(Promise.all(remaining.map(observation => observation.exited)), Date.now() + 3000); // NEW
+                    if (remaining.some(observation => !observation.done)) throw new Error('A Trellis-owned Syncthing process did not exit after forced termination.'); // NEW
+                } // NEW
+                return { ok: true, forced }; // NEW
+            } finally { // NEW
+                for (const observation of observations) observation.dispose(); // NEW
+                apiAddress = ''; emit(); // NEW
+            } // NEW
+        }).finally(() => { stopping = null; }); // NEW
+        return stopping; // NEW
+    } // CHANGE
+    /** Observe actual exit without treating ChildProcess.killed as proof of termination. */ // NEW
+    function observeExit(process) { // NEW
+        const observation = { process, done: process.exitCode != null || process.signalCode != null }; // NEW
+        let receive; // NEW
+        observation.exited = observation.done ? Promise.resolve() : new Promise(resolve => { receive = () => { observation.done = true; resolve(); }; process.once('exit', receive); }); // NEW
+        observation.dispose = () => { if (receive) process.removeListener('exit', receive); }; // NEW
+        return observation; // NEW
+    } // NEW
+    /** Bound waits while removing their timer immediately on early completion. */ // NEW
+    async function bounded(task, deadline) { // NEW
+        let timeout; // NEW
+        try { await Promise.race([task, new Promise(resolve => { timeout = setTimeout(resolve, Math.max(0, deadline - Date.now())); })]); } // NEW
+        finally { clearTimeout(timeout); } // NEW
+    } // NEW
     function canvasById(id) {
         const canvas = registry.find(entry => entry.shareId === safeId(id));
         if (!canvas) throw new Error('This canvas is not registered for sharing.');
@@ -293,7 +359,7 @@ export function createSyncthingService(options) {
     async function configureCanvas(canvas) {
         await fs.mkdir(canvas.folderPath, { recursive: true });
         const config = await api('config');
-        const peers = canvas.members || [];
+        const peers = (canvas.members || []).filter(peer => !identitySync?.revokedSyncthingIds?.includes(peer.deviceId)); // CHANGE: identity device removal also stops this installation's managed diagram transfers.
         for (const peer of peers) { // CHANGE: restore registered devices from --paused without touching other installations.
             const existing = config.devices.find(entry => entry.deviceID === peer.deviceId);
             const addresses = options.deviceAddresses ? options.deviceAddresses(peer.deviceId) : ['dynamic']; // NEW: explicit addresses support isolated acceptance tests.
@@ -307,6 +373,106 @@ export function createSyncthingService(options) {
         const ext = path.extname(canvas.filename); // NEW: only canvas data and explicit protocol directories synchronize.
         const stem = canvas.filename.slice(0, -ext.length);
         await api('db/ignores?folder=' + encodeURIComponent(canvas.folderId), 'POST', { ignore: ['!/' + canvas.filename, '!/' + stem + '.sync-conflict-*' + ext, '!/assets', '!/assets/**', '!/.trellis', '!/.trellis/**', '**'] });
+    }
+    /** Registry-only library listing never launches Syncthing or requires a graph. */ // NEW
+    async function listCanvases() { // NEW
+        await initialize();
+        return Promise.all(registry.map(async canvas => {
+            let available = false, reason = '';
+            try { const stat = await fs.stat(canvas.diagramPath); available = stat.isFile() && !canvas.localRemoved; }
+            catch (err) { if (err.code !== 'ENOENT') reason = err.message; }
+            return { shareId: canvas.shareId, diagramId: canvas.diagramId, name: canvas.label, path: canvas.diagramPath, folderPath: canvas.folderPath, available, seeds: runtimeReady && !canvas.paused && !canvas.revoked ? statuses.get(canvas.shareId)?.seeds ?? null : null, pending: !!canvas.pending, localRemoved: !!canvas.localRemoved, reason: reason || (!available ? canvas.pending ? 'Waiting for download or approval.' : 'No local copy.' : ''), state: statuses.get(canvas.shareId)?.state || (canvas.paused ? 'paused' : runtimeReady ? 'syncing' : 'offline'), conflicts: await conflictFiles(canvas).catch(() => []) }; // CHANGE
+        }));
+    }
+    /** Expose only public transport identity for targeted device provisioning. */ // NEW
+    async function getTransportIdentity() { // NEW
+        await start();
+        return { deviceId, publicKey: keys.publicKey };
+    }
+    async function configureMetadataFolder() { // NEW
+        if (!identitySync || !runtimeReady) return;
+        const config = await api('config');
+        const peers = identitySync.devices;
+        for (const configured of config.devices) if (identitySync.revokedSyncthingIds?.includes(configured.deviceID)) configured.paused = true; // NEW: retain protocol history while disconnecting removed identity peers.
+        for (const peer of peers) {
+            const existing = config.devices.find(entry => entry.deviceID === peer.syncthingId);
+            if (existing) { existing.paused = false; existing.autoAcceptFolders = false; }
+            else config.devices.push({ ...(config.defaults?.device || {}), deviceID: peer.syncthingId, name: peer.name, addresses: options.deviceAddresses ? options.deviceAddresses(peer.syncthingId) : ['dynamic'], paused: false, introducer: false, autoAcceptFolders: false });
+        }
+        const folder = { ...(config.defaults?.folder || {}), id: identitySync.folderId, label: 'Trellis identity library', path: identitySync.directory, type: 'sendreceive', paused: !!identitySync.paused, devices: peers.map(peer => ({ deviceID: peer.syncthingId })), fsWatcherEnabled: true, fsWatcherDelayS: 1, rescanIntervalS: 300, maxConflicts: -1 };
+        const index = config.folders.findIndex(entry => entry.id === folder.id);
+        if (index < 0) config.folders.push(folder); else config.folders[index] = { ...config.folders[index], ...folder };
+        await api('config', 'PUT', config);
+    }
+    /** Persist metadata configuration separately from diagram registrations. */ // NEW
+    async function configureIdentityMetadata(input) { // NEW
+        const generation = lifecycleGeneration; // NEW
+        await initialize();
+        if (generation !== lifecycleGeneration || stopping || options.canStart?.() === false) throw new Error('Sharing startup was cancelled.'); // NEW
+        const devices = input.devices.map(device => ({ syncthingId: device.syncthingId, name: device.name })); // CHANGE
+        const activeIds = new Set(devices.map(device => device.syncthingId)); // NEW
+        const revokedSyncthingIds = [...new Set([...(identitySync?.revokedSyncthingIds || []), ...(identitySync?.devices || []).filter(device => !activeIds.has(device.syncthingId)).map(device => device.syncthingId)])]; // NEW: persist revocations across restarts and later diagram configuration.
+        const next = { folderId: 'trellis-identity-' + safeId(input.identityId), directory: path.resolve(input.directory), devices, revokedSyncthingIds, paused: !!identitySync?.paused }; // CHANGE: preserve tray pause across identity refresh and restart.
+        if (next.devices.some(device => typeof device.syncthingId !== 'string')) throw new Error('Incomplete paired-device transport identity.');
+        const changed = canonical(next) !== canonical(identitySync);
+        identitySync = next;
+        await fs.mkdir(next.directory, { recursive: true });
+        if (changed) await writeAtomic(path.join(profile, 'identity-sync.json'), JSON.stringify(next));
+        if (generation !== lifecycleGeneration || stopping || options.canStart?.() === false) throw new Error('Sharing startup was cancelled.'); // NEW
+        if (!runtimeReady) await start();
+        else if (changed) {
+            const task = configurationQueue.then(async () => { if (generation !== lifecycleGeneration || stopped) return; for (const canvas of registry) if (!canvas.localRemoved) await configureCanvas(canvas); await configureMetadataFolder(); }); configurationQueue = task.catch(() => {}); await task; // CHANGE: stale queued identity refresh cannot reconfigure after shutdown.
+        }
+        return { ok: true };
+    }
+    /** A paired identity may enroll itself only where its linked user is an admin. */ // NEW
+    async function approveLibraryDevice(input) { // NEW
+        await start();
+        const canvas = canvasById(input.shareId), state = await canvasState(canvas);
+        if (canvas.coordinatorDeviceId !== deviceId || !activeAdmin(state, input.userId)) throw new Error('This shared garden needs approval from its coordinator/admin.');
+        if (!canvas.members.some(member => member.deviceId === input.deviceId)) {
+            crypto.createPublicKey(input.publicKey);
+            await publishMembership(canvas, [...canvas.members, { deviceId: input.deviceId, publicKey: input.publicKey, userId: input.userId }]);
+            await configureCanvas(canvas);
+        }
+        return { ok: true, members: canvas.members };
+    }
+    /** Register a download using a verified library descriptor, never a remote path. */ // NEW
+    async function registerLibraryDownload(input) { // NEW
+        await start();
+        let canvas = registry.find(entry => entry.shareId === input.shareId);
+        const folderPath = path.join(canvasesRoot, safeId(input.shareId));
+        if (!canvas) {
+            if (path.basename(input.filename) !== input.filename || !/\.drawio$/i.test(input.filename)) throw new Error('Invalid garden filename.');
+            canvas = { shareId: input.shareId, diagramId: safeId(input.diagramId), folderId: 'trellis-' + input.shareId, folderPath, diagramPath: path.join(folderPath, input.filename), filename: input.filename, label: input.name, coordinatorDeviceId: input.coordinatorDeviceId, coordinatorPublicKey: input.coordinatorPublicKey, membershipVersion: 0, members: input.members, pending: true, createdAt: now() };
+            registry.push(canvas);
+        }
+        canvas.localRemoved = false; canvas.paused = false;
+        await persist(); await configureCanvas(canvas); emit();
+        return { ok: true, path: canvas.diagramPath };
+    }
+    /** Detach before local deletion, so Syncthing cannot announce a tombstone. */ // NEW
+    async function removeLibraryDownload(input) { // NEW
+        await initialize();
+        const canvas = canvasById(input.shareId);
+        if (input.confirmLoss !== true) throw new Error('Confirm local removal, including possible unsynced or last-copy loss.');
+        const resolved = path.resolve(canvas.folderPath), parent = path.resolve(canvasesRoot);
+        if (path.dirname(resolved) !== parent || path.basename(resolved) !== canvas.shareId) throw new Error('Garden removal path is outside managed storage.');
+        canvas.localRemoved = true; await persist();
+        if (runtimeReady) { await api('config/folders/' + encodeURIComponent(canvas.folderId), 'DELETE'); await api('system/config/insync').catch(() => {}); }
+        else {
+            const filename = path.join(profile, 'syncthing', 'config.xml');
+            const document = parseXml(await fs.readFile(filename, 'utf8'));
+            for (const folder of Array.from(document.getElementsByTagName('folder'))) if (folder.getAttribute('id') === canvas.folderId) folder.parentNode.removeChild(folder);
+            await writeAtomic(filename, new XMLSerializer().serializeToString(document));
+        }
+        await fs.rm(resolved, { recursive: true, force: true }); emit();
+        return { ok: true };
+    }
+    /** Public catalog descriptors contain no local filesystem or daemon secrets. */ // NEW
+    async function libraryDescriptor(shareId) { // NEW
+        await initialize(); const canvas = canvasById(shareId);
+        return { shareId: canvas.shareId, diagramId: canvas.diagramId, filename: canvas.filename, name: canvas.label, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, members: canvas.members };
     }
     async function shareInfo(context = {}) {
         await initialize();
@@ -348,7 +514,7 @@ export function createSyncthingService(options) {
         let registered = false;
         try {
             await fs.mkdir(folderPath, { recursive: true });
-            await relocateAssets(state, source ? path.dirname(source) : options.documentsPath, folderPath, profile); // CHANGE
+            await relocateAssets(state, source ? path.dirname(source) : input.assetBasePath || options.documentsPath, folderPath, options.privatePaths || [profile]); // CHANGE: duplicate/import snapshots reuse explicit asset relocation and installation privacy boundaries.
             const relocated = state.document.serialize();
             await writeAtomic(diagramPath, relocated);
             if (digest(await fs.readFile(diagramPath, 'utf8')) !== digest(relocated)) throw new Error('Canvas relocation verification failed.');
@@ -509,10 +675,13 @@ export function createSyncthingService(options) {
     }
     async function poll() {
         if (polling || !runtimeReady) return;
+        const generation = lifecycleGeneration; // NEW
         polling = true;
         try {
             const connections = (await api('system/connections')).connections || {};
             for (const canvas of registry) {
+                if (stopped || generation !== lifecycleGeneration) return; // NEW
+                if (canvas.localRemoved) continue; // NEW: a retained catalog registration is not a materialized sync folder.
                 try {
                     await applyMembership(canvas);
                     const conflicts = await conflictFiles(canvas);
@@ -529,17 +698,22 @@ export function createSyncthingService(options) {
                         if (member.deviceId !== deviceId && user && connections[member.deviceId]?.connected) users.set(user.id, { id: user.id, name: user.name });
                     }
                     const db = await api('db/status?folder=' + encodeURIComponent(canvas.folderId));
-                    statuses.set(canvas.shareId, { state: canvas.revoked ? 'revoked' : conflicts.length || locallyConflicted ? 'conflict' : canvas.pending ? 'awaitingApproval' : canvas.paused ? 'paused' : db.state === 'idle' && !db.needTotalItems ? 'upToDate' : 'syncing', connectedCollaborators: users.size, collaborators: [...users.values()], conflicts, coordinatorConnected: canvas.coordinatorDeviceId === deviceId || !!connections[canvas.coordinatorDeviceId]?.connected, reason: '' });
-                } catch (err) { statuses.set(canvas.shareId, { state: 'unavailable', connectedCollaborators: null, reason: err.message }); }
+                    if (stopped || generation !== lifecycleGeneration) return; // NEW
+                    const eligibleMembers = canvas.members.filter(member => !identitySync?.revokedSyncthingIds?.includes(member.deviceId) && (!state || hasCanvasAccess(state, member.userId, now()))); // NEW
+                    const seeds = canvas.paused || canvas.revoked ? 0 : await countProjectSeeds({ members: eligibleMembers, deviceId, connections, hasLocalCopy: !!state, completion: peerId => api('db/completion?folder=' + encodeURIComponent(canvas.folderId) + (peerId === deviceId ? '' : '&device=' + encodeURIComponent(peerId))) }); // NEW
+                    if (stopped || generation !== lifecycleGeneration) return; // NEW
+                    statuses.set(canvas.shareId, { state: canvas.revoked ? 'revoked' : conflicts.length || locallyConflicted ? 'conflict' : canvas.pending ? 'awaitingApproval' : canvas.paused ? 'paused' : db.state === 'idle' && !db.needTotalItems ? 'upToDate' : 'syncing', connectedCollaborators: users.size, collaborators: [...users.values()], seeds, conflicts, coordinatorConnected: canvas.coordinatorDeviceId === deviceId || !!connections[canvas.coordinatorDeviceId]?.connected, reason: '' }); // CHANGE
+                } catch (err) { if (stopped || generation !== lifecycleGeneration) return; statuses.set(canvas.shareId, { state: 'unavailable', connectedCollaborators: null, reason: err.message }); } // CHANGE
             }
             emit();
         } finally { polling = false; }
     }
     async function setPaused(input) {
         await start();
-        const targets = input.shareId ? [canvasById(input.shareId)] : registry;
+        const targets = input.shareId ? [canvasById(input.shareId)] : registry.filter(canvas => !canvas.localRemoved && !canvas.revoked); // CHANGE: retired folders must not block Resume All for active shares and identity metadata.
         for (const canvas of targets) { if (canvas.revoked && !input.paused) throw new Error('This device has been removed from the canvas.'); canvas.paused = !!input.paused; await configureCanvas(canvas); }
         await persist();
+        if (!input.shareId && identitySync) { identitySync.paused = !!input.paused; await writeAtomic(path.join(profile, 'identity-sync.json'), JSON.stringify(identitySync)); await configureMetadataFolder(); } // NEW: Pause All includes the identity catalog/events folder.
         emit();
         return { ok: true };
     }
@@ -676,5 +850,5 @@ export function createSyncthingService(options) {
         catch (err) { sessions.set(callerId, session); old.paused = wasPaused; await configureCanvas(old); await persist(); throw err; }
         finally { await fs.rm(source, { force: true }); }
     }
-    return { initialize, start, stop, poll, shareInfo, setupCanvas, createInviteBlock, createDeviceInvite, joinCanvas, requestMembership, listRequests, setPaused, setPausedForContext, setConflictState, saveRecoveryCopy, assetPath, isManagedAssetRequest, inspectConflict, resolveConflict, exportHistory, importHistory, recovery, setContext, forgetContext: id => { sessions.delete(id); localConflicts.delete(id); }, listStatus, hasCanvases: () => registry.length > 0, onStatus: listener => { events.on('status', listener); return () => events.off('status', listener); }, savedHash: digest }; // CHANGE
+    return { hasBackgroundWork: () => registry.some(canvas => !canvas.localRemoved && !canvas.revoked), backgroundStatus: () => ({ state: !runtimeReady ? 'unavailable' : identitySync?.paused ? 'paused' : 'syncing', reason: lastError }), initialize, start, stop, poll, shareInfo, setupCanvas, createInviteBlock, createDeviceInvite, joinCanvas, requestMembership, listRequests, setPaused, setPausedForContext, setConflictState, saveRecoveryCopy, assetPath, isManagedAssetRequest, inspectConflict, resolveConflict, exportHistory, importHistory, recovery, setContext, forgetContext: id => { sessions.delete(id); localConflicts.delete(id); }, listStatus, hasCanvases: () => registry.length > 0, onStatus: listener => { events.on('status', listener); return () => events.off('status', listener); }, savedHash: digest, listCanvases, getTransportIdentity, configureIdentityMetadata, approveLibraryDevice, registerLibraryDownload, removeLibraryDownload, libraryDescriptor }; // CHANGE: reuse the managed sharing engine for the identity library.
 }

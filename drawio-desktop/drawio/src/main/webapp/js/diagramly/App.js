@@ -294,6 +294,7 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'plantingGroup': 'plugins/garden_planner_plugins/Planting_Group.js', // CHANGE: canonical plugin name.
     'plantTiler': 'plugins/garden_planner_plugins/Planting_Group.js',                               // CHANGE
     'gardenTasks': 'plugins/garden_planner_plugins/Garden_Task_Manager.js',                     // CHANGE
+    'gardenGuide': 'plugins/garden_planner_plugins/Garden_Guide.js', // CHANGE: selected-task instructions.
     'gardenRoadmapCore': 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', // NEW
     'gardenRoadmaps': 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', // NEW
     'gardenModules': 'plugins/garden_planner_plugins/Modules_Standalone.js',                    // CHANGE
@@ -321,6 +322,7 @@ App.publicPlugin = [
     'gardenSuccession',                                       // CHANGE
     'plantingGroup',                                             // CHANGE
     'gardenTasks',                                            // CHANGE
+    'gardenGuide', // CHANGE
     'gardenRoadmapCore', // NEW
     'gardenRoadmaps', // NEW
     'gardenModules',                                          // CHANGE
@@ -1412,11 +1414,12 @@ App.embedModePluginsCount = 0;
 /** Load Roadmap dependencies by completion, independently of unrelated plugin timing. */ // NEW
 App.loadRoadmapPlugin = function(pluginId)
 {
-	if (pluginId === 'gardenRoadmaps' && !App.roadmapManagerRequested) { App.roadmapManagerRequested = true; App.embedModePluginsCount++; App.pluginsLoaded[PLUGINS_BASE_PATH + App.pluginRegistry.gardenRoadmaps] = true; } // CHANGE: reserve the stored Manager path while its pure dependencies load.
+	var roadmapBase = PLUGINS_BASE_PATH === '.' ? './' : PLUGINS_BASE_PATH; // NEW: desktop dependency URLs share the stored-plugin canonical path.
+	if (pluginId === 'gardenRoadmaps' && !App.roadmapManagerRequested) { App.roadmapManagerRequested = true; App.embedModePluginsCount++; App.pluginsLoaded[roadmapBase + App.pluginRegistry.gardenRoadmaps] = true; } // CHANGE: reserve the stored Manager path while its pure dependencies load.
 	App.roadmapScriptLoads = App.roadmapScriptLoads || {}; // NEW
 	function load(path, complete)
 	{
-		var url = PLUGINS_BASE_PATH + path; // NEW
+		var url = roadmapBase + path; // CHANGE
 		var entry = App.roadmapScriptLoads[url]; // NEW
 		if (entry != null) { if (entry.done) complete(); else entry.waiters.push(complete); return; } // NEW
 		entry = {done: false, waiters: [complete]}; // NEW
@@ -1430,7 +1433,7 @@ App.loadRoadmapPlugin = function(pluginId)
 		{
 			delete App.roadmapScriptLoads[url]; delete App.pluginsLoaded[url]; // NEW: a later request may retry.
 			entry.waiters.length = 0; // NEW: never initialize Manager without its dependencies.
-			if (App.roadmapManagerRequested && !App.roadmapManagerLoaded) { App.roadmapManagerRequested = false; App.embedModePluginsCount--; delete App.pluginsLoaded[PLUGINS_BASE_PATH + App.pluginRegistry.gardenRoadmaps]; } // CHANGE
+			if (App.roadmapManagerRequested && !App.roadmapManagerLoaded) { App.roadmapManagerRequested = false; App.embedModePluginsCount--; delete App.pluginsLoaded[roadmapBase + App.pluginRegistry.gardenRoadmaps]; } // CHANGE
 			if (window.console) console.error('Roadmap dependency unavailable:', message); // NEW
 		}); // NEW
 	}

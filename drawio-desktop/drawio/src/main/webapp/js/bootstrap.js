@@ -274,6 +274,7 @@ function installTrellisBranding()
 	{
 		TrellisSplashEnhancements.install(); // NEW
 	}
+	if (window.TrellisGardenHome) { App.initPluginCallback(); Draw.loadPlugin(function(ui) { window.TrellisGardenHome.install(ui); }); } // CHANGE: initialize the supported plugin queue before App.main, including argument-opened files.
 };
 
 function checkAllLoaded()

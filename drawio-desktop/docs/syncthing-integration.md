@@ -1,6 +1,27 @@
 <!-- NEW: integration contract, operational behavior, and release acceptance checklist. -->
 # Trellis Managed Canvas Sharing
 
+## Close, Quit, and background ownership <!-- NEW -->
+
+Closing the final editor window retains configured canvas sharing and installed, non-revoked identity libraries in the tray. Locked identities continue transferring their configured data without exposing credentials. The tray's Pause All, Resume All, and Restart Sharing actions apply to both transport kinds. If native tray controls cannot be created, Trellis explains the failure once, stops its transports, and exits. Without configured syncing, Windows/Linux exit after the final window closes; macOS retains its normal application behavior. <!-- NEW -->
+
+Explicit Quit and Install Update first check every editor using sender/request-correlated IPC. Approving Discard in one editor does not delete its draft or close that window until all editors approve. Cancel keeps windows, drafts, transports, and refresh jobs running. Document snapshots stay in their renderer and are revalidated before discard; prepared editors temporarily block input, remote reloads, field updates, and delayed draft writes. A missing editor reply offers Cancel (the default) or Close Anyway; Close Anyway retains the recoverable draft. Failed draft removal is reported and returns to the running session. <!-- NEW -->
+
+Committed shutdown rejects new windows and transport work, cancels refresh/poll/retry activity, and requests graceful daemon shutdown using one ten-second deadline. Remaining Trellis-owned children are forcibly terminated, with up to three further seconds to observe actual exit. A successful kill request alone is not recorded as proof of exit. Local database handles, file watches, tray subscriptions, and window-specific IPC listeners are released. Forced termination can interrupt a transfer; saved local changes synchronize on a later launch. OS termination and power loss can bypass orderly cleanup. <!-- NEW -->
+
+The production profile and single-instance policy are unchanged. A second launch while the profile owner is active is rejected normally; lock files are never deleted to evade ownership. Native tests create independent temporary profiles and also reuse one profile immediately after approved exit. Test cleanup targets recorded child handles/PIDs, never executable names or installed user profiles. <!-- NEW -->
+
+Verification commands from `drawio-desktop`: <!-- NEW -->
+
+```text
+node --test test/trellis-lifecycle.test.mjs test/trellis-close-renderer.test.cjs test/trellis-lifecycle-electron.test.cjs
+npm run test:syncthing
+npm run test:home-production
+npm test
+```
+
+Set `TRELLIS_SYNCTHING_RUNTIME_TEST=1` to run the bundled-daemon and identity-transfer tests. Native Electron lifecycle checks have been exercised on Windows; macOS/Linux policy branches have behavioral coverage, while native validation on those hosts remains outstanding. <!-- NEW -->
+
 ## Architecture
 
 `src/main/trellis-syncthing-service.js` owns one isolated Syncthing daemon per Trellis

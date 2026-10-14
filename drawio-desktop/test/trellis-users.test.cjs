@@ -1795,6 +1795,8 @@ test("gardener grant allows only owned linked or created manual task edits", () 
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: ownedLinked, attribute: "title" }), true);
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: otherLinked, attribute: "title" }), false);
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: createdManual, attribute: "title" }), true);
+    assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: ownedLinked, attribute: "task_instruction_override" }), true); // CHANGE: Guide edits use the task-detail capability.
+    assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: otherLinked, attribute: "task_instruction_override" }), false); // CHANGE
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: ownedLinked, attribute: "task_assignee_role_ids_json" }), false);
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: board, attribute: "task_view_mode" }), false);
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: lane, attribute: "lane_key" }), false);

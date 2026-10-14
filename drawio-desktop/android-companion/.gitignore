@@ -1,0 +1,11 @@
+node_modules/
+.tool-cache/
+www/shared/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/assets/public/
+android/app/src/main/jniLibs/
+android/local.properties
+*.apk
+*.aab

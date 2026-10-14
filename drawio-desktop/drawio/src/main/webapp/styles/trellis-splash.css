@@ -1,4 +1,31 @@
 /* Trellis Studio startup presentation. */
+.trellis-splash-project-launcher { overflow-y:auto;overflow-x:hidden; } /* NEW: one scroll owner includes the launch actions. */
+.trellis-splash-project-launcher .trellis-splash-center { flex:0 0 auto;overflow:visible; } /* NEW */
+.trellis-splash-login-status { color:#314437;font-weight:600;margin:12px 0; } /* NEW */
+.trellis-splash-actions .trellis-splash-local-create { background:transparent;border:1px solid #c8d2c8;color:#59675b;font-size:14px !important;min-height:38px;margin-top:16px !important; } /* NEW */
+.trellis-projects-dialog { background:#fbf8ed !important;border-radius:12px;overflow:hidden !important;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px); } /* NEW */
+.trellis-projects-root { box-sizing:border-box;height:100%;overflow-y:auto;overflow-x:hidden;padding:16px 20px;color:#253c2d;text-align:left; } /* NEW */
+.trellis-projects-root h2 { margin:0 0 12px; } /* NEW */
+.trellis-projects-section { background:#fffdf6;border:1px solid #d3dac8;border-radius:10px;padding:12px;margin:12px 0; } /* NEW */
+.trellis-projects-section h3 { margin:0 0 10px; } /* NEW */
+.trellis-projects-section h4 { margin:14px 0 6px;color:#59675b; } /* NEW */
+.trellis-projects-root .trellis-home-panel { margin:8px 0; } /* NEW */
+.trellis-projects-root .trellis-home-row { align-items:flex-start; } /* NEW */
+.trellis-projects-root .geBtn { margin:2px;max-width:100%;white-space:normal; } /* NEW */
+.trellis-projects-root summary { cursor:pointer;margin:5px 0; } /* NEW */
+.trellis-projects-root input:focus-visible,.trellis-projects-root select:focus-visible,.trellis-projects-root button:focus-visible,.trellis-projects-root summary:focus-visible { outline:2px solid #376b25;outline-offset:2px; } /* NEW */
+/* Identity and library controls remain below the existing license content. */ /* NEW */
+.trellis-home-panel { background:#fffdf6;border:1px solid #d3dac8;border-radius:10px;padding:12px;margin:12px 0;text-align:left; } /* NEW */
+.trellis-home-row { display:flex;align-items:center;flex-wrap:wrap;gap:8px; } /* NEW */
+.trellis-home-field { display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0; } /* NEW */
+.trellis-home-field input:not([type=checkbox]),.trellis-home-field select { box-sizing:border-box;max-width:100%;padding:6px;border:1px solid #c8d2c8;border-radius:4px; } /* NEW */
+.trellis-home-list { max-height:270px;overflow:auto;margin-top:8px;overscroll-behavior:contain; } /* NEW */
+.trellis-home-garden { display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid #d3dac8;padding:10px 0; } /* NEW */
+.trellis-home-garden>div:first-child { min-width:0;flex:1 1 220px;overflow-wrap:anywhere; } /* NEW */
+.trellis-home-muted { display:block;font-size:12px;color:#59675b;overflow-wrap:anywhere; } /* NEW */
+.trellis-home-open { box-sizing:border-box;padding:12px;max-height:100%;overflow:auto; } /* NEW */
+.trellis-home-open .trellis-home-list { max-height:330px; } /* NEW */
+.trellis-home-form { display:flex;flex-direction:column;align-items:flex-start; } /* NEW */
 .geEditor.trellis-splash-active > .geMenubarContainer,
 .geEditor.trellis-splash-active > .geToolbarContainer {
 	display: none !important;

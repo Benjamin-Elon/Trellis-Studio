@@ -17,6 +17,7 @@
     "test:release-prepare": "node --test ./test/release-prepare.test.mjs",
     "start": "electron .",
     "syncthing:prepare": "node ./scripts/prepare-syncthing.mjs",
+    "test:home-production": "node ./scripts/run-production-smoke.cjs",
     "test:syncthing": "node --test ./test/trellis-syncthing*.test.mjs ./test/trellis-syncthing*.test.cjs",
     "sync": "node ./sync.cjs",
     "trellis:seed": "python ./scripts/trellis_seed_cli.py",

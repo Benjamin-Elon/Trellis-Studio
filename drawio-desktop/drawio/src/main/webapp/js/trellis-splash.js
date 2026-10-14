@@ -474,8 +474,10 @@
 		baseSplashDialog.container.trellisSplashDialog = baseSplashDialog;
 		removeLanguageControl(baseSplashDialog.container);
 		decorateRenderedState(baseSplashDialog);
+		if (window.TrellisGardenHome) window.TrellisGardenHome.attachSplash(baseSplashDialog, editorUi); // CHANGE: preserve the license presentation and attach login status and project launchers.
 		baseSplashDialog.container.addEventListener('click', function() {
 			decorateRenderedState(baseSplashDialog);
+			if (window.TrellisGardenHome) window.TrellisGardenHome.attachSplash(baseSplashDialog, editorUi); // NEW: license completion may replace the central DOM.
 		});
 		return baseSplashDialog;
 	}

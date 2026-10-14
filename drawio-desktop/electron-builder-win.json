@@ -5,7 +5,9 @@
   "files": [
     "**/*",
     "!**/WEB-INF{,/**}",
-    "!vendor{,/**}"
+    "!vendor{,/**}",
+    "!android-companion{,/**}",
+    "!.test-artifacts{,/**}"
   ],
   "npmRebuild": true,
   "publish": {

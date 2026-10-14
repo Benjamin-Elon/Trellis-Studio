@@ -918,7 +918,69 @@
         };
     }
 
+    /** Strict calendar-day parser for visual estimates; reject dates normalized by JavaScript. */ // NEW
+    function growthDay(value) { // NEW
+        const date = parseISODateUTCValue(value); // NEW
+        return date && fmtISO(date) === String(value) ? date.getTime() / 86400000 : null; // NEW
+    } // NEW
+
+    /** Resolve nursery growth already completed before a purchased transplant enters the garden. */ // NEW
+    function growthStartISO(attributes, context = {}) { // NEW
+        const purchased = ['transplant.purchased', 'transplant.outdoor', 'direct_sow.plug'].includes(normId(attributes.method_id)); // NEW
+        if (!purchased) return attributes.germ_date || attributes.sow_date || ''; // NEW
+        const entry = growthDay(attributes.transplant_date || attributes.sow_date); // NEW
+        if (entry == null) return ''; // NEW
+        const age = Math.max(0, (finiteNumberOrNull(context.daysTransplant) || 0) - (finiteNumberOrNull(context.daysGerm) || 0)); // NEW
+        return fmtISO(new Date((entry - Math.round(age)) * 86400000)); // NEW
+    } // NEW
+
+    /** Calculate stage progress without changing saved schedules, sizes, or graph geometry. */ // NEW
+    function calculatePlantGrowthState(attributes = {}, context = {}, todayISO) { // NEW
+        const today = growthDay(todayISO), start = growthDay(attributes.sow_date); // NEW
+        const state = (stage, progress, basis, reason = '', areaProgress = progress) => ({ // NEW
+            stage, percentage: progress == null ? null : Math.min(99, Math.round(progress * 100)), // NEW: active stages never claim completion before their boundary.
+            areaRatio: areaProgress == null ? 1 : 0.01 + 0.99 * areaProgress, basis, reason, todayISO // NEW
+        }); // NEW
+        const unavailable = reason => state('unavailable', null, 'unavailable', reason); // NEW
+        const fraction = (from, to) => Math.max(0, Math.min(1, (today - from) / (to - from))); // NEW
+        if (today == null) return unavailable('Current date is invalid.'); // NEW
+        const perennial = String(attributes.perennial) === '1' || !!attributes.lifespan_start; // NEW
+        if (perennial) { // NEW
+            const planted = growthDay(attributes.lifespan_start); // NEW
+            const duration = finiteNumberOrNull(attributes.days_maturity) > 0 ? Number(attributes.days_maturity) : finiteNumberOrNull(context.daysMaturity); // NEW
+            if (planted == null || !(duration > 0)) return unavailable('Planting date or days to maturity is unavailable.'); // NEW
+            if (today < planted) return state('planned', null, 'days to maturity', '', 0); // NEW
+            if (today >= planted + duration) return state('established', null, 'days to maturity'); // NEW
+            const p = fraction(planted, planted + duration); // NEW
+            return state('establishing', p, 'days to maturity', 'Approximate establishment; maturity days may describe first harvest.', p * p * (3 - 2 * p)); // NEW
+        } // NEW
+        const entry = growthDay(attributes.transplant_date || attributes.sow_date); // NEW
+        const purchased = ['transplant.purchased', 'transplant.outdoor', 'direct_sow.plug'].includes(normId(attributes.method_id)); // NEW
+        const germ = growthDay(attributes.germ_date), growing = growthDay(growthStartISO(attributes, context)); // NEW
+        const harvest = growthDay(attributes.harvest_start), end = growthDay(attributes.harvest_end); // NEW
+        const planted = purchased ? entry : start; // NEW
+        if (planted == null || growing == null || harvest == null || end == null || end < harvest || harvest < planted || (!purchased && (growing < planted || growing > harvest))) return unavailable('Growth and harvest dates are missing or out of order.'); // NEW
+        if (today < planted) return state('planned', null, 'schedule dates', '', 0); // NEW
+        if (!purchased && germ != null && today < germ) return state('seed', fraction(planted, germ), 'elapsed seed-stage days', '', 0); // NEW
+        if (today >= end) return state('complete', null, 'elapsed harvest-window days'); // NEW
+        if (today >= harvest) return state('harvest', fraction(harvest, end), 'elapsed harvest-window days', 'This is elapsed harvest time, not recorded yield.', 1); // NEW
+        let progress = fraction(growing, harvest), basis = 'elapsed growing-stage days'; // NEW
+        let reason = purchased ? 'Nursery age and climate are approximate.' : (!attributes.germ_date ? 'Germination date unavailable; using sowing date.' : ''); // NEW
+        const rates = context.dailyRates; // NEW
+        let total = 0, accumulated = 0, completeRates = !!rates; // NEW
+        for (let day = growing; completeRates && day < harvest; day++) { // NEW
+            const date = new Date(day * 86400000), key = fmtISO(date); // NEW
+            const rate = finiteNumberOrNull(rates[key] ?? rates[date.getUTCMonth() + 1]); // NEW
+            if (rate == null || rate < 0) { completeRates = false; break; } // NEW
+            total += rate; if (day < today) accumulated += rate; // NEW
+        } // NEW
+        if (completeRates && total > 0) { progress = Math.max(0, Math.min(1, accumulated / total)); basis = 'scheduled climate GDD'; } // NEW
+        else reason = [reason, 'GDD unavailable or zero; using elapsed stage days.'].filter(Boolean).join(' '); // NEW
+        return state('growing', progress, basis, reason); // NEW
+    } // NEW
+
     win.USL.scheduler.sharedCore = Object.freeze({
+        calculatePlantGrowthState, growthStartISO, // NEW: shared by the live canvas and its scheduler context resolver.
         DEFAULT_HARVEST_WINDOW_DAYS,
         HARVEST_END_SEMANTICS,
         INFERRED_SPRING_FROST_BUFFER_DAYS,

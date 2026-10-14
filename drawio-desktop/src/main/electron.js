@@ -11,7 +11,7 @@ import path from 'path';
 import url, { fileURLToPath } from 'url'; // CHANGE: validate file requests before allowing local resources.
 import {
 	Menu as menu, shell, dialog, session, screen,
-	clipboard, nativeImage, ipcMain, app, BrowserWindow, Tray // CHANGE: managed sharing remains accessible after windows close.
+	clipboard, nativeImage, ipcMain, app, BrowserWindow, Tray, safeStorage // CHANGE: OS-protect temporary device pairing credentials.
 } from 'electron';
 import crc from 'crc';
 import zlib from 'zlib';
@@ -28,8 +28,13 @@ import { disableUpdate as disUpPkg } from './disableUpdate.js';
 import { createFileWatchRegistry } from './fileWatchRegistry.js';
 import { createTrellisSplashBackgroundSelector } from './trellis-splash-backgrounds.js';
 import { createSyncthingService } from './trellis-syncthing-service.js'; // NEW
-import { createSharingTray, setSharingStartup } from './trellis-sharing-tray.js'; // NEW
+import { createSharingTray, createSharingGroup, setSharingStartup } from './trellis-sharing-tray.js'; // NEW
 import { assertSharingFileAccess } from './trellis-sharing-files.js'; // NEW: generic filesystem IPC must not expose service credentials.
+import { createIdentityService } from './trellis-identity-service.js'; // NEW
+import { createGardenLibraryService } from './trellis-garden-library-service.js'; // NEW
+import { createFieldService } from './trellis-field-service.js'; // NEW
+import { EventEmitter } from 'node:events'; // NEW
+import { createLifecycleCoordinator, requestWindowReply, cleanupClosedWindow, lastWindowPolicy } from './trellis-lifecycle.js'; // NEW
 
 // (ADD): SQLite
 import Database from 'better-sqlite3';
@@ -38,8 +43,12 @@ const fileWatchRegistry = createFileWatchRegistry();
 let sharingService = null; // NEW
 let sharingTray = null; // NEW
 let sharingTrayCreation = null; // NEW: concurrent Share/Join requests must not create duplicate trays.
-let sharingQuitReady = false; // NEW
+const sharingEvents = new EventEmitter(); // CHANGE: one tray subscription observes all transports.
+let configuredIdentities = []; // NEW: installed, non-revoked identities determine background eligibility.
+let backgroundReady = null, backgroundFailureShown = false, identityRefreshTask = null; // NEW
 const sharingWindowPaths = new Map(); // NEW: bind sharing IPC to the caller's watched document.
+const identityTransports = new Map(); // NEW: each identity has a separate daemon and registry.
+let identityService = null, gardenLibraryService = null, fieldService = null, identityRefreshTimer = null; // CHANGE
 
 try {
 	const drawioUserDataPath = path.join(app.getPath('appData'), 'draw.io'); // CHANGE: preserve the existing legacy runtime profile.
@@ -198,7 +207,7 @@ const disableUpdate = disUpPkg() ||
 const silentUpdate = !disableUpdate && (process.env.DRAWIO_SILENT_UPDATE === 'true' ||
 	process.argv.indexOf('--silent-update') !== -1);
 autoUpdater.logger = log
-autoUpdater.logger.transports.file.level = 'error'
+autoUpdater.logger.transports.file.level = 'info'; // CHANGE: preserve shutdown phases and owned-child outcomes in the existing rotating log.
 autoUpdater.logger.transports.console.level = 'error'
 autoUpdater.autoDownload = silentUpdate
 autoUpdater.autoInstallOnAppQuit = silentUpdate
@@ -382,6 +391,14 @@ const __DEV__ = process.env.DRAWIO_ENV === 'dev'
 
 let windowsRegistry = []
 let cmdQPressed = false
+const lifecycle = createLifecycleCoordinator({ // NEW
+	getWindows: () => windowsRegistry.slice(), prepare: prepareWindowClose, validate: validateWindowClose, release: releaseWindowClose, discard: discardWindowDraft, // NEW
+	commit: async (win, approval) => { await discardWindowDraft(win, approval); if (!win.isDestroyed()) win.destroy(); }, // NEW
+	destroy: win => { if (!win.isDestroyed()) win.destroy(); }, stop: stopTrellisResources, exit: () => app.quit(), // NEW
+	onState: (state, reason) => { cmdQPressed = state === 'stopping services' || state === 'ready to exit'; log.info('Trellis lifecycle:', state, reason); }, // NEW
+	onError: error => { log.error('Trellis shutdown:', error.message); if (lifecycle.acceptsWork) dialog.showErrorBox('Trellis could not close', error.message); } // NEW
+}); // NEW
+let closeRequestSequence = 0; // NEW
 let firstWinLoaded = false
 let firstWinFilePath = null
 const isMac = process.platform === 'darwin'
@@ -441,7 +458,8 @@ catch (e) {
 
 // Only allow request from the app code itself
 function validateSender(frame) {
-	return frame.url.replace(/\/.\:\//, str => str.toUpperCase()).startsWith(codeUrl);
+	try { return !!frame && !frame.isDestroyed?.() && typeof frame.url === 'string' && frame.url.replace(/\/.\:\//, str => str.toUpperCase()).startsWith(codeUrl); } // CHANGE: disposed IPC frames have no usable URL.
+	catch (_) { return false; } // NEW
 }
 
 function isWithinDisplayBounds(pos) {
@@ -460,6 +478,7 @@ function isWithinDisplayBounds(pos) {
 }
 
 function createWindow(opt = {}) {
+	if (!lifecycle.acceptsWindows) return null; // NEW: confirmations and committed shutdown cannot acquire new windows.
 	let lastWinSizeStr = (store && store.get('lastWinSize')) || '1200,800,0,0,false,false';
 	let lastWinSize = lastWinSizeStr ? lastWinSizeStr.split(',') : [1200, 800];
 
@@ -502,6 +521,7 @@ function createWindow(opt = {}) {
 	}
 
 	let mainWindow = new BrowserWindow(options)
+	const contentsId = mainWindow.webContents.id; // NEW: the getter is invalid after Electron destroys the window.
 	windowsRegistry.push(mainWindow)
 
 	if (lastWinSize[4] === 'true') {
@@ -533,11 +553,11 @@ function createWindow(opt = {}) {
 		mainWindow.webContents.openDevTools()
 	}
 
-	ipcMain.on('openDevTools', function (e) {
-		if (!validateSender(e.senderFrame)) return null;
-
-		mainWindow.webContents.openDevTools();
-	});
+	const openDevTools = e => { // CHANGE: this listener belongs to exactly one live window.
+		if (mainWindow.isDestroyed() || e.sender.id !== contentsId || !validateSender(e.senderFrame)) return; // NEW
+		mainWindow.webContents.openDevTools(); // CHANGE
+	}; // NEW
+	ipcMain.on('openDevTools', openDevTools); // CHANGE
 
 	function rememberWinSize(win) {
 		if (store != null) {
@@ -548,128 +568,29 @@ function createWindow(opt = {}) {
 	}
 
 	mainWindow.on('maximize', function () {
-		mainWindow.webContents.send('maximize')
+		if (canNotifyWindow(mainWindow)) mainWindow.webContents.send('maximize'); // CHANGE: late native events cannot target a disposed renderer.
 	});
 
 	mainWindow.on('unmaximize', function () {
-		mainWindow.webContents.send('unmaximize')
+		if (canNotifyWindow(mainWindow)) mainWindow.webContents.send('unmaximize'); // CHANGE
 	});
 
 	mainWindow.on('resize', function () {
-		mainWindow.webContents.send('resize')
+		if (canNotifyWindow(mainWindow)) mainWindow.webContents.send('resize'); // CHANGE
 	});
 
-	let uniqueIsModifiedId, closeCheckTimer = null, modifiedModalOpen = false;
-
-	ipcMain.on('isModified-result', async (e, data) => {
-		if (!validateSender(e.senderFrame) || data == null || uniqueIsModifiedId != data.uniqueId || modifiedModalOpen) return null;
-
-		if (closeCheckTimer != null) {
-			clearTimeout(closeCheckTimer); // Trellis compatibility: renderer replied, so the close guard is no longer needed.
-			closeCheckTimer = null;
-		}
-
-		if (data.isModified) {
-			modifiedModalOpen = true;
-			// Can't use async function here because it crashes on Linux when win.destroy is called
-			let response = dialog.showMessageBoxSync(
-				mainWindow,
-				{
-					type: 'question',
-					buttons: ['Cancel', 'Discard Changes'],
-					title: 'Confirm',
-					message: 'The document has unsaved changes. Do you really want to quit without saving?' //mxResources.get('allChangesLost')
-				});
-
-			if (response === 1) {
-				//If user chose not to save, remove the draft
-				if (data.draftPath != null) {
-					await deleteFile(data.draftPath);
-					mainWindow.destroy();
-				}
-				else {
-					mainWindow.webContents.send('removeDraft');
-
-					ipcMain.once('draftRemoved', (e) => {
-						if (!validateSender(e.senderFrame)) return null;
-
-						mainWindow.destroy();
-					});
-				}
-			}
-			else {
-				cmdQPressed = false;
-				modifiedModalOpen = false;
-				restoreSharingAfterCancelledQuit(); // NEW: cancelling Quit must restore background sync and reset the shutdown guard.
-			}
-		}
-		else {
-			mainWindow.destroy();
-		}
-	});
-
-	mainWindow.on('close', (event) => {
-		uniqueIsModifiedId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-
-		if (__DEV__) {
-			const index = windowsRegistry.indexOf(mainWindow)
-			console.log('Window on close', index, uniqueIsModifiedId)
-		}
-
-		const contents = mainWindow.webContents
-
-		if (contents != null) {
-			contents.send('isModified', uniqueIsModifiedId);
-			const closeCheckId = uniqueIsModifiedId;
-
-			if (closeCheckTimer != null) {
-				clearTimeout(closeCheckTimer); // Trellis compatibility: replace any stale close guard for repeated close clicks.
-			}
-
-			closeCheckTimer = setTimeout(() => {
-				if (mainWindow.isDestroyed() || modifiedModalOpen || uniqueIsModifiedId != closeCheckId) {
-					return;
-				}
-
-				modifiedModalOpen = true;
-				const response = dialog.showMessageBoxSync(
-					mainWindow,
-					{
-						type: 'warning',
-						buttons: ['Cancel', 'Close Anyway'],
-						title: 'Confirm',
-						message: 'Trellis could not check whether the current document has unsaved changes. Close anyway?' // Trellis compatibility: avoid trapping the window if the renderer close IPC is unavailable.
-					});
-
-				if (response === 1) {
-					mainWindow.destroy();
-				}
-				else {
-					cmdQPressed = false;
-					modifiedModalOpen = false;
-					closeCheckTimer = null;
-					restoreSharingAfterCancelledQuit(); // NEW
-				}
-			}, 1000); // Trellis compatibility: preserve close without adding a multi-second delay if the renderer misses the request.
-			event.preventDefault();
-		}
-
-		rememberWinSize(mainWindow);
-	})
-
-	// Emitted when the window is closed.
-	mainWindow.on('closed', () => {
-		const index = windowsRegistry.indexOf(mainWindow)
-
-		if (__DEV__) {
-			console.log('Window closed idx:%d', index)
-		}
-
-		fileWatchRegistry.unwatchWindow(mainWindow);
-		sharingWindowPaths.delete(mainWindow.webContents.id); // NEW
-		sharingService?.forgetContext(mainWindow.webContents.id); // NEW
-		windowsRegistry.splice(index, 1)
-	})
+	mainWindow.on('close', event => { // CHANGE: the coordinator owns confirmation and destruction.
+		if (lifecycle.state === 'ready to exit') return; // NEW
+		event.preventDefault(); // NEW
+		if (lifecycle.acceptsWindows) { // CHANGE
+			try { rememberWinSize(mainWindow); } catch (error) { log.warn('Window preferences:', error.message); } // NEW: a preference-write failure must not prevent document confirmation.
+			void lifecycle.requestClose(mainWindow); // NEW
+		} // NEW
+	}); // CHANGE
+	mainWindow.on('closed', () => { // CHANGE: cleanup never reads a destroyed webContents getter.
+		cleanupClosedWindow({ window: mainWindow, contentsId, windows: windowsRegistry, watches: fileWatchRegistry, paths: sharingWindowPaths, // NEW
+			services: [sharingService, ...identityTransports.values()].filter(Boolean), disposers: [() => ipcMain.removeListener('openDevTools', openDevTools)], onError: error => log.warn('Window cleanup:', error.message) }); // NEW
+	}); // CHANGE
 
 	return mainWindow
 }
@@ -715,8 +636,11 @@ app.whenReady().then(() => {
 		const url = details.url.replace(/\/.\:\//, str => str.toUpperCase());
 		try {
 			await assertSharingFileAccess(fileURLToPath(details.url), path.join(app.getPath('userData'), 'trellis-sharing')); // NEW: private files cannot be fetched through a plugin-directory alias.
+			await assertSharingFileAccess(fileURLToPath(details.url), path.join(app.getPath('userData'), 'trellis-identities')); // NEW: encrypted identity credentials remain inaccessible through file requests too.
 			if (url.startsWith(codeUrl) || isPluginsEnabled() && url.startsWith(pluginsCodeUrl)) { callback({}); return; }
-			if (details.resourceType === 'image' && sharingService && await sharingService.isManagedAssetRequest(details.webContentsId, details.url)) { callback({}); return; } // NEW: no scripts, fetches, or unregistered local images.
+			if (details.resourceType === 'image') { // CHANGE: registered assets from identity gardens use the same narrow allowlist.
+				for (const service of [sharingService, ...identityTransports.values()].filter(Boolean)) if (await service.isManagedAssetRequest(details.webContentsId, details.url)) { callback({}); return; } // NEW
+			} // NEW
 			console.log('Blocked loading file from ' + details.url, url, codeUrl, pluginsCodeUrl);
 			callback({ cancel: true });
 		} catch (_) { callback({ cancel: true }); } // CHANGE: fail closed on path validation errors.
@@ -1135,84 +1059,35 @@ app.whenReady().then(() => {
 	else {
 		app.on('second-instance', (event, commandLine, workingDirectory) => {
 			// Creating a new window while a save/open dialog is open crashes the app
-			if (dialogOpen) return;
+			if (dialogOpen || !lifecycle.acceptsWindows) return; // CHANGE: do not reopen during Quit.
 
 			//Create another window
 			let win = createWindow()
 
-			let loadEvtCount = 0;
-
-			function loadFinished(e) {
-				if (e != null && !validateSender(e.senderFrame)) return null;
-
-				loadEvtCount++;
-
-				if (loadEvtCount == 2) {
-					//Open the file if new app request is from opening a file
-					var potFile = commandLine.pop();
-
-					if (fs.existsSync(potFile)) {
-						win.webContents.send('args-obj', { args: [potFile] });
-					}
-				}
-			}
-
-			//Order of these two events is not guaranteed, so wait for them async.
-			//TOOD There is still a chance we catch another window 'app-load-finished' if user created multiple windows quickly 
-			ipcMain.once('app-load-finished', loadFinished);
-
-			win.webContents.on('did-finish-load', function () {
-				win.webContents.zoomFactor = appZoom;
-				win.webContents.setVisualZoomLevelLimits(1, appZoom);
-				loadFinished();
-			});
+			bindWindowLoad(win, () => { // CHANGE: only this window's renderer may complete its load.
+				const potFile = commandLine[commandLine.length - 1]; // NEW
+				if (potFile && fs.existsSync(potFile)) win.webContents.send('args-obj', { args: [potFile] }); // NEW
+			}); // CHANGE
 		})
 	}
 
-	if (options.trellisBackground && (!program.args || !program.args.length)) { // NEW
-		getSharingService().then(async service => {
-			if (service.hasCanvases()) await service.start();
-			await ensureSharingTray(service);
-			if (!sharingTray) createWindow();
-		}).catch(err => { log.error('Sharing startup:', err.message); createWindow(); });
-		return;
-	}
-	getSharingService().then(service => service.hasCanvases() ? service.start().then(() => ensureSharingTray(service)) : null).catch(err => log.error('Sharing startup:', err.message)); // NEW
+	const background = initializeBackgroundSync(); // CHANGE: resume installed identity transports while credentials remain locked.
+	if (options.trellisBackground && (!program.args || !program.args.length)) { // CHANGE
+		background.then(async () => { // NEW
+			await ensureSharingTray(); // NEW
+			if (!lifecycle.acceptsWindows) return; // NEW
+			if (hasConfiguredSync() && !sharingTray) await quitWithoutTray(); // NEW
+			else if (!hasConfiguredSync()) await lifecycle.requestQuit('background startup without configured sync'); // NEW
+		}).catch(error => { log.error('Background startup:', error.message); void quitWithoutTray(); }); // NEW
+		return; // CHANGE
+	} // CHANGE
+	background.catch(error => log.warn('Background startup:', error.message)); // CHANGE
 	let win = createWindow()
 
-	let loadEvtCount = 0;
-
-	function loadFinished(e) {
-		if (e != null && !validateSender(e.senderFrame)) return null;
-
-		loadEvtCount++;
-
-		if (loadEvtCount == 2) {
-			//Sending entire program is not allowed in Electron 9 as it is not native JS object
-			win.webContents.send('args-obj', { args: program.args, create: options.create });
-		}
-	}
-
-	//Order of these two events is not guaranteed, so wait for them async.
-	//TOOD There is still a chance we catch another window 'app-load-finished' if user created multiple windows quickly 
-	ipcMain.once('app-load-finished', loadFinished);
-
-	win.webContents.on('did-finish-load', function () {
-		if (firstWinFilePath != null) {
-			if (program.args != null) {
-				program.args.push(firstWinFilePath);
-			}
-			else {
-				program.args = [firstWinFilePath];
-			}
-		}
-
-		firstWinLoaded = true;
-
-		win.webContents.zoomFactor = appZoom;
-		win.webContents.setVisualZoomLevelLimits(1, appZoom);
-		loadFinished();
-	});
+	bindWindowLoad(win, () => { // CHANGE
+		if (firstWinFilePath != null) { program.args = program.args || []; program.args.push(firstWinFilePath); } // NEW
+		firstWinLoaded = true; win.webContents.send('args-obj', { args: program.args, create: options.create }); // NEW
+	}); // CHANGE
 
 	function toggleSpellCheck(e) {
 		if (e != null && !validateSender(e.senderFrame)) return null;
@@ -1395,29 +1270,20 @@ app.whenReady().then(() => {
 	}
 })
 
-//Quit from the dock context menu should quit the application directly
-if (isMac) {
-	app.on('before-quit', function () {
-		cmdQPressed = true;
-	});
-}
-
-// Quit when all windows are closed.
-app.on('window-all-closed', function () {
-	if (__DEV__) {
-		console.log('window-all-closed', windowsRegistry.length)
-	}
-
-	// On OS X it is common for applications and their menu bar
-	// to stay active until the user quits explicitly with Cmd + Q
-	if (sharingService?.hasCanvases() && !cmdQPressed) { // NEW: never leave an unreachable background process.
-		if (!sharingTray) createWindow();
-		return;
-	}
-	if (cmdQPressed || !isMac) {
-		app.quit()
-	}
-})
+/** Last-window close remains reachable in the tray, or exits with one explanation. */ // NEW
+app.on('window-all-closed', () => { // CHANGE
+	if (!lifecycle.acceptsWindows) return; // NEW
+	if (cmdQPressed) { void lifecycle.requestQuit('command-line completion'); return; } // NEW: completed CLI exports must not start background sharing.
+	void handleLastWindowClosed(); // NEW
+}); // CHANGE
+async function handleLastWindowClosed() { // NEW
+	await initializeBackgroundSync().catch(error => log.warn('Background sync:', error.message)); // NEW
+	if (!lifecycle.acceptsWindows || windowsRegistry.length) return; // NEW
+	await ensureSharingTray(); // NEW
+	const policy = lastWindowPolicy({ platform: process.platform, configuredSync: hasConfiguredSync(), trayAvailable: !!sharingTray }); // NEW
+	if (policy === 'explain and quit') await quitWithoutTray(); // NEW
+	else if (policy === 'quit') await lifecycle.requestQuit('last window'); // NEW
+} // NEW
 
 app.on('activate', function () {
 	if (__DEV__) {
@@ -1426,7 +1292,7 @@ app.on('activate', function () {
 
 	// On OS X it's common to re-create a window in the app when the
 	// dock icon is clicked and there are no other windows open.
-	if (windowsRegistry.length === 0) {
+	if (windowsRegistry.length === 0 && lifecycle.acceptsWindows) { // CHANGE
 		createWindow()
 	}
 })
@@ -1435,32 +1301,12 @@ app.on('will-finish-launching', function () {
 	app.on("open-file", function (event, filePath) {
 		event.preventDefault();
 		// Creating a new window while a save/open dialog is open crashes the app
-		if (dialogOpen) return;
+		if (dialogOpen || !lifecycle.acceptsWindows) return; // CHANGE: do not reopen during Quit.
 
 		if (firstWinLoaded) {
 			let win = createWindow();
 
-			let loadEvtCount = 0;
-
-			function loadFinished(e) {
-				if (e != null && !validateSender(e.senderFrame)) return null;
-
-				loadEvtCount++;
-
-				if (loadEvtCount == 2) {
-					win.webContents.send('args-obj', { args: [filePath] });
-				}
-			}
-
-			//Order of these two events is not guaranteed, so wait for them async.
-			//TOOD There is still a chance we catch another window 'app-load-finished' if user created multiple windows quickly 
-			ipcMain.once('app-load-finished', loadFinished);
-
-			win.webContents.on('did-finish-load', function () {
-				win.webContents.zoomFactor = appZoom;
-				win.webContents.setVisualZoomLevelLimits(1, appZoom);
-				loadFinished();
-			});
+			bindWindowLoad(win, () => win.webContents.send('args-obj', { args: [filePath] })); // CHANGE
 		}
 		else {
 			firstWinFilePath = filePath
@@ -1518,7 +1364,7 @@ autoUpdater.on('update-downloaded', (info) => {
 			detail: 'It will be installed the next time you restart the application',
 		}).then(result => {
 			if (result.response === 0) {
-				setTimeout(() => autoUpdater.quitAndInstall(), 1)
+				void lifecycle.requestQuit('install update', () => autoUpdater.quitAndInstall()); // CHANGE: updater bypasses Electron close hooks, so approve documents first.
 			}
 		})
 })
@@ -1777,7 +1623,7 @@ function exportDiagram(event, args, directFinalize) {
 				if (!validateSender(e.senderFrame)) return null;
 
 				if (renderInfo == null) {
-					event.reply('export-error');
+					replyToLiveFrame(event, 'export-error');
 					return;
 				}
 
@@ -1808,7 +1654,7 @@ function exportDiagram(event, args, directFinalize) {
 				var base64encoded = args.base64 == '1';
 
 				if (hasError) {
-					event.reply('export-error');
+					replyToLiveFrame(event, 'export-error');
 				}
 				else if (args.format == 'png' || args.format == 'jpg' || args.format == 'jpeg') {
 					//Adds an extra pixel to prevent scrollbars from showing
@@ -1850,7 +1696,7 @@ function exportDiagram(event, args, directFinalize) {
 								}
 							}
 
-							event.reply('export-success', data);
+							replyToLiveFrame(event, 'export-success', data);
 						});
 					}, bounds.width * bounds.height < LARGE_IMAGE_AREA ? 1000 : 5000);
 				}
@@ -1871,7 +1717,7 @@ function exportDiagram(event, args, directFinalize) {
 
 						contents.print(pdfOptions, (success, errorType) => {
 							//Consider all as success
-							event.reply('export-success', {});
+							replyToLiveFrame(event, 'export-success', {});
 							// Notify the user with an error if it fails
 							if (!success && errorType != 'Print job canceled') {
 								dialog.showMessageBox(null, {
@@ -1897,11 +1743,11 @@ function exportDiagram(event, args, directFinalize) {
 							else {
 								// TODO extract the correct xml if the source was a pnd file
 								data = await mergePdfs(pdfs, args.embedXml == '1' ? args.xml : null);
-								event.reply('export-success', data);
+								replyToLiveFrame(event, 'export-success', data);
 							}
 						})
 							.catch((error) => {
-								event.reply('export-error', error);
+								replyToLiveFrame(event, 'export-error', error);
 							});
 					}
 				}
@@ -1911,11 +1757,11 @@ function exportDiagram(event, args, directFinalize) {
 					ipcMain.once('svg-data', (e, data) => {
 						if (!validateSender(e.senderFrame)) return null;
 
-						event.reply('export-success', data);
+						replyToLiveFrame(event, 'export-success', data);
 					});
 				}
 				else {
-					event.reply('export-error', 'Error: Unsupported format');
+					replyToLiveFrame(event, 'export-error', 'Error: Unsupported format');
 				}
 			};
 
@@ -1925,13 +1771,13 @@ function exportDiagram(event, args, directFinalize) {
 				ipcMain.once('xml-data', (e, data) => {
 					if (!validateSender(e.senderFrame)) return null;
 
-					event.reply('export-success', data);
+					replyToLiveFrame(event, 'export-success', data);
 				});
 
 				ipcMain.once('xml-data-error', (e) => {
 					if (!validateSender(e.senderFrame)) return null;
 
-					event.reply('export-error');
+					replyToLiveFrame(event, 'export-error');
 				});
 			}
 
@@ -1960,7 +1806,7 @@ function exportDiagram(event, args, directFinalize) {
 			browser.destroy();
 		}
 
-		event.reply('export-error', e);
+		replyToLiveFrame(event, 'export-error', e);
 		console.log('export-error', e);
 	}
 };
@@ -2554,7 +2400,8 @@ function clipboardAction(method, data) {
 
 async function deleteFile(file) {
 	// Reading the header of the file to confirm it is a file we can delete
-	let fh = await fsProm.open(file, O_RDONLY);
+	let fh = await fsProm.open(file, O_RDONLY).catch(error => { if (error.code === 'ENOENT') return null; throw error; }); // CHANGE
+	if (!fh) return; // NEW
 	let buffer = Buffer.allocUnsafe(16);
 	await fh.read(buffer, 0, 16);
 	await fh.close();
@@ -2564,8 +2411,8 @@ async function deleteFile(file) {
 	}
 }
 
-function windowAction(method) {
-	let win = BrowserWindow.getFocusedWindow();
+function windowAction(method, win = BrowserWindow.getFocusedWindow()) { // CHANGE: IPC actions use their requesting window, including hidden editors.
+	if (win?.isDestroyed()) return; // NEW
 
 	if (win) {
 		if (method == 'minimize') {
@@ -2613,48 +2460,238 @@ function getTrellisAppInfo() {
 	};
 }
 
+/** Deferred IPC/export results must not target a destroyed or replaced renderer frame. */ // NEW
+function replyToLiveFrame(event, channel, payload) { // NEW
+	if (!('senderFrame' in event)) return event.reply(channel, payload); // NEW: preserve main-owned CLI export error propagation.
+	try { // NEW
+		if (event.sender?.isDestroyed?.() || ('senderFrame' in event && !validateSender(event.senderFrame))) return; // NEW
+		event.reply(channel, payload); // NEW: main-owned CLI export events also use this path.
+	} catch (error) { log.warn('Renderer reply skipped:', error.message); } // NEW
+} // NEW
+/** A live window may have a disposed frame after renderer startup failure or crash. */ // NEW
+function canNotifyWindow(win) { // NEW
+	if (!lifecycle.acceptsWork || win.isDestroyed()) return false; // NEW
+	try { const contents = win.webContents; return !contents.isDestroyed() && !contents.isCrashed() && !contents.mainFrame.isDestroyed(); } // NEW
+	catch (_) { return false; } // NEW
+} // NEW
+/** Reject late background work once the quit transaction has committed. */ // NEW
+function assertTrellisRunning() { if (!lifecycle.acceptsWork) throw new Error('Trellis is shutting down.'); } // NEW
+function hasConfiguredSync() { return !!sharingService?.hasBackgroundWork() || configuredIdentities.length > 0; } // NEW
+function configuredTransports() { return [sharingService?.hasBackgroundWork() ? sharingService : null, ...configuredIdentities.map(identity => identityTransports.get(identity.id))].filter(Boolean); } // NEW
+const sharingGroup = createSharingGroup({ // NEW
+	getServices: configuredTransports, canStart: () => lifecycle.acceptsWork, // NEW
+	getIdentityStatuses: () => configuredIdentities.map(identity => ({ label: identity.username + ' identity', connectedCollaborators: null, ...identityTransports.get(identity.id)?.backgroundStatus() })), // NEW
+	subscribe: listener => { sharingEvents.on('status', listener); return () => sharingEvents.off('status', listener); } // NEW
+}); // NEW
+/** A background-only Windows/Linux session exits when its final configured share is retired. */ // NEW
+function maybeFinishBackground() { // NEW
+	if (sharingTray && process.platform !== 'darwin' && lifecycle.acceptsWindows && windowsRegistry.length === 0 && !hasConfiguredSync()) void lifecycle.requestQuit('no configured sync'); // NEW
+} // NEW
+/** Refresh the installed registry independently of unlocked credentials or daemon creation. */ // NEW
+async function refreshConfiguredIdentities() { // NEW
+	const identities = await getIdentityService(); // NEW
+	const result = await identities.list(); // NEW
+	assertTrellisRunning(); configuredIdentities = result.identities.filter(identity => !identity.error && !identity.revoked); sharingEvents.emit('status'); maybeFinishBackground(); // NEW
+} // NEW
+/** Serialize periodic refresh so a slow catalog operation cannot stack transports. */ // NEW
+async function refreshIdentityBackground() { // NEW
+	assertTrellisRunning(); await identityService.refresh(); // NEW
+	await refreshConfiguredIdentities(); // NEW
+	for (const identity of configuredIdentities) { assertTrellisRunning(); await gardenLibraryService.processDownloads(identity.id); } // NEW
+	await ensureSharingTray(); // NEW
+} // NEW
+/** Startup and last-window close share one initialization of configured background owners. */ // NEW
+function initializeBackgroundSync() { // NEW
+	if (backgroundReady) return backgroundReady; // NEW
+	backgroundReady = (async () => { // NEW
+		const legacy = await getSharingService(); // NEW
+		await refreshConfiguredIdentities(); // NEW
+		await Promise.allSettled([legacy.hasBackgroundWork() ? legacy.start() : Promise.resolve(), refreshIdentityBackground()]); // NEW
+		assertTrellisRunning(); await ensureSharingTray(); // NEW
+	})(); // NEW
+	return backgroundReady; // NEW
+} // NEW
+/** A missing tray never leaves an unreachable daemon behind after the final window closes. */ // NEW
+async function quitWithoutTray() { // NEW
+	if (!lifecycle.acceptsWork) return; // NEW
+	if (!backgroundFailureShown) { // NEW
+		backgroundFailureShown = true; dialog.showErrorBox('Background syncing unavailable', 'Trellis could not create its tray controls. Trellis will stop syncing and close. Saved changes will sync the next time you open it.'); // NEW
+	} // NEW
+	await lifecycle.requestQuit('tray unavailable'); // NEW
+} // NEW
+/** Window-load IPC is sender-scoped and removed when its owner closes. */ // NEW
+function bindWindowLoad(win, callback) { // NEW
+	const contents = win.webContents, senderId = contents.id; let loaded = false, ready = false, completed = false; // NEW
+	const cleanup = () => { ipcMain.removeListener('app-load-finished', receive); contents.removeListener('did-finish-load', didLoad); win.removeListener('closed', cleanup); }; // NEW
+	const finish = () => { if (completed || win.isDestroyed() || !loaded || !ready || !lifecycle.acceptsWork) return; completed = true; cleanup(); callback(); }; // NEW
+	const receive = event => { if (event.sender.id !== senderId || !validateSender(event.senderFrame)) return; ready = true; finish(); }; // NEW
+	const didLoad = () => { if (win.isDestroyed()) return; loaded = true; contents.zoomFactor = appZoom; contents.setVisualZoomLevelLimits(1, appZoom); finish(); }; // NEW
+	ipcMain.on('app-load-finished', receive); contents.on('did-finish-load', didLoad); win.once('closed', cleanup); // NEW
+} // NEW
+/** Request a private document preparation step with bounded, correlated IPC. */ // NEW
+function closeReply(win, phase, approval, timeoutMs = 1000) { // NEW
+	return requestWindowReply({ ipcMain, window: win, channel: 'isModified', replyChannel: 'isModified-result', validateSender, timeoutMs, // NEW
+		payload: { uniqueId: 'close-' + (++closeRequestSequence), phase, snapshotId: approval?.snapshotId } }); // NEW
+} // NEW
+/** Keep all drafts and transports intact while asking the existing unsaved-change questions. */ // NEW
+async function prepareWindowClose(win) { // NEW
+	try { // NEW
+		const reply = await closeReply(win, 'prepare');
+		if (reply.error) throw new Error(reply.error); // NEW // NEW
+		if (win.isDestroyed()) return reply; // NEW
+		if (!reply.isModified) return reply; // NEW
+		const answer = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Cancel', 'Discard Changes'], defaultId: 0, cancelId: 0, title: 'Confirm', message: 'The document has unsaved changes. Do you really want to quit without saving?' }); // NEW
+		return answer === 1 ? reply : null; // NEW
+	} catch (error) { // NEW
+		if (win.isDestroyed()) return { forced: true }; // NEW
+		log.warn('Editor close check:', error.message); // NEW
+		const answer = dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Cancel', 'Close Anyway'], defaultId: 0, cancelId: 0, title: 'Confirm', message: 'Trellis could not check whether the current document has unsaved changes. Close anyway?' }); // NEW
+		return answer === 1 ? { forced: true } : null; // NEW
+	} // NEW
+} // NEW
+/** Seal only the exact renderer-local snapshot that the user approved. */ // NEW
+async function validateWindowClose(win, approval) { // NEW
+	if (approval.forced || win.isDestroyed()) return true; // NEW
+	try { const reply = await closeReply(win, 'seal', approval); if (reply.error) throw new Error(reply.error); return !!reply.snapshotValid; } // NEW
+	catch (error) { if (win.isDestroyed()) return true; throw error; } // NEW
+} // NEW
+function releaseWindowClose(win) { if (!win.isDestroyed()) win.webContents.send('isModified', { phase: 'cancel' }); } // NEW
+/** Remove drafts only after every window approves; failures leave the application running. */ // NEW
+async function discardWindowDraft(win, approval) { // NEW
+	if (win.isDestroyed() || approval.forced) return; // NEW: Close Anyway retains the recoverable draft.
+	const reply = await closeReply(win, 'discard', approval, 10000); // NEW
+	if (reply.error) throw new Error('The document draft could not be removed: ' + reply.error); // NEW
+	if (!reply.snapshotValid) throw new Error('The document changed during Quit. Review it and try again.'); // NEW
+} // NEW
+/** Stop every owned transport in parallel, then release local watchers, databases, and tray. */ // NEW
+async function stopTrellisResources({ deadline }) { // NEW
+	clearInterval(identityRefreshTimer); identityRefreshTimer = null; // NEW
+	const services = [sharingService, ...identityTransports.values()].filter(Boolean); // NEW
+	const results = await Promise.allSettled(services.map(service => service.stop({ deadline }))); // NEW
+	for (const result of results) if (result.status === 'rejected') log.error('Owned transport shutdown failed:', result.reason.message); // NEW
+	for (const win of windowsRegistry) fileWatchRegistry.unwatchWindow(win); // NEW
+	for (const [id, db] of dbRegistry) { try { db.close(); } catch (error) { log.warn('Database shutdown:', error.message); } dbRegistry.delete(id); dbRegistryPaths.delete(id); } // NEW
+	sharingTray?.dispose(); sharingTray = null; // NEW
+	if (results.some(result => result.status === 'rejected')) throw new Error('An owned transport did not finish shutdown. See the shutdown log for its termination outcome.'); // NEW: do not proceed to installer launch after unverified termination.
+} // NEW
+
 async function getSharingService() { // NEW: single service for all application windows.
+	assertTrellisRunning(); // NEW
 	if (!sharingService) {
-		sharingService = createSyncthingService({ userDataPath: app.getPath('userData'), documentsPath: app.getPath('documents'), binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store) });
+		sharingService = createSyncthingService({ userDataPath: app.getPath('userData'), documentsPath: app.getPath('documents'), privatePaths: [path.join(app.getPath('userData'), 'trellis-sharing'), path.join(app.getPath('userData'), 'trellis-identities')], binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onLifecycle: entry => log.info('Syncthing lifecycle:', entry.phase, entry.pids) }); // CHANGE // CHANGE: explicit asset import cannot copy identity credentials.
 		sharingService.onStatus(status => {
-			for (const win of windowsRegistry) if (!win.isDestroyed()) win.webContents.send('trellisShareStatus', sharingService.listStatus(win.webContents.id)); // CHANGE: exclude each window's current actor from its count.
+			sharingEvents.emit('status'); maybeFinishBackground(); // CHANGE
+			for (const win of windowsRegistry) if (canNotifyWindow(win)) win.webContents.send('trellisShareStatus', sharingService.listStatus(win.webContents.id)); // CHANGE: exclude each window's current actor from its count.
 		});
 	}
 	await sharingService.initialize();
 	return sharingService;
 }
-async function ensureSharingTray(service) { // NEW
-	if (sharingTray || !service.hasCanvases()) return;
-	if (sharingTrayCreation) return sharingTrayCreation; // NEW
-	sharingTrayCreation = (async () => { try {
-		sharingTray = await createSharingTray({ app, Tray, Menu: menu, nativeImage, service, store, iconPath: path.join(codeDir, 'images/window-icon.png'), openWindow: diagramPath => {
-			const win = createWindow();
-			if (diagramPath) { // CHANGE: wait for this renderer's desktop file loader, not document load.
-				const listener = event => { if (event.sender.id === win.webContents.id) { ipcMain.removeListener('app-load-finished', listener); win.webContents.send('args-obj', { args: [diagramPath] }); } };
-				ipcMain.on('app-load-finished', listener);
-				win.once('closed', () => ipcMain.removeListener('app-load-finished', listener));
+/** Own identity credentials and transfer services outside every renderer. */ // NEW
+function assertRememberedIdentityProtection() { // NEW: Linux's fallback is not secure enough for persistent login.
+	if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) throw new Error('Operating-system credential protection is unavailable.'); // NEW
+} // NEW
+async function getIdentityService() { // NEW
+	assertTrellisRunning(); // NEW
+	if (!identityService) {
+		const root = path.join(app.getPath('userData'), 'trellis-identities');
+		identityService = createIdentityService({
+			root,
+			protectPending(text) { if (!safeStorage.isEncryptionAvailable()) throw new Error('Operating-system credential protection is unavailable.'); return safeStorage.encryptString(text).toString('base64'); },
+			unprotectPending(text) { return safeStorage.decryptString(Buffer.from(text, 'base64')); },
+			protectSession(text) { assertRememberedIdentityProtection(); return safeStorage.encryptString(text).toString('base64'); }, // NEW: secrets stay in the main process.
+			unprotectSession(text) { assertRememberedIdentityProtection(); return safeStorage.decryptString(Buffer.from(text, 'base64')); }, // NEW
+			transportFactory: async (identityId, profileRoot) => {
+				assertTrellisRunning(); // NEW
+				if (!identityTransports.has(identityId)) {
+					const service = createSyncthingService({ userDataPath: profileRoot, profilePath: path.join(profileRoot, 'transport'), privatePaths: [root, path.join(app.getPath('userData'), 'trellis-sharing')], documentsPath: app.getPath('documents'), canvasesRoot: path.join(app.getPath('documents'), 'Trellis', 'Garden Library', identityId), binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onLifecycle: entry => log.info('Syncthing lifecycle:', entry.phase, entry.pids) }); // CHANGE // CHANGE
+					service.onStatus(() => { sharingEvents.emit('status'); maybeFinishBackground(); for (const win of windowsRegistry) if (canNotifyWindow(win)) { win.webContents.send('trellisIdentityStatus', { session: identityService.session() }); win.webContents.send('trellisShareStatus', service.listStatus(win.webContents.id)); } }); // CHANGE: managed gardens reuse existing sharing status and conflict UI.
+					identityTransports.set(identityId, service);
+				}
+				return identityTransports.get(identityId);
+			},
+			adoptTransport: async (provisionalId, identityId, profileRoot) => {
+				await identityTransports.get(provisionalId)?.stop(); identityTransports.delete(provisionalId);
+				const source = path.join(root, provisionalId, 'transport'), destination = path.join(profileRoot, 'transport');
+				if (fs.existsSync(source) && !fs.existsSync(destination)) await fsProm.rename(source, destination);
 			}
-		} });
-	} catch (err) { log.error('Sharing tray unavailable:', err.message); } })().finally(() => { sharingTrayCreation = null; }); // CHANGE
-	return sharingTrayCreation;
-}
-async function getTrellisSyncthingShareInfo(args) { // CHANGE: real managed-share lookup replaces unavailable stub.
-	return (await getSharingService()).shareInfo(args);
-}
-function restoreSharingAfterCancelledQuit() { // NEW
-	if (!sharingQuitReady || !sharingService) return;
-	sharingQuitReady = false;
-	sharingTray = null;
-	sharingService.start().then(() => ensureSharingTray(sharingService)).catch(err => log.error('Sharing restart after cancelled Quit:', err.message));
-}
-
-app.on('before-quit', event => { // NEW: graceful shutdown and no service orphan after explicit Quit.
-	cmdQPressed = true;
-	if (sharingService && !sharingQuitReady) {
-		event.preventDefault();
-		sharingService.stop().finally(() => { sharingQuitReady = true; sharingTray?.dispose(); app.quit(); });
+		});
+		gardenLibraryService = createGardenLibraryService({ // CHANGE
+			identities: identityService, legacyService: getSharingService, // NEW
+			getLocalFolder: () => store?.get('trellis.localGardenProjectsFolder') || path.join(app.getPath('documents'), 'Trellis', 'Local Garden Projects'), // NEW
+			setLocalFolder: folder => { if (!store) throw new Error('Local folder settings could not be saved.'); store.set('trellis.localGardenProjectsFolder', folder); }, // NEW
+			validateLocalPath: filename => assertSharingFileAccess(filename, path.join(app.getPath('userData'), 'trellis-identities')), // NEW
+			listCities: () => { // NEW: read the existing live catalog without creating or migrating tables.
+				const live = getLiveDbPath(), filename = fs.existsSync(live) ? live : path.resolve(__dirname, TRELLIS_BUILT_IN_DB_REL_PATH); // CHANGE: the bundled city catalog is available before the editor seeds its live database.
+				if (!fs.existsSync(filename)) return []; // NEW
+				const database = new Database(filename, { readonly: true, fileMustExist: true }); // NEW
+				try { return database.prepare('SELECT * FROM Cities ORDER BY city_name').all(); } finally { database.close(); } // NEW
+			} // NEW
+		}); // CHANGE
+		fieldService = createFieldService({ identities: identityService, library: gardenLibraryService }); // NEW
+		identityService.onChange(session => { if (lifecycle.acceptsWork) void refreshConfiguredIdentities().catch(error => log.warn('Identity registry:', error.message)); sharingEvents.emit('status'); for (const win of windowsRegistry) if (canNotifyWindow(win)) win.webContents.send('trellisIdentityStatus', { session }); });
+		identityRefreshTimer = setInterval(() => { // CHANGE: never overlap refresh or acquire transports during committed Quit.
+			if (!lifecycle.acceptsWork || identityRefreshTask) return; // NEW
+			identityRefreshTask = refreshIdentityBackground().catch(error => log.warn('Identity sync:', error.message)).finally(() => { identityRefreshTask = null; }); // NEW
+		}, 5000); // CHANGE
+		identityRefreshTimer.unref();
 	}
-});
+	await identityService.initialize();
+	return identityService;
+}
+/** Select a daemon from the watched file, never a renderer-supplied identity. */ // NEW
+async function getScopedSharingService(callerId, diagramPath) { // NEW
+	const watched = diagramPath || sharingWindowPaths.get(callerId);
+	if (watched) {
+		const libraryRoot = path.resolve(app.getPath('documents'), 'Trellis', 'Garden Library');
+		const relative = path.relative(libraryRoot, path.resolve(watched));
+		if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+			const identityId = relative.split(path.sep)[0], identities = await getIdentityService();
+			if ((await identities.list()).identities.some(entry => entry.id === identityId)) return identities.transport(identityId);
+		}
+	}
+	return getSharingService();
+}
+/** Reuse the existing renderer modification handshake across all editor windows. */ // NEW
+async function lockIdentitySafely() { // NEW
+	for (const win of windowsRegistry) {
+		if (win.isDestroyed()) continue;
+		const uniqueId = 'identity-lock-' + (++closeRequestSequence); // CHANGE
+		const reply = await requestWindowReply({ ipcMain, window: win, channel: 'isModified', replyChannel: 'isModified-result', payload: { uniqueId }, validateSender, timeoutMs: 10000 }); // CHANGE
+		if (win.isDestroyed()) continue; // NEW
+		const modified = reply.isModified; // NEW
+		if (modified) {
+			const answer = await dialog.showMessageBox(win, { type: 'question', buttons: ['Cancel', 'Discard Changes and Log Out'], defaultId: 0, cancelId: 0, title: 'Log out of Trellis', message: 'This window has unsaved changes. Save them before logging out, or discard them.' });
+			if (win.isDestroyed()) continue; // NEW
+			if (answer.response !== 1) return { ok: false, canceled: true };
+		}
+	}
+	await (await getIdentityService()).lock(); // CHANGE: do not report logout until the remembered credential has been removed.
+	for (const win of windowsRegistry) if (canNotifyWindow(win)) win.webContents.send('trellisIdentityLocked');
+	return { ok: true };
+}
+/** One aggregate tray remains useful for legacy shares and locked identity libraries. */ // NEW
+async function ensureSharingTray() { // CHANGE
+	if (!lifecycle.acceptsWork || sharingTray || backgroundFailureShown || !hasConfiguredSync()) return; // NEW
+	if (sharingTrayCreation) return sharingTrayCreation; // CHANGE
+	sharingTrayCreation = (async () => { // CHANGE
+		try { // NEW
+			const tray = await createSharingTray({ app, Tray, Menu: menu, nativeImage, service: sharingGroup, store, iconPath: path.join(codeDir, 'images/window-icon.png'), openWindow: diagramPath => { // CHANGE
+				const win = createWindow(); if (!win) return; // NEW
+				if (diagramPath) bindWindowLoad(win, () => win.webContents.send('args-obj', { args: [diagramPath] })); // CHANGE
+			} }); // NEW
+			if (!lifecycle.acceptsWork) tray.dispose(); else sharingTray = tray; // NEW: delayed native tray creation cannot survive shutdown.
+		} catch (error) { log.error('Sharing tray unavailable:', error.message); void quitWithoutTray(); } // CHANGE
+	})().finally(() => { sharingTrayCreation = null; }); // CHANGE
+	return sharingTrayCreation; // CHANGE
+} // CHANGE
+async function getTrellisSyncthingShareInfo(args) { // CHANGE: real managed-share lookup replaces unavailable stub.
+	return (await getScopedSharingService(null, args.diagramPath)).shareInfo(args); // CHANGE: identity gardens use their scoped daemon.
+}
+app.on('before-quit', event => { // CHANGE: approve every document before stopping any service.
+	if (lifecycle.state === 'ready to exit') return; // NEW
+	event.preventDefault(); void lifecycle.requestQuit('explicit quit'); // CHANGE
+}); // CHANGE
 
 function openTrellisEmailDraft(args) {
 	const source = args || {};
@@ -2703,6 +2740,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 	if (!validateSender(event.senderFrame)) return null;
 
 	try {
+		assertTrellisRunning(); // NEW: late renderer commands cannot acquire resources after shutdown commits.
 		let ret = null;
 		const profile = path.join(app.getPath('userData'), 'trellis-sharing'); // NEW: retain ordinary filesystem APIs while protecting the service profile.
 		const paths = [args.path, args.filename, args.file, args.filePath, args.dbPath, args.fileObject?.path];
@@ -2710,8 +2748,9 @@ ipcMain.on("rendererReq", async (event, args) => {
 		if (typeof args.dbName === 'string') paths.push(getLiveDbPath(args.dbName));
 		if (Array.isArray(args.pathParts) && args.pathParts.every(part => typeof part === 'string')) paths.push(path.join(...args.pathParts));
 		if (typeof args.plugin === 'string') paths.push(path.join(getAppDataFolder(), 'plugins', args.plugin));
-		for (const filename of paths) await assertSharingFileAccess(filename, profile); // NEW: check aliases and not-yet-created destinations before dispatch.
+		for (const filename of paths) { await assertSharingFileAccess(filename, profile); await assertSharingFileAccess(filename, path.join(app.getPath('userData'), 'trellis-identities')); } // CHANGE: generic IPC cannot read pairing or identity credentials.
 
+		assertTrellisRunning(); // NEW: path validation may have overlapped committed Quit.
 		switch (args.action) {
 			case 'saveFile':
 				ret = await saveFile(args.fileObject, args.data, args.origStat, args.overwrite, args.defEnc);
@@ -2777,7 +2816,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				ret = await isFileWritable(args.file);
 				break;
 			case 'windowAction':
-				ret = await windowAction(args.method);
+				ret = await windowAction(args.method, getRequestWindow(event)); // CHANGE
 				break;
 			case 'openExternal':
 				ret = await openExternal(args.url);
@@ -2795,7 +2834,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				ret = await getTrellisSyncthingShareInfo(args); // CHANGE
 				break;
 			case 'trellisShare': { // NEW: narrow sharing methods; never proxy arbitrary REST requests.
-				const service = await getSharingService();
+				const service = await getScopedSharingService(event.sender.id); // CHANGE: managed identity gardens use their own service.
 				const callerId = event.sender.id;
 				const payload = args.payload || {};
 				if (args.method === 'setContext') {
@@ -2804,6 +2843,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 					service.setContext(callerId, payload);
 					ret = { ok: true };
 				} else if (args.method === 'getStatus') ret = { ok: true, canvases: service.listStatus(callerId) }; // CHANGE
+				else if (args.method === 'listCanvases') ret = { ok: true, canvases: await service.listCanvases() }; // NEW: no diagram or daemon startup is required.
 				else if (args.method === 'joinCanvas') ret = await service.joinCanvas(payload);
 				else if (args.method === 'openAsset') { const reason = await shell.openPath(await service.assetPath(callerId, payload)); ret = { ok: !reason, reason }; } // NEW: open only registered, explicitly copied assets.
 				else if (args.method === 'setPaused') ret = await service.setPausedForContext(callerId, payload); // CHANGE: bind renderer pause controls to its open canvas.
@@ -2811,6 +2851,37 @@ ipcMain.on("rendererReq", async (event, args) => {
 				else throw new Error('Unsupported sharing operation.');
 				if (['setupCanvas', 'joinCanvas', 'recovery'].includes(args.method)) await ensureSharingTray(service);
 				break;
+			}
+			case 'trellisIdentity': { // NEW: explicit dispatch never exposes credential or transport objects.
+				const identities = await getIdentityService(), payload = args.payload || {};
+				if (args.method === 'getSession') ret = identities.session();
+				else if (args.method === 'lock') ret = await lockIdentitySafely();
+				else if (args.method === 'getDevices') ret = (await identities.requireSession(true)).devices.map(device => ({ id: device.id, name: device.name, kind: device.kind }));
+				else if (['list', 'create', 'unlock', 'changePassword', 'createPairRequest', 'approvePairRequest', 'importSetup', 'removeDevice'].includes(args.method)) ret = await identities[args.method](payload);
+				else throw new Error('Unsupported identity operation.');
+				break;
+			}
+			case 'trellisGardenLibrary': { // NEW
+				await getIdentityService();
+				const payload = args.payload || {};
+				if (args.method === 'selectLocalFolder') { // NEW: authorize scanning only a folder explicitly selected in the native dialog.
+					const paths = await showOpenDialog(undefined, undefined, ['openDirectory']); // NEW
+					ret = paths?.length ? await gardenLibraryService.configureLocalFolder(paths[0]) : { ok: false, canceled: true }; // NEW
+					break; // NEW
+				} // NEW
+				if (['importCurrent', 'completeStarter'].includes(args.method)) { // CHANGE: starter completion is bound to the same watched-document authority as import.
+					if (!payload.path || path.resolve(payload.path) !== path.resolve(sharingWindowPaths.get(event.sender.id) || '')) throw new Error('Import the currently opened, saved diagram.');
+					await assertSharingFileAccess(payload.path, path.join(app.getPath('userData'), 'trellis-identities'));
+				}
+				if (!['list', 'create', 'completeStarter', 'importCurrent', 'rename', 'duplicate', 'download', 'setOffline', 'removeLocal', 'listLocal', 'cities', 'getReferenceCity', 'setReferenceCity'].includes(args.method)) throw new Error('Unsupported Garden library operation.'); // CHANGE
+				ret = await gardenLibraryService[args.method](payload);
+				break;
+			}
+			case 'trellisField': { // NEW: only the watched garden may export or acknowledge field changes.
+				await getIdentityService(); const payload = args.payload || {};
+				if (!['publishWork', 'pendingUpdates', 'importUpdates', 'acknowledge'].includes(args.method)) throw new Error('Unsupported field operation.');
+				if (args.method === 'acknowledge' && path.resolve(payload.path || '') !== path.resolve(sharingWindowPaths.get(event.sender.id) || '')) throw new Error('Field acknowledgment must come from this window’s saved diagram.');
+				ret = await fieldService[args.method](payload); break;
 			}
 			case 'openTrellisEmailDraft':
 				ret = openTrellisEmailDraft(args);
@@ -2827,13 +2898,13 @@ ipcMain.on("rendererReq", async (event, args) => {
 				break;
 			case 'unwatchFile':
 				ret = await unwatchFile(args.path, getRequestWindow(event));
-				if (sharingWindowPaths.get(event.sender.id) === args.path) { sharingWindowPaths.delete(event.sender.id); sharingService?.forgetContext(event.sender.id); } // NEW
+				if (sharingWindowPaths.get(event.sender.id) === args.path) { sharingWindowPaths.delete(event.sender.id); sharingService?.forgetContext(event.sender.id); for (const service of identityTransports.values()) service.forgetContext(event.sender.id); } // CHANGE: old identity context cannot authorize a replacement document.
 				break;
 			case 'exit':
 				app.quit();
 				break;
 			case 'isFullscreen':
-				ret = BrowserWindow.getFocusedWindow().isFullScreen();
+				ret = getRequestWindow(event)?.isFullScreen() ?? false; // CHANGE: startup and shutdown do not require a focused window.
 				break;
 			// (ADD)
 			case 'dbResolvePath': {
@@ -2848,7 +2919,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				  ? restoreBuiltInTrellisDatabase({ dbName, seedRelPath: effectiveSeedRel }).dbPath
 				  : (args.createIfMissing === true && seedRel == null ? ensureCreatedDb(livePath) : ensureSeededDb(seedAbs, livePath));
 			  
-				event.reply('mainResp', {
+				replyToLiveFrame(event, 'mainResp', {
 				  reqId: args.reqId,
 				  data: { dbPath: ensured }
 				});
@@ -2872,7 +2943,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				dbRegistry.set(dbId, db);
 				dbRegistryPaths.set(dbId, abs);
 				// reply with handle
-				event.reply('mainResp', { reqId: args.reqId, data: { dbId } });
+				replyToLiveFrame(event, 'mainResp', { reqId: args.reqId, data: { dbId } });
 				break;
 			}
 			// (ADD)	
@@ -2881,7 +2952,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				const db = dbRegistry.get(args.dbId);
 				if (db) { db.close(); dbRegistry.delete(args.dbId); }
 				dbRegistryPaths.delete(args.dbId);
-				event.reply('mainResp', { reqId: args.reqId, data: true });
+				replyToLiveFrame(event, 'mainResp', { reqId: args.reqId, data: true });
 				break;
 			}
 			// (ADD)
@@ -2893,7 +2964,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				const rows = Array.isArray(args.params) || typeof args.params === 'object'
 					? stmt.all(args.params)
 					: stmt.all();
-				event.reply('mainResp', { reqId: args.reqId, data: rows });
+				replyToLiveFrame(event, 'mainResp', { reqId: args.reqId, data: rows });
 				break;
 			}
 			// (ADD)
@@ -2906,7 +2977,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 					? stmt.run(args.params)
 					: stmt.run();
 				// better-sqlite3 returns info with changes, lastInsertRowid
-				event.reply('mainResp', { reqId: args.reqId, data: { changes: info.changes, lastInsertRowid: String(info.lastInsertRowid) } });
+				replyToLiveFrame(event, 'mainResp', { reqId: args.reqId, data: { changes: info.changes, lastInsertRowid: String(info.lastInsertRowid) } });
 				break;
 			}
 			// (ADD)
@@ -2915,15 +2986,15 @@ ipcMain.on("rendererReq", async (event, args) => {
 				const db = dbRegistry.get(args.dbId);
 				if (!db) throw new Error('db not open');
 				const out = db.pragma(args.name, { simple: true });
-				event.reply('mainResp', { reqId: args.reqId, data: out });
+				replyToLiveFrame(event, 'mainResp', { reqId: args.reqId, data: out });
 				break;
 			}
 
 		};
 
-		event.reply('mainResp', { success: true, data: ret, reqId: args.reqId });
+		replyToLiveFrame(event, 'mainResp', { success: true, data: ret, reqId: args.reqId }); // CHANGE
 	}
 	catch (e) {
-		event.reply('mainResp', { error: true, msg: e.message, e: e, reqId: args.reqId });
+		replyToLiveFrame(event, 'mainResp', { error: true, msg: e.message, e: e, reqId: args.reqId }); // CHANGE
 	}
 });

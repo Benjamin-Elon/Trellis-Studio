@@ -3,6 +3,7 @@ const fs = require('node:fs'); // CHANGE
 const path = require('node:path'); // CHANGE
 const { app, BrowserWindow } = require('electron'); // CHANGE
 const { createRegularSpacingFixture } = require('./regular-spacing-preview.cjs'); // CHANGE
+const { measurePreviewGeometry } = require('./planting-preview-geometry.cjs'); // CHANGE
 const root = process.env.TRELLIS_PREVIEW_ROOT || path.resolve(__dirname, '../..'); // CHANGE
 app.commandLine.appendSwitch('disable-gpu'); // CHANGE
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); // CHANGE: software rendering avoids a separate GPU subprocess in restricted Windows test environments.
@@ -16,6 +17,7 @@ app.whenReady().then(async () => { // CHANGE
         await win.webContents.executeJavaScript('window.mxLoadResources=false;window.mxLoadStylesheets=false;'); // CHANGE
         const webapp = path.join(root, 'drawio/src/main/webapp'); // CHANGE
         await win.webContents.executeJavaScript(fs.readFileSync(path.join(webapp, 'mxgraph/mxClient.js'), 'utf8')); // CHANGE
+        await win.webContents.executeJavaScript('window.measurePreviewGeometry=' + measurePreviewGeometry.toString() + '; void 0;'); // CHANGE: expose measurements without returning an unclonable function over Electron IPC.
         await win.webContents.executeJavaScript(` // CHANGE
             window.graph = new mxGraph(document.getElementById('graph')); // CHANGE
             graph.isSpecialColor=()=>false; // CHANGE
@@ -37,16 +39,22 @@ app.whenReady().then(async () => { // CHANGE
                 const garden=graph.insertVertex(parent,'garden',xml({garden_module:'1',label:'Garden'}),200,150,2500,2500); // CHANGE
                 const bed=graph.insertVertex(garden,'bed',xml({garden_bed:'1',label:'Bed'}),250,200,300,100,'fillColor=#afb576;'); // CHANGE
                 const slots=Array.from({length:125},(_,i)=>({x:6+(i%25)*12,y:30+Math.floor(i/25)*13,r:4})); // CHANGE
-                const state={ownerId:'allocate:fixture',moduleCell:garden,draft:{crop:{label:'Radish'},plantResolution:{plant:{plant_abbr:'RAD'}},status:'compatible',plantCount:125,geometry:{ok:true,geometry:{x:250,y:200,width:300,height:100},slots}}}; // CHANGE
+                const state={ownerId:'allocate:fixture',moduleCell:garden,draft:{crop:{label:'Radish'},plantResolution:{plant:{plant_abbr:'RAD'}},status:'compatible',plantCount:125,geometry:{ok:true,labelBandPx:21,geometry:{x:250,y:200,width:300,height:100},slots}}}; // CHANGE: Allocate must retain its proposal's header band.
                 window.previewFixtureState=state; // CHANGE
                 const serialize=()=>mxUtils.getXml(new mxCodec().encode(graph.getModel())); // CHANGE
                 const rows=[], service=graph.__trellisPlantingGroup.preview; // CHANGE
                 const capture=(name, redraw=true)=>{ // CHANGE
                     if(redraw)previewAllocateController.renderGhost(state); // CHANGE
                     const ghost=document.querySelector('.trellis-allocate-ghost'),frame=ghost.querySelector('.manual-link-spacing-preview-group-frame'); // CHANGE
-                    const rect=frame.getBoundingClientRect(),target=graph.view.getState(bed).shape.node.getBoundingClientRect(),style=getComputedStyle(frame); // CHANGE
+                    const rect=frame.getBoundingClientRect(),style=getComputedStyle(frame); // CHANGE
+                    const parent=graph.view.getState(garden),scale=graph.view.scale,tr=graph.view.translate,geo=state.draft.geometry.geometry; // CHANGE
+                    const groupRect={x:parent.x/scale-tr.x+geo.x,y:parent.y/scale-tr.y+geo.y,width:geo.width,height:geo.height}; // CHANGE
+                    const radians=(state.draft.geometry.rotation||0)*Math.PI/180; // CHANGE
+                    const expectedCircles=slots.map(slot=>{const x=slot.x-geo.width/2,y=slot.y-geo.height/2;return {x:groupRect.x+geo.width/2+x*Math.cos(radians)-y*Math.sin(radians),y:groupRect.y+geo.height/2+x*Math.sin(radians)+y*Math.cos(radians)};}); // CHANGE
+                    const measured=measurePreviewGeometry(graph,ghost,[{rect:groupRect,contentBounds:{minX:4,minY:25,maxX:296,maxY:96},rotationDeg:state.draft.geometry.rotation||0,circles:expectedCircles}]); // CHANGE
                     const canvas=graph.container.getBoundingClientRect(); // CHANGE
-                    rows.push({name,deltaX:rect.x-target.x,deltaY:rect.y-target.y,width:rect.width,height:rect.height,circles:ghost.querySelectorAll('.manual-link-spacing-preview-plant').length,label:ghost.querySelector('.manual-link-spacing-preview-plant')?.textContent,display:style.display,visibility:style.visibility,inViewport:rect.right>canvas.left&&rect.left<canvas.right&&rect.bottom>canvas.top&&rect.top<canvas.bottom,parent:ghost.parentNode.className}); // CHANGE
+                    const title=ghost.querySelector('.manual-link-spacing-preview-group-title'),matrix=new DOMMatrix(getComputedStyle(title).transform); // CHANGE: inspect actual Chromium glyph orientation across Allocate rotations.
+                    rows.push({name,...measured,titleAngle:Math.atan2(matrix.b,matrix.a)*180/Math.PI,titleSibling:title.parentNode===ghost,titleBorder:title.style.borderBottom,width:rect.width,height:rect.height,circles:ghost.querySelectorAll('.manual-link-spacing-preview-plant').length,label:ghost.querySelector('.manual-link-spacing-preview-plant')?.textContent,display:style.display,visibility:style.visibility,inViewport:rect.right>canvas.left&&rect.left<canvas.right&&rect.bottom>canvas.top&&rect.top<canvas.bottom,parent:ghost.parentNode.className}); // CHANGE
                 }; // CHANGE
                 graph.view.scaleAndTranslate(1.35,5,10);graph.container.scrollLeft=300;graph.container.scrollTop=250; // CHANGE
                 const before=serialize();capture('135% scrolled'); // CHANGE
@@ -62,7 +70,7 @@ app.whenReady().then(async () => { // CHANGE
                 const warningBorder=document.querySelector('.trellis-allocate-ghost .manual-link-spacing-preview-group-frame').style.borderColor; // CHANGE
                 const m=graph.view.getState(garden),scale=graph.view.scale,tr=graph.view.translate; // CHANGE
                 const rect={x:m.x/scale-tr.x+250,y:m.y/scale-tr.y+200,width:300,height:100}; // CHANGE
-                service.render('spacing',{className:'manual-link-spacing-preview',rows:[{rect,label:'Radish',circles:slots.map(s=>({x:rect.x+s.x,y:rect.y+s.y,r:s.r,label:'RAD'}))}]}); // CHANGE
+                service.render('spacing',{className:'manual-link-spacing-preview',rows:[{rect,groupLabelBandPx:21,label:'Radish',circles:slots.map(s=>({x:rect.x+s.x,y:rect.y+s.y,r:s.r,label:'RAD'}))}]}); // CHANGE
                 const spacing=document.querySelector('.manual-link-spacing-preview .manual-link-spacing-preview-group-frame').getBoundingClientRect(); // CHANGE
                 const allocation=document.querySelector('.trellis-allocate-ghost .manual-link-spacing-preview-group-frame').getBoundingClientRect(); // CHANGE
                 const sharedDelta={x:spacing.x-allocation.x,y:spacing.y-allocation.y}; // CHANGE
@@ -75,8 +83,10 @@ app.whenReady().then(async () => { // CHANGE
             })(); // CHANGE
         `); // CHANGE
         for (const row of result.rows) { // CHANGE
-            assert.ok(Math.abs(row.deltaX) <= 2 && Math.abs(row.deltaY) <= 2, JSON.stringify(row)); // CHANGE: mxGraph stroke bounds differ by less than two CSS pixels.
+            assert.ok(row.maxFrameDelta <= 2 && row.maxCircleDelta <= 2 && row.circleCount === row.expectedCount, JSON.stringify(row)); // CHANGE: verify the usable footprint rather than the outer bed/group border.
             assert.equal(row.circles, 125); assert.equal(row.label, 'RAD'); // CHANGE
+            assert.equal(row.titleAngle,0); assert.equal(row.titleSibling,true); // CHANGE: title glyphs remain upright outside the rotating/clipping frame.
+            assert.equal(row.titleBorder,''); // CHANGE
             assert.equal(row.visibility, 'visible'); assert.notEqual(row.display, 'none'); // CHANGE
             assert.ok(row.inViewport, row.name); assert.equal(row.parent, 'trellis-graph-annotation-layer'); // CHANGE
         } // CHANGE
@@ -215,18 +225,9 @@ app.whenReady().then(async () => { // CHANGE
                     await fixture.settle(); // CHANGE
                     const host=document.querySelector('.manual-link-spacing-preview'); // CHANGE
                     const frame=host.querySelector('[data-spacing-preview-cell="'+fixture.groups[0].id+'"]'),rect=frame.getBoundingClientRect(); // CHANGE
-                    const state=graph.view.getState(fixture.groups[0]),target=state.shape.node.getBoundingClientRect(); // CHANGE
-                    const dots=[...host.querySelectorAll('.manual-link-spacing-preview-plant')]; // CHANGE
-                    let dotIndex=0,maxCircleDelta=0; // CHANGE
-                    for(const row of preview.rows){ // CHANGE
-                        const frameRect=host.querySelector('[data-spacing-preview-cell="'+row.cellId+'"]').getBoundingClientRect(); // CHANGE
-                        for(const dot of row.groupPreview.circles){ // CHANGE
-                            const bounds=dots[dotIndex++]?.getBoundingClientRect();if(!bounds){maxCircleDelta=Infinity;continue;} // CHANGE
-                            maxCircleDelta=Math.max(maxCircleDelta,Math.abs(bounds.x+bounds.width/2-frameRect.x-(dot.x-row.rect.x)*graph.view.scale),Math.abs(bounds.y+bounds.height/2-frameRect.y-(dot.y-row.rect.y)*graph.view.scale)); // CHANGE
-                        } // CHANGE
-                    } // CHANGE
-                    const circlesAligned=dots.length===dotIndex&&maxCircleDelta<=2; // CHANGE
-                    checks.push({name,deltaX:rect.x-target.x,deltaY:rect.y-target.y,circlesAligned,maxCircleDelta,actualCircles:dots.length,expectedCircles:dotIndex,focusRetained:document.activeElement===field&&entry.panel.querySelector('input[type=number]')===field,rawValue:field.value,hidden:state.shape.node.style.opacity==='0'}); // CHANGE
+                    const state=graph.view.getState(fixture.groups[0]); // CHANGE
+                    const measured=measurePreviewGeometry(graph,host,preview.rows.map(row=>({...row.groupPreview,cellId:row.cellId}))); // CHANGE: compare both footprint and circles to the group's projected coordinates.
+                    checks.push({name,...measured,focusRetained:document.activeElement===field&&entry.panel.querySelector('input[type=number]')===field,rawValue:field.value,hidden:state.shape.node.style.opacity==='0'}); // CHANGE
                 } // CHANGE
                 for(const scale of [1.35,1.75]){ // CHANGE
                     graph.view.scaleAndTranslate(scale,5,10); // CHANGE
@@ -245,7 +246,7 @@ app.whenReady().then(async () => { // CHANGE
             })(); // CHANGE
         `); // CHANGE
         for (const check of regularSpacing.checks) { // CHANGE
-            assert.ok(Math.abs(check.deltaX) <= 2 && Math.abs(check.deltaY) <= 2 && check.circlesAligned && check.focusRetained && check.rawValue === '33' && check.hidden, JSON.stringify(check)); // CHANGE
+            assert.ok(check.maxFrameDelta <= 2 && check.maxCircleDelta <= 2 && check.circleCount === check.expectedCount && check.focusRetained && check.rawValue === '33' && check.hidden, JSON.stringify(check)); // CHANGE
         } // CHANGE
         assert.ok(regularSpacing.displaced && regularSpacing.unchanged && regularSpacing.restored, JSON.stringify(regularSpacing)); // CHANGE
         result.regularSpacing = regularSpacing; // CHANGE
@@ -274,13 +275,14 @@ app.whenReady().then(async () => { // CHANGE
                 graph.container.style.width='1000px';graph.container.scrollLeft=0;graph.container.scrollTop=0;graph.view.scaleAndTranslate(1,0,0); // CHANGE
                 const xml=attrs=>{const node=mxUtils.createXmlDocument().createElement('object');Object.entries(attrs).forEach(([key,value])=>node.setAttribute(key,String(value)));return node;}; // CHANGE
                 const garden=graph.insertVertex(null,null,xml({garden_module:'1',label:'Garden'}),0,0,1000,680,'fillColor=#b6d99c;module=1;container=1;'); // CHANGE
-                const checks=[]; // CHANGE
+                const checks=[]; window.footprintVisuals=[]; // CHANGE: retain authoritative proposals for the optional footprint comparison image.
                 for(const [index,live]of [false,true].entries()){ // CHANGE
                     const bed=graph.insertVertex(garden,null,xml({garden_bed:'1',label:'Bed'}),75+index*500,400,300,180,'fillColor=#afb576;'); // CHANGE: graph units reflect the production 0.9 units/cm drawing scale.
                     const proposal=USL.tiler.proposePlantingGeometry({bedCell:bed,fillAvailableBed:true,spacingXCm:85,spacingYCm:120,vegDiameterCm:110,allowedOverhangPct:50,offsetXCm:0,offsetYCm:0}); // CHANGE
                     const group=USL.tiler.createPlantingFromProposal({moduleCell:garden,proposal,attributes:{plant_name:'Zucchini',plant_abbr:'ZUC'},source:'centering-visual'}, {select:false}); // CHANGE
                     const row={cellId:group.id,enabled:true,label:'Zucchini',spacingXCm:85,spacingYCm:120,vegDiameterCm:110,allowedOverhangPct:50,offsetXCm:0,offsetYCm:0,rect:{...group.geometry}}; // CHANGE
                     const preview=USL.scheduler.layoutTools.buildSpacingPreviewModel(graph,[row]).rows[0].groupPreview; // CHANGE
+                    window.footprintVisuals.push({garden,group,proposal,preview}); // CHANGE
                     const minX=Math.min(...preview.circles.map(dot=>dot.x-dot.r)),maxX=Math.max(...preview.circles.map(dot=>dot.x+dot.r)); // CHANGE
                     const minY=Math.min(...preview.circles.map(dot=>dot.y-dot.r)),maxY=Math.max(...preview.circles.map(dot=>dot.y+dot.r)); // CHANGE
                     const host=document.createElement('div');host.style.cssText='position:fixed;top:24px;left:'+(index?530:24)+'px;width:420px;padding:12px;background:white;border:1px solid #777;z-index:10040;';document.body.appendChild(host); // CHANGE
@@ -299,6 +301,23 @@ app.whenReady().then(async () => { // CHANGE
             await new Promise(resolve=>setTimeout(resolve,300)); // CHANGE
             fs.writeFileSync(process.env.TRELLIS_OVERHANG_SCREENSHOT,(await win.webContents.capturePage()).toPNG()); // CHANGE
         } // CHANGE
+        if(process.env.TRELLIS_FOOTPRINT_SCREENSHOT) { // CHANGE
+            await win.webContents.executeJavaScript(` // CHANGE
+                (async()=>{ // CHANGE
+                    graph.__trellisPlantingSpacingEditor.clear();document.querySelectorAll('body>div:not(#graph)').forEach(node=>node.remove()); // CHANGE
+                    for(const host of document.querySelectorAll('[data-planting-preview-owner]'))graph.__trellisPlantingGroup.preview.clear(host.dataset.plantingPreviewOwner); // CHANGE: remove retained ghosts from previous test scenarios.
+                    const [spacing,allocate]=footprintVisuals; // CHANGE
+                    graph.__trellisPlantingGroup.preview.render('spacing:visual',{className:'manual-link-spacing-preview',rows:[{...spacing.preview,label:'Spacing · Zucchini'}]}); // CHANGE
+                    previewAllocateController.renderGhost({ownerId:'allocate:visual',moduleCell:allocate.garden,draft:{crop:{label:'Allocate · Zucchini'},plantResolution:{plant:{plant_abbr:'ZUC'}},status:'compatible',plantCount:allocate.proposal.plantCount,geometry:allocate.proposal}}); // CHANGE
+                    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))); // CHANGE
+                    for(const item of footprintVisuals)for(const cell of graph.model.getDescendants(item.group)){const state=graph.view.getState(cell);for(const node of [state?.shape?.node,state?.text?.node])if(node)node.style.visibility='hidden';} // CHANGE: hide saved shapes after the renderer's refresh so only ghosts remain visible.
+                })(); // CHANGE
+            `); // CHANGE
+            await win.webContents.capturePage(); // CHANGE
+            await new Promise(resolve=>setTimeout(resolve,300)); // CHANGE
+            fs.writeFileSync(process.env.TRELLIS_FOOTPRINT_SCREENSHOT,(await win.webContents.capturePage()).toPNG()); // CHANGE
+            if(process.env.TRELLIS_FOOTPRINT_VISUAL_ONLY){process.stdout.write('FOOTPRINT_VISUAL_RESULT:written\n');app.quit();return;} // CHANGE: optional visual inspection can finish before repeating the independent angle suites.
+        } // CHANGE
         const rotatedSpacing={checks:[],undoCleared:true,redoCleared:true}; // CHANGE
         for(const [angle,bedAngle] of [[0,37],[37,-30],[90,0],[-30,90]]){ // CHANGE
             const angleWindow=new BrowserWindow({show:false,width:1000,height:750,webPreferences:{sandbox:false,backgroundThrottling:false}}); // CHANGE
@@ -306,6 +325,7 @@ app.whenReady().then(async () => { // CHANGE
                 await angleWindow.loadURL('data:text/html,'+encodeURIComponent('<!doctype html><body style="margin:0"><div id="graph" style="position:relative;width:900px;height:650px;overflow:auto"></div></body>')); // CHANGE
                 await angleWindow.webContents.executeJavaScript('window.mxLoadResources=false;window.mxLoadStylesheets=false;'); // CHANGE
                 await angleWindow.webContents.executeJavaScript(fs.readFileSync(path.join(webapp,'mxgraph/mxClient.js'),'utf8')); // CHANGE
+                await angleWindow.webContents.executeJavaScript('window.measurePreviewGeometry=' + measurePreviewGeometry.toString() + '; void 0;'); // CHANGE
                 await angleWindow.webContents.executeJavaScript(` // CHANGE
                     window.graph=new mxGraph(document.getElementById('graph'));graph.isSpecialColor=()=>false; // CHANGE
                     graph.convertValueToString=cell=>cell.value?.getAttribute?cell.value.getAttribute('label')||'':String(cell.value||''); // CHANGE
@@ -329,18 +349,10 @@ app.whenReady().then(async () => { // CHANGE
                         const preview=fixture.tools.buildSpacingPreviewModel(graph,draft); // CHANGE
                         for(const scale of [1.35,1.75]){ // CHANGE
                             graph.view.scaleAndTranslate(scale,5,10);graph.container.scrollLeft=200;graph.container.scrollTop=160;await fixture.settle(); // CHANGE
-                            const host=document.querySelector('.manual-link-spacing-preview'),hostBounds=host.getBoundingClientRect(); // CHANGE
-                            const dots=[...host.querySelectorAll('.manual-link-spacing-preview-plant')];let index=0,maxDelta=0; // CHANGE
-                            for(const row of preview.rows){ // CHANGE
-                                const frame=host.querySelector('[data-spacing-preview-cell="'+row.cellId+'"]'); // CHANGE
-                                const baseX=hostBounds.x+parseFloat(frame.style.left),baseY=hostBounds.y+parseFloat(frame.style.top); // CHANGE
-                                for(const dot of row.groupPreview.circles){ // CHANGE
-                                    const bounds=dots[index++].getBoundingClientRect(); // CHANGE
-                                    maxDelta=Math.max(maxDelta,Math.abs(bounds.x+bounds.width/2-baseX-(dot.x-row.rect.x)*scale),Math.abs(bounds.y+bounds.height/2-baseY-(dot.y-row.rect.y)*scale)); // CHANGE
-                                } // CHANGE
-                            } // CHANGE
+                            const host=document.querySelector('.manual-link-spacing-preview'); // CHANGE
+                            const measured=measurePreviewGeometry(graph,host,preview.rows.map(row=>({...row.groupPreview,cellId:row.cellId}))); // CHANGE
                             const frame=host.querySelector('[data-spacing-preview-cell="'+fixture.groups[0].id+'"]'),bedFrame=host.querySelector('.manual-link-spacing-preview-bed-frame'); // CHANGE
-                            checks.push({angle,bedAngle,scale,maxDelta,circleCount:dots.length,expectedCount:index,frameTransform:frame.style.transform,bedTransform:bedFrame.style.transform,unchanged:fixture.serialize()===before}); // CHANGE
+                            checks.push({angle,bedAngle,scale,...measured,frameTransform:frame.style.transform,bedTransform:bedFrame.style.transform,unchanged:fixture.serialize()===before}); // CHANGE
                         } // CHANGE
                         graph.__trellisPlantingSpacingEditor.clear(); graph.setCellStyles('fillColor','#abcdef',[fixture.roadmapModule]); // CHANGE
                         const historyEntry=await fixture.open();fixture.edit(historyEntry); // CHANGE: await the editor rebuilt by the model change before editing.
@@ -362,7 +374,7 @@ app.whenReady().then(async () => { // CHANGE
         for(const check of rotatedSpacing.checks){ // CHANGE
             assert.equal(check.frameTransform,check.angle?'rotate('+check.angle+'deg)':'',JSON.stringify(check)); // CHANGE
             assert.equal(check.bedTransform,check.bedAngle?'rotate('+check.bedAngle+'deg)':'',JSON.stringify(check)); // CHANGE
-            assert.ok(check.maxDelta<=2&&check.circleCount===check.expectedCount&&check.unchanged,JSON.stringify(check)); // CHANGE
+            assert.ok(check.maxFrameDelta<=2&&check.maxCircleDelta<=2&&check.circleCount===check.expectedCount&&check.unchanged,JSON.stringify(check)); // CHANGE
         } // CHANGE
         assert.ok(rotatedSpacing.undoCleared&&rotatedSpacing.redoCleared,JSON.stringify(rotatedSpacing)); // CHANGE
         result.rotatedSpacing=rotatedSpacing; // CHANGE

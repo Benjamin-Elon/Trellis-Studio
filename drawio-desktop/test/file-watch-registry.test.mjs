@@ -125,7 +125,7 @@ test('desktop file watch lifecycle integration is marked and wired', () => {
 	assert.match(preloadSource, /file-watch listener cleanup/, 'preload header should mark listener cleanup');
 	assert.match(electronAppSource, /duplicate file-watch prevention/, 'ElectronApp header should mark duplicate watch prevention');
 	assert.match(electronSource, /BrowserWindow\.fromWebContents\(event\.sender\)/, 'watch ownership should use the IPC sender window');
-	assert.match(electronSource, /fileWatchRegistry\.unwatchWindow\(mainWindow\);/, 'closed windows should release file-watch subscriptions');
+	assert.match(electronSource, /cleanupClosedWindow\(\{[\s\S]*watches: fileWatchRegistry/, 'closed windows should pass their watches to owned cleanup'); // CHANGE: behavioral lifecycle tests verify actual release after destruction.
 	assert.match(preloadSource, /else if \(msg\.action === 'unwatchFile'\) \{[\s\S]*delete fileChangedListeners\[msg\.path\];/, 'unwatch requests should remove preload file-change listeners');
 	assert.match(electronAppSource, /if \(this\.watchedPath == newPath\) return; \/\/ CHANGE/, 'same-path renderer watch calls should return before IPC');
 });

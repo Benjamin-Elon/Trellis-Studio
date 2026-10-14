@@ -665,6 +665,8 @@ test("createModuleAtPoint creates garden module with settings-needed event", asy
     const team = harness.root.children.find(child => child !== mod && child.getAttribute("team_module") === "1");
     const task = harness.root.children.find(child => child !== mod && child.getAttribute("task_module") === "1");
     assert.equal(mod.getAttribute("garden_module"), "1");
+    assert.equal(mod.getAttribute('plant_circle_max_per_planting'), '200'); // NEW: newly created gardens activate the agreed circle budgets.
+    assert.equal(mod.getAttribute('plant_circle_max_total'), '1000'); // NEW
     assert.equal(mod.getAttribute("team_module"), null);
     assert.ok(team);
     assert.ok(task);

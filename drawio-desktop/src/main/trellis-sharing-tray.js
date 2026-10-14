@@ -35,22 +35,45 @@ export async function createSharingTray({ app, Tray, Menu, nativeImage, iconPath
     const icon = nativeImage.createFromPath(iconPath);
     if (icon.isEmpty()) throw new Error('Sharing tray icon is unavailable.');
     const tray = new Tray(icon.resize({ width: 20, height: 20 }));
-    function update(statuses = service.listStatus()) {
+    let disposed = false; // NEW
+    function update() { // CHANGE: aggregate service notifications always rebuild the complete transport list.
+        if (disposed) return; // NEW
+        const statuses = service.listStatus(); // NEW
         tray.setToolTip('Trellis Studio sharing');
         tray.setContextMenu(Menu.buildFromTemplate([
             { label: 'Open Trellis Studio', click: () => openWindow() }, // CHANGE: Electron passes a MenuItem argument to click handlers, not a canvas path.
             { type: 'separator' },
             ...statuses.map(status => ({ label: status.label + ': ' + (status.connectedCollaborators == null ? 'connection count unavailable' : status.connectedCollaborators + ' connected collaborators') + ' (' + status.state + ')', click: () => openWindow(status.diagramPath) })),
             { type: 'separator' },
-            { label: 'Pause All Syncing', click: () => service.setPaused({ paused: true }).catch(err => tray.setToolTip(err.message)) },
-            { label: 'Resume All Syncing', click: () => service.setPaused({ paused: false }).catch(err => tray.setToolTip(err.message)) },
-            { label: 'Restart Sharing', click: () => service.stop().then(() => service.start()).catch(err => tray.setToolTip(err.message)) }, // CHANGE: explicit restart also resets the bounded crash budget.
-            { label: 'Start Trellis at Sign-in', type: 'checkbox', checked: !!store?.get('trellisSharingStartup'), click: item => setSharingStartup(app, item.checked, store).then(() => update()).catch(err => tray.setToolTip(err.message)) },
+            { label: 'Pause All Syncing', click: () => service.setPaused({ paused: true }).catch(showError) }, // CHANGE
+            { label: 'Resume All Syncing', click: () => service.setPaused({ paused: false }).catch(showError) }, // CHANGE
+            { label: 'Restart Sharing', click: () => service.stop().then(() => service.start()).catch(showError) }, // CHANGE
+            { label: 'Start Trellis at Sign-in', type: 'checkbox', checked: !!store?.get('trellisSharingStartup'), click: item => setSharingStartup(app, item.checked, store).then(() => update()).catch(showError) }, // CHANGE
             { label: 'Quit Trellis Studio', click: () => app.quit() }
         ]));
     }
-    tray.on('double-click', () => openWindow());
-    const unsubscribe = service.onStatus(update);
-    update();
-    return { tray, dispose() { unsubscribe(); tray.destroy(); } };
+    function showError(error) { if (!disposed) tray.setToolTip(error.message); } // NEW: late requests cannot access a destroyed tray.
+    let unsubscribe; // NEW
+    try { // NEW: a failed menu/subscription must not leak the partially created native tray.
+        tray.on('double-click', () => openWindow()); // CHANGE
+        unsubscribe = service.onStatus(update); update(); // CHANGE
+    } catch (error) { disposed = true; unsubscribe?.(); tray.destroy(); throw error; } // NEW
+    return { tray, dispose() { if (disposed) return; disposed = true; unsubscribe(); tray.destroy(); } }; // CHANGE
 }
+
+/** Present all current transports through the existing tray service interface. */ // NEW
+export function createSharingGroup({ getServices, getIdentityStatuses, subscribe, canStart }) { // NEW
+    async function run(method, input) { // NEW
+        if (method !== 'stop' && !canStart()) throw new Error('Trellis is shutting down.'); // NEW
+        const results = await Promise.allSettled(getServices().map(service => service[method](input))); // NEW
+        const failure = results.find(result => result.status === 'rejected'); // NEW
+        if (failure) throw failure.reason; // NEW
+    } // NEW
+    return { // NEW
+        listStatus: () => [...getIdentityStatuses(), ...getServices().flatMap(service => service.listStatus())], // NEW
+        onStatus: subscribe, // NEW
+        setPaused: input => run('setPaused', input), // NEW
+        stop: input => run('stop', input || { deadline: Date.now() + 10000 }), // NEW
+        start: () => run('start') // NEW
+    }; // NEW
+} // NEW

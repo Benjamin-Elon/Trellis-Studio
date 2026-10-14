@@ -30,6 +30,7 @@ from .schema import (
 from .sowing_windows import normalize_window_row, select_cities_for_crop, usable_crop_for_sowing_windows
 from .validator import normalize_key, source_values_from_input, validate_input, validate_row, validate_run
 from .weather import forecast_rows, history_window, summarize_city_monthly_weather
+from .task_instructions import draft_instructions  # CHANGE: instruction-only enrichment preserves deterministic schedules.
 
 
 TASK_RULE_ORDER = ["prep", "sow", "start", "harden", "transplant", "thin", "harvest"]
@@ -167,7 +168,7 @@ def estimate_openai_calls(input_data: dict[str, Any], settings: Settings, db_pat
         "plant_task_templates": template_count,
         "variety_task_overrides": variety_override_count,
         "sowing_window_crops": sowing_window_count,
-        "estimated_total": crop_count + city_label_count + companion_count + sowing_window_count,  # CHANGED: template rows are deterministic, not OpenAI calls
+        "estimated_total": crop_count + city_label_count + companion_count + sowing_window_count + template_count,  # CHANGE: instruction drafts add one call per crop/method; varieties inherit.
     }
 
 
@@ -555,9 +556,17 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
             print(f"Finished crop {crop_index}/{crop_count}: {row['plant_name']}", flush=True)
             return
         print(f"  - Plant task templates to generate: {len(crop_methods)}", flush=True)
+        instruction_templates = {}  # CHANGE: reuse crop/method drafts for variety templates.
         for method_index, method in enumerate(crop_methods, 1):
             print(f"    * Template {method_index}/{len(crop_methods)}: {method['method_id']}", flush=True)
             template = build_task_template_from_method(method)  # deterministic template generation
+            try:  # CHANGE: provider failure leaves the valid deterministic schedule intact.
+                template, instruction_trace = draft_instructions(openai, row, method, template, crop.get('sources') or [], str(crop.get('notes') or ''))  # CHANGE
+                provenance['traces'].append(instruction_trace.redacted())  # CHANGE
+            except Exception as error:  # CHANGE
+                print(f"      Instruction drafts unavailable: {error}", flush=True)  # CHANGE
+                provenance.setdefault('instruction_failures', []).append({'plant_name': row['plant_name'], 'method_id': method['method_id'], 'error': str(error)})  # CHANGE
+            instruction_templates[method['method_id']] = template  # CHANGE
             generated["PlantTaskTemplates"].append({
                 "plant_name": row["plant_name"],
                 "method_id": method["method_id"],
@@ -572,6 +581,15 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
                 continue
             print(f"    * Override {override_index}/{len(overrides)}: {override.get('variety_name')} / {override.get('method_id')}", flush=True)
             template = build_task_template_from_method(method)  # deterministic template generation
+            inherited = {rule['id']: rule for rule in instruction_templates.get(method['method_id'], {}).get('rules', [])}  # CHANGE
+            for rule in template['rules']:  # CHANGE: inherit only guidance; variety timing remains deterministic.
+                for field in ('instructions', 'instructionProvenance'):  # CHANGE
+                    if field in inherited.get(rule['id'], {}):  # CHANGE
+                        rule[field] = inherited[rule['id']][field]  # CHANGE
+                explicit = override.get('instructions_by_rule', {}).get(rule['id'])  # CHANGE
+                if isinstance(explicit, str):  # CHANGE
+                    rule['instructions'] = explicit  # CHANGE
+                    rule['instructionProvenance'] = {'status': 'customized', 'sourceUrls': [], 'sourceNote': 'Explicit variety instruction override.'}  # CHANGE
             generated["VarietyTaskTemplates"].append({
                 "plant_name": row["plant_name"],
                 "variety_name": override["variety_name"],

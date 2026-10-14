@@ -13,9 +13,10 @@ import { createSyncthingService } from '../src/main/trellis-syncthing-service.js
 import { inspectDiagram, preserveAccess, hasCanvasAccess, encodeBlock, decodeBlock, digest, canonical, signRecord, inviteFingerprint } from '../src/main/trellis-share-protocol.js';
 
 const device = letter => Array(8).fill(letter.repeat(7)).join('-');
+const fixtureInviteExpiry = Date.now() + 86400000; // NEW: pages in a fixture share the same user-store timestamp even under CPU load.
 const escape = value => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 function xml(options = {}) {
-    const store = { usersEnabled: true, users: [{ id: 'admin', name: 'Admin', admin: true }, { id: 'alice', name: 'Alice', email: 'alice@example.org', admin: false }, { id: 'bob', name: 'Bob', email: 'bob@example.org', admin: true }], pendingUsers: [{ id: 'invite-user', email: 'invite@example.org' }], invites: [{ id: 'invite-1', email: 'invite@example.org', pendingUserId: 'invite-user', scopeCellIds: ['board'], createdBy: 'admin', status: 'pending', expiresAt: Date.now() + 86400000 }], ...options.store };
+    const store = { usersEnabled: true, users: [{ id: 'admin', name: 'Admin', admin: true }, { id: 'alice', name: 'Alice', email: 'alice@example.org', admin: false }, { id: 'bob', name: 'Bob', email: 'bob@example.org', admin: true }], pendingUsers: [{ id: 'invite-user', email: 'invite@example.org' }], invites: [{ id: 'invite-1', email: 'invite@example.org', pendingUserId: 'invite-user', scopeCellIds: ['board'], createdBy: 'admin', status: 'pending', expiresAt: fixtureInviteExpiry }], ...options.store };
     return '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="diagram-1" trellis_users_json="' + escape(JSON.stringify(store)) + '"><mxCell parent="0"/></object><object id="board" label="' + (options.label || 'Board') + '" trellis_owner_user_id="' + (options.owner || 'admin') + '" trellis_access_user_ids_json="' + escape(JSON.stringify(options.grants || ['alice', 'invite-user', 'bob'])) + '"' + (options.open ? ' trellis_access_open="1"' : '') + '><mxCell parent="1" vertex="1" style="' + (options.style || '') + '"/></object></root></mxGraphModel>';
 }
 async function fixture(t, letter = 'A') {
@@ -35,12 +36,13 @@ async function fixture(t, letter = 'A') {
     let process;
     let spawnCount = 0;
     let statusGate = null; // NEW: simulate a REST response crossing explicit shutdown.
+    let shutdownGate = null, shutdownExits = true, killExits = true, shutdownError = false; const processes = []; // NEW
     const connections = {};
     const service = createSyncthingService({ userDataPath, documentsPath: path.join(root, 'documents'), binaryRoot, platform: 'win32', arch: 'x64', setStartup: async enabled => calls.push({ startup: enabled }), spawn(executable, args, opts) {
         spawnCount++;
         calls.push({ executable, args, opts });
         process = new EventEmitter();
-        process.kill = () => { process.emit('exit', 0); return true; };
+        processes.push(process); process.kill = () => { process.kills = (process.kills || 0) + 1; if (killExits) process.emit('exit', 0); return true; }; // CHANGE
         return process;
     }, fetch: async (url, opts) => {
         const endpoint = new URL(url).pathname.slice(6);
@@ -50,11 +52,11 @@ async function fixture(t, letter = 'A') {
         else if (endpoint === 'config') { if (opts.method === 'PUT') config = JSON.parse(opts.body); else result = structuredClone(config); }
         else if (endpoint === 'system/connections') result = { connections };
         else if (endpoint === 'db/status') result = { state: 'idle', needTotalItems: 0 };
-        else if (endpoint === 'system/shutdown') process.emit('exit', 0);
+        else if (endpoint === 'system/shutdown') { const target = process; if (shutdownGate) await shutdownGate; if (shutdownExits) target.emit('exit', 0); if (shutdownError) throw new Error('Shutdown response disconnected'); } // CHANGE
         return { ok: true, text: async () => JSON.stringify(result) };
     } });
     t.after(async () => { await service.stop(); await fs.rm(root, { recursive: true, force: true }); });
-    return { service, root, calls, connections, config: () => config, spawnCount: () => spawnCount, userDataPath, crash: () => process.emit('exit', 1), setStatusGate: gate => { statusGate = gate; } }; // CHANGE
+    return { service, root, calls, connections, config: () => config, spawnCount: () => spawnCount, userDataPath, crash: () => process.emit('exit', 1), setStatusGate: gate => { statusGate = gate; }, processes, setShutdown: (gate, exits = true, error = false) => { shutdownGate = gate; shutdownExits = exits; shutdownError = error; }, setKillExits: value => { killExits = value; } }; // CHANGE
 }
 async function setup(f, content = xml()) {
     const source = path.join(f.root, 'original.drawio');
@@ -409,6 +411,61 @@ test('daemon crashes consume a bounded retry budget and explicit restart resets 
     assert.equal((await f.service.start()).ok, true);
     assert.equal(f.spawnCount(), 5);
 });
+
+test('concurrent stops share one graceful shutdown and observe synchronous exit', async t => { // NEW
+    const f = await fixture(t); await f.service.start(); // NEW
+    const first = f.service.stop(); assert.equal(first, f.service.stop()); // NEW
+    assert.deepEqual(await first, { ok: true, forced: false }); // NEW
+    assert.equal(f.calls.filter(call => call.endpoint === 'system/shutdown').length, 1); // NEW
+    assert.equal(f.processes[0].listenerCount('exit'), 0); // NEW: both the daemon owner and temporary observer released their listeners.
+}); // NEW
+
+test('unresponsive shutdown REST is bounded and forces only the owned daemon', async t => { // NEW
+    const f = await fixture(t); await f.service.start(); // NEW
+    let release; f.setShutdown(new Promise(resolve => { release = resolve; }), false); // NEW
+    const before = Date.now(); const result = await f.service.stop({ deadline: before + 30 }); release(); // NEW
+    assert.equal(result.forced, true); assert.equal(f.processes[0].kills, 1); assert.ok(Date.now() - before < 1500); // NEW
+    assert.equal(f.processes[0].listenerCount('exit'), 0); // NEW
+}); // NEW
+
+test('a disconnected shutdown response still permits the daemon to finish gracefully', async t => { // NEW
+    const f = await fixture(t); await f.service.start(); f.setShutdown(null, false, true); // NEW
+    const stopping = f.service.stop({ deadline: Date.now() + 500 }); setTimeout(() => f.processes[0].emit('exit', 0), 30); // NEW
+    assert.deepEqual(await stopping, { ok: true, forced: false }); assert.equal(f.processes[0].kills || 0, 0); // NEW
+}); // NEW
+
+test('a successful kill request without exit is reported as failed termination', async t => { // NEW
+    const f = await fixture(t); await f.service.start(); f.setShutdown(null, false); f.setKillExits(false); // NEW
+    const rejected = assert.rejects(f.service.stop({ deadline: Date.now() + 10 }), /did not exit/); // NEW
+    await rejected; assert.equal(f.processes[0].kills, 1); await assert.rejects(f.service.start(), /previous Syncthing process/); f.setKillExits(true); f.setShutdown(null, true); // CHANGE
+}); // NEW
+
+test('Quit during identity generation observes its exit and never launches serve afterwards', async t => { // NEW
+    const f = await fixture(t); await fs.rm(path.join(f.userDataPath, 'trellis-sharing/syncthing/config.xml')); // NEW
+    const starting = f.service.start(), rejected = assert.rejects(starting, /cancelled/); // NEW
+    while (!f.calls.some(call => call.args?.[0] === 'generate')) await new Promise(resolve => setTimeout(resolve, 5)); // NEW
+    const concurrent = assert.rejects(f.service.start(), /cancelled/); // NEW: concurrent callers join generation rather than misidentifying it as a failed stop.
+    await f.service.stop(); await Promise.all([rejected, concurrent]); assert.equal(f.spawnCount(), 1); // CHANGE
+    assert.equal(f.calls.some(call => call.args?.[0] === 'serve'), false); assert.equal(f.processes[0].kills, 1); // NEW
+}); // NEW
+
+test('old startup replies cannot stop or clear a replacement daemon', async t => { // NEW
+    const f = await fixture(t); let release; f.setStatusGate(new Promise(resolve => { release = resolve; })); // NEW
+    const old = f.service.start(), rejected = assert.rejects(old, /cancelled/); // NEW
+    while (!f.calls.some(call => call.endpoint === 'system/status')) await new Promise(resolve => setTimeout(resolve, 5)); // NEW
+    await f.service.stop(); f.setStatusGate(null); await f.service.start(); release(); await rejected; // NEW
+    assert.equal(f.spawnCount(), 2); assert.equal(f.service.backgroundStatus().state, 'syncing'); // NEW
+    assert.equal(f.processes[1].kills || 0, 0); // NEW
+}); // NEW
+
+test('Pause All preserves identity metadata pause across refresh and restart', async t => { // NEW
+    const f = await fixture(t); const input = { identityId: 'identity', directory: path.join(f.root, 'metadata'), devices: [{ syncthingId: device('A'), name: 'Desktop' }] }; // NEW
+    await f.service.configureIdentityMetadata(input); await f.service.setPaused({ paused: true }); // NEW
+    assert.equal(f.config().folders.find(folder => folder.id === 'trellis-identity-identity').paused, true); // NEW
+    await f.service.configureIdentityMetadata(input); await f.service.stop(); await f.service.start(); // NEW
+    assert.equal(f.config().folders.find(folder => folder.id === 'trellis-identity-identity').paused, true); // NEW
+    await f.service.setPaused({ paused: false }); assert.equal(f.service.backgroundStatus().state, 'syncing'); // NEW
+}); // NEW
 
 test('private sharing paths cannot be read through generic IPC or copied as assets', async t => { // NEW
     const f = await fixture(t);

@@ -25,6 +25,7 @@ var mxSettings =
 		'gardenSuccession', // NEW
 		'plantingGroup', // NEW
 		'gardenTasks', // NEW
+		'gardenGuide', // CHANGE
 		'gardenRoadmapCore', // NEW
 		'gardenRoadmaps', // NEW
 		'gardenModules', // NEW
@@ -53,6 +54,7 @@ var mxSettings =
 		plantingGroup: 'plugins/garden_planner_plugins/Planting_Group.js', // CHANGE
 		plantTiler: 'plugins/garden_planner_plugins/Planting_Group.js', // NEW
 		gardenTasks: 'plugins/garden_planner_plugins/Garden_Task_Manager.js', // NEW
+		gardenGuide: 'plugins/garden_planner_plugins/Garden_Guide.js', // CHANGE
 		gardenRoadmapCore: 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', // NEW
 		gardenRoadmaps: 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', // NEW
 		gardenModules: 'plugins/garden_planner_plugins/Modules_Standalone.js', // NEW

@@ -863,8 +863,8 @@ Draw.loadPlugin(function (ui) {
             return rows[0] ? new PlantModel(rows[0]) : null;
         }
 
-        static async loadById(id) {
-            await ensureSchedulerPhysiologySchema();
+        static async loadById(id, { readOnly = false } = {}) { // CHANGE: visual reads must not run schema maintenance.
+            if (!readOnly) await ensureSchedulerPhysiologySchema(); // CHANGE
             const sql = `
           SELECT *,
                  COALESCE(direct_sow,0) AS direct_sow,
@@ -1966,8 +1966,8 @@ Draw.loadPlugin(function (ui) {
             return rows.map(r => new PlantVarietyModel(r));
         }
 
-        static async loadById(varietyId) {
-            await this.ensureTable();
+        static async loadById(varietyId, { readOnly = false } = {}) { // CHANGE
+            if (!readOnly) await this.ensureTable(); // CHANGE: growth estimates never create or alter variety tables.
             const vid = Number(varietyId);
             if (!Number.isFinite(vid)) return null;
 
@@ -2155,11 +2155,11 @@ Draw.loadPlugin(function (ui) {
         return out;
     }
 
-    async function resolveEffectivePlant(plantId, varietyId = null) {
+    async function resolveEffectivePlant(plantId, varietyId = null, options = {}) { // CHANGE: reuse variety override mechanics for read-only visual context.
         const pid = Number(plantId);
         if (!Number.isFinite(pid)) return null;
     
-        const basePlant = await PlantModel.loadById(pid);
+        const basePlant = await PlantModel.loadById(pid, options); // CHANGE
         if (!basePlant) return null;
     
         const vid = finiteNumberOrNull(varietyId); // CHANGE: empty variety selections inherit plant defaults without looking up variety zero.
@@ -2167,7 +2167,7 @@ Draw.loadPlugin(function (ui) {
             return basePlant;
         }
     
-        const variety = await PlantVarietyModel.loadById(vid);
+        const variety = await PlantVarietyModel.loadById(vid, options); // CHANGE
         if (!variety) {
             return basePlant;
         }
@@ -2227,16 +2227,16 @@ Draw.loadPlugin(function (ui) {
             return rows[0] ? new CityClimate(rows[0]) : null;
         }
 
-        static async loadUniqueByName(name) {
-            await ensureSchedulerPhysiologySchema();
+        static async loadUniqueByName(name, { readOnly = false } = {}) { // CHANGE
+            if (!readOnly) await ensureSchedulerPhysiologySchema(); // CHANGE
             const trimmed = String(name || '').trim();
             if (!trimmed) return null;
             const rows = await queryAll(`SELECT * FROM Cities WHERE city_name = ? LIMIT 2;`, [trimmed]);
             return rows.length === 1 ? new CityClimate(rows[0]) : null;
         }
 
-        static async loadById(cityId) {
-            await ensureSchedulerPhysiologySchema();
+        static async loadById(cityId, { readOnly = false } = {}) { // CHANGE
+            if (!readOnly) await ensureSchedulerPhysiologySchema(); // CHANGE
             const id = Number(cityId);
             if (!Number.isFinite(id)) return null;
             const rows = await queryAll(`SELECT * FROM Cities WHERE city_id = ? LIMIT 1;`, [id]);
@@ -2247,8 +2247,8 @@ Draw.loadPlugin(function (ui) {
             return (await CityClimate.loadById(cityId)) || (cityName ? await CityClimate.loadByName(cityName) : null);
         }
 
-        static async resolveUniqueNameFallback({ cityId = null, cityName = '' } = {}) {
-            return (await CityClimate.loadById(cityId)) || (cityName ? await CityClimate.loadUniqueByName(cityName) : null);
+        static async resolveUniqueNameFallback({ cityId = null, cityName = '' } = {}, options = {}) { // CHANGE
+            return (await CityClimate.loadById(cityId, options)) || (cityName ? await CityClimate.loadUniqueByName(cityName, options) : null); // CHANGE
         }
 
         static async updateLatitude(cityName, latitudeDeg) {
@@ -13131,6 +13131,10 @@ Draw.loadPlugin(function (ui) {
             titleInput.type = "text";
             titleInput.value = r.title;
             const titleRow = row("Title", titleInput).row;
+            const instructionsInput = document.createElement('textarea'); // CHANGE: recipe instructions remain independent of timing controls.
+            instructionsInput.rows = 5; instructionsInput.value = typeof r.instructions === 'string' ? r.instructions : ''; // CHANGE
+            instructionsInput.setAttribute('aria-label', 'Task instructions'); // CHANGE
+            const instructionsRow = row('Instructions', instructionsInput).row; // CHANGE
             const customTaskRule = !isCanonicalTaskId(r.id);
             const taskTypeState = customTaskRule ? getTaskTypeEditorOptions() : null;
             const taskTypeSel = customTaskRule ? makeSelect(taskTypeState.options, r.taskTypeId || (taskTypeState.available ? "" : "general")) : null;
@@ -13250,6 +13254,7 @@ Draw.loadPlugin(function (ui) {
             repeatUntilModeSel.addEventListener("change", syncTaskEditorVisibility);
 
             editorBody.appendChild(titleRow);
+            editorBody.appendChild(instructionsRow); // CHANGE
             if (taskTypeRow) editorBody.appendChild(taskTypeRow);
             editorBody.appendChild(startRow);
             editorBody.appendChild(endModeRow);
@@ -13268,6 +13273,7 @@ Draw.loadPlugin(function (ui) {
             const saveBtn = mxUtils.button("Save", async () => {
                 try {
                     r.title = titleInput.value.trim();
+                    if (instructionsInput.value !== (r.instructions || '')) { r.instructions = instructionsInput.value; r.instructionProvenance = { ...(r.instructionProvenance || {}), status: 'customized' }; } // CHANGE
                     if (customTaskRule) r.taskTypeId = taskTypeSel.value || (taskTypeState.available ? "" : "general");
 
                     r.startOffsetDays = Number(startOffsetNum.value);
@@ -14194,6 +14200,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function validateTaskRule(rule, { allowedStages = null, requireTaskType = false } = {}) {
+        if (rule && rule.instructions != null && typeof rule.instructions !== 'string') throw new Error('Task instructions must be text.'); // CHANGE
         const r = normalizeTaskRule(rule);
         const rawRepeatUntilMode = rule && Object.prototype.hasOwnProperty.call(rule, "repeatUntilMode") ? String(rule.repeatUntilMode || "") : "";
 
@@ -14596,6 +14603,8 @@ Draw.loadPlugin(function (ui) {
                     startAnchorStage: rule.startAnchorStage,
                     endMode: rule.endMode
                 };
+                if (typeof rule.instructions === 'string') task.instructions = rule.instructions; // CHANGE
+                if (rule.instructionProvenance) task.instructionProvenance = JSON.parse(JSON.stringify(rule.instructionProvenance)); // CHANGE
                 if (includePreviewMetadata) {
                     Object.defineProperties(task, {
                         previewRuleKey: { value: previewRuleKey, enumerable: false },
@@ -15044,6 +15053,46 @@ Draw.loadPlugin(function (ui) {
         return { template: null, source: "none" };
     }
 
+    /** Resolve guidance without altering a planting's saved template or scheduled cards. */ // CHANGE
+    async function resolveTaskGuideContext(group, card) { // CHANGE
+        const model = graph.getModel(); // CHANGE
+        const moduleCell = findGardenModuleAncestor(model, group); // CHANGE
+        const plantId = Number(group.getAttribute('plant_id')); // CHANGE
+        const varietyId = group.getAttribute('variety_id') || null; // CHANGE
+        const methodId = group.getAttribute('method_id') || card.getAttribute('scheduler_method_id') || group.getAttribute('planting_method') || ''; // CHANGE: prefer canonical method identity over a legacy display attribute.
+        const growthStageKey = group.getAttribute('growth_stage_key') || DEFAULT_GROWTH_STAGE_KEY; // CHANGE
+        const warnings = []; // CHANGE
+        let template = null, plant = null; // CHANGE
+        try { template = normalizeTaskTemplate((await resolveTaskTemplate({ cell: group, plantId, varietyId, methodId })).template); } catch (error) { warnings.push('Recipe unavailable: ' + error.message); } // CHANGE
+        const ruleId = card.getAttribute('scheduler_rule_id'); // CHANGE
+        const matches = (template && template.rules || []).filter(rule => String(rule.id) === String(ruleId) && ruleId); // CHANGE
+        let rule = matches.length === 1 ? matches[0] : null; // CHANGE
+        if (rule && typeof rule.instructions !== 'string') { // CHANGE: legacy saved templates can inherit newly seeded instructions without changing dates.
+            try { // CHANGE
+                const defaults = await resolveTaskTemplate({ cell: null, plantId, varietyId, methodId }); // CHANGE
+                const fallback = (defaults.template && defaults.template.rules || []).filter(item => String(item.id) === String(ruleId)); // CHANGE
+                if (fallback.length === 1 && typeof fallback[0].instructions === 'string') rule = { ...rule, instructions: fallback[0].instructions, instructionProvenance: fallback[0].instructionProvenance }; // CHANGE
+            } catch (error) { warnings.push('Default instructions unavailable: ' + error.message); } // CHANGE
+        } // CHANGE
+        try { const result = await resolvePlantForPlanCrop({ plantId, varietyId, growthStageKey }); plant = result.ok ? result.plant : null; if (!result.ok) warnings.push(result.reason || 'Plant references unavailable.'); } catch (error) { warnings.push('Plant references unavailable: ' + error.message); } // CHANGE
+        return { moduleCell, plantId, methodId: normId(methodId), growthStageKey, template, rule, plant, warnings }; // CHANGE
+    } // CHANGE
+
+    /** Reuse recipe validation on a detached value, then commit its library as one undoable edit. */ // CHANGE
+    function saveTaskGuideRecipe(moduleCell, recipe, options = {}) { // CHANGE
+        const model = graph.getModel(); // CHANGE
+        const users = graph.__trellisUsers || (window.Trellis && window.Trellis.users); // CHANGE
+        if (!moduleCell || model.getCell(cellStableId(moduleCell)) !== moduleCell) throw new Error('The garden is no longer available.'); // CHANGE
+        if (users && users.canEditCell && !users.canEditCell(moduleCell)) throw new Error('You do not have permission to save recipes in this garden.'); // CHANGE
+        const value = moduleCell.value.cloneNode(true); // CHANGE
+        const detached = Object.create(moduleCell); detached.value = value; detached.getAttribute = key => value.getAttribute(key); // CHANGE
+        const saved = upsertTaskRecipe(detached, recipe, options); // CHANGE
+        model.beginUpdate(); // CHANGE
+        try { model.setValue(moduleCell, value); } finally { model.endUpdate(); } // CHANGE
+        if (!(readTaskRecipeLibrary(moduleCell).some(item => item.id === saved.id && JSON.stringify(item.template) === JSON.stringify(saved.template)))) throw new Error('Recipe changes could not be saved.'); // CHANGE
+        return saved; // CHANGE
+    } // CHANGE
+
     function prepAnchorForPlanningMode(planningMode) {
         return planningMode === "direct_sow" ? "SOW" : "TRANSPLANT";
     }
@@ -15348,7 +15397,7 @@ Draw.loadPlugin(function (ui) {
         const stageLabelSuffix = stageIsDefaultMature(growthStage) ? '' : ' - ' + growthStage.stageLabel;
         const patch = {
             season_start_year: String(inputs.seasonStartYear),
-            days_maturity: perennial || budget?.mode !== 'days' ? '' : String(budget.amount),
+            days_maturity: perennial ? (Number(plant.days_maturity) > 0 ? String(plant.days_maturity) : '') : (budget?.mode === 'days' ? String(budget.amount) : ''), // CHANGE: retain the perennial establishment estimate without calculating a harvest schedule.
             gdd_to_maturity: perennial || budget?.mode !== 'gdd' ? '' : String(budget.amount),
             lifespan_start: perennial ? String(result.lifespanStartISO || '') : '',
             lifespan_end: perennial ? String(result.lifespanEndISO || '') : '',
@@ -17708,8 +17757,50 @@ Draw.loadPlugin(function (ui) {
         normalizeCompanionLayoutTemplate
     };
 
+    const growthContextCaches = { plants: new Map(), cities: new Map(), climate: new Map() }; // NEW
+    /** Invalidate reusable reference data after an editor save or database replacement. */ // NEW
+    function invalidateGrowthContexts() { // NEW
+        Object.values(growthContextCaches).forEach(cache => cache.clear()); // NEW
+    } // NEW
+
+    /** Resolve only the reference data needed to draw a planting; this service never writes a cell. */ // NEW
+    async function resolvePlantGrowthContext(cell, todayISO = localTodayISO()) { // NEW
+        if (!sharedCore) bindRequiredSchedulerCores(); // NEW
+        const attrs = Object.fromEntries(Array.from(cell?.value?.attributes || []).map(attr => [attr.name, attr.value])); // NEW
+        const perennial = attrs.perennial === '1' || !!attrs.lifespan_start; // NEW
+        if (perennial && Number(attrs.days_maturity) > 0) return { daysMaturity: Number(attrs.days_maturity) }; // NEW
+        const plantKey = JSON.stringify([attrs.plant_id, attrs.variety_id]); // NEW
+        if (!growthContextCaches.plants.has(plantKey)) growthContextCaches.plants.set(plantKey, resolveEffectivePlant(Number(attrs.plant_id), attrs.variety_id ? Number(attrs.variety_id) : null, { readOnly: true })); // NEW
+        const plant = await growthContextCaches.plants.get(plantKey); // NEW
+        const context = { daysMaturity: plant?.days_maturity, daysTransplant: plant?.days_transplant, daysGerm: plant?.days_germ }; // NEW
+        if (perennial || !plant) return context; // NEW
+        const growingISO = sharedCore.growthStartISO(attrs, context); // NEW
+        if (!sharedCore.parseISODateUTCValue(growingISO) || !sharedCore.parseISODateUTCValue(attrs.harvest_start) || todayISO >= attrs.harvest_start) return context; // NEW
+        const moduleCell = findGardenModuleAncestor(graph.getModel(), cell); // NEW
+        const cityRef = { cityId: attrs.city_id || moduleCell?.getAttribute?.('city_id'), cityName: attrs.city_name || moduleCell?.getAttribute?.('city_name') }; // NEW
+        const cityKey = JSON.stringify(cityRef); // NEW
+        if (!growthContextCaches.cities.has(cityKey)) growthContextCaches.cities.set(cityKey, CityClimate.resolveUniqueNameFallback(cityRef, { readOnly: true })); // NEW
+        const city = await growthContextCaches.cities.get(cityKey); // NEW
+        if (!city) return context; // NEW
+        const policy = resolveClimateModelPolicy(moduleCell, city.city_name, plant.plant_id, null).effective; // NEW
+        const firstYear = Number(growingISO.slice(0, 4)), lastYear = Number(attrs.harvest_start.slice(0, 4)); // NEW
+        if (lastYear < firstYear || lastYear - firstYear > 10) return context; // NEW: reject unreasonable annual spans before loading daily climate.
+        const climateKey = JSON.stringify([cityKey, firstYear, lastYear, policy, todayISO]); // NEW
+        if (!growthContextCaches.climate.has(climateKey)) { // NEW
+            if (growthContextCaches.climate.size >= 16) growthContextCaches.climate.clear(); // NEW: bound retained multi-year daily weather.
+            growthContextCaches.climate.set(climateKey, city.loadDailyClimateModel({ scanStart: new Date(Date.UTC(firstYear, 0, 1)), scanEndHard: new Date(Date.UTC(lastYear, 11, 31)), climatePolicy: policy })); // NEW
+        } // NEW
+        const dailyClimate = await growthContextCaches.climate.get(climateKey); // NEW
+        const env = plant.cropTempEnvelope(); // NEW
+        if (attrs.tbase_c !== '' && Number.isFinite(Number(attrs.tbase_c))) env.Tbase = Number(attrs.tbase_c); // NEW: respect the saved crop-base snapshot.
+        context.dailyRates = sharedCore.buildDailyGddMap({ dailyClimate, cropTemp: env, bedProfile: resolveScheduleBedContext(cell).profile, city, year: firstYear, gddCalibrationEnabled: policy.gddCalibrationEnabled }); // NEW
+        return context; // NEW
+    } // NEW
+    if (window.addEventListener) ['usl:varietyEditorSaved', 'usl:growthStagesSaved', 'trellis:database-restored'].forEach(name => window.addEventListener(name, invalidateGrowthContexts)); // NEW
+
     window.USL = window.USL || {};
     window.USL.scheduler = Object.assign({}, window.USL.scheduler, {
+        resolvePlantGrowthContext, invalidateGrowthContexts, // NEW: read-only context service for the planting renderer.
         openScheduleDialog: (ui, cell) => openScheduleDialog(ui, cell),
         openBedScheduleDialog: (ui, bedCell, options) => openBedScheduleDialog(ui, bedCell, options), // CHANGE
         openDerivedScheduleDialog: (ui, sourceCell, options) => openDerivedScheduleDialog(ui, sourceCell, options),
@@ -17725,6 +17816,7 @@ Draw.loadPlugin(function (ui) {
         openAllocationScheduleDialog,
         resolveAllocationDefaultStatus,
         persistAllocationReusableDefaults,
+        taskGuide: { resolveContext: resolveTaskGuideContext, readRecipes: readTaskRecipeLibrary, canUpdateRecipe: canUpdateTaskRecipe, saveRecipe: saveTaskGuideRecipe }, // CHANGE: narrow Guide integration reuses the existing recipe registry.
         layoutTools
     });
     window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
@@ -18280,6 +18372,7 @@ Draw.loadPlugin(function (ui) {
                 if (typeof loader.validate === 'function') loader.validate();
                 bindRequiredSchedulerCores();
                 installSchedulerPlugin(ui);
+                window.dispatchEvent(new CustomEvent('trellisPlantGrowthReady')); // NEW: groups installed before the asynchronous scheduler cores can now resolve growth.
             } catch (e) {
                 installDisabledSchedulerApi(e);
             }

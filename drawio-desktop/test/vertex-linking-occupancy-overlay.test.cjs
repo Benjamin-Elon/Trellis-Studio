@@ -359,7 +359,7 @@ test("selected linked vertices draw direct connections even when task overlay is
     const source = readSource();
     const drawDecisionSource = sourceBetween(source, "// Decide visibility using internal lane-based policy", "for (const otherCard of sameBoardLinkedCards)");
 
-    assert.match(drawDecisionSource, /const shouldShow = shouldShowEdgeInternal\(cell, other\);/);
+    assert.match(drawDecisionSource, /const shouldShow = shouldShowEdgeInternal\(cell, other, repeatLinkVisibility\);/); // CHANGE: connector decisions use the board's repeat selection
     assert.match(drawDecisionSource, /if \(shouldShow && !shouldSuppressStandardRoadmapDependencyOverlay\(cell, other\)\) \{/); // CHANGE
     assert.match(drawDecisionSource, /linkOverlays\.setLinkOverlay\(/);
     assert.doesNotMatch(drawDecisionSource, /!taskOverlayActive/);

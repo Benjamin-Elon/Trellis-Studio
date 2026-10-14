@@ -110,6 +110,7 @@ def source_values_from_input(item: dict[str, Any]) -> set[str]:
 
 
 def validate_task_template(template: dict[str, Any], allowed_stages: set[str] | None = None) -> list[str]:
+    from .task_instructions import validate_instruction_fields  # CHANGE
     errors: list[str] = []
     if not isinstance(template, dict):
         return ["Task template must be an object."]
@@ -122,6 +123,10 @@ def validate_task_template(template: dict[str, Any], allowed_stages: set[str] | 
     allowed = allowed_stages or {"SOW", "GERM", "TRANSPLANT", "HARVEST_START", "HARVEST_END"}
     for index, rule in enumerate(rules):
         prefix = f"rule[{index}]"
+        if not isinstance(rule, dict):  # CHANGE
+            errors.append(f'{prefix} must be an object.')  # CHANGE
+            continue  # CHANGE
+        errors.extend(f'{prefix}.{error}' for error in validate_instruction_fields(rule))  # CHANGE
         title = str(rule.get("title") or "").strip()
         stage = str(rule.get("startAnchorStage") or "").strip()
         end_stage = rule.get("endAnchorStage")
@@ -228,6 +233,9 @@ def validate_row(
                 errors.append(f"{prefix}.avg_monthly_low_c{month} cannot exceed avg_monthly_high_c{month}.")
         for key in ("last_spring_frost_doy", "first_fall_frost_doy", "first_fall_frost_p90_doy", "first_fall_frost_p50_doy", "first_fall_frost_p10_doy", "last_spring_frost_p90_doy", "last_spring_frost_p50_doy", "last_spring_frost_p10_doy"):
             _number_between(prefix, row, key, 1, 366, errors)
+    elif table == 'TaskInstructionPatches':  # CHANGE: guarded patches are review/apply artifacts, not replacement templates.
+        from .task_instructions import validate_instruction_patch  # CHANGE
+        errors.extend(f'{prefix}.{error}' for error in validate_instruction_patch(row))  # CHANGE
     elif table in ("PlantTaskTemplates", "VarietyTaskTemplates"):
         try:
             template = json.loads(str(row.get("template_json") or "{}"))

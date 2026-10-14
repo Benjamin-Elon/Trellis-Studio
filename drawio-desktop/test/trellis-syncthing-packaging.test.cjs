@@ -97,6 +97,13 @@ test('unsupported sign-in registration is reported without persisting a success 
     assert.equal(persisted, false);
 });
 
+test('a native menu failure disposes the partial tray and its status subscription', { skip: process.platform === 'linux' }, async () => { // NEW
+    const { createSharingTray } = await import('../src/main/trellis-sharing-tray.js'); let destroyed = false, unsubscribed = false; // NEW
+    class BrokenTray extends EventEmitter { setToolTip() {} setContextMenu() { throw new Error('Menu failed'); } destroy() { destroyed = true; } } // NEW
+    await assert.rejects(createSharingTray({ app: {}, Tray: BrokenTray, Menu: { buildFromTemplate: value => value }, nativeImage: { createFromPath: () => ({ isEmpty: () => false, resize() { return this; } }) }, iconPath: 'sample', service: { listStatus: () => [], onStatus: () => () => { unsubscribed = true; } }, openWindow() {}, store: { get: () => false } }), /Menu failed/); // NEW
+    assert.equal(destroyed, true); assert.equal(unsubscribed, true); // NEW
+}); // NEW
+
 test('Electron file filter allows managed images only and always blocks private files', async () => { // NEW: execute the production callback rather than duplicating its decision logic.
     const source = await fs.readFile(path.join(__dirname, '../src/main/electron.js'), 'utf8');
     const ast = require('@babel/parser').parse(source, { sourceType: 'module' });
@@ -105,7 +112,7 @@ test('Electron file filter allows managed images only and always blocks private 
     assert.ok(callback);
     const calls = [];
     const uri = relative => pathToFileURL(path.join(os.tmpdir(), relative)).href; // NEW
-    const filter = vm.runInNewContext(source.slice(callback.start, callback.end), { console: { log() {} }, path, fileURLToPath, app: { getPath: () => os.tmpdir() }, codeUrl: uri('app') + '/', pluginsCodeUrl: uri('plugins') + '/', isPluginsEnabled: () => true, assertSharingFileAccess: async filename => { if (filename.endsWith('secret')) throw new Error('Private'); }, sharingService: { isManagedAssetRequest: async (caller, url) => { calls.push([caller, url]); return url.endsWith('managed.png'); } } });
+    const filter = vm.runInNewContext(source.slice(callback.start, callback.end), { console: { log() {} }, path, fileURLToPath, app: { getPath: () => os.tmpdir() }, codeUrl: uri('app') + '/', pluginsCodeUrl: uri('plugins') + '/', isPluginsEnabled: () => true, assertSharingFileAccess: async filename => { if (filename.endsWith('secret')) throw new Error('Private'); }, identityTransports: new Map(), sharingService: { isManagedAssetRequest: async (caller, url) => { calls.push([caller, url]); return url.endsWith('managed.png'); } } }); // CHANGE: the production callback now consults identity transports too.
     const check = async (url, type = 'image') => { let result; await filter({ url, resourceType: type, webContentsId: 7 }, value => { result = value; }); return !!result.cancel; };
     assert.equal(await check(uri('shared/managed.png')), false);
     assert.equal(await check(uri('shared/managed.png'), 'script'), true);

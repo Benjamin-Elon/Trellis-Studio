@@ -42,7 +42,7 @@ const taskManagerPath = path.join(
     'Garden_Task_Manager.js'
 );
 
-function loadSchedulerHooks() {
+function loadSchedulerHooks(graph = {}) { // CHANGE: Guide integration uses an actual model seam.
     const context = vm.createContext({
         console,
         Date,
@@ -55,7 +55,7 @@ function loadSchedulerHooks() {
         },
         Draw: {
             loadPlugin(register) {
-                register({ editor: { graph: {} } });
+                register({ editor: { graph } }); // CHANGE
             }
         }
     });
@@ -2863,6 +2863,17 @@ test('generated scheduler tasks include canonical and custom task type ids', asy
     assert.deepEqual(Array.from(tasks.map(task => task.task_type_id)), ['bed_preparation', 'hardening_off', 'watering']);
 });
 
+test('generated task instructions and provenance follow every repeated rule occurrence without changing dates', async () => { // CHANGE
+    const plant = makePlant({ plant_name: 'Carrot' }); // CHANGE
+    const result = hooks.computeScheduleResult(makeInputs({ plant, startISO: '2026-04-01' })); // CHANGE
+    const rule = { id: 'custom_water', title: 'Water', startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 1, repeatMode: 'interval', repeatEveryDays: 2, repeatUntilMode: 'x_times', repeatTimes: 2 }; // CHANGE
+    const generate = taskRule => hooks.buildTasksForPlan({ plant, schedule: result.schedule, timelines: result.timelines, taskTemplate: { version: 2, rules: [taskRule] } }); // CHANGE
+    const baseline = await generate(rule), enriched = await generate({ ...rule, instructions: 'Water carefully\nCheck soil', instructionProvenance: { status: 'draft', sourceUrls: ['https://example.test/carrot'] } }); // CHANGE
+    assert.equal(enriched.length, 2); assert.equal(enriched.every(task => task.instructions === 'Water carefully\nCheck soil'), true); // CHANGE
+    assert.deepEqual(Array.from(enriched.map(task => [task.startISO, task.endISO, task.scheduler_task_key])), Array.from(baseline.map(task => [task.startISO, task.endISO, task.scheduler_task_key]))); // CHANGE
+    enriched[0].instructionProvenance.status = 'customized'; assert.equal(enriched[1].instructionProvenance.status, 'draft'); // CHANGE
+}); // CHANGE
+
 test('task titles fall back to plant-only names when no variety is selected', async () => {
     const plant = makePlant({ plant_name: 'Tomato' });
     const result = hooks.computeScheduleResult(makeInputs({ plant }));
@@ -3297,6 +3308,27 @@ test('task recipe ownership blocks updates when users are enabled', () => {
     delete hooks.__testWindow.Trellis;
 });
 
+test('Guide scheduler facade reads saved instructions offline and saves recipe libraries as undoable value replacements', async () => { // CHANGE
+    const { JSDOM } = require('jsdom'); const dom = new JSDOM(); // CHANGE
+    const document = dom.window.document.implementation.createDocument('', '', null); // CHANGE
+    const cell = (id, attrs) => { const value = document.createElement('object'); Object.entries(attrs).forEach(([key, val]) => value.setAttribute(key, val)); return { id, value, getAttribute(key) { return this.value.getAttribute(key); } }; }; // CHANGE
+    const template = { version: 2, rules: [{ id: 'sow', title: 'Sow', startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 2, instructions: 'Plant seeds', instructionProvenance: { status: 'draft' } }] }; // CHANGE
+    const garden = cell('guide-garden', { garden_module: '1' }), group = cell('guide-group', { tiler_group: '1', plant_id: '10', method_id: 'direct_sow.field', task_template_json: JSON.stringify(template) }), card = cell('guide-card', { scheduler_rule_id: 'sow' }); group.parent = garden; // CHANGE
+    const cells = new Map([garden, group, card].map(item => [item.id, item])), previous = []; let transactions = 0; // CHANGE
+    const model = { getCell: id => cells.get(id), getParent: item => item.parent, beginUpdate() { transactions++; }, endUpdate() {}, setValue(item, value) { previous.push(item.value); item.value = value; } }; // CHANGE
+    const local = loadSchedulerHooks({ getModel: () => model }), api = local.__testWindow.USL.scheduler.taskGuide; // CHANGE
+    const context = await api.resolveContext(group, card); assert.equal(context.rule.instructions, 'Plant seeds'); assert.ok(context.warnings.length); // CHANGE
+    const sourceValue = garden.value; // CHANGE
+    const recipe = api.saveRecipe(garden, { name: 'My sowing', plantId: 10, methodIds: ['direct_sow.field'], growthStageKeys: ['mature'], template }); // CHANGE
+    assert.equal(transactions, 1); assert.equal(sourceValue.getAttribute('task_recipe_library_json'), null); assert.notEqual(garden.value, sourceValue); // CHANGE
+    assert.equal(api.readRecipes(garden)[0].template.rules[0].instructions, 'Plant seeds'); // CHANGE
+    const prior = garden.value; assert.throws(() => api.saveRecipe(garden, { ...recipe, id: '', name: 'My sowing' }), /already exists/); assert.equal(garden.value, prior); // CHANGE
+    local.__testWindow.Trellis = { users: { canEditCell: () => false } }; // CHANGE
+    assert.throws(() => api.saveRecipe(garden, recipe, { allowUpdateId: recipe.id }), /permission/); assert.equal(garden.value, prior); // CHANGE
+    delete local.__testWindow.Trellis; garden.value = previous[0]; assert.equal(api.readRecipes(garden).length, 0); // CHANGE: restoring the model value undoes the entire library save.
+    dom.window.close(); // CHANGE
+}); // CHANGE
+
 test('database persistence failure prevents graph mutation', async () => {
     const cell = makeAttributeCell({ sow_date: '2026-04-01', method_id: 'direct_sow.field' });
     const patch = { sow_date: '2026-05-01', method_id: 'transplant.indoor', lifespan_end: '2029-12-31' };
@@ -3684,6 +3716,61 @@ test('scheduler sync respects date locks and preserves touched missing cards', (
     const manuallyStagedPlan = taskHooks.planDifferentialTaskSync([makeGeneratedSyncRecord('water::0::3', { manual_staged: '1' })], []);
     assert.deepEqual(Array.from(manuallyStagedPlan.missing, item => item.key), ['water::0::3']);
 });
+
+test('repeat connectors advance through unfinished occurrences and retain the latest completed fallback', () => { // NEW
+    const records = Array.from({ length: 6 }, (_, index) => ({ // NEW
+        id: `weed-${index}`, boardId: 'board', seriesKey: 'weed', workflowState: 'STAGED', // NEW
+        laneKey: index < 3 ? 'TODO_STAGED' : 'UPCOMING_MONTH', startISO: `2026-04-${String(index + 1).padStart(2, '0')}` // NEW
+    })); // NEW
+    const chosen = () => Array.from(taskHooks.planRepeatSeriesLinkVisibility(records)).filter(([, show]) => show).map(([id]) => id); // NEW
+    assert.deepEqual(chosen(), ['weed-0']); // NEW: overdue staged occurrences remain eligible
+    records.forEach(record => { record.expanded = true; }); // NEW
+    assert.deepEqual(chosen(), ['weed-0']); // NEW: expansion does not increase connector count
+    records.forEach((record, index) => { // NEW
+        record.workflowState = 'DONE'; // NEW
+        assert.deepEqual(chosen(), [index === 5 ? 'weed-5' : `weed-${index + 1}`]); // NEW
+    }); // NEW
+    records.forEach(record => { record.yearHidden = true; }); // NEW
+    assert.deepEqual(chosen(), []); // NEW
+}); // NEW
+
+test('repeat connectors separate boards and series and respect year filtering', () => { // NEW
+    const records = [ // NEW
+        { id: 'old-year', boardId: 'a', seriesKey: 'weed', startISO: '2025-01-01', yearHidden: true }, // NEW
+        { id: 'a-first', boardId: 'a', seriesKey: 'weed', startISO: '2026-04-01' }, // NEW
+        { id: 'a-next', boardId: 'a', seriesKey: 'weed', startISO: '2026-04-08' }, // NEW
+        { id: 'b-first', boardId: 'b', seriesKey: 'weed', startISO: '2026-04-02' }, // NEW
+        { id: 'b-next', boardId: 'b', seriesKey: 'weed', startISO: '2026-04-09' }, // NEW
+        { id: 'water-first', boardId: 'a', seriesKey: 'water', startISO: '2026-04-03' }, // NEW
+        { id: 'water-next', boardId: 'a', seriesKey: 'water', startISO: '2026-04-10' }, // NEW
+        { id: 'single', boardId: 'a', seriesKey: 'harvest', startISO: '2026-04-04' }, // NEW
+        { id: 'unlinked', boardId: 'a', seriesKey: null } // NEW
+    ]; // NEW
+    const plan = taskHooks.planRepeatSeriesLinkVisibility(records); // NEW
+    assert.deepEqual(Array.from(plan).filter(([, show]) => show).map(([id]) => id), ['a-first', 'b-first', 'water-first']); // NEW
+    assert.equal(plan.has('single'), false); // NEW: ordinary cards retain their existing policy
+    assert.equal(plan.has('unlinked'), false); // NEW
+    records.filter(record => record.boardId === 'a' && record.seriesKey === 'weed').forEach(record => { record.yearHidden = record.id !== 'old-year'; }); // NEW
+    const switched = taskHooks.planRepeatSeriesLinkVisibility(records); // NEW
+    assert.equal(switched.get('old-year'), true); // NEW
+    assert.equal(switched.get('a-first'), false); // NEW
+}); // NEW
+
+test('repeat connector ordering keeps valid dates first and breaks ties deterministically', () => { // NEW
+    const records = [ // NEW
+        { id: 'invalid', seriesKey: 'series', startISO: '2026-02-31' }, // NEW
+        { id: 'missing', seriesKey: 'series' }, // NEW
+        { id: 'z', seriesKey: 'series', startISO: '2026-04-01', endISO: '2026-04-03' }, // NEW
+        { id: 'b', seriesKey: 'series', startISO: '2026-04-01', endISO: '2026-04-02' }, // NEW
+        { id: 'a', seriesKey: 'series', startISO: '2026-04-01', endISO: '2026-04-02' } // NEW
+    ]; // NEW
+    assert.equal(taskHooks.planRepeatSeriesLinkVisibility(records).get('a'), true); // NEW
+    records.forEach(record => { record.workflowState = 'DONE'; }); // NEW
+    assert.equal(taskHooks.planRepeatSeriesLinkVisibility(records).get('z'), true); // NEW: malformed starts do not win latest-completed selection
+    const invalidOnly = records.slice(0, 2); // NEW
+    assert.equal(taskHooks.planRepeatSeriesLinkVisibility(invalidOnly).get('invalid'), true); // NEW: stable id fallback when every date is absent or malformed
+    assert.equal(records[0].startISO, '2026-02-31'); // NEW: planning never repairs or writes authored dates
+}); // NEW
 
 test('repeat series identity normalizes links and text without using dates', () => {
     const first = {

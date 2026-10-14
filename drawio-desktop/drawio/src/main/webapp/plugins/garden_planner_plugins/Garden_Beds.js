@@ -1268,6 +1268,7 @@ Draw.loadPlugin(function (ui) {
         const beds = getSelectedGardenBedsForOverlay();
         const keep = new Set();
         beds.forEach(function (bed) {
+            if (graph.__plantTilerIsBedOverlayHidden && graph.__plantTilerIsBedOverlayHidden(bed)) return; // CHANGE: actions and conditions share manual dismissal, including Allocation's name field.
             const id = getCellId(bed);
             if (!id) return;
             keep.add(id);
@@ -1295,6 +1296,7 @@ Draw.loadPlugin(function (ui) {
     const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null;
     model.addListener && model.addListener(mxEvent.CHANGE, refreshSelectedBedOverlaysSoon);
     if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedBedOverlaysSoon);
+    graph.addListener && graph.addListener("trellisBedOverlayVisibilityChanged", syncSelectedBedOverlays); // CHANGE: synchronize both panels immediately; standalone Garden_Beds defaults to visible.
     if (graph.view && graph.view.addListener) {
         graph.view.addListener(mxEvent.SCALE, refreshSelectedBedOverlaysSoon);
         graph.view.addListener(mxEvent.TRANSLATE, refreshSelectedBedOverlaysSoon);
@@ -1305,7 +1307,7 @@ Draw.loadPlugin(function (ui) {
     if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisInteractionModeChanged", refreshSelectedBedOverlaysSoon); // CHANGE: restore conditions even when selection does not change.
     if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) clearSelectedBedOverlays(); else refreshSelectedBedOverlaysSoon(); }); // NEW
     if (graph.addMouseListener) graph.addMouseListener({ mouseDown: function (_sender, evt) { beginSelectedBedOverlayDrag(evt); }, mouseMove: function (_sender, evt) { updateSelectedBedOverlayDrag(evt); }, mouseUp: function () { finishSelectedBedOverlayDrag(); } }); // NEW
-    if (typeof window !== "undefined" && window.addEventListener) ["mouseup", "pointerup", "blur"].forEach(function (eventName) { window.addEventListener(eventName, finishSelectedBedOverlayDrag); }); // NEW
+    if (typeof window !== "undefined" && window.addEventListener) ["mouseup", "pointerup", "pointercancel", "blur"].forEach(function (eventName) { window.addEventListener(eventName, finishSelectedBedOverlayDrag); }); // CHANGE: cancellation must also release conditions-panel drag suppression.
     graph.addListener && graph.addListener(mxEvent.DESTROY, clearSelectedBedOverlays);
 
     window.TrellisGardenBeds = {

@@ -27,6 +27,7 @@ from .schema import (
 )
 from .validator import normalize_key, validate_run
 from .weather import checksum_rows
+from .task_instructions import apply_instruction_patches, load_instruction_targets, preview_instruction_patch  # CHANGE
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -86,7 +87,8 @@ def create_diff_report(run_dir: Path, db_path: Path) -> dict[str, Any]:
                 report["weather"][table] = _weather_summary(rows)
                 report["summary"]["weather_rows"] += len(rows)
             else:
-                diffs = [_diff_row(conn, table, row, generated_index) for row in rows]
+                targets = load_instruction_targets(conn) if table == 'TaskInstructionPatches' else []  # CHANGE
+                diffs = [preview_instruction_patch(targets, row) if table == 'TaskInstructionPatches' else _diff_row(conn, table, row, generated_index) for row in rows]  # CHANGE
                 report["tables"][table] = diffs
                 report["summary"]["db_changes"] += sum(1 for diff in diffs if diff["action"] != "unchanged")
     write_json(run_dir / "diff_report.json", report)
@@ -289,10 +291,13 @@ def _apply_order() -> list[str]:
         "Companions", "CompanionLayoutGroupDefaults", "CompanionEvidence", "PlantTaskTemplates",
         "VarietyTaskTemplates", "PlantingWindowReferences", "NutritionNutrients", "PlantNutritionMappings",
         "PlantNutritionValues", "NutritionRequirements", "CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily",
+        "TaskInstructionPatches",  # CHANGE: apply guarded enrichment after ordinary template writes.
     ]
 
 
 def _apply_table(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]]) -> int:
+    if table == 'TaskInstructionPatches':  # CHANGE
+        return apply_instruction_patches(conn, rows)  # CHANGE
     if table == "Plants":
         return _upsert_named(conn, "Plants", rows, "plant_id", "plant_name", PLANT_COLUMNS)
     if table == "Cities":

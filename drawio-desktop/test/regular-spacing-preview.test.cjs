@@ -4,6 +4,7 @@ const path = require('node:path'); // CHANGE
 const test = require('node:test'); // CHANGE
 const { loadPlantTilerMxGraph } = require('./helpers/plant-tiler-mxgraph-harness.cjs'); // CHANGE
 const { createRegularSpacingFixture } = require('./helpers/regular-spacing-preview.cjs'); // CHANGE
+const { assertFootprintFrame } = require('./helpers/planting-preview-geometry.cjs'); // CHANGE
 
 /** Load production plugins; reference data has no saved defaults and records all attempted writes. */ // CHANGE
 async function setup(t, options = {}) { // CHANGE
@@ -30,19 +31,27 @@ function assertAligned(h, preview, sourceRows = null) { // CHANGE
         for (let parent = graph.model.getParent(state.cell); parent; parent = graph.model.getParent(parent)) { const g = parent.getGeometry(); if (g) { savedX += g.x; savedY += g.y; } } // CHANGE
         const dx = state.x / scale - tr.x - savedX, dy = state.y / scale - tr.y - savedY; // CHANGE
         const frame = host.querySelector('[data-spacing-preview-cell="' + row.cellId + '"]'); assert.ok(frame); // CHANGE
-        assert.ok(Math.abs(parseFloat(frame.style.left) - (canonical.x + dx + tr.x) * scale) <= 1); // CHANGE
-        assert.ok(Math.abs(parseFloat(frame.style.top) - (canonical.y + dy + tr.y) * scale) <= 1); // CHANGE
-        assert.equal(parseFloat(frame.style.width), Math.round(row.rect.width * scale)); // CHANGE
-        assert.equal(parseFloat(frame.style.height), Math.round(row.rect.height * scale)); // CHANGE
+        assertFootprintFrame(frame, { ...row.rect, x: canonical.x + dx, y: canonical.y + dy }, row.groupPreview.contentBounds, row.groupPreview.rotationDeg || 0, scale, tr); // CHANGE: validate the footprint, including its top header boundary, around the original group pivot.
+        const title = host.querySelector('[data-spacing-preview-title="' + row.cellId + '"]'); assert.ok(title); // CHANGE: real regular-overlay drafts share the upright title renderer with Allocate.
+        assert.equal(title.parentNode, host); assert.doesNotMatch(title.style.transform, /rotate/); // CHANGE
+        assert.equal(title.style.borderBottom, ''); // CHANGE: the footprint's top edge replaces the upright title underline.
+        const radians = (row.groupPreview.rotationDeg || 0) * Math.PI / 180, offset = 2 + parseFloat(title.style.height) / 2 - row.rect.height * scale / 2; // CHANGE
+        const centerX = (canonical.x + dx + tr.x + row.rect.width / 2) * scale, centerY = (canonical.y + dy + tr.y + row.rect.height / 2) * scale; // CHANGE
+        assert.ok(Math.abs(parseFloat(title.style.left) - (centerX - offset * Math.sin(radians))) < 1e-6); assert.ok(Math.abs(parseFloat(title.style.top) - (centerY + offset * Math.cos(radians))) < 1e-6); // CHANGE
     } // CHANGE
     const circles = Array.from(host.querySelectorAll('.manual-link-spacing-preview-plant')); // CHANGE
     let index = 0; // CHANGE
     for (const row of preview.rows) { // CHANGE
-        const frame = host.querySelector('[data-spacing-preview-cell="' + row.cellId + '"]'); // CHANGE
+        const state = view.getState(graph.model.getCell(row.cellId)); // CHANGE: circles retain full-group coordinates rather than following the smaller frame's origin.
+        const canonical = sourceRows?.find(item => item.cellId === row.cellId)?.rect || row.rect; // CHANGE
+        const group = h.groups.find(group => group.id === row.cellId), original = group.getGeometry(); // CHANGE
+        let savedX = original.x, savedY = original.y; // CHANGE
+        for (let parent = graph.model.getParent(group); parent; parent = graph.model.getParent(parent)) { const g = parent.getGeometry(); if (g) { savedX += g.x; savedY += g.y; } } // CHANGE
+        const dx = state.x / scale - tr.x - savedX, dy = state.y / scale - tr.y - savedY; // CHANGE
         for (const dot of row.groupPreview.circles) { // CHANGE
             const circle = circles[index++], radius = Math.max(2, dot.r * scale); // CHANGE
-            assert.ok(Math.abs(parseFloat(circle.style.left) + radius - parseFloat(frame.style.left) - (dot.x - row.rect.x) * scale) <= 1); // CHANGE
-            assert.ok(Math.abs(parseFloat(circle.style.top) + radius - parseFloat(frame.style.top) - (dot.y - row.rect.y) * scale) <= 1); // CHANGE
+            assert.ok(Math.abs(parseFloat(circle.style.left) + radius - (dot.x + canonical.x - row.rect.x + dx + tr.x) * scale) <= 1); // CHANGE
+            assert.ok(Math.abs(parseFloat(circle.style.top) + radius - (dot.y + canonical.y - row.rect.y + dy + tr.y) * scale) <= 1); // CHANGE
         } // CHANGE
     } // CHANGE
     assert.equal(circles.length, index); // CHANGE

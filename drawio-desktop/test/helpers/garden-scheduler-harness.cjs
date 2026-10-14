@@ -44,7 +44,7 @@ function loadSchedulerHooks(options = {}) { // CHANGE: full-dialog integration c
         },
         Draw: {
             loadPlugin(register) {
-                register({ editor: { graph: {} } });
+                register({ editor: { graph: options.graph || {} } }); // CHANGE: exercise read-only growth context against an explicit graph fixture.
             }
         }
     });

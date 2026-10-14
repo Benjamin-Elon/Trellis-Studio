@@ -575,7 +575,39 @@ function makeHarness(options = {}) {
     const taskHooks = context.globalThis.__TRELLIS_TASK_MANAGER_TEST_HOOKS__;
     const runtimeHooks = context.globalThis.__TRELLIS_TASK_MANAGER_RUNTIME_TEST_HOOKS__;
 
+    /** Load Guide against the same UI so integration tests use the production card command. */ // CHANGE
+    function loadGuide() { // CHANGE
+        const register = context.Draw.loadPlugin; // CHANGE
+        context.Draw.loadPlugin = callback => callback(currentUi); // CHANGE
+        try { const filename = path.join(path.dirname(TASK_MANAGER_PATH), 'Garden_Guide.js'); vm.runInContext(fs.readFileSync(filename, 'utf8'), context, { filename }); } finally { context.Draw.loadPlugin = register; } // CHANGE
+    } // CHANGE
+
+    /** Loads the real linker into the Task Manager harness; mx shapes render inspectable SVG nodes. */ // NEW
+    function loadVertexLinking() { // NEW
+        model.contains = cell => { let ancestor = cell; while (ancestor && ancestor.parent) ancestor = ancestor.parent; return ancestor === root; }; // NEW
+        graph.getView = () => graph.view; // NEW
+        graph.view.getOverlayPane = () => overlayPane; // NEW
+        graph.isCellSelectable = cell => !!cell; // NEW
+        graph.fireEvent = evt => (graphListeners.get(evt.name) || []).forEach(listener => listener(graph, evt)); // NEW
+        context.CustomEvent = dom.window.CustomEvent; // NEW
+        context.mxRectangle = TestGeometry; // NEW
+        context.mxPolyline = class { // NEW
+            constructor(points, stroke, strokeWidth) { this.points = points; this.stroke = stroke; this.strokeWidth = strokeWidth; } // NEW
+            init(pane) { this.node = document.createElementNS('http://www.w3.org/2000/svg', 'polyline'); pane.appendChild(this.node); } // NEW
+            redraw() { this.node.setAttribute('points', this.points.map(point => `${point.x},${point.y}`).join(' ')); this.node.setAttribute('stroke', this.stroke); } // NEW
+        }; // NEW
+        context.mxText = class { // NEW
+            constructor(value, bounds) { this.value = value; this.bounds = bounds; } // NEW
+            init(pane) { this.node = document.createElementNS('http://www.w3.org/2000/svg', 'text'); pane.appendChild(this.node); } // NEW
+            redraw() { this.node.textContent = this.value; this.node.setAttribute('x', this.bounds.x); this.node.setAttribute('y', this.bounds.y); } // NEW
+        }; // NEW
+        const linkerPath = path.join(path.dirname(TASK_MANAGER_PATH), 'Vertex_Linking_Standalone.js'); // NEW
+        vm.runInContext(fs.readFileSync(linkerPath, 'utf8'), context, { filename: linkerPath }); // NEW
+    } // NEW
+
     return {
+        loadGuide, // CHANGE
+        loadVertexLinking, // NEW: integration tests exercise both production plugins
         document,
         window: dom.window,
         graph,
@@ -652,6 +684,118 @@ function makeHarness(options = {}) {
         resetCounters() { geometrySetCount = 0; labelSetCount = 0; modelBeginUpdateCount = 0; scrollCellToVisibleCalls = 0; lastScrollCell = null; refreshCalls.length = 0; taskHooks.resetTaskReflowTestCounters(); }
     };
 }
+
+/** Reproduces one six-occurrence crop series alongside an independent linked task. */ // NEW
+function makeRepeatingLinkFixture() { // NEW
+    const h = makeHarness(); // NEW
+    setAttr(h.board, 'task_view_mode', 'FULL'); // NEW
+    const source = new TestCell('linkedCrop', makeValue(h.document, { tiler_group: '1', label: 'Cilantro' }), new TestGeometry(10, 100, 120, 160)); // NEW
+    h.addCell(h.root, source); // NEW
+    const cards = Array.from({ length: 6 }, (_, index) => { // NEW
+        const day = `2026-04-${String(index + 1).padStart(2, '0')}`; // NEW
+        const card = new TestCell(`weed-${index}`, makeValue(h.document, { // NEW
+            kanban_card: '1', title: 'Weed', plant_name: 'Cilantro', method: 'FIELD', linkedTo: source.id, // NEW
+            workflow_state: 'STAGED', start: day, end: day // NEW
+        }), new TestGeometry(0, 0, 160, 80)); // NEW
+        h.addCell(h.stagedLane, card); // NEW
+        return card; // NEW
+    }); // NEW
+    const sow = new TestCell('linkedSow', makeValue(h.document, { kanban_card: '1', title: 'Sow', linkedTo: source.id, workflow_state: 'STAGED', start: '2026-04-01', end: '2026-04-01' }), new TestGeometry(0, 0, 160, 80)); // NEW
+    h.addCell(h.stagedLane, sow); // NEW
+    setAttr(source, 'linkedTo', cards.concat(sow).map(card => card.id).join(',')); // NEW
+    h.window.dispatchEvent(new h.window.CustomEvent('yearFilterChanged')); // NEW: run the actual repeat-collapse and paging passes
+    h.setState(source, { x: 10, y: 100, width: 120, height: 160 }); // NEW
+    h.board.children.forEach((lane, laneIndex) => { // NEW
+        h.setState(lane, { x: 400 + laneIndex * 220, y: 100, width: 200, height: 200 }); // NEW
+        lane.children.forEach((card, cardIndex) => h.setState(card, { x: 420 + laneIndex * 220, y: 150 + cardIndex * 100, width: 160, height: 80 })); // NEW
+    }); // NEW
+    h.loadVertexLinking(); // NEW
+    return { h, source, cards, sow }; // NEW
+} // NEW
+
+function renderedTaskLinks(h) { // NEW
+    return Array.from(h.document.querySelectorAll('polyline')).filter(node => node.__manualLinkMeta); // NEW
+} // NEW
+
+test('linked repeating tasks draw one connector when collapsed or expanded and preserve stored relationships', async () => { // NEW
+    const { h, source, cards, sow } = makeRepeatingLinkFixture(); // NEW
+    const originalLinks = [source, ...cards, sow].map(cell => attr(cell, 'linkedTo')); // NEW
+    assert.equal(cards.filter(card => attr(card, 'repeat_hidden') === '1').length, 5); // NEW
+    h.graph.setSelectionCell(source); // NEW
+    assert.deepEqual(renderedTaskLinks(h).map(node => node.__manualLinkMeta.trgId).sort(), [sow.id, cards[0].id].sort()); // NEW
+    cards.forEach(card => setAttr(card, 'repeat_expanded', '1')); // NEW
+    h.window.dispatchEvent(new h.window.CustomEvent('yearFilterChanged')); // NEW
+    await nextTick(); // NEW
+    assert.equal(cards.filter(card => attr(card, 'repeat_hidden') === '1').length, 0); // NEW
+    assert.deepEqual(renderedTaskLinks(h).map(node => node.__manualLinkMeta.trgId).sort(), [sow.id, cards[0].id].sort()); // NEW
+    assert.deepEqual([source, ...cards, sow].map(cell => attr(cell, 'linkedTo')), originalLinks); // NEW
+    h.window.close(); // NEW
+}); // NEW
+
+test('linked repeat connectors advance after completion and date edits and follow undo/redo', async () => { // NEW
+    const { h, source, cards } = makeRepeatingLinkFixture(); // NEW
+    const weedTarget = () => renderedTaskLinks(h).find(node => node.__manualLinkMeta.trgId.startsWith('weed-')).__manualLinkMeta.trgId; // NEW
+    h.graph.setSelectionCell(source); // NEW
+    setAttr(cards[0], 'workflow_state', 'DONE'); // NEW
+    h.fireModelChange(); // NEW
+    await nextTick(); // NEW
+    assert.equal(weedTarget(), cards[1].id); // NEW
+    setAttr(cards[2], 'start', '2026-03-01'); // NEW
+    h.fireModelChange(); // NEW
+    await nextTick(); // NEW
+    assert.equal(weedTarget(), cards[2].id); // NEW
+    setAttr(cards[2], 'start', '2026-04-03'); // NEW
+    setAttr(cards[0], 'workflow_state', 'STAGED'); // NEW: emulate undo restoring the authored task fields
+    h.window.dispatchEvent(new h.window.Event('trellisHistoryAfterRestore')); // NEW
+    await nextTick(); // NEW
+    assert.equal(weedTarget(), cards[0].id); // NEW
+    setAttr(cards[0], 'workflow_state', 'DONE'); // NEW: redo the completion
+    h.window.dispatchEvent(new h.window.Event('trellisHistoryAfterRestore')); // NEW
+    await nextTick(); // NEW
+    assert.equal(weedTarget(), cards[1].id); // NEW
+    h.window.close(); // NEW
+}); // NEW
+
+test('completed repeat column links reveal their chosen occurrence through expansion and paging', async () => { // NEW
+    const { h, source, cards } = makeRepeatingLinkFixture(); // NEW
+    cards.forEach(card => setAttr(card, 'workflow_state', 'DONE')); // NEW
+    h.window.dispatchEvent(new h.window.CustomEvent('yearFilterChanged')); // NEW
+    h.graph.setSelectionCell(source); // NEW
+    const chosen = cards[5]; // NEW
+    assert.equal(attr(chosen, 'repeat_hidden'), '1'); // NEW
+    assert.equal(chosen.visible, false); // NEW
+    const line = renderedTaskLinks(h).find(node => node.__manualLinkMeta.trgId === chosen.id); // NEW
+    assert.ok(line, 'latest completed occurrence has one column-anchored connector'); // NEW
+    const laneState = h.states.get(chosen.parent); // NEW
+    const targetY = Number(line.getAttribute('points').split(' ')[1].split(',')[1]); // NEW
+    assert.ok(Math.abs(targetY - (laneState.y + laneState.height / 2)) <= 5); // NEW
+    line.dispatchEvent(new h.window.MouseEvent('mousedown', { button: 0, bubbles: true })); // NEW
+    await nextTick(); // NEW
+    assert.equal(attr(chosen, 'repeat_hidden'), null); // NEW
+    assert.equal(attr(chosen, 'repeat_expanded'), '1'); // NEW
+    assert.equal(chosen.visible, true); // NEW
+    assert.equal(h.selectedCell, chosen); // NEW
+    assert.equal(h.lastScrollCell, chosen); // NEW
+    assert.equal(renderedTaskLinks(h).length, 1); // NEW: direct selection retains that completed task's own link
+    h.graph.setSelectionCell(source); // NEW
+    assert.equal(renderedTaskLinks(h).filter(node => node.__manualLinkMeta.trgId.startsWith('weed-')).length, 1); // NEW
+    h.window.close(); // NEW
+}); // NEW
+
+test('repeat links respect changed year flags and directly selected later occurrences retain their links', async () => { // NEW
+    const { h, source, cards } = makeRepeatingLinkFixture(); // NEW
+    h.graph.setSelectionCell(source); // NEW
+    setAttr(cards[0], 'year_hidden', '1'); // NEW
+    h.window.dispatchEvent(new h.window.CustomEvent('yearFilterChanged')); // NEW
+    await nextTick(); // NEW
+    assert.equal(renderedTaskLinks(h).find(node => node.__manualLinkMeta.trgId.startsWith('weed-')).__manualLinkMeta.trgId, cards[1].id); // NEW
+    h.graph.__trellisTaskManager.revealLinkedTaskOccurrence(cards[4]); // NEW
+    h.graph.setSelectionCell(cards[4]); // NEW
+    assert.equal(renderedTaskLinks(h).length, 1); // NEW
+    assert.equal(renderedTaskLinks(h)[0].__manualLinkMeta.srcId, cards[4].id); // NEW
+    assert.equal(renderedTaskLinks(h)[0].__manualLinkMeta.trgId, source.id); // NEW
+    h.window.close(); // NEW
+}); // NEW
 
 function attachCompanionTaskFixture(h) {
     const garden = new TestCell("garden", makeValue(h.document, { garden_module: "1", label: "Kitchen Garden" }), new TestGeometry(0, 0, 500, 360), "shape=swimlane;");
@@ -1102,6 +1246,37 @@ test("task manager normalizes canonical assignee ids and treats assignments as u
     assert.equal(hooks.isUserTouchedSchedulerCard({ workflow_state: "STAGED", task_assignee_role_ids_json: '["role-a"]' }), true);
     assert.equal(hooks.isUserTouchedSchedulerRecord({ source: { workflow_state: "STAGED", task_assignee_role_ids_json: "bad" }, laneKey: "TODO_STAGED" }), false);
 });
+
+test('Guide autosave uses the production undoable card command without changing notes or dates', async () => { // CHANGE
+    const h = makeHarness(); h.loadGuide(); // CHANGE
+    setAttr(h.card1, 'task_instructions', 'Inherited instructions'); // CHANGE
+    h.window.USL.guide.open(h.card1); // CHANGE
+    const input = h.lastDialog.querySelector('textarea'); // CHANGE
+    const baseline = { start: attr(h.card1, 'start'), end: attr(h.card1, 'end'), note: attr(h.card1, 'card_note') }; // CHANGE
+    h.clearValueWrites(); const transactions = h.modelBeginUpdateCount, geometry = h.geometrySetCount; // CHANGE
+    input.value = '1. Water\n2. Check soil'; input.dispatchEvent(new h.window.Event('input')); input.dispatchEvent(new h.window.Event('blur')); // CHANGE
+    assert.equal(attr(h.card1, 'task_instruction_override'), input.value); // CHANGE
+    assert.equal(h.modelBeginUpdateCount, transactions + 1); assert.equal(h.geometrySetCount, geometry); // CHANGE
+    assert.deepEqual({ start: attr(h.card1, 'start'), end: attr(h.card1, 'end'), note: attr(h.card1, 'card_note') }, baseline); // CHANGE
+    buttonByText(h.lastDialog, 'Reset to inherited instructions').click(); // CHANGE
+    assert.equal(attr(h.card1, 'task_instruction_override'), null); assert.equal(input.value, 'Inherited instructions'); // CHANGE
+    h.window.close(); // CHANGE
+}); // CHANGE
+
+test('scheduler regeneration refreshes inherited instructions and preserves only the edited occurrence override', () => { // CHANGE
+    const h = makeHarness(); const { garden } = attachCompanionTaskFixture(h); // CHANGE
+    const group = new TestCell('guide-crop', makeValue(h.document, { tiler_group: '1' }), new TestGeometry(20, 40, 120, 80)); h.addCell(garden, group); // CHANGE
+    const tasks = [0, 1].map(index => ({ title: 'Sow crop', startISO: '2026-03-01', endISO: '2026-03-02', scheduler_task_key: 'sow::' + index, scheduler_rule_id: 'sow', instructions: 'Draft', instructionProvenance: { status: 'draft' } })); // CHANGE
+    const created = h.runtimeHooks.createTasks(tasks, group.id, { focusCreated: false }); // CHANGE
+    const first = h.model.getCell(created[0].cellId), second = h.model.getCell(created[1].cellId); // CHANGE
+    h.window.Trellis.taskCommands.commitCardPatch(first, { task_instruction_override: '' }, { reflow: false }); // CHANGE
+    const result = h.runtimeHooks.applyDifferentialTaskSync({ targetGroupId: group.id, tasks: tasks.map(task => ({ ...task, instructions: 'Updated draft' })), focusCreated: false }); // CHANGE
+    assert.equal(result.updates.length, 2); assert.equal(attr(first, 'task_instruction_override'), ''); // CHANGE
+    assert.equal(attr(first, 'task_instructions'), 'Updated draft'); assert.equal(attr(second, 'task_instructions'), 'Updated draft'); // CHANGE
+    assert.equal(attr(second, 'task_instruction_override'), null); // CHANGE
+    const missing = h.runtimeHooks.applyDifferentialTaskSync({ targetGroupId: group.id, tasks: [tasks[1]], focusCreated: false }); // CHANGE
+    assert.equal(missing.missing.length, 1); assert.equal(attr(first, 'scheduler_missing'), '1'); // CHANGE
+}); // CHANGE
 
 test("task manager preserves assignments only across unique scheduler keys and retains unsafe occurrences as missing", () => {
     const hooks = loadTaskManagerHooks();

@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { assertFootprintFrame } = require('./helpers/planting-preview-geometry.cjs'); // CHANGE
 
 const PLUGIN_PATH = path.join(__dirname, "..", "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins", "Allocate_Planner.js");
 const YEAR_PLANNER_PATH = path.join(__dirname, "..", "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins", "Year_Planner.js");
@@ -148,10 +149,16 @@ function loadAllocatePlugin() {
         Draw: { loadPlugin(callback) { callback({ editor: { graph }, showDialog(node) { document.lastDialog = node; root.appendChild(node); }, hideDialog() { if (document.lastDialog) root.removeChild(document.lastDialog); document.lastDialog = null; } }); } } // CHANGE: exercise the explicit review/create action.
     });
     const plantingSource = fs.readFileSync(path.join(path.dirname(PLUGIN_PATH), 'Planting_Group.js'), 'utf8'); // CHANGE
+    const geometryConstants = ['GROUP_PADDING_PX', 'GROUP_BASE_AREA_PX2', 'GROUP_LABEL_FONT_PX', 'GROUP_LABEL_FONT_MIN_PX', 'GROUP_LABEL_FONT_MAX_PX', 'GROUP_LABEL_LINE_HEIGHT', 'GROUP_LABEL_BAND_PAD_PX', 'GROUP_LABEL_BAND_PX'].map(name => plantingSource.match(new RegExp('    const ' + name + ' = [^;]+;'))[0]).join('\n'); // CHANGE: reuse production constants for native usable-area and header calculations.
+    const coordinateHelpers = ['toRad', 'rotateVectorModel', 'modelPointForLocalPoint', 'clamp', 'groupLabelMetrics', 'plantingContentBoundsLocal'].map(name => { // CHANGE: renderer geometry falls back to the native tiler's helpers.
+        const start = plantingSource.indexOf('    function ' + name + '('), end = plantingSource.indexOf('\n    function ', start + 1); // CHANGE
+        return plantingSource.slice(start, end); // CHANGE: load the real helper rather than duplicating its geometry in this harness.
+    }).join('\n'); // CHANGE
     const sharedDrawing = plantingSource.slice(plantingSource.indexOf('const GRAPH_OVERLAY_LAYER_CLASS'), plantingSource.indexOf('    const plantingPreview =')); // CHANGE
     context.previewGraph = graph; // CHANGE
-    vm.runInContext('(function(graph){ const GRAPH_OVERLAY_Z={ANNOTATION:10000,CONNECTION:10010,CONTROL:10020,CONTROL_TOP:10030}; ' + sharedDrawing + '; graph.__trellisPlantingGroup={preview:createPlantingPreviewRenderer()}; })(previewGraph);', context); // CHANGE: run the production shared renderer in this focused harness.
-    vm.runInContext(SOURCE, context, { filename: PLUGIN_PATH });
+    vm.runInContext('(function(graph){ const GRAPH_OVERLAY_Z={ANNOTATION:10000,CONNECTION:10010,CONTROL:10020,CONTROL_TOP:10030}; ' + geometryConstants + coordinateHelpers + sharedDrawing + '; graph.__trellisPlantingGroup={preview:createPlantingPreviewRenderer()}; })(previewGraph);', context); // CHANGE: run the production shared renderer and its geometry dependencies in this focused harness.
+    const testSource = SOURCE.replace('return { open, close, renderScheduleProgress,', 'return { renderGhost, companionDraftFromRows, open, close, renderScheduleProgress,').replace('renderScheduleProgress: AllocateController.renderScheduleProgress,', 'renderScheduleProgress: AllocateController.renderScheduleProgress, renderGhost: AllocateController.renderGhost, companionDraftFromRows: AllocateController.companionDraftFromRows,'); // CHANGE: exercise private adapters without adding public production APIs.
+    vm.runInContext(testSource, context, { filename: PLUGIN_PATH }); // CHANGE
     const api = window.USL.allocate.__test;
     api.__window = window;
     api.__root = root;
@@ -1135,6 +1142,22 @@ async function previewSession({ selectBed = true, sharedButtons = false } = {}) 
     return { api, state, bed, crop, lifecycle, previews, cleared, getCreates: () => creates }; // CHANGE
 } // CHANGE
 
+test('companion allocation retains its accepted header height in the usable ghost footprint', async () => { // CHANGE
+    const { api, state, crop, getCreates } = await previewSession(); // CHANGE
+    try { // CHANGE
+        const simulate = api.__window.USL.planningCore.simulateCandidatePlanting; // CHANGE
+        api.__window.USL.planningCore.simulateCandidatePlanting = input => { const result = simulate(input); result.base.plan = { crops: [crop] }; result.coverage.plan = { crops: [crop] }; return result; }; // CHANGE
+        const rect = { x: 40, y: 60, width: 180, height: 100 }; // CHANGE
+        const row = { cellId: 'proposed', proposed: true, modelRect: rect, rect, rotationDeg: 90, spacingXCm: 30, spacingYCm: 30, offsetXCm: 0, offsetYCm: 0, allowedOverhangPct: 50, label: 'Lettuce' }; // CHANGE
+        const preview = { status: 'ok', rows: [{ ...row, groupPreview: { actual: 4, committedCount: 0, committedExpectedYield: 0, draftExpectedYield: 4, groupLabelBandPx: 29, circles: [{ x: 120, y: 100, r: 5 }], disabledSlots: [] } }] }; // CHANGE
+        state.draft = api.companionDraftFromRows(state, state.draft, { selectedId: 'companion' }, [row], preview); // CHANGE
+        assert.equal(state.draft.geometry.labelBandPx, 29); assert.equal(state.draft.geometry.allowedOverhangPct, 50); // CHANGE
+        api.renderGhost(state); // CHANGE
+        assertFootprintFrame(state.ghost.querySelector('.manual-link-spacing-preview-group-frame'), rect, { minX: 4, minY: 33, maxX: 176, maxY: 96 }, 90, 1, { x: 0, y: 0 }); // CHANGE: accepted companion metadata must reach the shared renderer without recalculation.
+        assert.equal(getCreates(), 0); assert.equal(state.ghost.querySelectorAll('.manual-link-spacing-preview-plant').length, 1); // CHANGE
+    } finally { api.__window.USL.allocate.close(); } // CHANGE
+}); // CHANGE
+
 test('saving an edited schedule updates both previews without creating the planting', async () => { // CHANGE
     const harness = await previewSession({ sharedButtons: true }); // CHANGE: also verify shared styling preserves controller actions.
     const { api, state, lifecycle, previews } = harness;
@@ -1592,8 +1615,8 @@ test('rotated warned drafts update the HUD, ghost, timeline and reviewed creatio
     assert.notEqual(state.draft.plantCount, originalCount); // CHANGE
     assert.match(collectText(state.hudRefs.draftBox).join(' '), /Companion overlap with Carrot/); // CHANGE
     assert.equal(state.ghost.querySelectorAll('.manual-link-spacing-preview-plant').length, state.draft.plantCount); // CHANGE
-    assert.equal(parseFloat(state.ghost.querySelector('.manual-link-spacing-preview-group-frame').style.left), Math.round((state.draft.geometry.geometry.x + 300 + 5) * 1.75)); // CHANGE
-    assert.equal(parseFloat(state.ghost.querySelector('.manual-link-spacing-preview-group-frame').style.top), Math.round((state.draft.geometry.geometry.y + 150 + 10) * 1.75)); // CHANGE
+    const proposal = state.draft.geometry, rect = { ...proposal.geometry, x: proposal.geometry.x + 300, y: proposal.geometry.y + 150 }; // CHANGE
+    assertFootprintFrame(state.ghost.querySelector('.manual-link-spacing-preview-group-frame'), rect, { minX: 4, minY: 4 + proposal.labelBandPx, maxX: rect.width - 4, maxY: rect.height - 4 }, proposal.rotation || 0, 1.75, { x: 5, y: 10 }); // CHANGE: moving and rotating a garden must project the usable footprint around the group pivot.
     assert.equal(previews.at(-1).plantingRect, state.draft.geometry.plantingRect); // CHANGE
     state.hudRefs.rotate.click(); assert.equal(state.draft.plantCount, originalCount); // CHANGE
     let created = null, transactions = 0; // CHANGE

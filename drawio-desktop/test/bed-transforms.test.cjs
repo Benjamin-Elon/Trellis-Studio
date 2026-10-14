@@ -14,7 +14,7 @@ function fixture(rotation = 0) { // CHANGE
         Object.entries(attrs).forEach(([key, val]) => node.setAttribute(key, val)); return node; // CHANGE
     } // CHANGE
     const bed = h.bed(400, 300, rotation, 200, 200); // CHANGE
-    const group = graph.insertVertex(h.moduleCell, 'crop', value({ tiler_group: '1', plant_abbr: 'CAR', bed_auto_fit: '0', plant_count: '2', plant_count_actual: '2', spacing_x_cm: '20', spacing_y_cm: '30' }), 260, 260, 80, 70, 'rotation=12;locked=1;'); // CHANGE
+    const group = graph.insertVertex(h.moduleCell, 'crop', value({ tiler_group: '1', plant_abbr: 'CAR', label: 'Carrots', bed_auto_fit: '0', plant_count: '2', plant_count_actual: '2', spacing_x_cm: '20', spacing_y_cm: '30' }), 260, 260, 80, 70, 'rotation=12;locked=1;verticalAlign=top;'); // CHANGE: real titles exercise gesture cleanup alongside circle labels.
     const plant = graph.insertVertex(group, 'manual', value({ plant_tiler: '1', auto: '0', dirty: '1', label: 'CAR' }), 7, 33, 12, 12, 'ellipse;rotation=5;'); // CHANGE: include a real circle label in preview coverage.
     const assembly = graph.insertVertex(h.moduleCell, 'pipes', value({ irrigation_assembly: '1', irrigation_assembly_type: 'bed' }), 440, 340, 100, 80, 'rotation=22;locked=1;'); // CHANGE
     const part = graph.insertVertex(assembly, 'part', value({ irrigation_part: '1' }), 10, 20, 16, 10, 'rotation=22;'); // CHANGE
@@ -114,6 +114,7 @@ for (const html of [0, 1]) for (const operation of ['move', 'rotate']) test(`${o
     try { // CHANGE
         h.graph.setCellStyles('html', String(html), [h.plant]); h.graph.refresh(); // CHANGE
         const state = h.graph.view.getState(h.plant), nodes = [state.shape.node, state.text.node]; // CHANGE
+        const title = h.graph.view.getState(h.group).text.node, titleVisibility = title.style.visibility; // CHANGE
         nodes[1].style.visibility = 'hidden'; // CHANGE: cleanup must restore a previously hidden label exactly.
         const prior = nodes.map(node => node.style.visibility), before = saved(h); h.undoManager.clear(); // CHANGE
         const preview = h.graph.__trellisBedTransforms.createPreview([h.bed], [h.group]); // CHANGE: duplicate selected contents must not hide or restore twice.
@@ -121,9 +122,11 @@ for (const html of [0, 1]) for (const operation of ['move', 'rotate']) test(`${o
         preview.update(() => operation === 'move' ? { dx: 25, dy: -15 } : { delta: 45 }); // CHANGE
         await new Promise(resolve => h.window.requestAnimationFrame(resolve)); // CHANGE
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-preview-cell="manual"]').length, 0); // CHANGE
+        assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-preview-cell="crop"][data-trellis-bed-preview-kind="text"]').length, 0); assert.equal(title.style.visibility, 'hidden'); // CHANGE
         nodes.forEach(node => assert.equal(node.style.visibility, 'hidden')); assert.deepEqual(saved(h), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
         assert.ok(h.window.document.querySelector('[data-trellis-bed-preview-cell="crop"]')); // CHANGE: frames still participate in the preview.
         preview.clear(); preview.clear(); nodes.forEach((node, index) => assert.equal(node.style.visibility, prior[index])); // CHANGE: cleanup is safe on repeated reset.
+        assert.equal(title.style.visibility, titleVisibility); // CHANGE
         assert.deepEqual(saved(h), before); // CHANGE
     } finally { h.close(); } // CHANGE
 }); // CHANGE
@@ -149,6 +152,7 @@ test('actual child plantings and irrigation are carried once by native rotation 
         const expected = rotate(p, c, 57); close(world(h.part).x, expected.x, 'native child x'); close(world(h.part).y, expected.y, 'native child y'); // CHANGE
         const expectedCircle = rotate(circle, c, 57); close(world(h.plant).x, expectedCircle.x, 'nested circle x'); close(world(h.plant).y, expectedCircle.y, 'nested circle y'); // CHANGE
         assert.equal(Number(h.graph.getCellStyle(h.plant).rotation || 0), 0); // CHANGE: native recursive style changes must not leave circle text tilted.
+        assert.equal(h.graph.view.getState(h.group).text.getTextRotation(), 0); // CHANGE: nested planting titles remain upright under native recursive rotation.
         assert.equal(Number(h.graph.getCellStyle(h.part).rotation), 79); assert.equal(h.undoManager.history.length, 1); // CHANGE
         h.undoManager.undo(); assert.deepEqual(saved(h), before); // CHANGE
     } finally { h.close(); } // CHANGE
@@ -296,6 +300,7 @@ test('move preview retains the native commit marker and reset restores sources',
     try { // CHANGE
         h.graph.setSelectionCell(h.bed); const handler = h.graph.graphHandler; // CHANGE
         const visibility = [h.graph.view.getState(h.plant).shape.node.style.visibility, h.graph.view.getState(h.plant).text.node.style.visibility]; // CHANGE: mxGraph explicitly sets some nodes to visible.
+        const titleVisibility = h.graph.view.getState(h.group).text.node.style.visibility; // CHANGE
         handler.start(h.bed, 300, 300, [h.bed]); handler.currentDx = 30; handler.currentDy = 20; // CHANGE
         handler.livePreviewUsed = true; handler.livePreviewActive = true; handler.updatePreview(); // CHANGE
         assert.ok(handler.shape, 'mouseUp needs a preview marker to commit'); assert.ok(handler.__trellisBedPreview); // CHANGE
@@ -305,6 +310,7 @@ test('move preview retains the native commit marker and reset restores sources',
         handler.mouseUp(h.graph, mouse); close(world(h.group).x, p.x + 30, 'release x'); // CHANGE
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-transform-preview]').length, 0); // CHANGE
         assert.deepEqual([h.graph.view.getState(h.plant).shape.node.style.visibility, h.graph.view.getState(h.plant).text.node.style.visibility], visibility); // CHANGE: completion restores both circle renderers.
+        assert.equal(h.graph.view.getState(h.group).text.node.style.visibility, titleVisibility); // CHANGE: mouse release restores the planting title too.
         assert.equal(h.undoManager.history.length, 1); // CHANGE
     } finally { h.close(); } // CHANGE
 }); // CHANGE
@@ -330,6 +336,7 @@ test('rotation handle previews without model writes and Escape restores the rend
     try { // CHANGE
         h.graph.setSelectionCell(h.bed); const handler = h.graph.selectionCellsHandler.getHandler(h.bed), before = saved(h); // CHANGE
         const visibility = [h.graph.view.getState(h.plant).shape.node.style.visibility, h.graph.view.getState(h.plant).text.node.style.visibility]; // CHANGE
+        const titleVisibility = h.graph.view.getState(h.group).text.node.style.visibility; // CHANGE
         handler.start(400, 180, h.window.mxEvent.ROTATION_HANDLE); // CHANGE
         const event = new h.window.mxMouseEvent(new h.window.MouseEvent('mousemove', { altKey: true }), h.graph.view.getState(h.bed)); // CHANGE
         event.graphX = 520; event.graphY = 180; handler.rotateVertex(event); // CHANGE
@@ -337,9 +344,11 @@ test('rotation handle previews without model writes and Escape restores the rend
         assert.ok(handler.__trellisBedPreview); assert.deepEqual(saved(h), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-preview-cell="manual"]').length, 0); // CHANGE
         assert.equal(h.graph.view.getState(h.plant).shape.node.style.visibility, 'hidden'); assert.equal(h.graph.view.getState(h.plant).text.node.style.visibility, 'hidden'); // CHANGE
+        assert.equal(h.graph.view.getState(h.group).text.node.style.visibility, 'hidden'); // CHANGE
         h.graph.fireEvent(new h.window.mxEventObject(h.window.mxEvent.ESCAPE)); // CHANGE
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-transform-preview]').length, 0); assert.deepEqual(saved(h), before); // CHANGE
         assert.deepEqual([h.graph.view.getState(h.plant).shape.node.style.visibility, h.graph.view.getState(h.plant).text.node.style.visibility], visibility); // CHANGE: Escape restores hidden originals without diagram changes.
+        assert.equal(h.graph.view.getState(h.group).text.node.style.visibility, titleVisibility); // CHANGE
     } finally { h.close(); } // CHANGE
 }); // CHANGE
 
@@ -396,8 +405,10 @@ test('move handler reset restores hidden circles and preserves model-hidden circ
         h.graph.getModel().setVisible(hidden, false); h.graph.setSelectionCell(h.bed); h.undoManager.clear(); // CHANGE
         const before = saved(h), handler = h.graph.graphHandler, node = h.graph.view.getState(h.plant).shape.node; // CHANGE
         const visibility = node.style.visibility; // CHANGE
+        const title = h.graph.view.getState(h.group).text.node, titleVisibility = title.style.visibility; // CHANGE
         handler.start(h.bed, 300, 300, [h.bed]); handler.currentDx = 30; handler.currentDy = 20; handler.updatePreview(); // CHANGE
         assert.equal(node.style.visibility, 'hidden'); handler.reset(); assert.equal(node.style.visibility, visibility); // CHANGE
+        assert.equal(title.style.visibility, titleVisibility); // CHANGE: native handler reset uses the same title cleanup as completion and Escape.
         assert.equal(h.graph.getModel().isVisible(hidden), false); assert.deepEqual(saved(h), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-transform-preview]').length, 0); // CHANGE
     } finally { h.close(); } // CHANGE
@@ -415,9 +426,11 @@ test('detail-summary transitions preserve rotated circle centers, upright labels
         h.graph.setCellStyles('rotation', '-30', [h.bed]); // CHANGE
         const summary = h.graph.getChildVertices(group).find(cell => cell.getAttribute('lod_summary') === '1'); // CHANGE
         assert.ok(summary); assert.equal(Number(h.graph.getCellStyle(summary).rotation), -30); // CHANGE: summaries retain their established bed rotation behavior.
+        assert.equal(h.graph.view.getState(group).text.getTextRotation(), 0); // CHANGE: collapsed groups retain an upright native title.
         h.tiler.retileGroup(h.graph, group, { forceExpand: true }); // CHANGE
         const restored = h.graph.getChildVertices(group).filter(cell => cell.getAttribute('plant_tiler') === '1'); // CHANGE
         assert.equal(restored.length, 8); assert.equal(group.getAttribute('plant_count_actual'), '8'); // CHANGE
+        assert.equal(h.graph.view.getState(group).text.getTextRotation(), 0); // CHANGE: expanding details restores circles without rotating the title.
         for (const cell of restored) { // CHANGE
             const expected = rotate(originals.get(cell.getAttribute('tile_r') + ',' + cell.getAttribute('tile_c')), pivot, -30); // CHANGE
             close(world(cell).x, expected.x, 'restored x'); close(world(cell).y, expected.y, 'restored y'); assert.equal(Number(h.graph.getCellStyle(cell).rotation || 0), 0); // CHANGE

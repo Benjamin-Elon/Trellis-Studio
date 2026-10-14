@@ -188,7 +188,7 @@ test('Garden Settings exposes fixed path width presets with explicit enablement'
     assert.match(dialogSource, /const chosenPathPresetsCm = readPathWidthInputsAsCm\(chosenUnits\);/); // NEW
     assert.match(dialogSource, /Enabled path widths must be positive numbers\./); // NEW
     assert.match(dialogSource, /pathAttrs\[pathPresetEnabledAttr\(preset\.id\)\] = preset\.enabled \? "1" : "0";[\s\S]*pathAttrs\[pathPresetWidthAttr\(preset\.id\)\] = formatBedCmAttr\(preset\.widthCm\);/); // NEW
-    assert.match(dialogSource, /ui\.showDialog\(div, 460, 560, true, true, notifyClose\);/); // NEW
+    assert.match(dialogSource, /ui\.showDialog\(div, 460, 640, true, true, notifyClose\);/); // CHANGE: circle-budget fields increase the Garden Settings dialog height.
 }); // NEW
 
 test('Garden bed path snapping evaluates direct neighbors and closest path presets', () => { // NEW
@@ -403,6 +403,181 @@ test('Garden module overlay suppresses plan actions while irrigation mode is act
     assert.match(source, /function refreshForSelection\(\) \{[\s\S]*if \(isIrrigationModeActiveForOverlay\(\)\) \{[\s\S]*hideToolbar\(\);[\s\S]*return;/);
     assert.match(source, /mxEvent\.addListener\(window, "trellisIrrigationModeChanged", scheduleRefresh\);/);
 });
+
+/** Load the production plugins with real mxGraph selection and mouse-event ordering. */ // CHANGE
+function loadBedPanelFixture(t, pluginOrder = ['Planting_Group.js', 'Garden_Beds.js'], clickThrough = true) { // CHANGE
+    const dom = new JSDOM('<!doctype html><body><div id="graph" style="position:relative;width:1200px;height:800px"></div></body>', { runScripts: 'outside-only', pretendToBeVisual: true }); // CHANGE
+    t.after(() => dom.window.close()); // CHANGE
+    const { window } = dom; // CHANGE
+    const errors = []; window.addEventListener('error', event => errors.push(event.error)); t.after(() => assert.deepEqual(errors, [], 'no uncaught renderer errors')); // CHANGE
+    window.mxLoadResources = false; window.mxLoadStylesheets = false; // CHANGE
+    window.HTMLCanvasElement.prototype.getContext = () => null; // CHANGE
+    const pluginRoot = path.dirname(plantTilerPath); // CHANGE
+    window.eval(fs.readFileSync(path.join(pluginRoot, '../../mxgraph/mxClient.js'), 'utf8')); // CHANGE
+    const graph = new window.mxGraph(window.document.getElementById('graph')); // CHANGE
+    graph.setHtmlLabels(true); graph.isSpecialColor = () => false; graph.getCompositeParent = cell => cell; // CHANGE: supply the editor's composite-parent contract to native drag handling.
+    graph.graphHandler.isPropagateSelectionCell = () => false; // CHANGE
+    graph.convertValueToString = cell => cell.getAttribute('label') || ''; // CHANGE
+    const ui = { editor: { graph }, actions: { get: () => null }, hideDialog() {}, showDialog() {} }; // CHANGE
+    window.Draw = { loadPlugin: callback => callback(ui) }; // CHANGE
+    for (const name of [...pluginOrder, ...(clickThrough ? ['Deep_Click_Through.js'] : [])]) window.eval(fs.readFileSync(path.join(pluginRoot, name), 'utf8')); // CHANGE
+    const xml = attrs => { const value = window.mxUtils.createXmlDocument().createElement('object'); for (const [key, text] of Object.entries(attrs)) value.setAttribute(key, text); return value; }; // CHANGE
+    const moduleCell = graph.insertVertex(null, 'garden', xml({ garden_module: '1', label: 'Garden' }), 0, 0, 2000, 2000, 'swimlane;module=1;'); // CHANGE
+    const bed = graph.insertVertex(moduleCell, 'bed', xml({ garden_bed: '1', label: 'East bed' }), 400, 200, 200, 100); // CHANGE
+    const bed2 = graph.insertVertex(moduleCell, 'bed2', xml({ garden_bed: '1', label: 'West bed' }), 400, 400, 200, 100); // CHANGE
+    const flush = () => new Promise(resolve => window.setTimeout(() => window.setTimeout(resolve, 0), 0)); // CHANGE
+    const mouse = (cell, type, options = {}) => { // CHANGE
+        const state = graph.view.getState(cell); // CHANGE
+        state.shape.node.dispatchEvent(new window.MouseEvent(type, { bubbles: true, clientX: state.x + state.width / 2, clientY: state.y + state.height / 2, ...options })); // CHANGE
+    }; // CHANGE
+    const click = async (cell = bed, options = {}) => { mouse(cell, 'mousedown', options); mouse(cell, 'mouseup', options); await flush(); }; // CHANGE
+    const actions = () => graph.container.querySelector('.trellis-garden-module-label-controls')?.parentNode; // CHANGE
+    const conditions = () => [...graph.container.querySelectorAll('.trellis-bed-conditions-overlay')]; // CHANGE
+    const assertPanels = (visible, allocation = false) => { // CHANGE
+        assert.equal(actions()?.style.display === 'flex', visible && !allocation, 'floating action visibility'); // CHANGE
+        assert.equal(conditions().length, visible ? 1 : 0, 'bed conditions visibility'); // CHANGE
+    }; // CHANGE
+    return { window, graph, moduleCell, bed, bed2, mouse, click, flush, actions, conditions, assertPanels }; // CHANGE
+} // CHANGE
+
+for (const order of [['Planting_Group.js', 'Garden_Beds.js'], ['Garden_Beds.js', 'Planting_Group.js']]) { // CHANGE
+    test(`selected-bed clicks toggle both panels without a press blink (${order.join(' then ')})`, async t => { // CHANGE
+        const f = loadBedPanelFixture(t, order); // CHANGE
+        await f.click(); f.assertPanels(true); // CHANGE: first click selects without dismissing.
+        const modelBefore = f.window.mxUtils.getXml(new f.window.mxCodec().encode(f.graph.model)); // CHANGE: toggling is UI state only.
+        assert.equal(f.graph.getSelectionCell(), f.bed); // CHANGE
+        f.mouse(f.bed, 'mousedown'); f.assertPanels(true); // CHANGE
+        await f.flush(); f.assertPanels(true); // CHANGE: a held press spans a render opportunity.
+        f.mouse(f.bed, 'mouseup'); f.assertPanels(false); await f.flush(); f.assertPanels(false); // CHANGE: both panels commit before a deferred refresh or browser paint.
+        assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), true); // CHANGE
+        f.mouse(f.bed, 'mousedown', { clientX: 520 }); await f.flush(); f.assertPanels(false); // CHANGE
+        f.mouse(f.bed, 'mouseup', { clientX: 520 }); f.assertPanels(true); await f.flush(); f.assertPanels(true); // CHANGE
+        assert.equal(f.actions().style.left, '528px'); // CHANGE: showing anchors actions to the latest click.
+        assert.equal(f.graph.getSelectionCell(), f.bed); // CHANGE
+        assert.equal(f.window.mxUtils.getXml(new f.window.mxCodec().encode(f.graph.model)), modelBefore); // CHANGE: visibility never writes diagram data or history.
+    }); // CHANGE
+} // CHANGE
+
+test('bed dismissal survives refresh and view/history events but resets on every selection change', async t => { // CHANGE
+    const f = loadBedPanelFixture(t); // CHANGE
+    f.graph.setSelectionCell(f.bed); await f.flush(); await f.click(); f.assertPanels(false); // CHANGE
+    f.graph.__plantTilerRefreshGardenModuleOverlay(); // CHANGE
+    f.graph.view.setScale(1.25); f.graph.view.setTranslate(12, 15); // CHANGE
+    f.graph.view.fireEvent(new f.window.mxEventObject(f.window.mxEvent.REPAINT)); // CHANGE
+    for (const name of [f.window.mxEvent.CELLS_MOVED, f.window.mxEvent.CELLS_RESIZED]) f.graph.fireEvent(new f.window.mxEventObject(name)); // CHANGE
+    for (const name of [f.window.mxEvent.UNDO, f.window.mxEvent.REDO]) f.graph.model.fireEvent(new f.window.mxEventObject(name)); // CHANGE
+    f.window.dispatchEvent(new f.window.Event('resize')); await f.flush(); f.assertPanels(false); // CHANGE
+    for (const selection of [[f.bed2], [], [f.bed, f.bed2], [f.moduleCell]]) { // CHANGE
+        f.graph.setSelectionCells(selection); // CHANGE
+        assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // CHANGE: reset before deferred render.
+        f.graph.setSelectionCell(f.bed); await f.flush(); f.assertPanels(true); // CHANGE: rapid return cannot retain dismissal.
+        await f.click(); f.assertPanels(false); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('Allocation toggles only compact bed names and preserves dismissal across mode changes', async t => { // CHANGE
+    const f = loadBedPanelFixture(t); // CHANGE
+    let active = null; f.window.Trellis = { interactionModes: { getActive: () => active } }; // CHANGE
+    const mode = async value => { active = value; f.window.dispatchEvent(new f.window.CustomEvent('trellisInteractionModeChanged')); await f.flush(); }; // CHANGE
+    f.graph.setSelectionCell(f.bed); await f.flush(); await f.click(); // CHANGE
+    await mode({ mode: 'allocate' }); f.assertPanels(false, true); // CHANGE
+    await f.click(); f.assertPanels(true, true); // CHANGE
+    assert.equal(f.conditions()[0].children.length, 1); // CHANGE
+    await f.click(); f.assertPanels(false, true); // CHANGE
+    await mode(null); f.assertPanels(false); // CHANGE
+    await f.click(); f.assertPanels(true); // CHANGE
+    f.window.TrellisIrrigationPlanner = { isIrrigationModeActive: () => true }; // CHANGE
+    f.window.dispatchEvent(new f.window.CustomEvent('trellisIrrigationModeChanged')); await f.flush(); // CHANGE
+    await f.click(); f.assertPanels(false); // CHANGE: suppressed modes do not toggle manual dismissal.
+    assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // CHANGE
+    f.window.TrellisIrrigationPlanner.isIrrigationModeActive = () => false; // CHANGE
+    f.window.dispatchEvent(new f.window.CustomEvent('trellisIrrigationModeChanged')); await f.flush(); f.assertPanels(true); // CHANGE
+    f.window.Trellis.users = { isTeamPermissionModeActive: () => true }; // CHANGE
+    f.window.dispatchEvent(new f.window.CustomEvent('trellisTeamPermissionModeChanged', { detail: { active: true } })); await f.flush(); // CHANGE
+    await f.click(); f.assertPanels(false); assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // CHANGE
+    f.window.Trellis.users.isTeamPermissionModeActive = () => false; // CHANGE
+    f.window.dispatchEvent(new f.window.CustomEvent('trellisTeamPermissionModeChanged', { detail: { active: false } })); await f.flush(); f.assertPanels(true); // CHANGE
+}); // CHANGE
+
+test('bed movement threshold suppresses panels without changing manual dismissal, including return-to-origin drags', async t => { // CHANGE
+    const f = loadBedPanelFixture(t); // CHANGE
+    f.graph.setSelectionCell(f.bed); await f.flush(); // CHANGE
+    f.mouse(f.bed, 'mousedown'); f.mouse(f.bed, 'mousemove', { clientX: 503 }); f.assertPanels(true); // CHANGE
+    f.mouse(f.bed, 'mouseup', { clientX: 503 }); await f.flush(); f.assertPanels(false); // CHANGE: under four pixels still toggles.
+    for (const dismissed of [true, false]) { // CHANGE
+        if (!dismissed) { await f.click(); f.assertPanels(true); } // CHANGE
+        f.mouse(f.bed, 'mousedown'); f.mouse(f.bed, 'mousemove', { clientX: 504 }); f.assertPanels(false); // CHANGE: exact four-pixel boundary.
+        f.graph.__plantTilerRefreshGardenModuleOverlay(); await f.flush(); f.assertPanels(false); // CHANGE
+        f.mouse(f.bed, 'mousemove'); f.mouse(f.bed, 'mouseup'); await f.flush(); // CHANGE
+        assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), dismissed); f.assertPanels(!dismissed); // CHANGE
+    } // CHANGE
+    f.mouse(f.bed, 'mousedown'); f.mouse(f.bed, 'mousemove', { clientX: 508 }); f.assertPanels(false); // CHANGE
+    f.mouse(f.bed, 'mouseup', { clientX: 508 }); await f.flush(); f.assertPanels(true); // CHANGE: completed move restores initially visible panels.
+}); // CHANGE
+
+test('modifiers, secondary buttons, double-click second presses, and panel controls do not dismiss a bed', async t => { // CHANGE
+    const f = loadBedPanelFixture(t); // CHANGE
+    f.graph.setSelectionCell(f.bed); await f.flush(); // CHANGE
+    for (const options of [{ shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { button: 1 }, { button: 2 }, { detail: 2 }]) { // CHANGE
+        await f.click(f.bed, options); // CHANGE
+        assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // CHANGE
+        f.graph.setSelectionCell(f.bed); await f.flush(); f.assertPanels(true); // CHANGE
+    } // CHANGE
+    for (const panel of [f.actions(), f.conditions()[0]]) { // CHANGE
+        const control = panel.querySelector('input, button'); // CHANGE
+        control.dispatchEvent(new f.window.MouseEvent('mousedown', { bubbles: true })); // CHANGE
+        control.dispatchEvent(new f.window.MouseEvent('mouseup', { bubbles: true })); // CHANGE
+        await f.flush(); f.assertPanels(true); // CHANGE
+    } // CHANGE
+    f.graph.setSelectionCells([f.bed, f.bed2]); await f.flush(); // CHANGE
+    await f.click(); assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // CHANGE: reducing multi-selection is a fresh selection click.
+}); // CHANGE
+
+test('outside release, pointer cancellation, and blur restore the previous panel state without toggling', async t => { // CHANGE
+    const f = loadBedPanelFixture(t); // CHANGE
+    f.graph.setSelectionCell(f.bed); await f.flush(); // CHANGE
+    for (const eventName of ['mouseup', 'pointerup', 'pointercancel', 'blur']) { // CHANGE
+        for (const dismissed of [false, true]) { // CHANGE
+            if (f.graph.__plantTilerIsBedOverlayHidden(f.bed) !== dismissed) await f.click(); // CHANGE
+            f.mouse(f.bed, 'mousedown'); f.mouse(f.bed, 'mousemove', { clientX: 504 }); f.assertPanels(false); // CHANGE
+            f.window.dispatchEvent(new f.window.Event(eventName)); await f.flush(); f.assertPanels(!dismissed); // CHANGE
+            f.window.dispatchEvent(new f.window.Event(eventName)); // CHANGE: repeated cleanup is harmless.
+            f.mouse(f.bed, 'mouseup'); await f.flush(); f.assertPanels(!dismissed); // CHANGE: a late graph release cannot toggle.
+        } // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('selection changes during a bed press invalidate the toggle even when selection returns before release', async t => { // CHANGE
+    const f = loadBedPanelFixture(t); // CHANGE
+    f.graph.setSelectionCell(f.bed); await f.flush(); // CHANGE
+    f.mouse(f.bed, 'mousedown'); // CHANGE
+    f.graph.setSelectionCell(f.bed2); f.graph.setSelectionCell(f.bed); // CHANGE
+    f.mouse(f.bed, 'mouseup'); await f.flush(); f.assertPanels(true); // CHANGE
+    assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // CHANGE
+}); // CHANGE
+
+test('a native release outside the canvas cancels rather than toggling even at the original coordinates', async t => { // CHANGE
+    const f = loadBedPanelFixture(t); // CHANGE
+    f.graph.setSelectionCell(f.bed); await f.flush(); // CHANGE
+    for (const dismissed of [false, true]) { // CHANGE
+        if (dismissed) await f.click(); // CHANGE
+        f.mouse(f.bed, 'mousedown'); // CHANGE
+        f.window.document.body.dispatchEvent(new f.window.MouseEvent('mouseup', { bubbles: true, clientX: 500, clientY: 250 })); // CHANGE
+        await f.flush(); f.assertPanels(!dismissed); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('garden-module clicks still toggle actions while Planting_Group works without Garden_Beds', async t => { // CHANGE
+    const f = loadBedPanelFixture(t, ['Planting_Group.js'], false); // CHANGE
+    f.graph.setSelectionCell(f.moduleCell); await f.flush(); // CHANGE
+    const clickModule = async () => { f.mouse(f.moduleCell, 'mousedown', { clientX: 100, clientY: 100 }); f.mouse(f.moduleCell, 'mouseup', { clientX: 100, clientY: 100 }); await f.flush(); }; // CHANGE
+    await clickModule(); assert.equal(f.actions().style.display, 'none'); // CHANGE
+    f.graph.__plantTilerRefreshGardenModuleOverlay(); await f.flush(); assert.equal(f.actions().style.display, 'none'); // CHANGE
+    await clickModule(); assert.equal(f.actions().style.display, 'flex'); // CHANGE
+    f.graph.setSelectionCell(f.bed); await f.flush(); // CHANGE
+    await f.click(); assert.equal(f.actions().style.display, 'none'); // CHANGE
+    await f.click(); assert.equal(f.actions().style.display, 'flex'); // CHANGE
+}); // CHANGE
 
 test('Plant group creation finalizes tiling and bed fit inside the creation transaction', () => {
     const source = readPlantTilerSource();

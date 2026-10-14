@@ -22,6 +22,7 @@ const trellisDefaultPluginIds = [
     "gardenSuccession",
     "plantingGroup",
     "gardenTasks",
+    "gardenGuide", // CHANGE: Task Guide is available on fresh and migrated installs.
     "gardenRoadmapCore", // NEW
     "gardenRoadmaps", // NEW
     "gardenModules",
@@ -50,6 +51,7 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Bed_Succession_Navigator.js",
     "plugins/garden_planner_plugins/Planting_Group.js",
     "plugins/garden_planner_plugins/Garden_Task_Manager.js",
+    "plugins/garden_planner_plugins/Garden_Guide.js", // CHANGE
     "plugins/garden_planner_plugins/Garden_Roadmap_Core.js", // NEW
     "plugins/garden_planner_plugins/Garden_Roadmap_Manager.js", // NEW
     "plugins/garden_planner_plugins/Modules_Standalone.js",
@@ -309,3 +311,14 @@ for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // CHANG
         assert.equal(context.App.pluginsLoaded[context.App.normalizePlantingPluginPath('plugins/garden_planner_plugins/Plant_Tiler.js')], true); // CHANGE
     }); // CHANGE
 } // CHANGE
+
+for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // NEW
+    test(path.basename(filePath) + ' desktop roadmap URLs include the separator and share stored-plugin keys', () => { // NEW
+        const source = readProjectFile(filePath), requests = []; // NEW
+        const context = { App: { pluginsLoaded: {}, embedModePluginsCount: 0 }, PLUGINS_BASE_PATH: '.', window: { console }, mxscript: (url, done) => requests.push({ url, done }) }; // NEW
+        for (const field of ['pluginRegistry', 'loadRoadmapPlugin']) vm.runInNewContext(runtimeAssignment(source, field), context); // NEW
+        context.App.loadRoadmapPlugin('gardenRoadmaps'); assert.equal(requests[0].url, './plugins/garden_planner_plugins/Garden_Roadmap_Core.js'); // NEW
+        assert.equal(context.App.pluginsLoaded['./' + context.App.pluginRegistry.gardenRoadmaps], true); // NEW
+        requests[0].done(); assert.equal(requests[1].url, './plugins/garden_planner_plugins/Garden_Roadmap_Manager.js'); // NEW
+    }); // NEW
+} // NEW

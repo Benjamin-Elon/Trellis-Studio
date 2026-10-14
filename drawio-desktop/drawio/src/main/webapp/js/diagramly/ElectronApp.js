@@ -350,6 +350,70 @@ mxStencilRegistry.allowEval = false;
 		await requestSync({action: 'openExternal', url: url});
 	};
 
+	/** Keep document snapshots local and temporarily block edits only after approval. */ // NEW
+	function installTrellisClosePreparation(ui) { // NEW
+		let snapshot = null, sequence = 0, shield = null, draftWriter = null; // NEW
+		const inputEvents = ['keydown', 'beforeinput', 'pointerdown', 'mousedown', 'click']; // NEW
+		const blockInput = event => { if (window.__trellisClosing) { event.preventDefault(); event.stopImmediatePropagation(); } }; // NEW
+		function capture() { // NEW
+			const file = ui.getCurrentFile(); // NEW
+			return { file, modified: !!file?.isModified(), xml: file ? mxUtils.getXml(ui.getXmlFileData(true, false, true)) : '' }; // NEW
+		} // NEW
+		function matches(id) { // NEW
+			if (!snapshot || snapshot.id !== id) return false; // NEW
+			const current = capture(); // NEW
+			return current.file === snapshot.file && current.xml === snapshot.xml && current.modified === snapshot.modified && !current.file?.savingFile; // NEW
+		} // NEW
+		function seal() { // NEW
+			if (window.__trellisClosing) return; // NEW
+			window.__trellisClosing = true; // NEW
+			for (const type of inputEvents) window.addEventListener(type, blockInput, true); // NEW
+			shield = document.createElement('div'); shield.textContent = 'Closing Trellis…'; // NEW
+			shield.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(255,255,255,.65);display:flex;align-items:center;justify-content:center;font:16px sans-serif;'; document.body.appendChild(shield); // NEW
+			if (snapshot.file) { draftWriter = snapshot.file.saveDraft; snapshot.file.saveDraft = function() {}; } // NEW: approved discards cannot be recreated by the delayed draft timer.
+		} // NEW
+		function release() { // NEW
+			if (draftWriter && snapshot?.file) snapshot.file.saveDraft = draftWriter; // NEW
+			const restoreDraft = draftWriter && snapshot?.file; draftWriter = null; shield?.remove(); shield = null; window.__trellisClosing = false; // CHANGE
+			if (restoreDraft?.isModified()) restoreDraft.saveDraft(); // NEW: a canceled or failed discard restores delayed draft recovery.
+			for (const type of inputEvents) window.removeEventListener(type, blockInput, true); // NEW
+			if (ui.__trellisDeferredFileChange) { const change = ui.__trellisDeferredFileChange; delete ui.__trellisDeferredFileChange; if (change[2] === ui.getCurrentFile()) ui.handleFileChange(...change); } // NEW
+			snapshot = null; // NEW
+		} // NEW
+		/** Await the existing filesystem/IndexedDB mechanics instead of their fire-and-forget wrappers. */ // NEW
+		async function discard() { // NEW
+			const file = snapshot.file; if (!snapshot.modified || !file) return; // NEW
+			if (file.fileObject?.draftFileName) { // CHANGE
+				await requestSync({ action: 'deleteFile', file: file.fileObject.draftFileName }); // NEW
+				if (await requestSync({ action: 'checkFileExists', pathParts: [file.fileObject.draftFileName] })) throw new Error('Draft removal was declined by the filesystem safety check.'); // NEW: the existing deletion guard may retain a file without throwing.
+			} // NEW
+			else if (file.draftId != null) { // NEW
+				const id = file.draftId; await new Promise((resolve, reject) => ui.removeDatabaseItem('.draft_' + id, resolve, reject)); file.usedDraftId = id; file.draftId = null; // NEW
+			} // NEW
+		} // NEW
+		electron.registerMsgListener('isModified', async request => { // NEW
+			const payload = typeof request === 'object' && request ? request : { uniqueId: request }; // NEW: preserve existing logout and legacy checks.
+			if (payload.phase === 'cancel') { release(); return; } // NEW
+			const reply = { uniqueId: payload.uniqueId, isModified: false, draftPath: null }; // NEW
+			try { // NEW
+				if (payload.phase === 'seal' || payload.phase === 'discard') { // NEW
+					reply.snapshotValid = matches(payload.snapshotId); // NEW
+					if (reply.snapshotValid) { seal(); if (payload.phase === 'discard') await discard(); } // NEW
+				} else { // NEW
+					const file = ui.getCurrentFile(); if (file && ui.editor.graph.isEditing()) ui.editor.graph.stopEditing(); // NEW
+					reply.isModified = !!file?.isModified(); reply.draftPath = EditorUi.enableDrafts && file?.fileObject ? file.fileObject.draftFileName : null; // NEW
+					if (payload.phase === 'prepare') { release(); snapshot = { ...capture(), id: String(++sequence) }; reply.snapshotId = snapshot.id; } // NEW
+				} // NEW
+			} catch (error) { reply.error = error.message || String(error); } // NEW
+			// Contents, file paths in the snapshot, and credentials never cross this private approval reply. // NEW
+			electron.sendMessage('isModified-result', reply); // NEW
+		}); // NEW
+		electron.registerMsgListener('removeDraft', async payload => { // CHANGE: legacy callers still receive a reply, after removal finishes.
+			try { await ui.getCurrentFile()?.removeDraft(); electron.sendMessage('draftRemoved', { uniqueId: payload?.uniqueId }); } // NEW
+			catch (error) { electron.sendMessage('draftRemoved', { uniqueId: payload?.uniqueId, error: error.message }); } // NEW
+		}); // NEW
+	} // NEW
+
 	// Initializes the user interface
 	var editorUiInit = EditorUi.prototype.init;
 	EditorUi.prototype.init = async function()
@@ -359,30 +423,7 @@ mxStencilRegistry.allowEval = false;
 		var editorUi = this;
 		var graph = this.editor.graph;
 		
-		electron.registerMsgListener('isModified', (uniqueId) =>
-		{
-			const currentFile = editorUi.getCurrentFile();
-			let reply = {isModified: false, draftPath: null, uniqueId: uniqueId};
-
-			if (currentFile != null)
-			{
-				if (editorUi.editor.graph.isEditing())
-				{
-					editorUi.editor.graph.stopEditing();
-				}
-
-				reply.isModified = currentFile.isModified();
-				reply.draftPath = EditorUi.enableDrafts && currentFile.fileObject? currentFile.fileObject.draftFileName : null;
-			}
-
-			electron.sendMessage('isModified-result', reply);
-		});
-
-		electron.registerMsgListener('removeDraft', () =>
-		{
-			editorUi.getCurrentFile().removeDraft();
-			electron.sendMessage('draftRemoved', {});
-		});
+		installTrellisClosePreparation(editorUi); // CHANGE: correlate and revalidate private close operations.
 
 		// Adds support for libraries
 		this.actions.addAction('newLibrary...', mxUtils.bind(this, function()
@@ -1067,6 +1108,7 @@ mxStencilRegistry.allowEval = false;
 	// Uses local picker
 	EditorUi.prototype.handleFileChange = function(curr, prev, file)
 	{
+		if (window.__trellisClosing) { this.__trellisDeferredFileChange = [curr, prev, file]; return; } // NEW: defer remote reload until a canceled quit restores the editor.
 		// File not deleted, changed (not just accessed) and not already in conflict state
 		if (curr.mtimeMs != 0 && curr.mtimeMs != prev.mtimeMs && !file.inConflictState)
 		{

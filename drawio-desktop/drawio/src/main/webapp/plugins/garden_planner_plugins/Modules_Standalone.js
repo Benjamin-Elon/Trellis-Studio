@@ -909,6 +909,7 @@ Draw.loadPlugin(function (ui) {
 
     function setModuleType(cell, type) {
         let becameGarden = false;                                                            
+        const wasGarden = isGardenModule(cell); // NEW: type conversion initializes budgets, opening an existing garden does not.
 
         model.beginUpdate();
         try {
@@ -922,6 +923,10 @@ Draw.loadPlugin(function (ui) {
             // Set the desired flag
             if (type === "garden") {
                 setXmlFlag(cell, "garden_module", true);
+                if (!wasGarden) { // NEW: new gardens start with bounded circle detail.
+                    setStringValueAttr(cell, 'plant_circle_max_per_planting', '200'); // NEW
+                    setStringValueAttr(cell, 'plant_circle_max_total', '1000'); // NEW
+                } // NEW
                 becameGarden = true;                                                        
             } else if (type === "team") {
                 setXmlFlag(cell, "team_module", true);

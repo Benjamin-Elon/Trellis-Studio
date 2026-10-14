@@ -53,7 +53,7 @@ Draw.loadPlugin(function (ui) {
         gardener: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS],
         coordinator: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS]
     };
-    const TASK_DETAIL_ATTRS = new Set(["label", "title", "notes", "card_note", "start", "end", "due", "assigned_day", "task_estimated_hours", "scheduler_dates_locked"]);
+    const TASK_DETAIL_ATTRS = new Set(["label", "title", "notes", "card_note", "task_instruction_override", "start", "end", "due", "assigned_day", "task_estimated_hours", "scheduler_dates_locked"]); // CHANGE: task guidance uses the existing edit-details capability.
     const TASK_ASSIGNMENT_ATTRS = new Set(["task_assignee_role_ids_json"]);
     const SCOPE_GRANT_ATTRS = new Set([ATTR_ACCESS_USERS, ATTR_ACCESS_GRANTS, ATTR_ACCESS_OPEN]);
     const USER_ID_PREFIX = "user_";
@@ -88,6 +88,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     let currentUserId = "";
+    let authenticatedUserId = ""; // NEW: remembered logins alone cannot link a portable identity.
     let panel = null;
     let statusNode = null;
     let peopleFilterNode = null;
@@ -201,6 +202,7 @@ Draw.loadPlugin(function (ui) {
             email: normalizeEmail(source.email || ""),
             pinSalt: String(source.pinSalt || ""),
             pinHash: String(source.pinHash || ""),
+            portableIdentityId: String(source.portableIdentityId || ""), // NEW: explicit proven account linkage survives normalization.
             admin: !!source.admin,
             disabled: !!source.disabled,
             createdAt: Number(source.createdAt) || nowMs()
@@ -379,7 +381,7 @@ Draw.loadPlugin(function (ui) {
 
     function publicUser(user) {
         if (!user) return null;
-        return { id: user.id, name: user.name, email: user.email || "", admin: !!user.admin, disabled: !!user.disabled };
+        return { id: user.id, name: user.name, email: user.email || "", admin: !!user.admin, disabled: !!user.disabled, portableIdentityId: user.portableIdentityId || "" }; // CHANGE: expose linkage, never PIN credentials.
     }
 
     function listUsers() {
@@ -818,6 +820,7 @@ Draw.loadPlugin(function (ui) {
         store.usersEnabled = true;
         store.users = [user];
         currentUserId = user.id;
+        authenticatedUserId = user.id; // NEW: creating the first administrator proves this diagram account.
         writeStore(store);
         return { ok: true, user: publicUser(user) };
     }
@@ -835,11 +838,13 @@ Draw.loadPlugin(function (ui) {
             const created = createUser(name, pin, true);
             if (!created.ok) return created;
             currentUserId = created.user.id;
+            authenticatedUserId = created.user.id; // NEW
             return { ok: true, user: created.user };
         }
         const user = userByName(name);
         if (!user || user.pinHash !== hashPin(pin, user.pinSalt)) return { ok: false, reason: "Unknown user or incorrect PIN." };
         currentUserId = user.id;
+        authenticatedUserId = user.id; // NEW: only successful PIN authentication permits linking.
         return { ok: true, user: publicUser(user) };
     }
 
@@ -889,6 +894,7 @@ Draw.loadPlugin(function (ui) {
 
     function logout() {
         currentUserId = "";
+        authenticatedUserId = ""; // NEW
         forgetRememberedLogin();
         closeAccountMenu();
         showStatus("Logged out.");
@@ -1684,6 +1690,13 @@ Draw.loadPlugin(function (ui) {
         return hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT);
     }
 
+    /** Circle budgets are garden policy: general content managers cannot change them. */ // NEW
+    function canConfigurePlantCircleLimits(cell) { // NEW
+        if (!isEnabled()) return true; // NEW
+        const user = currentUser(); // NEW
+        return !!user && isGardenModule(cell) && (user.admin || getAttr(cell, ATTR_OWNER) === user.id); // NEW
+    } // NEW
+
     function canAddCell(parent) {
         if (!isEnabled()) return true;
         const user = currentUser();
@@ -2375,6 +2388,7 @@ Draw.loadPlugin(function (ui) {
         invite.status = "accepted";
         writeStore(store);
         currentUserId = user.id;
+        authenticatedUserId = user.id; // NEW: accepted invitations prove this user's access.
         graph[INTERNAL_FLAG] = true;
         model.beginUpdate();
         try { ensureGardenRoleCardsForUser(user.id); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; }
@@ -2733,6 +2747,7 @@ Draw.loadPlugin(function (ui) {
     function editPermissionContext(changes) {
         const source = Array.isArray(changes) ? changes : [];
         const createdPlantingIds = collectAllowedCreatedPlantingIds(source);
+        const createdGardens = new Set(source.filter(change => change.constructor && change.constructor.name === 'mxChildChange' && isGardenModule(cellFromChange(change)) && currentParentOfChange(change) && !previousParentOfChange(change) && canAddCell(currentParentOfChange(change))).map(cellFromChange)); // NEW: creators initialize defaults before accepted-edit ownership stamping.
         const summaryGroups = collectAuthorizedSummaryGroups(source, createdPlantingIds); // NEW
         const roadmapDeletedIds = new Set(), roadmapTransfers = new Map(); // CHANGE
         function roadmapBoard(cell) { for (let cur = cell; cur; cur = model.getParent(cur)) if (getAttr(cur, 'roadmap_type') === 'board') return cur; return null; } // NEW
@@ -2746,7 +2761,7 @@ Draw.loadPlugin(function (ui) {
             if (!previousParent || destination || !canDeleteFromPreviousParent(cell, previousParent)) return; // CHANGE
             traverseCells(cell, function (removed) { if (getAttr(removed, 'roadmap_type') || isTaskCard(removed)) roadmapDeletedIds.add(String(cellStableId(removed))); }); // NEW
         }); // NEW
-        return { createdPlantingIds, summaryGroups, roadmapDeletedIds, roadmapTransfers, allowGeneratedPlantTileChurn: createdPlantingIds.size > 0 || source.some(plantingContextAllowsGeneratedTileChurn) }; // CHANGE: summary authorization is per cell; existing tile churn semantics remain intact.
+        return { createdPlantingIds, createdGardens, summaryGroups, roadmapDeletedIds, roadmapTransfers, allowGeneratedPlantTileChurn: createdPlantingIds.size > 0 || source.some(plantingContextAllowsGeneratedTileChurn) }; // CHANGE: summary authorization is per cell; existing tile churn semantics remain intact.
     }
 
     /** Permit only the source-board navigation repair caused by an authorized object transfer. */ // NEW
@@ -2783,18 +2798,62 @@ Draw.loadPlugin(function (ui) {
         }); // NEW
     } // NEW
 
+    /** Authorize only exact controller-generated presentation changes from a permitted garden-budget operation. */ // NEW
+    function plantCircleBudgetChangeAllowed(change, context) { // NEW
+        const limits = graph.__trellisPlantingGroup && graph.__trellisPlantingGroup.circleLimits; // NEW
+        const record = limits && limits.getDerivedChange(change); // NEW
+        if (!record || !record.garden || !record.group || !record.triggers.length) return false; // NEW
+        const sourceAllowed = record.triggers.some(trigger => { // NEW
+            if (limits.getDerivedChange(trigger)) return false; // NEW: derived changes never authorize each other.
+            const cell = cellFromChange(trigger), name = trigger.constructor && trigger.constructor.name; // NEW
+            if (!cell) return false; // NEW
+            if (cell === record.garden && changedAttributeNames(trigger).some(key => key === 'plant_circle_max_per_planting' || key === 'plant_circle_max_total')) return canConfigurePlantCircleLimits(cell) && changeAllowed(trigger, context); // NEW
+            const planting = nearestPlanting(cell) || (isTilerGroup(previousParentOfChange(trigger)) ? previousParentOfChange(trigger) : null); // NEW
+            if (!planting || nearestGardenModule(planting) !== record.garden) return false; // NEW
+            const changesLayout = name === 'mxGeometryChange' || name === 'mxChildChange' || changedAttributeNames(trigger).some(key => /^(spacing_|plant_count|plant_circle_detail_mode$|disabled_|layout_)/.test(key)); // NEW
+            return changesLayout && changeAllowed(trigger, context); // NEW
+        }); // NEW
+        if (!sourceAllowed) return false; // NEW
+        const cell = cellFromChange(change), name = change.constructor && change.constructor.name; // NEW
+        if (cell === record.group) { // NEW
+            const allowed = new Set(['lod_collapsed', 'lod_layout_snapshot_v1', 'lod_layout_snapshot_at', 'plant_count', 'plant_count_capacity', 'plant_count_actual', 'planting_expected_yield_kg']); // NEW
+            return (name === 'mxValueChange' || name === 'mxCellAttributeChange') && changedAttributeNames(change).every(key => allowed.has(key)); // NEW
+        } // NEW
+        if (!isGeneratedPlantTile(cell) && !isPlantingSummary(cell)) return false; // NEW
+        const parents = [parentOf(cell), name === 'mxChildChange' ? change.parent : null, name === 'mxChildChange' ? change.previous : null].filter(Boolean); // NEW
+        return parents.length > 0 && parents.every(parent => parent === record.group) && ['mxChildChange', 'mxValueChange', 'mxStyleChange', 'mxGeometryChange'].includes(name); // NEW
+    } // NEW
+
+    /** Resolve garden identity from the model, independently of planting-controller permission claims. */ // NEW
+    function nearestGardenModule(cell) { // NEW
+        for (let current = cell; current; current = parentOf(current)) if (isGardenModule(current)) return current; // NEW
+        return null; // NEW
+    } // NEW
+
     function changeAllowed(change, context) {
         if (change && change.__trellisUsersActorStamp) return true;
+        if (graph.__trellisFieldMetadataChange && change?.constructor?.name === 'mxValueChange') { // NEW: validated field commands may update only their protocol metadata and existing task fields.
+            const allowed = new Set(['trellis_field_object_id', 'trellis_field_versions_json', 'trellis_field_acknowledgments_json', 'workflow_state', 'completed', 'card_note']); // CHANGE: mobile updates use the established Task Manager workflow field.
+            const current = change.cell?.value, previous = change.previous; // NEW
+            if (current?.nodeType === 1 && previous?.nodeType === 1) { // NEW
+                const names = new Set([...Array.from(current.attributes).map(a => a.name), ...Array.from(previous.attributes).map(a => a.name)]); // NEW
+                if ([...names].every(name => current.getAttribute(name) === previous.getAttribute(name) || allowed.has(name))) return true; // NEW
+            } // NEW
+        } // NEW
         const name = change && change.constructor && change.constructor.name;
         const cell = cellFromChange(change);
         if (!name || !cell) return true;
         if (roadmapTransferAllowed(change, context) || roadmapCleanupAllowed(change, context) || roadmapMembershipLinkAllowed(change)) return true; // NEW: exact metadata-only exceptions.
         if (roleUserLinkChanged(change)) return canTransferOwnership(cell);
         const changedAttrs = (name === "mxCellAttributeChange" || name === "mxValueChange") ? changedAttributeNames(change) : [];
+        const circlePolicyAttrs = changedAttrs.filter(attr => attr === 'plant_circle_max_per_planting' || attr === 'plant_circle_max_total'); // NEW
+        const initializesCircleDefaults = context && context.createdGardens.has(cell) && circlePolicyAttrs.every(attr => getAttr(cell, attr) === (attr === 'plant_circle_max_per_planting' ? '200' : '1000')); // NEW: only factory defaults in the authorized creation edit qualify.
+        if (circlePolicyAttrs.length && !canConfigurePlantCircleLimits(cell) && !initializesCircleDefaults) return false; // NEW: policy changes are protected at the model boundary.
         if (changedAttrs.indexOf(ATTR_OWNER) >= 0) return canTransferOwnership(cell);
         if (changedAttrs.some(function (attr) { return SCOPE_GRANT_ATTRS.has(attr); })) return canManageScopeGrants(cell);
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && PROTECTED_ATTRS.has(String(change.key || "")) && !canManageAccess(cell)) return false;
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && protectedAttrsChanged(change) && !canManageAccess(cell)) return false;
+        if (plantCircleBudgetChangeAllowed(change, context)) return true; // NEW: unrelated changes still pass all ordinary permission checks.
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && isModuleCell(cell)) return canEditCell(cell);
         if (isPlantingSummaryLifecycleChange(change)) return !!(context && context.summaryGroups && context.summaryGroups.has(cell)); // NEW: fail closed, after all protected metadata checks.
         if (name === "mxChildChange") {
@@ -3376,11 +3435,36 @@ Draw.loadPlugin(function (ui) {
         return true;
     }
 
+    /** Restore only a linkage matching the currently unlocked main-process identity. */ // NEW
+    async function restorePortableLogin() { // NEW
+        if (!window.trellisIdentity || !isEnabled()) return { ok: false }; // NEW
+        const diagramKey = getDiagramLoginKey(false); // NEW
+        const session = await window.trellisIdentity.getSession(); // NEW
+        if (diagramKey !== getDiagramLoginKey(false)) return { ok: false }; // NEW: ignore a response for a previously opened diagram.
+        const user = session && readStore().users.find(entry => !entry.disabled && entry.portableIdentityId === session.identityId); // NEW
+        if (!user) return { ok: false }; // NEW
+        currentUserId = user.id; authenticatedUserId = user.id; // NEW
+        finalizePublicAuthMutation('', !!authOverlay); // NEW
+        return { ok: true, user: publicUser(user) }; // NEW
+    } // NEW
+    /** Link the current proven diagram user; never infer identity from a name/email. */ // NEW
+    async function linkPortableIdentity() { // NEW
+        if (!window.trellisIdentity || !currentUserId || authenticatedUserId !== currentUserId) return { ok: false, reason: 'Log in with your diagram PIN or accept its invitation before linking.' }; // NEW
+        const diagramKey = getDiagramLoginKey(false), userId = currentUserId; // NEW
+        const session = await window.trellisIdentity.getSession(); // NEW
+        if (!session || userId !== currentUserId || diagramKey !== getDiagramLoginKey(false)) return { ok: false, reason: 'The identity or diagram changed.' }; // NEW
+        const store = readStore(), user = store.users.find(entry => entry.id === userId && !entry.disabled); // NEW
+        if (!user) return { ok: false, reason: 'This diagram user is unavailable.' }; // NEW
+        if (user.portableIdentityId && user.portableIdentityId !== session.identityId) return { ok: false, reason: 'This diagram user is already linked to another identity.' }; // NEW
+        user.portableIdentityId = session.identityId; writeStore(store); // NEW
+        getDiagramLoginKey(true); // NEW: imported legacy diagrams need a stable preference/document identity.
+        return { ok: true, user: publicUser(user), diagramId: getDiagramLoginKey(false) }; // NEW
+    } // NEW
     function handleDiagramOpened() {
-        currentUserId = "";
-        restoreRememberedLogin();
-        updateToolbarButton();
-        applyAuthGateIfNeeded();
+        currentUserId = ""; authenticatedUserId = ""; // CHANGE: file changes clear both session and linking proof.
+        const finish = function () { if (!isLoggedIn()) restoreRememberedLogin(); updateToolbarButton(); applyAuthGateIfNeeded(); }; // NEW
+        if (window.trellisIdentity) { restorePortableLogin().then(finish, finish); } // NEW
+        else finish(); // CHANGE: preserve synchronous legacy/test behavior.
     }
 
     function installFileLoadedGate() {
@@ -4853,9 +4937,7 @@ Draw.loadPlugin(function (ui) {
 
     function promptLoginIfNeeded() {
         setTimeout(function () {
-            restoreRememberedLogin();
-            applyAuthGateIfNeeded();
-            updateToolbarButton();
+            handleDiagramOpened(); // CHANGE: restore an explicitly linked portable identity before showing legacy login.
         }, 0);
     }
 
@@ -4915,6 +4997,7 @@ Draw.loadPlugin(function (ui) {
         login,
         logout,
         getDiagramKey, // NEW: public non-test access to the diagram-scoped local preference key.
+        restorePortableLogin, linkPortableIdentity, // NEW: narrow identity orchestration alongside existing Users policy.
         showAuthDialog,
         rememberLogin,
         forgetRememberedLogin,

@@ -71,13 +71,29 @@ restores the committed layout. Opening a diagram does not normalize old angles. 
 Live bed movement and rotation previews omit plant-circle shapes and labels, <!-- CHANGE -->
 temporarily hiding their original rendered nodes. Circles remain in the model <!-- CHANGE -->
 snapshots used by the eventual commit. Completion, cancellation, and handler <!-- CHANGE -->
-cleanup restore each node's exact prior visibility. Frames, headers, summaries, <!-- CHANGE -->
+cleanup restore each node's exact prior visibility. Frames, summaries, <!-- CHANGE -->
 irrigation, and other bed contents keep their established preview behavior. <!-- CHANGE -->
 
 
 Spacing previews retain each planting group's rotation and the bed outline's <!-- CHANGE -->
 rotation. Frames rotate around their centers; circles use the tiler's already <!-- CHANGE -->
 rotated coordinates, so the preview container must not rotate them again. <!-- CHANGE -->
+
+Planting-group titles paint upright in both SVG and HTML diagrams, including <!-- CHANGE -->
+saved groups. Their native label anchors still follow the rotated header edge. <!-- CHANGE -->
+The owner scopes text creation and label-bound hooks to its graph renderer; <!-- CHANGE -->
+native spacing, alignment, font styles, other labels, and summary text remain <!-- CHANGE -->
+unchanged. A view refresh updates existing titles without XML, geometry, history, <!-- CHANGE -->
+or database writes. Live bed movement/rotation hides titles with the circles and <!-- CHANGE -->
+restores exact prior visibility on completion, cancellation, reset, or destruction. <!-- CHANGE -->
+
+Allocate and both Spacing hosts share upright preview titles positioned outside <!-- CHANGE -->
+the rotating frame. They retain the previous inner-header inset, font, padding, <!-- CHANGE -->
+background, and truncation. Titles can extend outside a rotated frame without <!-- CHANGE -->
+being clipped by that frame or changing its available planting area. Summary <!-- CHANGE -->
+text stays inside the rotated frame. Regression coverage includes native header <!-- CHANGE -->
+anchors, diagram history, preview cleanup, saved groups, zoom, drilled-in modules, <!-- CHANGE -->
+and Chromium rendering in `planting-title-rendering.test.cjs`. <!-- CHANGE -->
 
 While regular spacing or allocation has an uncommitted preview, the first Undo <!-- CHANGE -->
 or Redo discards all active previews and drafts without advancing diagram history. <!-- CHANGE -->

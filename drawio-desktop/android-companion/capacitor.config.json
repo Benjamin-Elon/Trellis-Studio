@@ -1,0 +1,6 @@
+{
+  "appId": "studio.trellis.field",
+  "appName": "Trellis Field",
+  "webDir": "www",
+  "android": { "allowMixedContent": false }
+}

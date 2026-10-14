@@ -706,7 +706,7 @@ Draw.loadPlugin(function (ui) {
      * Decide whether to show the edge from `source` → `target` using lane          
      * status and start dates.                                                      
      */
-    function shouldShowEdgeInternal(source, target) {
+    function shouldShowEdgeInternal(source, target, repeatLinkVisibility) { // CHANGE: one precomputed selection per linked board/series
 
         const sid = source ? source.id : null;
         const tid = target ? target.id : null;
@@ -726,6 +726,12 @@ Draw.loadPlugin(function (ui) {
             vertexLinkLog("[EdgePolicy] NOT tiler→task → SHOW");
             return true;
         }
+
+        if (getAttr(target, 'year_hidden') === '1') return false; // NEW: respect each board's displayed year
+        if (repeatLinkVisibility && repeatLinkVisibility.has(String(target.id))) { // NEW
+            return repeatLinkVisibility.get(String(target.id)); // NEW: chosen repeats bypass the per-column policy
+        } // NEW
+        if (getAttr(target, 'repeat_hidden') === '1') return false; // NEW: safe fallback before Task Manager initializes
 
         // Status is defined by the TARGET task (its lane/status), not the tiler.
         const key = getLaneStatusKeyForTask(target);
@@ -1164,7 +1170,13 @@ Draw.loadPlugin(function (ui) {
 
     function revealKanbanCardForNavigation(card) {
         if (!isKanbanCard(card)) return;
-        if (getAttr(card, 'year_hidden') === '1' || getAttr(card, 'repeat_hidden') === '1') return;
+        if (getAttr(card, 'year_hidden') === '1') return; // CHANGE: hidden repeats can be revealed using Task Manager commands
+        const taskManager = graph.__trellisTaskManager; // NEW: resolve after both plugins have initialized
+        if (taskManager && typeof taskManager.revealLinkedTaskOccurrence === 'function' && taskManager.revealLinkedTaskOccurrence(card)) { // NEW
+            dispatchYearFilterChangedForTaskOverlay(card, null); // NEW
+            return; // NEW
+        } // NEW
+        if (getAttr(card, 'repeat_hidden') === '1') return; // NEW: keep hidden repeats intact when Task Manager is unavailable
         if (!model.isVisible || model.isVisible(card)) return;
         const pagingApi = graph.__trellisTaskPagingApi;
         if (pagingApi && typeof pagingApi.revealCard === 'function' && pagingApi.revealCard(card)) { dispatchYearFilterChangedForTaskOverlay(card, null); return; }
@@ -1505,26 +1517,43 @@ Draw.loadPlugin(function (ui) {
         return asVertexArray(graph.getSelectionCells && graph.getSelectionCells());
     }
 
-    function refreshCurrentHighlight() {
-        const selected = selectedLinkableVertices();
+    let highlightRefreshPending = false; // NEW: coalesce model/year changes after board reflow
+    let refreshingCurrentHighlight = false; // NEW: highlight cleanup may itself emit a model change
 
-        if (!selected || selected.length === 0) {
-            highlightLinked(null);
-            return;
-        }
+    /** Rebuilds connector membership once after the current model changes settle. */ // NEW
+    function requestCurrentHighlightRefresh() { // NEW
+        if (highlightRefreshPending || refreshingCurrentHighlight) return; // NEW
+        highlightRefreshPending = true; // NEW
+        setTimeout(function () { // NEW
+            highlightRefreshPending = false; // NEW
+            refreshCurrentHighlight(); // NEW
+        }, 0); // NEW
+    } // NEW
 
-        if (selected.length === 1) {
-            const cell = selected[0];
-            if (cell && model.isVertex(cell)) highlightLinked(cell);
-            else highlightLinked(null);
-            return;
-        }
+    function refreshCurrentHighlight() { // CHANGE: prevent recursive refreshes from link cleanup
+        if (refreshingCurrentHighlight) return; // NEW
+        refreshingCurrentHighlight = true; // NEW
+        try { // NEW
+            const selected = selectedLinkableVertices(); // CHANGE
 
-        if (selected.every(isRoleCard)) {
-            highlightLinkedRoleCards(selected);
-        } else {
-            highlightLinked(null);
-        }
+            if (!selected || selected.length === 0) { // CHANGE
+                highlightLinked(null); // CHANGE
+                return; // CHANGE
+            } // CHANGE
+
+            if (selected.length === 1) { // CHANGE
+                const cell = selected[0]; // CHANGE
+                if (cell && model.isVertex(cell)) highlightLinked(cell); // CHANGE
+                else highlightLinked(null); // CHANGE
+                return; // CHANGE
+            } // CHANGE
+
+            if (selected.every(isRoleCard)) { // CHANGE
+                highlightLinkedRoleCards(selected); // CHANGE
+            } else { // CHANGE
+                highlightLinked(null); // CHANGE
+            } // CHANGE
+        } finally { refreshingCurrentHighlight = false; } // NEW
     }
 
     function assignStandardLinkLabelOffsets(records) {
@@ -1638,7 +1667,11 @@ Draw.loadPlugin(function (ui) {
 
             const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards(cell, targets);
             const selectedTilerTaskSiblingIds = collectLinkedTaskCardSiblingIdsForTiler(cell, targets);
-            const exitMap = computeExitParamsForOrigin(cell, targets);
+            const taskManager = graph.__trellisTaskManager; // NEW: linking and task plugins may initialize in either order
+            const repeatLinkVisibility = selectedIsTilerGroup && taskManager && typeof taskManager.getRepeatLinkVisibility === 'function' // NEW
+                ? taskManager.getRepeatLinkVisibility(targets) : null; // NEW
+            const connectorTargets = targets.filter(other => shouldShowEdgeInternal(cell, other, repeatLinkVisibility) && !shouldSuppressStandardRoadmapDependencyOverlay(cell, other)); // NEW
+            const exitMap = computeExitParamsForOrigin(cell, connectorTargets); // CHANGE: hidden occurrences cannot distort visible endpoint spacing
             const visibleLinkOverlayRecords = [];
 
             for (const other of targets) {
@@ -1656,7 +1689,7 @@ Draw.loadPlugin(function (ui) {
                 const exitHint = exitMap.get(other.id);
 
                 // Decide visibility using internal lane-based policy               
-                const shouldShow = shouldShowEdgeInternal(cell, other);
+                const shouldShow = shouldShowEdgeInternal(cell, other, repeatLinkVisibility); // CHANGE: use the same series choice for geometry and drawing
                 if (shouldShow && !shouldSuppressStandardRoadmapDependencyOverlay(cell, other)) { // CHANGE
                     visibleLinkOverlayRecords.push({ other, exitHint, edgeColor, label, labelOffset: { x: 0, y: 0 } });
                 }
@@ -2369,8 +2402,10 @@ Draw.loadPlugin(function (ui) {
     graph.getModel().addListener(mxEvent.CHANGE, function (_sender, evt) {
         // Any geometry change (move/resize) will trigger recompute                
         linkOverlays.refreshAll();
-
+        requestCurrentHighlightRefresh(); // NEW: completion, dates, links and undo/redo can change the chosen occurrence
     });
+
+    window.addEventListener('yearFilterChanged', requestCurrentHighlightRefresh); // NEW: year filtering can change without an undoable model edit
 
     window.addEventListener('trellisHistoryBeforeRestore', function () {
         try { clearAllHighlights(); } catch (e) { }

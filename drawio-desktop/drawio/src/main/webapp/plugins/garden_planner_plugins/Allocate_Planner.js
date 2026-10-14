@@ -2282,7 +2282,7 @@ Draw.loadPlugin(function (ui) {
                 const dx = slot.x - geo.width / 2, dy = slot.y - geo.height / 2; // CHANGE
                 return { x: rect.x + geo.width / 2 + dx * Math.cos(radians) - dy * Math.sin(radians), y: rect.y + geo.height / 2 + dx * Math.sin(radians) + dy * Math.cos(radians), r: slot.r, label }; // CHANGE: centers are rotated exactly once.
             }); // CHANGE
-            state.ghost = renderer.render(state.ownerId, { className: 'trellis-allocate-ghost', rows: [{ rect, rotationDeg: proposal.rotation || 0, label: draft.crop && draft.crop.label || '', circles, tone: draft.status, summaryText: proposal.lodCollapsed ? String(draft.plantCount) + ' plants' : '' }] }); // CHANGE
+            state.ghost = renderer.render(state.ownerId, { className: 'trellis-allocate-ghost', rows: [{ rect, groupLabelBandPx: proposal.labelBandPx, rotationDeg: proposal.rotation || 0, label: draft.crop && draft.crop.label || '', circles, tone: draft.status, summaryText: proposal.lodCollapsed ? String(draft.plantCount) + ' plants' : '' }] }); // CHANGE: draw the assigned usable area using the proposal's authoritative header height.
         } // CHANGE
 
         /** Convert the shared editor's slot previews into a planting proposal and a multi-crop supply simulation. */ // CHANGE
@@ -2296,7 +2296,7 @@ Draw.loadPlugin(function (ui) {
             const simulation = window.USL.planningCore.simulateCandidatePlanting({ moduleCell: state.moduleCell, year: state.year, plan: state.plan, plantingCountOverrides: overrides, // CHANGE
                 candidate: { cropId: base.crop.cropId || base.crop.id, harvestStart: base.harvestStart, harvestEnd: base.harvestEnd, kgPerPlant: base.kgPerPlant, plantCount: count } }); // CHANGE
             const geometry = { ok: true, sharedFootprint: true, geometry: Object.assign({}, proposed.modelRect), rotation: proposed.rotationDeg || 0, // CHANGE
-                allowedOverhangPct: proposed.allowedOverhangPct ?? 30, // CHANGE: fixed companion geometry retains the crop's explicit percentage.
+                allowedOverhangPct: proposed.allowedOverhangPct ?? 30, labelBandPx: proposedPreview.groupLabelBandPx, // CHANGE: retain the accepted companion's overhang and header geometry.
                 plantCount: count, spacingXCm: Number(proposed.spacingXCm), spacingYCm: Number(proposed.spacingYCm), vegDiameterCm: proposed.vegDiameterCm, // CHANGE
                 layoutOffsetXCm: Number(proposed.offsetXCm), layoutOffsetYCm: Number(proposed.offsetYCm), disabledSlots: proposedPreview.disabledSlots, // CHANGE
                 lodCollapsed: proposedPreview.capped, slots: proposedPreview.circles.map(circle => { // CHANGE: keep the accepted companion visible after closing Spacing.

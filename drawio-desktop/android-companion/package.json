@@ -1,0 +1,21 @@
+{
+  "name": "trellis-field-companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare:web": "node scripts/prepare-web.mjs",
+    "sync": "npm run prepare:web && cap sync android",
+    "build:android": "node scripts/build-android.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:native-engines": "node scripts/test-native-engine-policy.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "fake-indexeddb": "^6.2.4"
+  }
+}

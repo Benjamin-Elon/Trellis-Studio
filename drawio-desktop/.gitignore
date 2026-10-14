@@ -11,3 +11,5 @@ test-results/
 __pycache__/
 *.pyc
 /vendor/syncthing/
+# NEW: isolated production smoke profiles and screenshots are local artifacts.
+/.test-artifacts/

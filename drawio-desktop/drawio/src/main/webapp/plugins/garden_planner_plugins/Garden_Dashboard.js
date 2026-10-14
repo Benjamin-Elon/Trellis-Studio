@@ -1939,6 +1939,7 @@ Draw.loadPlugin(function (ui) {
         if (shareInfo.managed === false) { alertShareStatus(shareInfo.reason || "Move this diagram into a Trellis-managed Syncthing folder before sharing."); return; }
         openShareInviteDialog(permission.scopes || state.scopes, shareInfo);
     }
+    if (ui.actions && typeof ui.actions.addAction === 'function') ui.actions.addAction('trellisShareGardenProject', openShareGardenCanvasDialog).label = 'Invite users to garden project'; // NEW: reuse the same scoped invitation UI after starter creation.
 
     function ensureViewportToolbar() {
         if (viewportToolbar) return viewportToolbar;
@@ -2058,6 +2059,13 @@ Draw.loadPlugin(function (ui) {
         syncBtn.style.minWidth = "175px"; // NEW: connection updates do not shift toolbar controls.
         syncBtn.addEventListener("click", function () { const sharing = window.Trellis && window.Trellis.sharing; if (sharing) sharing.showSharingDialog(); }); // NEW
         const tableBtn = createToolbarButton("Table", "Show dashboard table", "open");
+        const harvestSizeWrap = document.createElement('label'); // NEW
+        harvestSizeWrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font:12px Arial,sans-serif;white-space:nowrap;'; // NEW
+        harvestSizeWrap.title = 'Show dashed blue harvest-size outlines for this garden. Unchecked hides all blue outlines, including selected groups. Black circles estimate growth for today, independently of the selected year.'; // CHANGE
+        const harvestSizeInput = document.createElement('input'); // NEW
+        harvestSizeInput.type = 'checkbox'; harvestSizeInput.dataset.trellisHarvestSize = '1'; // NEW
+        harvestSizeWrap.appendChild(harvestSizeInput); harvestSizeWrap.appendChild(document.createTextNode('Show harvest size')); // NEW
+        harvestSizeInput.addEventListener('change', () => { if (activeToolbarModule) graph.__trellisPlantingGroup?.growth?.setShowHarvestSize(activeToolbarModule, harvestSizeInput.checked); }); // NEW
 
         const table = document.createElement("div");
         table.className = "trellis-garden-dashboard-table";
@@ -2076,6 +2084,7 @@ Draw.loadPlugin(function (ui) {
         leftControls.appendChild(prev);
         leftControls.appendChild(yearLabel);
         leftControls.appendChild(next);
+        leftControls.appendChild(harvestSizeWrap); // NEW: view-only control stays beside the year controls.
         leftControls.appendChild(planBtn);
         leftControls.appendChild(allocateBtn);
         leftControls.appendChild(irrigationBtn);
@@ -2092,7 +2101,7 @@ Draw.loadPlugin(function (ui) {
         wrap.appendChild(panel);
         host.appendChild(wrap);
 
-        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, syncBtn, tableBtn, table }; // CHANGE: add per-canvas connection status.
+        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, prev, next, yearLabel, harvestSizeInput, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, syncBtn, tableBtn, table }; // CHANGE: retain the view-only harvest-size checkbox.
         refreshSharingCount(); // NEW
         [prev, next, planBtn, equipmentBtn, irrigationBtn, allocateBtn, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, messagesBtn, exportBtn, shareBtn, tableBtn, gardenPickerBtn, createGardenBtn].forEach(function (button) { // CHANGE
             button.__trellisDashboardDefaultTitle = button.title || "";
@@ -2192,6 +2201,7 @@ Draw.loadPlugin(function (ui) {
         const entry = ensureViewportToolbar();
         if (!entry) return;
         activeToolbarModule = null;
+        entry.harvestSizeInput.checked = false; entry.harvestSizeInput.disabled = true; // NEW
         if (taskManagerApi() && typeof taskManagerApi().setActiveDashboardContext === "function") taskManagerApi().setActiveDashboardContext(null, null);
         entry.gardenName.textContent = "No active garden";
         entry.gardenName.title = "No active garden";
@@ -2233,6 +2243,9 @@ Draw.loadPlugin(function (ui) {
         const year = getToolbarYear(moduleCell);
         const activeWorkspace = getActiveWorkspaceForSelection() || "garden"; // NEW
         const gardenToolsDisabled = activeWorkspace === "tasks" || activeWorkspace === "team" || activeWorkspace === "roadmap"; // CHANGE
+        const growth = graph.__trellisPlantingGroup?.growth; // NEW
+        entry.harvestSizeInput.checked = growth?.getShowHarvestSize(moduleCell) === true; // NEW
+        entry.harvestSizeInput.disabled = gardenToolsDisabled || !growth; // NEW
         const yearControlsDisabled = activeWorkspace === "team" || activeWorkspace === "roadmap"; // CHANGE: linked Task workspace can still drive the garden year
         setGardenActionControlsDisabled(entry, gardenToolsDisabled, gardenToolsDisabled ? WORKSPACE_DISABLED_TITLE : "");
         setYearActionControlsDisabled(entry, yearControlsDisabled, yearControlsDisabled ? WORKSPACE_DISABLED_TITLE : "");

@@ -24,6 +24,7 @@ from .suggestions import (
 from .paths import PROJECT_DIR
 from .validator import validate_input, validate_run
 from .verify import VerifyOptions, verify_database_sweep
+from .task_instructions import generate_missing_instruction_run  # CHANGE
 
 
 def run_menu() -> None:
@@ -43,6 +44,7 @@ def run_menu() -> None:
         print("10. Generate climate benchmark")
         print("11. Verify database sweep")  # NEW: round-robin crop verification artifact generation.
         print("12. Exit")
+        print("13. Fill missing task instructions")  # CHANGE: generate patches for normal review and apply.
         choice = input("Choose an option: ").strip()
         if choice == "1":
             _suggest_input_flow(settings)
@@ -68,6 +70,15 @@ def run_menu() -> None:
             _verify_flow(settings)
         elif choice == "12":
             return
+        elif choice == '13':  # CHANGE
+            try:  # CHANGE
+                run_dir = generate_missing_instruction_run(settings, OpenAIJsonClient(read_openai_api_key(), settings.openai_model, settings.openai_reasoning_effort))  # CHANGE
+                print(f'Instruction run: {run_dir}. Use Review/Validate, then Apply valid run.')  # CHANGE
+                failures = read_json(run_dir / 'metadata.json', {}).get('failures', [])  # CHANGE
+                if failures:  # CHANGE
+                    print(f'{len(failures)} template(s) still lack drafts; see metadata.json for generation failures.')  # CHANGE
+            except Exception as error:  # CHANGE
+                print(f'Instruction generation failed: {error}')  # CHANGE
         else:
             print("Unknown option.")
 
