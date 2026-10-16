@@ -149,6 +149,39 @@ test('export canvas retains target diameter and native labels while the live DOM
     } finally { h.close(); } // NEW
 }); // NEW
 
+for (const html of [0, 1]) test(`bed previews defer asynchronous growth rendering and resume ${html ? 'HTML' : 'SVG'} labels after cancellation`, async () => { // CHANGE
+    const h = fixture(); // CHANGE
+    try { // CHANGE
+        const bed = h.bed(400, 300), group = h.group('preview', h.moduleCell, { bed_auto_fit: '0' }); // CHANGE
+        const otherGarden = h.graph.insertVertex(null, 'other-garden', h.value({ garden_module: '1' }), 900, 0, 1000, 1000); // CHANGE
+        const other = h.group('outside', otherGarden), tile = h.graph.getChildVertices(group)[0], otherTile = h.graph.getChildVertices(other)[0]; // CHANGE
+        h.graph.setCellStyles('html', String(html), [tile]); h.graph.refresh(); // CHANGE
+        const state = h.graph.view.getState(tile), nodes = [state.shape.node, state.text.node], visibility = nodes.map(node => node.style.visibility); // CHANGE
+        const radius = cell => Number(h.ellipses(cell).find(node => node.getAttribute('stroke') === '#111827').getAttribute('rx')); // CHANGE
+        const originalRadius = radius(tile), otherRadius = radius(otherTile), requests = new Map(); // CHANGE
+        h.window.USL.scheduler.resolvePlantGrowthContext = cell => new Promise(resolve => requests.set(cell, resolve)); // CHANGE
+        h.undoManager.clear(); const before = h.serialize(); // CHANGE
+        h.growth.scheduleRefresh(); // CHANGE: exercise a refresh queued before any originals are suppressed.
+        const preview = h.graph.__trellisBedTransforms.createPreview([bed], [group]); preview.update(() => ({ delta: 37 })); // CHANGE
+        h.growth.refresh(); await Promise.resolve(); await Promise.resolve(); // CHANGE: begin climate requests while visual updates are suspended.
+        const dailyRates = {}; for (let day = 11; day <= 30; day++) dailyRates['2026-01-' + day] = day < 21 ? 10 : 0; // CHANGE
+        requests.get(group)({ dailyRates }); requests.get(other)({ dailyRates }); // CHANGE: all stage heat arrives before today, advancing both estimates to full size.
+        await new Promise(resolve => h.window.requestAnimationFrame(() => h.window.requestAnimationFrame(resolve))); // CHANGE
+        h.growth.refresh(); h.growth.refresh(); // CHANGE: repeated late refreshes must preserve suppression and avoid caching hidden labels.
+        assert.equal(h.growth.estimate(group).areaRatio, 1); assert.equal(radius(tile), originalRadius); assert.ok(radius(otherTile) > otherRadius); // CHANGE
+        nodes.forEach(node => assert.equal(node.style.visibility, 'hidden')); // CHANGE
+        assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-preview-cell="' + tile.id + '"]').length, 0); // CHANGE
+        assert.equal(h.serialize(), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
+        preview.clear(); preview.clear(); assert.deepEqual(nodes.map(node => node.style.visibility), visibility); // CHANGE: cancellation restores exact originals synchronously.
+        assert.equal(radius(tile), originalRadius); // CHANGE: catch-up waits until the next frame rather than repainting during cleanup.
+        await new Promise(resolve => h.window.requestAnimationFrame(resolve)); // CHANGE
+        assert.ok(radius(tile) > originalRadius); assert.equal(state.text.node.style.visibility, visibility[1]); // CHANGE: resumed rendering did not retain preview-only hidden styles.
+        assert.equal(h.graph.__trellisBedTransforms.isPreviewing(tile), false); // CHANGE
+        state.text.node.style.visibility = 'hidden'; preview.clear(); assert.equal(state.text.node.style.visibility, 'hidden'); // CHANGE: late repeated cleanup cannot overwrite newer rendering state.
+        assert.equal(h.serialize(), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
 test('obsolete asynchronous climate results cannot overwrite changed groups', async () => { // NEW
     const h = fixture(); // NEW
     try { // NEW

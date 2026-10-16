@@ -117,10 +117,12 @@ for (const html of [0, 1]) for (const operation of ['move', 'rotate']) test(`${o
         const title = h.graph.view.getState(h.group).text.node, titleVisibility = title.style.visibility; // CHANGE
         nodes[1].style.visibility = 'hidden'; // CHANGE: cleanup must restore a previously hidden label exactly.
         const prior = nodes.map(node => node.style.visibility), before = saved(h); h.undoManager.clear(); // CHANGE
+        const growth = h.graph.__trellisPlantingGroup.growth; growth.scheduleRefresh(); // CHANGE: a growth refresh queued before preview creation must respect its new membership.
         const preview = h.graph.__trellisBedTransforms.createPreview([h.bed], [h.group]); // CHANGE: duplicate selected contents must not hide or restore twice.
         assert.ok(preview.snapshots[0].records.has(h.plant)); // CHANGE: visual omission does not change committed membership.
         preview.update(() => operation === 'move' ? { dx: 25, dy: -15 } : { delta: 45 }); // CHANGE
         await new Promise(resolve => h.window.requestAnimationFrame(resolve)); // CHANGE
+        growth.refresh(); growth.refresh(); // CHANGE: suppression survives repeated refreshes after preview paint, not just favorable callback ordering.
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-preview-cell="manual"]').length, 0); // CHANGE
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-preview-cell="crop"][data-trellis-bed-preview-kind="text"]').length, 0); assert.equal(title.style.visibility, 'hidden'); // CHANGE
         nodes.forEach(node => assert.equal(node.style.visibility, 'hidden')); assert.deepEqual(saved(h), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
@@ -346,6 +348,7 @@ test('rotation handle previews without model writes and Escape restores the rend
         assert.equal(h.graph.view.getState(h.plant).shape.node.style.visibility, 'hidden'); assert.equal(h.graph.view.getState(h.plant).text.node.style.visibility, 'hidden'); // CHANGE
         assert.equal(h.graph.view.getState(h.group).text.node.style.visibility, 'hidden'); // CHANGE
         h.graph.fireEvent(new h.window.mxEventObject(h.window.mxEvent.ESCAPE)); // CHANGE
+        assert.equal(h.graph.__trellisBedTransforms.isPreviewing(h.plant), false); // CHANGE: Escape releases growth suppression as well as rendered ghosts.
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-transform-preview]').length, 0); assert.deepEqual(saved(h), before); // CHANGE
         assert.deepEqual([h.graph.view.getState(h.plant).shape.node.style.visibility, h.graph.view.getState(h.plant).text.node.style.visibility], visibility); // CHANGE: Escape restores hidden originals without diagram changes.
         assert.equal(h.graph.view.getState(h.group).text.node.style.visibility, titleVisibility); // CHANGE
@@ -411,6 +414,28 @@ test('move handler reset restores hidden circles and preserves model-hidden circ
         assert.equal(title.style.visibility, titleVisibility); // CHANGE: native handler reset uses the same title cleanup as completion and Escape.
         assert.equal(h.graph.getModel().isVisible(hidden), false); assert.deepEqual(saved(h), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
         assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-transform-preview]').length, 0); // CHANGE
+    } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+for (const operation of ['move', 'rotate']) test(`${operation} handler destruction releases growth suppression and restores original nodes`, async () => { // CHANGE
+    const h = fixture(); // CHANGE
+    try { // CHANGE
+        h.graph.setSelectionCell(h.bed); // CHANGE
+        const service = h.graph.__trellisBedTransforms, state = h.graph.view.getState(h.plant); // CHANGE
+        const nodes = [state.shape.node, state.text.node], visibility = nodes.map(node => node.style.visibility), before = saved(h); // CHANGE
+        const handler = operation === 'move' ? h.graph.graphHandler : h.graph.selectionCellsHandler.getHandler(h.bed); // CHANGE
+        if (operation === 'move') { // CHANGE
+            handler.start(h.bed, 300, 300, [h.bed]); handler.currentDx = 30; handler.currentDy = 20; handler.updatePreview(); // CHANGE
+            handler.refreshHandler(); // CHANGE: a native refresh queued before destruction must never recreate the preview afterward.
+        } else { handler.currentAlpha = 37; service.previewRotation(handler); } // CHANGE
+        h.graph.__trellisPlantingGroup.growth.refresh(); // CHANGE: ensure destruction releases an actively suppressed growth render.
+        nodes.forEach(node => assert.equal(node.style.visibility, 'hidden')); // CHANGE
+        handler.destroy(); assert.equal(service.isPreviewing(h.plant), false); // CHANGE
+        assert.deepEqual(nodes.map(node => node.style.visibility), visibility); // CHANGE
+        await new Promise(resolve => h.window.requestAnimationFrame(resolve)); // CHANGE: destruction also allows queued growth rendering to resume.
+        assert.deepEqual(nodes.map(node => node.style.visibility), visibility); // CHANGE
+        assert.equal(h.window.document.querySelectorAll('[data-trellis-bed-transform-preview]').length, 0); // CHANGE
+        assert.deepEqual(saved(h), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
     } finally { h.close(); } // CHANGE
 }); // CHANGE
 

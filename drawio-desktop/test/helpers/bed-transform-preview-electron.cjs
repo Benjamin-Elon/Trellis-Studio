@@ -49,7 +49,7 @@ app.whenReady().then(async () => { // CHANGE
             assert.equal(originalTitle.rotation,0); // CHANGE
             const originalCenters = await win.webContents.executeJavaScript(`[bed,...plants].map(cell=>{const s=graph.view.getState(cell);return {x:s.getCenterX(),y:s.getCenterY(),visibility:[s.shape.node.style.visibility,s.text.node.style.visibility]};});`); // CHANGE: verify omitted circles still receive the complete committed transform.
             await win.webContents.executeJavaScript(` // CHANGE
-                window.preview=graph.__trellisBedTransforms.createPreview([bed]);preview.update(()=>({delta:37}));waitFrame(); // CHANGE
+                graph.__trellisPlantingGroup.growth.scheduleRefresh();window.preview=graph.__trellisBedTransforms.createPreview([bed]);preview.update(()=>({delta:37}));graph.__trellisPlantingGroup.growth.refresh();waitFrame(); // CHANGE: force growth redraw pressure before and during the rotation preview.
             `); // CHANGE
             const previewBounds = await win.webContents.executeJavaScript(` // CHANGE
                 ['crop','irrigation','part'].map(id=>rect(document.querySelector('[data-trellis-bed-preview-cell="'+id+'"][data-trellis-bed-preview-kind="shape"]'))); // CHANGE: circle renderers are deliberately absent from the preview.
@@ -89,7 +89,7 @@ app.whenReady().then(async () => { // CHANGE
                 const circleVisibility=plants.map(cell=>{const s=graph.view.getState(cell);return [s.shape.node.style.visibility,s.text.node.style.visibility];}); // CHANGE
                 const titleVisibility=graph.view.getState(group).text.node.style.visibility; // CHANGE
                 const handler=graph.graphHandler;handler.start(bed,350,350,[bed]);handler.currentDx=48;handler.currentDy=24; // CHANGE
-                handler.livePreviewUsed=true;handler.livePreviewActive=true;handler.updatePreview();await waitFrame(); // CHANGE
+                handler.livePreviewUsed=true;handler.livePreviewActive=true;handler.updatePreview();await waitFrame();graph.__trellisPlantingGroup.growth.refresh();graph.__trellisPlantingGroup.growth.refresh(); // CHANGE: repeated late growth refreshes cannot reveal dragged circles.
                 const circlesHidden=plants.every(cell=>{const s=graph.view.getState(cell);return s.shape.node.style.visibility==='hidden'&&s.text.node.style.visibility==='hidden'&&!document.querySelector('[data-trellis-bed-preview-cell="'+cell.id+'"]');}); // CHANGE
                 const titleHidden=graph.view.getState(group).text.node.style.visibility==='hidden'&&!document.querySelector('[data-trellis-bed-preview-cell="crop"][data-trellis-bed-preview-kind="text"]'); // CHANGE
                 const hasMarker=!!handler.shape;const me=new mxMouseEvent(new MouseEvent('mouseup',{clientX:398,clientY:374}),graph.view.getState(bed));me.graphX=398;me.graphY=374; // CHANGE

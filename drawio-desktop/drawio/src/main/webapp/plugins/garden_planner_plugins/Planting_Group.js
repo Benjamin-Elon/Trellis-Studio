@@ -6952,6 +6952,7 @@ Draw.loadPlugin(function (ui) {
         let applying = false, copying = 0, loading = 0, flushing = false; // CHANGE
         let gestureSnapshots = new Map(); // CHANGE
         const snapshots = new WeakMap(); // CHANGE
+        const activePreviews = new Set(); // CHANGE: frozen memberships keep queued growth redraws from revealing preview sources.
 
         /** Read the first previous value in an edit, including independently selected contents. */
         function originalReader(edit) { // CHANGE
@@ -7194,6 +7195,12 @@ Draw.loadPlugin(function (ui) {
             graph.setGraphXml = function () { loading++; try { return setGraphXml.apply(this, arguments); } finally { loading--; } }; // CHANGE
         } // CHANGE
 
+        /** Test frozen gesture membership without depending on mutable selection or model edits. */ // CHANGE
+        function isPreviewing(cell) { // CHANGE
+            for (const members of activePreviews) if (members.has(cell)) return true; // CHANGE
+            return false; // CHANGE
+        } // CHANGE
+
         /** Clone bed contents except plant circles and planting titles; restore hidden originals on cleanup. */ // CHANGE
         function createPreview(beds, extraCells = []) { // CHANGE
             flushPendingLayouts(); // CHANGE
@@ -7205,6 +7212,8 @@ Draw.loadPlugin(function (ui) {
                 units.push({ unit: { bed: { id: 'selection' } }, center: { x: 0, y: 0 }, records }); // CHANGE
             } // CHANGE
             const wrappers = [], hidden = [], seen = new Set(); // CHANGE
+            const members = new Set(units.flatMap(snapshot => [snapshot.unit.bed, ...snapshot.records.keys()])); // CHANGE
+            activePreviews.add(members); // CHANGE: register before any original nodes are hidden.
             let frame = null, pending = null; // CHANGE
             for (const snapshot of units) { // CHANGE
                 // Calibrate the pivot from the view so drilling into a module uses its local origin.
@@ -7257,12 +7266,14 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
             return { // CHANGE
                 snapshots: units, // CHANGE
-                update(target) { pending = target; if (frame == null) frame = window.requestAnimationFrame(paint); }, // CHANGE
+                update(target) { if (!activePreviews.has(members)) return; pending = target; if (frame == null) frame = window.requestAnimationFrame(paint); }, // CHANGE: a cleared preview cannot restart its paint loop.
                 clear() { // CHANGE
+                    if (!activePreviews.delete(members)) return; // CHANGE: release membership and schedule catch-up only once.
                     if (frame != null) window.cancelAnimationFrame(frame); // CHANGE
                     for (const { wrapper } of wrappers) wrapper.remove(); // CHANGE
                     for (const { node, visibility } of hidden) node.style.visibility = visibility; // CHANGE
                     pending = null; frame = null; // CHANGE
+                    graph.__trellisPlantingGroup?.growth?.scheduleRefresh(); // CHANGE: restore sources immediately, then render the latest growth on the next frame.
                 } // CHANGE
             }; // CHANGE
         } // CHANGE
@@ -7307,7 +7318,7 @@ Draw.loadPlugin(function (ui) {
             handler.__trellisBedPreview.update(snapshot => ({ delta: (handler.currentAlpha || 0) - snapshot.rotation })); // CHANGE
         } // CHANGE
 
-        graph.__trellisBedTransforms = { resolve, canCarry, isCarried, createPreview, previewMove, previewRotation, clearHandlerPreview, beginGestureCommit, endGestureCommit: previous => { gestureSnapshots = previous; } }; // CHANGE
+        graph.__trellisBedTransforms = { resolve, canCarry, isCarried, isPreviewing, createPreview, previewMove, previewRotation, clearHandlerPreview, beginGestureCommit, endGestureCommit: previous => { gestureSnapshots = previous; } }; // CHANGE
 
         if (!mxGraphHandler.prototype.__trellisBedPreviewInstalled) { // CHANGE
             mxGraphHandler.prototype.__trellisBedPreviewInstalled = true; // CHANGE
@@ -7354,6 +7365,9 @@ Draw.loadPlugin(function (ui) {
                 }; // CHANGE
                 prototype.destroy = function () { // CHANGE
                     const service = this.graph && this.graph.__trellisBedTransforms; // CHANGE
+                    if (service && prototype === mxGraphHandler.prototype && this.refreshThread != null) { // CHANGE: native destruction leaves a queued refresh able to recreate the bed preview.
+                        window.clearTimeout(this.refreshThread); this.refreshThread = null; // CHANGE
+                    } // CHANGE
                     if (service) service.clearHandlerPreview(this); // CHANGE
                     return destroy.apply(this, arguments); // CHANGE
                 }; // CHANGE
@@ -11284,6 +11298,7 @@ Draw.loadPlugin(function (ui) {
             const state = graph.view?.getState?.(cell); // NEW
             if (!state || !visible(cell)) { if (entry.badge) entry.badge.style.display = 'none'; return; } // NEW
             for (const child of graph.getChildVertices(cell) || []) { // NEW
+                if (graph.__trellisBedTransforms?.isPreviewing(child)) continue; // CHANGE: defer redraw and label-style caching until the preview restores its originals.
                 const childState = graph.view.getState(child); // NEW
                 if (childState && isPlantCircle(child) && renderer) { // NEW
                     attachPaint(childState.shape, childState); renderer.redraw(childState, true); // NEW
@@ -11363,7 +11378,7 @@ Draw.loadPlugin(function (ui) {
         } // NEW
         graph.destroy = function () { dispose(); return originalDestroy?.apply(this, arguments); }; // NEW
         armRollover(); schedule(); // NEW
-        return { refresh, invalidate, dispose, estimate, updateDetail, getShowHarvestSize: garden => outlines.get(garden) === true, setShowHarvestSize(garden, enabled) { outlines.set(garden, !!enabled); schedule(); } }; // NEW
+        return { refresh, scheduleRefresh: schedule, invalidate, dispose, estimate, updateDetail, getShowHarvestSize: garden => outlines.get(garden) === true, setShowHarvestSize(garden, enabled) { outlines.set(garden, !!enabled); schedule(); } }; // CHANGE: preview cleanup uses the existing coalesced growth scheduler.
     } // NEW
 
     /** One controller owns selection, draft invalidation and presentation refreshes. */ // CHANGE
