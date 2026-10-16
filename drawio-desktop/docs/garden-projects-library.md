@@ -1,6 +1,6 @@
 # Garden Projects library
 
-The splash retains its Create, Open, Support, Change license, contact, and close controls. It displays the identity session's username, independent of the name recorded on the license. Create/Open launch the same Garden Projects dialog with creation/list focus. Create local diagram uses the existing standalone New flow.
+The splash retains its Create, Open, Support, Change license, contact, and close controls. It displays the identity session's username, independent of the name recorded on the license. Create/Open launch the same Garden Projects dialog with creation/list focus. <!-- CHANGE: removed the standalone creation button from the splash. -->
 
 ## Projects and identity controls
 

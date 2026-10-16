@@ -2264,6 +2264,9 @@ test("pending invite creates regular pending user grants and email draft", () =>
     const result = users.createPendingInvite({ email: "Bob@Example.com", scopeCellIds: [harness.module.id], shareInfo: { deviceId: "DEV", folderId: "FOL", folderLabel: "Garden", folderPath: "C:/Garden" } });
     assert.equal(result.ok, true);
     assert.equal(result.invite.email, "bob@example.com");
+    assert.match(result.emailDraft.body, /In Trellis OS, choose Join Shared Canvas/); // CHANGE: invitations use the public product name.
+    assert.match(result.emailDraft.body, /Open the synced diagram in Trellis OS/); // CHANGE
+    assert.doesNotMatch(result.emailDraft.body, /Trellis Studio/); // CHANGE: catch partially renamed sharing instructions.
     assert.match(result.emailDraft.body, /DEV/);
     assert.match(result.emailDraft.body, /FOL/);
     assert.match(result.emailDraft.body, new RegExp(result.code.replace("-", "\\-")));

@@ -57,6 +57,7 @@ TRELLIS_SHELL_CACHE_URLS = (  # NEW: keep the Trellis splash shell available thr
 )
 BRANDING_CACHE_URLS = (
     "js/bootstrap.js",
+    "js/app.min.js",  # CHANGE: refresh the production splash branding alongside its source.
     "styles/grapheditor.css",
     *GENERATED_BRANDING_CACHE_URLS,
     *TRELLIS_SHELL_CACHE_URLS,  # CHANGE: validate and refresh the complete branded shell.

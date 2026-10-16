@@ -1,6 +1,8 @@
 <!-- NEW: integration contract, operational behavior, and release acceptance checklist. -->
 # Trellis Managed Canvas Sharing
 
+The object-locking and delta-sharing protocol, guided collaboration dialog, migration, and verification commands are documented in [Object collaboration over Syncthing](collaboration-v2.md). Legacy file-sharing behavior below remains supported until an admin upgrades the share. <!-- NEW -->
+
 ## Close, Quit, and background ownership <!-- NEW -->
 
 Closing the final editor window retains configured canvas sharing and installed, non-revoked identity libraries in the tray. Locked identities continue transferring their configured data without exposing credentials. The tray's Pause All, Resume All, and Restart Sharing actions apply to both transport kinds. If native tray controls cannot be created, Trellis explains the failure once, stops its transports, and exits. Without configured syncing, Windows/Linux exit after the final window closes; macOS retains its normal application behavior. <!-- NEW -->
@@ -188,5 +190,6 @@ integrity failures, tray dispatch, and persistent AppImage startup commands with
 altering local login settings. Service tests cover bounded crash retries and Quit
 while startup requests are still pending.
 
-Git controls, live co-editing, automatic coordinator takeover, planned coordinator
-transfer, mobile clients, and historical backfill remain intentionally deferred.
+Git controls, automatic coordinator takeover, planned coordinator transfer, mobile
+clients, and historical backfill remain intentionally deferred. Object co-editing
+is available for upgraded shares through the v2 protocol described above. <!-- CHANGE -->

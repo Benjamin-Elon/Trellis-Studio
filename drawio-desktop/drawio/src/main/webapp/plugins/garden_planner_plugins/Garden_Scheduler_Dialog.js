@@ -13422,6 +13422,7 @@ Draw.loadPlugin(function (ui) {
 
         const tabsContainer = document.createElement("div");
         tabsContainer.className = "usl-scheduler-dialog";
+        if (cell && cell.id) tabsContainer.dataset.collaborationObjectId = cell.id; // NEW: typing reserves the scheduler's actual target, including context-menu opens.
         tabsContainer.style.display = "flex";
         tabsContainer.style.flexDirection = "column";
         tabsContainer.style.height = "100%";

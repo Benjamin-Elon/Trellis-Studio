@@ -9,7 +9,7 @@ const node = (tag, text) => { const value = document.createElement(tag); if (tex
 const day = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 function button(label, action) { const value = node('button', label); value.addEventListener('click', () => Promise.resolve(action()).catch(error => { status.textContent = error.message; })); return value; }
 function field(label, type = 'text') { const wrap = node('label'), input = node('input'); input.type = type; wrap.append(node('span', label), input); return { wrap, input }; }
-const recordKey = work => 'work:' + account.identityId + ':' + work.diagramId + ':' + work.workerId;
+const recordKey = (work, installed = account) => 'work:' + installed.identityId + ':' + work.diagramId + ':' + work.workerId; // CHANGE: asynchronous work retains its owning identity after a selection change.
 async function nativeCall(method, payload = {}) { if (!native) throw new Error('Native synchronization is available in the Android app.'); return native[method](payload); }
 async function exportJson(value, filename) { await nativeCall('exportFile', { text: JSON.stringify(value, null, 2), filename }); }
 async function importJson() { const result = await nativeCall('importFile'); return result.canceled ? null : JSON.parse(result.text); }
@@ -26,8 +26,9 @@ async function login(password) {
     await loadWorks(); render();
 }
 async function loadWorks() {
-    works = [];
-    for (const key of await db.get('work-index:' + account.identityId) || []) { const record = await db.get(key); if (record) works.push(record); }
+    const installed = account, loaded = []; // CHANGE: do not expose another identity's partial library while awaiting IndexedDB.
+    for (const key of await db.get('work-index:' + installed.identityId) || []) { const record = await db.get(key); if (record) loaded.push(record); } // CHANGE
+    if (account !== installed) return; works = loaded; // NEW
     if (!current || !works.some(record => record.work.diagramId === current.work.diagramId)) current = works[0] || null;
     else current = works.find(record => record.work.diagramId === current.work.diagramId);
 }
@@ -65,62 +66,88 @@ async function importSetup(password) {
     for (const event of content.records) await nativeCall('writeRecord', { identityId: account.identityId, relative: 'events/' + event.payload.id + '.json', text: JSON.stringify(event) });
     await login(password); await sync();
 }
-async function acceptWork(incoming) {
-    const work = p.validateWork(incoming), key = recordKey(work); // CHANGE
+async function acceptWork(incoming, installed = account) { // CHANGE
+    const work = p.validateWork(incoming), key = recordKey(work, installed); // CHANGE
     await db.update(key, old => { // CHANGE: package refresh and local editing must serialize in one IndexedDB transaction.
         if (old && old.work.exportedAt > work.exportedAt) return old; // CHANGE
         const pending = old?.pending || { schema: 1, kind: 'task-updates', diagramId: work.diagramId, workerId: work.workerId, operations: [] }; // CHANGE
         const refreshed = p.refreshWork(work, pending); // CHANGE
         return { work, pending: refreshed.pending, display: refreshed.work, queued: old?.queued || [], lastSaved: old?.lastSaved || null }; // CHANGE: keep desktop acknowledgments separate from the optimistic local overlay.
     }); // CHANGE
-    await db.update('work-index:' + account.identityId, keys => [...new Set([...(keys || []), key])]);
+    await db.update('work-index:' + installed.identityId, keys => [...new Set([...(keys || []), key])]); // CHANGE
 }
-async function signUpdates(updates) {
-    const reduced = await identity.reduceEvents(account.events, account.identityId);
-    return identity.sign({ schema: 1, id: crypto.randomUUID(), identityId: account.identityId, author: account.deviceId, kind: 'task-updates', time: Date.now(), identityHeads: reduced.heads, updates }, unlocked.privateKey);
+async function signUpdates(updates, installed = account, credentials = unlocked) { // CHANGE
+    const reduced = await identity.reduceEvents(installed.events, installed.identityId); // CHANGE
+    if (account !== installed || unlocked !== credentials || !credentials?.privateKey) throw new Error('Log in again before signing field updates.'); // NEW
+    return identity.sign({ schema: 1, id: crypto.randomUUID(), identityId: installed.identityId, author: installed.deviceId, kind: 'task-updates', time: Date.now(), identityHeads: reduced.heads, updates }, credentials.privateKey); // CHANGE
 }
+/** Restore other installed transports from public approvals; their vaults and field libraries stay locked. */ // NEW
+async function resumeBackgroundTransfers(selectedIdentityId) { // NEW
+    const failures = []; // NEW
+    for (const installed of accounts) { // NEW
+        if (!installed || installed.identityId === selectedIdentityId) continue; // NEW
+        try { // NEW
+            const saved = await db.get('account:' + installed.identityId), reduced = await identity.reduceEvents(saved.events, saved.identityId); // NEW: a prior selected session may have received newer public approval events.
+            if (await identity.fingerprint(reduced.genesis) !== saved.genesisHash) throw new Error('Identity trust anchor changed.'); // NEW
+            if (!reduced.devices.some(device => device.id === saved.deviceId)) continue; // NEW: removed local devices cannot restore a transport.
+            await nativeCall('configureIdentity', { identityId: saved.identityId, devices: reduced.devices }); // NEW: native files already contain the signed outbox; restoring needs no signing credential.
+        } catch (_) { failures.push(installed.username); } // NEW: one damaged or unavailable identity cannot stop another identity's transfers.
+    } // NEW
+    return failures; // NEW
+} // NEW
 async function sync() {
     if (!account || busy) return;
     busy = true;
+    const installed = account, credentials = unlocked, stillCurrent = () => account === installed && unlocked === credentials; // NEW: public transport can finish, but library display and signing belong to the initiating session.
     const previousPackageId = current?.work.packageId; // NEW: unchanged polls must not reset the garden's pan and zoom.
     try {
-        const incoming = await nativeCall('readRecords', { identityId: account.identityId }); // CHANGE
+        const incoming = await nativeCall('readRecords', { identityId: installed.identityId }); // CHANGE
         if (!Array.isArray(incoming.records)) throw new Error('Synchronization returned an invalid record list.'); // NEW
         const records = incoming.records.map(record => ({ ...record, value: JSON.parse(record.text) })); // CHANGE
         const events = records.filter(record => record.relative.startsWith('events/')).map(record => record.value);
-        const reduced = await identity.reduceEvents([...account.events, ...events], account.identityId);
-        if (await identity.fingerprint(reduced.genesis) !== account.genesisHash) throw new Error('Identity trust anchor changed.');
-        account.events = reduced.records; await db.put('account:' + account.identityId, account);
-        if (!reduced.devices.some(device => device.id === account.deviceId)) { unlocked = null; render(); throw new Error('This device was removed.'); }
-        await nativeCall('configureIdentity', { identityId: account.identityId, devices: reduced.devices });
+        const reduced = await identity.reduceEvents([...installed.events, ...events], installed.identityId); // CHANGE
+        if (await identity.fingerprint(reduced.genesis) !== installed.genesisHash) throw new Error('Identity trust anchor changed.'); // CHANGE
+        installed.events = reduced.records; await db.put('account:' + installed.identityId, installed); // CHANGE
+        if (!reduced.devices.some(device => device.id === installed.deviceId)) { if (account === installed) { unlocked = null; render(); } throw new Error('This device was removed.'); } // CHANGE
+        await nativeCall('configureIdentity', { identityId: installed.identityId, devices: reduced.devices }); // CHANGE
+        if (!stillCurrent()) return; // NEW
         const approved = new Map(reduced.records.filter(record => record.payload.device).map(record => [record.payload.device.id, record.payload.device.publicKey]));
         if (unlocked) for (const record of records.filter(record => record.relative.includes('/work/'))) {
             const value = record.value, key = approved.get(value.payload?.author);
-            if (!key || value.payload.identityId !== account.identityId || value.payload.kind !== 'field-work' || !await identity.verify(value, key)) throw new Error('Field-work signature is invalid.');
-            await acceptWork(value.payload.work);
+            if (!key || value.payload.identityId !== installed.identityId || value.payload.kind !== 'field-work' || !await identity.verify(value, key)) throw new Error('Field-work signature is invalid.'); // CHANGE
+            if (!stillCurrent()) return; await acceptWork(value.payload.work, installed); // CHANGE
         }
-        if (unlocked) {
+        if (credentials && stillCurrent()) { // CHANGE
             await loadWorks();
+            if (!stillCurrent()) return; // NEW
             for (const record of works) {
                 const queued = record.queued || []; // NEW: writing an outbox record is not proof of remote delivery.
                 const fresh = record.pending.operations.filter(op => !queued.includes(op.id)); // NEW
                 if (!fresh.length) continue; // CHANGE: don't create another signed file every poll.
-                const signed = await signUpdates({ ...record.pending, operations: fresh }); // CHANGE
-                await nativeCall('writeRecord', { identityId: account.identityId, relative: 'field/' + record.work.diagramId + '/' + record.work.workerId + '/updates/' + signed.payload.id + '.json', text: JSON.stringify(signed) });
-                await db.update(recordKey(record.work), value => ({ ...value, queued: [...new Set([...(value.queued || []), ...fresh.map(op => op.id)])] })); // CHANGE
+                const signed = await signUpdates({ ...record.pending, operations: fresh }, installed, credentials); // CHANGE
+                if (!stillCurrent()) return; // NEW
+                await nativeCall('writeRecord', { identityId: installed.identityId, relative: 'field/' + record.work.diagramId + '/' + record.work.workerId + '/updates/' + signed.payload.id + '.json', text: JSON.stringify(signed) }); // CHANGE
+                await db.update(recordKey(record.work, installed), value => ({ ...value, queued: [...new Set([...(value.queued || []), ...fresh.map(op => op.id)])] })); // CHANGE
+                if (!stillCurrent()) return; // NEW
             }
             await loadWorks();
+            if (!stillCurrent()) return; // NEW
             if (!document.activeElement?.matches('input') && (tab !== 'garden' || current?.work.packageId !== previousPackageId)) render(); // CHANGE: replace the map only when a new package changes its contents.
             status.textContent = incoming.waitingForWifi ? 'Waiting for Wi-Fi. Edits remain saved on this device.' : incoming.networkAvailable === false ? 'Offline. Edits remain saved on this device until synchronization resumes.' : 'Sync available. Changes remain pending until desktop acknowledges them.'; // CHANGE: a blocked transport still permits verified cached work and signed local outbox writes.
         }
-    } catch (error) { status.textContent = 'Sync pending: ' + error.message + ' Your edits remain saved on this device.'; }
-    finally { busy = false; }
+    } catch (error) { if (account === installed) status.textContent = 'Sync pending: ' + error.message + ' Your edits remain saved on this device.'; } // CHANGE: a late error belongs to its original identity.
+    finally { // CHANGE
+        const failures = await resumeBackgroundTransfers(account?.identityId); // NEW: restore every installation's background transfers after restart or Wi-Fi reconnection, including while logged out.
+        if (failures.length) status.textContent += ' Background synchronization pending for ' + failures.join(', ') + '.'; // NEW
+        busy = false; // CHANGE
+    } // CHANGE
 }
 async function editTask(taskId, name, value) {
     if (!unlocked || !current) throw new Error('Log in before editing field work.');
-    const key = recordKey(current.work), counterKey = 'counter:' + account.identityId + ':' + account.deviceId;
-    await db.recordOperation(counterKey, key, counter => ({ id: account.deviceId + ':' + counter, taskId, field: name, value, version: { time: Date.now(), deviceId: account.deviceId, counter } }), (work, pending) => p.refreshWork(work, pending).work); // CHANGE: one transaction prevents lost or reused operations after restart.
-    await loadWorks(); render();
+    const installed = account, credentials = unlocked, key = recordKey(current.work, installed), counterKey = 'counter:' + installed.identityId + ':' + installed.deviceId; // CHANGE
+    await db.recordOperation(counterKey, key, counter => ({ id: installed.deviceId + ':' + counter, taskId, field: name, value, version: { time: Date.now(), deviceId: installed.deviceId, counter } }), (work, pending) => p.refreshWork(work, pending).work); // CHANGE: the transaction allocates the initiating identity's counter even if selection changes before it commits.
+    if (account !== installed || unlocked !== credentials) return; await loadWorks(); // NEW
+    if (account !== installed || unlocked !== credentials) return; render(); // CHANGE: a completed local save cannot replace another identity's screen.
     await sync(); // NEW: queue a signed update immediately while credentials are unlocked; the native engine can deliver it after logout.
 }
 function renderLogin() {

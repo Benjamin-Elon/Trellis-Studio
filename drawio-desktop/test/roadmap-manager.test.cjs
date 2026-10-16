@@ -1000,6 +1000,30 @@ test('roadmap hit testing uses layout geometry when child view states are stale'
     const frame = h.typed(h.board, 'timeframe')[3], frameState = h.graph.view.getState(frame); assert.equal(h.api.getHitCellAt(frameState.x + frameState.width / 2, frameState.y + 4), frame); // NEW
 }); // NEW
 
+test('selection overlays update and clear without rebuilding roadmap labels', async t => { // NEW
+    const h = harness(t), second = h.api.addObject(h.process), c = h.w.TrellisRoadmapCore, today = c.todayDay(); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today), endISO: c.formatDay(today + 1) }); // NEW
+    h.api.editObject(second, { startISO: c.formatDay(today + 2), endISO: c.formatDay(today + 3) }); // NEW
+    h.api.linkRoadmapObjects([h.object, second]); h.api.setProcessObjectBadges(h.process, true); // NEW
+    h.api.setObjectCost(h.object, { mode: 'fixed', amount: 100 }); h.api.setViewState(h.board, { pricingEnabled: true }); // NEW
+    await frame(h); await frame(h); // NEW: settle model/layout refreshes before observing selection-only work.
+    const node = h.graph.view.getState(h.object).text.node, before = h.xml(), history = h.undo.history.length; // NEW
+    const refresh = h.graph.refresh; let refreshes = 0; h.graph.refresh = function () { refreshes++; return refresh.apply(this, arguments); }; // NEW
+    h.graph.setSelectionCell(h.object); await frame(h); // NEW
+    assert.ok(graphButton(h, 'Create Task')); assert.equal(dependencyArrows(h).length, 1); assert.equal(dependencyPills(h).length, 2); // NEW
+    assert.ok(objectDateBadgeNodes(h).length); assert.ok(h.graph.container.querySelector('.trellis-roadmap-cost-badge')); // NEW
+    assert.ok(h.graph.container.querySelector('.trellis-roadmap-date-hud')); // NEW
+    clickRoadmapCell(h, h.object); await frame(h); assert.equal(graphButton(h, 'Create Task'), undefined); // NEW
+    h.graph.clearSelection(); await frame(h); // NEW
+    assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-control').length, 0); // NEW
+    assert.equal(dependencyArrows(h).length, 0); assert.equal(dependencyPills(h).length, 0); // NEW
+    assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-cost-badge').length, 0); // NEW
+    h.graph.setSelectionCell(h.object); await frame(h); assert.ok(graphButton(h, 'Create Task'), 'deselection resets the hidden-object toggle'); // NEW
+    h.graph.setSelectionCells([h.object, second]); await frame(h); assert.ok(h.graph.container.textContent.includes('2 objects selected')); // NEW
+    assert.equal(refreshes, 0); assert.equal(h.graph.view.getState(h.object).text.node, node); // NEW
+    assert.equal(h.xml(), before); assert.equal(h.undo.history.length, history); // NEW
+}); // NEW
+
 test('selected roadmap object repeated plain clicks toggle controls without changing selection', async t => { // NEW
     const h = harness(t), second = h.api.addObject(h.process); h.graph.setSelectionCell(h.object); h.api.refresh(); await frame(h); // NEW
     assert.ok(graphButton(h, 'Create Task')); // NEW

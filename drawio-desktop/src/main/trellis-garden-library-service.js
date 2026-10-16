@@ -109,7 +109,10 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
             try { // NEW
                 source = await localSource(session.identityId, entry.diagramId); // CHANGE
                 const localList = source?.legacy ? await (await legacyService()).listCanvases() : registered; // CHANGE
-                local = localList.find(canvas => canvas.shareId === entry.shareId); // CHANGE
+                local = localList.find(canvas => canvas.shareId === entry.shareId);
+                const replacement = localList.find(canvas => canvas.protocolVersion === 2 && canvas.replacesShareId === entry.shareId && canvas.diagramId === entry.diagramId && canvas.available); // NEW: an admin upgrade keeps this identity's library entry attached to the replacement.
+                if (replacement) { const descriptor = await (source?.legacy ? await legacyService() : daemon).libraryDescriptor(replacement.shareId); const updated = { ...entry, ...descriptor, name: entry.name, workerId: entry.workerId }; await publish(updated); Object.assign(entry, updated); local = replacement; } // NEW
+ // CHANGE
                 if (local?.available) { // NEW
                     const knownCities = new Map((cityList || []).map(city => [city.cityId, city])); // NEW
                     const cachedCities = new Map((summary?.moduleCities || []).filter(city => !knownCities.has(city.cityId)).map(city => [city.cityId, city])); // NEW

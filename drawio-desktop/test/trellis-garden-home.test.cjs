@@ -30,10 +30,10 @@ test('splash displays status after license, preserves launch buttons, and gates 
     f.window.TrellisGardenHome.attachSplash(splash, f.ui); await new Promise(resolve => setImmediate(resolve)); // CHANGE
     assert.equal(container.querySelector('.trellis-splash-login-status').textContent, 'Not logged in'); // CHANGE
     assert.equal(container.querySelector('.trellis-home-panel'), null); // CHANGE
-    assert.match(container.textContent, /Create New Garden Project.*Open Existing Garden Project.*Explore & Support My Projects.*Create local diagram/); // CHANGE
+    assert.match(container.textContent, /Create New Garden Project.*Open Existing Garden Project.*Explore & Support My Projects/); // CHANGE
     f.window.TrellisGardenHome.attachSplash(splash, f.ui); // CHANGE
     assert.equal(container.querySelectorAll('.trellis-splash-login-status').length, 1); // CHANGE
-    assert.equal(container.querySelectorAll('.trellis-splash-local-create').length, 1); // CHANGE
+    assert.equal(container.querySelectorAll('.trellis-splash-local-create').length, 0); // CHANGE: repeated splash attachment must not add local creation.
 }); // CHANGE
 
 test('splash identity status follows login and logout without exposing identity forms', async () => { // CHANGE
@@ -171,13 +171,6 @@ test('Create and Open splash buttons reuse the dialog with different focus and p
         f.ui.__trellisGardenHome.projectsRoot.querySelector('.trellis-home-row:last-child button:last-child').click(); await new Promise(resolve => setTimeout(resolve, 10)); // NEW
         assert.equal(f.window.document.querySelector('.trellis-projects-root'), null); assert.ok(f.window.document.getElementById('splash')); // NEW
     } // NEW
-}); // NEW
-test('local creation uses the existing new action after draft protection', async () => { // NEW
-    const f = fixture(), container = f.window.document.getElementById('splash'); // NEW
-    f.window.TrellisGardenHome.attachSplash({ container, isTrellisLicenseWizardComplete: () => true }, f.ui); await tick(); // NEW
-    f.setCurrent({ isModified: () => true }); f.ui.confirm = (_text, cancel) => cancel(); // NEW
-    container.querySelector('.trellis-splash-local-create').click(); await tick(); assert.deepEqual(f.calls, []); // NEW
-    f.ui.confirm = (_text, _cancel, ok) => ok(); container.querySelector('.trellis-splash-local-create').click(); await tick(); assert.deepEqual(f.calls, ['hide', 'new']); // NEW
 }); // NEW
 test('shared bands, private sources, deduplication, and Unknown seeds are rendered without nested lists', async () => { // NEW
     const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW

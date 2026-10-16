@@ -65,6 +65,37 @@ async function setup(f, content = xml()) {
     const result = await f.service.setupCanvas(1, { diagramPath: source, diagramId: 'diagram-1', xml: content });
     return { source, result };
 }
+
+test('admin migration isolates v2 records, keeps a backup, and permits local saving after transport stops', async t => { // NEW
+    const f = await fixture(t), { result: legacy } = await setup(f); // NEW
+    const upgraded = await f.service.upgradeCollaboration(1, { shareId: legacy.shareId }); // NEW
+    assert.equal(upgraded.protocolVersion, 2); assert.notEqual(upgraded.shareId, legacy.shareId); assert.match(upgraded.folderId, /^trellis-v2-/); // NEW
+    assert.equal(await fs.readFile(legacy.diagramPath, 'utf8'), upgraded.xml); // NEW
+    const ignores = f.calls.filter(c => c.endpoint === 'db/ignores').at(-1).data.ignore; assert.equal(ignores.includes('!/' + path.basename(upgraded.diagramPath)), false); // NEW
+    await f.service.stop(); // NEW
+    const local = await f.service.collaborationAction(1, { shareId: upgraded.shareId, kind: 'save', baseXml: upgraded.xml, xml: upgraded.xml.replace('label="Board"', 'label="Local edit"') }); // NEW
+    assert.equal(local.ok, true); assert.match(await fs.readFile(upgraded.diagramPath, 'utf8'), /Local edit/); // NEW
+    const backup = local.collaboration.recoveries.find(copy => copy.reason.includes('Verified full backup')); assert.ok(backup); assert.equal(await fs.readFile(backup.recoveryPath, 'utf8'), upgraded.xml); // NEW: the full migration backup is accessible through the collaboration overview.
+    const known = await f.service.shareInfo({ diagramPath: upgraded.diagramPath }); assert.equal(known.managed, true); // NEW
+}); // NEW
+test('migration rejects unresolved native conflicts and unprivileged callers', async t => { // NEW
+    const f = await fixture(t), { result } = await setup(f); // NEW
+    f.service.setContext(2, { diagramPath: result.diagramPath, diagramId: 'diagram-1', userId: 'alice' }); // NEW
+    await assert.rejects(f.service.upgradeCollaboration(2, { shareId: result.shareId }), /admin/); // NEW
+    await fs.writeFile(path.join(result.folderPath, 'original.sync-conflict-20261011-120000-DEVICE.drawio'), xml()); // NEW
+    await assert.rejects(f.service.upgradeCollaboration(1, { shareId: result.shareId }), /conflict/); // NEW
+}); // NEW
+test('approval completion requires the signed acknowledgement for that exact request', async t => { // NEW
+    const a = await fixture(t, 'A'), b = await fixture(t, 'B'), { result } = await setup(a); // NEW
+    const invitation = await a.service.createInviteBlock(1, { shareId: result.shareId, inviteId: 'invite-1', code: 'ABCDE' }); // NEW
+    const joined = await b.service.joinCanvas({ block: invitation.block }); // NEW
+    const first = await a.service.requestMembership(1, { shareId: result.shareId, operation: 'approve', reply: joined.reply }); // NEW
+    const repeated = await a.service.requestMembership(1, { shareId: result.shareId, operation: 'approve', reply: joined.reply }); // NEW
+    const directory = path.join(result.folderPath, '.trellis', 'acknowledgements'); // NEW
+    await fs.copyFile(path.join(directory, first.requestId + '.json'), path.join(directory, repeated.requestId + '.json')); // NEW
+    const item = (await a.service.listRequests(1, { shareId: result.shareId })).requests.find(request => request.id === repeated.requestId); // NEW
+    assert.equal(item.status, 'pending'); // NEW
+}); // NEW
 test('diagram parser supports compressed pages and preserves protected access on resolution', () => {
     const current = xml({ owner: 'admin' });
     const compressed = zlib.deflateRawSync(Buffer.from(encodeURIComponent(current))).toString('base64');

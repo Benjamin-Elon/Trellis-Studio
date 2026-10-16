@@ -319,7 +319,7 @@ test("SplashDialog renders the personal project intro before license selection",
     assert.match(text, /Trellis is a name pun/);
     assert.match(text, /Mystery Lawn/);
     assert.match(text, /LifeCycler/);
-    assert.match(text, /Trellis Studio/);
+    assert.match(text, /Trellis OS/); // CHANGE: Trellis OS branding.
     assert.match(text, /Commercial collaboration, issue reports, testing notes, gardening data, and feedback/);
     assert.ok(findButton(dialog.container, "Continue to License"));
     assert.equal(dialog.container.querySelector(".trellis-splash-actions").style.display, "none");
@@ -741,8 +741,8 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
     assert.equal(dialog.container.querySelector(".geAdaptiveAsset"), null);
     assert.ok(dialog.container.querySelector(".trellis-splash-identity"));
     assert.ok(dialog.container.querySelector(".trellis-splash-brand-mark"));
-    assert.equal(dialog.container.querySelector(".trellis-splash-title").textContent, "Trellis Studio");
-    assert.equal(dialog.container.querySelector(".trellis-splash-tagline").textContent, "Build systems that grow.");
+    assert.equal(dialog.container.querySelector(".trellis-splash-title").textContent, "Trellis OS"); // CHANGE: Trellis OS branding.
+    assert.equal(dialog.container.querySelector(".trellis-splash-tagline").textContent, "Build Systems That Grow"); // CHANGE: Trellis OS branding.
 	assert.ok(dialog.container.querySelector(".trellis-splash-tagline").compareDocumentPosition(dialog.container.querySelector(".trellis-saved-license-card")) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
 	assert.match(dialog.container.textContent, /License/);
 	assert.match(dialog.container.textContent, /Saved User/);
@@ -1092,7 +1092,7 @@ test("Trellis splash rejects unsafe background filenames and keeps the gradient 
 
     assert.equal(backdrop.style.getPropertyValue("--trellis-splash-image"), "");
     assert.equal(backdrop.classList.contains("trellis-splash-has-image"), false);
-    assert.equal(closeButton.getAttribute("aria-label"), "Exit Trellis Studio");
+    assert.equal(closeButton.getAttribute("aria-label"), "Exit Trellis OS"); // CHANGE: Trellis OS branding.
 });
 
 test("Trellis splash tries the packaged default before Electron selection", () => {
@@ -1202,7 +1202,7 @@ test("Trellis splash assets and bootstrap wire the same enhancement into package
     const enhancementIndex = indexSource.indexOf('src="js/trellis-splash.js"');
     const bootstrapIndex = indexSource.indexOf('src="js/bootstrap.js"');
 
-	assert.match(enhancementSource, /Build systems that grow/);
+	assert.match(enhancementSource, /Build Systems That Grow/); // CHANGE: Trellis OS branding.
 	assert.match(enhancementSource, /getTrellisSplashBackground/);
 	assert.match(enhancementSource, /trellis-splash-active/);
 	assert.match(enhancementSource, /trellis\.splash\.avatar\.v1/);

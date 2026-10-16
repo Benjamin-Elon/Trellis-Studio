@@ -1,6 +1,6 @@
 # Trellis splash backgrounds
 
-Place packaged splash backgrounds in this directory before building Trellis Studio.
+Place packaged splash backgrounds in this directory before building Trellis OS. <!-- CHANGE: Trellis OS branding. -->
 
 `trellis-garden-sunrise.png` is the initial packaged scene. <!-- NEW -->
 

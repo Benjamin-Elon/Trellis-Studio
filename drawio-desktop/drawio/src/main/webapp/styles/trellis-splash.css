@@ -1,8 +1,7 @@
-/* Trellis Studio startup presentation. */
+/* Trellis OS startup presentation. */ /* CHANGE: Trellis OS branding. */
 .trellis-splash-project-launcher { overflow-y:auto;overflow-x:hidden; } /* NEW: one scroll owner includes the launch actions. */
 .trellis-splash-project-launcher .trellis-splash-center { flex:0 0 auto;overflow:visible; } /* NEW */
 .trellis-splash-login-status { color:#314437;font-weight:600;margin:12px 0; } /* NEW */
-.trellis-splash-actions .trellis-splash-local-create { background:transparent;border:1px solid #c8d2c8;color:#59675b;font-size:14px !important;min-height:38px;margin-top:16px !important; } /* NEW */
 .trellis-projects-dialog { background:#fbf8ed !important;border-radius:12px;overflow:hidden !important;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px); } /* NEW */
 .trellis-projects-root { box-sizing:border-box;height:100%;overflow-y:auto;overflow-x:hidden;padding:16px 20px;color:#253c2d;text-align:left; } /* NEW */
 .trellis-projects-root h2 { margin:0 0 12px; } /* NEW */

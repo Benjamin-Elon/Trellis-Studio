@@ -52,7 +52,7 @@ function loadPlugin(options = {}) {
     context.window.trellisApp = {
         getInfo() {
             return Promise.resolve(Object.assign({
-                productName: "Trellis Studio",
+                productName: "Trellis OS", // CHANGE: Trellis OS branding.
                 version: "1.1.2",
                 repoUrl: "https://github.com/Benjamin-Elon/trellis-studio",
                 releasesUrl: "https://github.com/Benjamin-Elon/trellis-studio/releases",
@@ -182,7 +182,7 @@ test("Trellis updates plugin registers Help action and opens dialog", async () =
     assert.match(shown[0].node.textContent, /Project/);
     assert.match(shown[0].node.textContent, /Contact/);
     assert.doesNotMatch(shown[0].node.textContent, /Patreon/i);
-    assert.match(shown[0].node.textContent, /Trellis Studio 1\.1\.2/);
+    assert.match(shown[0].node.textContent, /Trellis OS 1\.1\.2/); // CHANGE: Trellis OS branding.
     assert.match(shown[0].node.textContent, /Trellis 1\.1\.3/);
     assert.match(shown[0].node.textContent, /Bundled changelog entry/);
     assert.equal(findButton(shown[0].node, "Retry"), undefined);

@@ -2308,9 +2308,9 @@ Draw.loadPlugin(function (ui) {
         const lines = [
             "You have been invited to collaborate on a Trellis garden canvas.",
             "",
-            "1. In Trellis Studio, choose Join Shared Canvas and paste the invitation block below.", // CHANGE
+            "1. In Trellis OS, choose Join Shared Canvas and paste the invitation block below.", // CHANGE
             "2. Send the prepared device reply to the sender and wait for an admin to approve it.", // CHANGE
-            "3. Open the synced diagram in Trellis Studio.",
+            "3. Open the synced diagram in Trellis OS.", // CHANGE: Trellis OS branding.
             "4. In People & Access, choose Accept Invite and enter your email, invite code, display name, and PIN.",
             "",
             "Trellis invite code: " + code,

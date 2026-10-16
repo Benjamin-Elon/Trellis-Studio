@@ -1,6 +1,6 @@
-Trellis Studio is a visual garden planning and management workspace that turns diagrams into coordinated, data-rich plans.
+**Trellis OS — Build Systems That Grow.** A visual garden planning and management workspace that turns diagrams into coordinated, data-rich plans. <!-- CHANGE: Trellis OS branding and restored tagline. -->
 
-**Licensing:** Trellis Studio is a mixed-license distribution. Upstream and third-party material keep their existing notices. Trellis's restricted source-available terms apply only to files under `drawio-desktop/drawio/src/main/webapp/plugins/garden_planner_plugins/`; commercial use of those covered plugin files requires written approval. See [drawio-desktop/LICENSES.md](drawio-desktop/LICENSES.md).
+**Licensing:** Trellis OS is a mixed-license distribution. Upstream and third-party material keep their existing notices. Trellis's restricted source-available terms apply only to files under `drawio-desktop/drawio/src/main/webapp/plugins/garden_planner_plugins/`; commercial use of those covered plugin files requires written approval. See [drawio-desktop/LICENSES.md](drawio-desktop/LICENSES.md). <!-- CHANGE: Trellis OS branding. -->
 
 **Features:**
 

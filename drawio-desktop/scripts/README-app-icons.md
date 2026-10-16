@@ -4,7 +4,9 @@ The application identity assets are generated from these canonical RGBA sources:
 
 - `build/branding/trellis-mark-small.png` contains Negative Space T for all generated app-icon outputs.
 - `build/branding/trellis-mark-full.png` is retained as a historical source and is not used for generated app icons.
-- `build/branding/trellis-wordmark-text.png` for the `Trellis Studio` wordmark.
+- `build/branding/trellis-wordmark-text.png` for the `Trellis OS` wordmark. <!-- CHANGE: Trellis OS branding. -->
+
+Trellis OS uses a single-line wordmark with equal prominence for both words. The green T sources and palette stay unchanged. Builder configurations explicitly retain the legacy executable and application-bundle basenames; package identity, repository/update URLs, AppX identity, and the pinned `draw.io` user-data directory also remain compatibility identifiers. JSON configuration files cannot contain end-of-line change comments. <!-- CHANGE: document the public rename and compatibility pins. -->
 
 `drawio/src/main/webapp/images/window-icon.png` and
 `drawio/src/main/webapp/images/header-icon.png` are 256 px high-DPI sources

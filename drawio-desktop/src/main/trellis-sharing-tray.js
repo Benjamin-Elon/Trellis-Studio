@@ -19,7 +19,7 @@ export async function setSharingStartup(app, enabled, store) {
         if (enabled) {
             const command = getLinuxStartupCommand(app); // CHANGE: AppImage mounts disappear when the running process exits.
             await fs.mkdir(directory, { recursive: true });
-            await fs.writeFile(filename, '[Desktop Entry]\nType=Application\nName=Trellis Studio Sharing\nExec=' + command + '\nTerminal=false\nX-GNOME-Autostart-enabled=true\n', { mode: 0o600 }); // CHANGE: validate before creating startup files.
+            await fs.writeFile(filename, '[Desktop Entry]\nType=Application\nName=Trellis OS Sharing\nExec=' + command + '\nTerminal=false\nX-GNOME-Autostart-enabled=true\n', { mode: 0o600 }); // CHANGE: validate before creating startup files.
         } else await fs.rm(filename, { force: true });
     } else {
         app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath, args: [...(app.isPackaged ? [] : [app.getAppPath()]), '--trellis-background'] });
@@ -39,9 +39,9 @@ export async function createSharingTray({ app, Tray, Menu, nativeImage, iconPath
     function update() { // CHANGE: aggregate service notifications always rebuild the complete transport list.
         if (disposed) return; // NEW
         const statuses = service.listStatus(); // NEW
-        tray.setToolTip('Trellis Studio sharing');
+        tray.setToolTip('Trellis OS sharing'); // CHANGE: Trellis OS branding.
         tray.setContextMenu(Menu.buildFromTemplate([
-            { label: 'Open Trellis Studio', click: () => openWindow() }, // CHANGE: Electron passes a MenuItem argument to click handlers, not a canvas path.
+            { label: 'Open Trellis OS', click: () => openWindow() }, // CHANGE: Electron passes a MenuItem argument to click handlers, not a canvas path.
             { type: 'separator' },
             ...statuses.map(status => ({ label: status.label + ': ' + (status.connectedCollaborators == null ? 'connection count unavailable' : status.connectedCollaborators + ' connected collaborators') + ' (' + status.state + ')', click: () => openWindow(status.diagramPath) })),
             { type: 'separator' },
@@ -49,7 +49,7 @@ export async function createSharingTray({ app, Tray, Menu, nativeImage, iconPath
             { label: 'Resume All Syncing', click: () => service.setPaused({ paused: false }).catch(showError) }, // CHANGE
             { label: 'Restart Sharing', click: () => service.stop().then(() => service.start()).catch(showError) }, // CHANGE
             { label: 'Start Trellis at Sign-in', type: 'checkbox', checked: !!store?.get('trellisSharingStartup'), click: item => setSharingStartup(app, item.checked, store).then(() => update()).catch(showError) }, // CHANGE
-            { label: 'Quit Trellis Studio', click: () => app.quit() }
+            { label: 'Quit Trellis OS', click: () => app.quit() } // CHANGE: Trellis OS branding.
         ]));
     }
     function showError(error) { if (!disposed) tray.setToolTip(error.message); } // NEW: late requests cannot access a destroyed tray.

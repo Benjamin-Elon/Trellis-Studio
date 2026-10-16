@@ -154,6 +154,8 @@ contextBridge.exposeInMainWorld('trellisShare', {
 	createDeviceInvite: payload => sharingRequest('createDeviceInvite', payload), // NEW
 	joinCanvas: payload => sharingRequest('joinCanvas', payload), // NEW
 	requestMembership: payload => sharingRequest('requestMembership', payload), // NEW
+	collaborationAction: payload => sharingRequest('collaborationAction', payload), // NEW: file-bound object coordination.
+	upgradeCollaboration: payload => sharingRequest('upgradeCollaboration', payload), // NEW: admin migration with backup.
 	listRequests: payload => sharingRequest('listRequests', payload), // NEW
 	getStatus: () => sharingRequest('getStatus', {}), // NEW
 	setPaused: payload => sharingRequest('setPaused', payload), // NEW

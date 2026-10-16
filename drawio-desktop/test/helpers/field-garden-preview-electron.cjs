@@ -10,7 +10,7 @@ const output = path.join(project, '.test-artifacts', 'field-garden-preview'); //
 const fixture = path.resolve(process.argv[2] || path.join(project, '.test-artifacts/android-physical/whole-garden-work.json')); // NEW
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-field-preview-')); // NEW
 app.setPath('userData', profile); app.disableHardwareAcceleration(); // NEW
-let window, server; // NEW
+let window, server, failed = false; // CHANGE
 const timeout = setTimeout(() => { console.error('Field preview smoke timed out.'); app.exit(1); }, 90000); // NEW
 /** Serve only the bundled web files; the mock replaces Android transport, not drawing or authentication. */ // NEW
 function serveWeb() { // NEW
@@ -18,7 +18,7 @@ function serveWeb() { // NEW
     for (const name of ['trellis-field-protocol.js', 'trellis-identity-protocol.js']) files.set('/shared/' + name, path.join(project, 'drawio/src/main/webapp/js', name)); // NEW
     server = http.createServer((request, response) => { // NEW
         if (request.url === '/test-native.js') { // NEW
-            response.writeHead(200, { 'Content-Type': 'text/javascript' }).end("globalThis.fieldTestRecords=[];globalThis.fieldTestWrites=[];globalThis.fieldTestNetwork={networkAvailable:false,waitingForWifi:false};globalThis.Capacitor={Plugins:{TrellisSync:{readRecords:async()=>({records:fieldTestRecords,...fieldTestNetwork}),configureIdentity:async()=>({ok:true,waitingForWifi:fieldTestNetwork.waitingForWifi}),setWifiOnly:async({enabled})=>{fieldTestNetwork.waitingForWifi=enabled;return{ok:true};},writeRecord:async(record)=>{fieldTestWrites.push(record);return{ok:true};}}}};"); return; // CHANGE: blocked transport still exposes cached records and accepts signed local outbox writes.
+            response.writeHead(200, { 'Content-Type': 'text/javascript' }).end("globalThis.fieldTestRecords=[];globalThis.fieldTestWrites=[];globalThis.fieldTestConfigured=[];globalThis.fieldTestRecordOwner=null;globalThis.fieldTestNetwork={networkAvailable:false,waitingForWifi:false};globalThis.Capacitor={Plugins:{TrellisSync:{readRecords:async({identityId})=>({records:!fieldTestRecordOwner||fieldTestRecordOwner===identityId?fieldTestRecords:[],...fieldTestNetwork}),configureIdentity:async(record)=>{fieldTestConfigured.push(record);return{ok:true,waitingForWifi:fieldTestNetwork.waitingForWifi};},setWifiOnly:async({enabled})=>{fieldTestNetwork.waitingForWifi=enabled;return{ok:true};},writeRecord:async(record)=>{fieldTestWrites.push(record);return{ok:true};}}}};"); return; // CHANGE: route fixture records to their owning identity and record public transport restores.
         } // NEW
         const filename = files.get(request.url); // NEW
         if (!filename) { response.writeHead(404).end(); return; } // NEW
@@ -49,6 +49,7 @@ async function run() { // NEW
     assert.ok(work.gardens.some(garden => garden.regions.some(region => region.kind === 'planting-group')), 'Sample must contain a linked planting group.'); // NEW
     await app.whenReady(); const url = await serveWeb(); // NEW
     window = new BrowserWindow({ show: false, width: 412, height: 780, webPreferences: { backgroundThrottling: false } }); // NEW
+    window.webContents.on('console-message', details => { if (details.level === 'error') console.error('Field UI: ' + details.message); }); // CHANGE: use Electron's structured console event to expose fixture renderer errors.
     await window.loadURL(url); // NEW
     await until("!!globalThis.TrellisIdentityProtocol && document.querySelector('input[type=password]')", 'bundled app login'); // NEW
     await window.webContents.executeJavaScript(`(async()=>{ // NEW
@@ -60,9 +61,14 @@ async function run() { // NEW
         const workKey='work:'+identityId+':'+work.diagramId+':'+work.workerId; // NEW
         await db.put('account:'+identityId,account);await db.put('accounts',[identityId]);await db.put('selected-account',identityId);await db.put('work-index:'+identityId,[workKey]); // NEW
         await db.put(workKey,{work,display:work,pending:{schema:1,kind:'task-updates',diagramId:work.diagramId,workerId:work.workerId,operations:[]},queued:[]}); // NEW
+        const otherSigner=await p.keyPair(),otherIdentityId=crypto.randomUUID(),otherDeviceId=crypto.randomUUID(),otherEventId=crypto.randomUUID(),otherKey=crypto.getRandomValues(new Uint8Array(32)); // NEW
+        const otherCredential=await p.protectPassword(otherKey,'second-preview-password',otherIdentityId+':'+otherEventId),otherEvent=await p.sign({schema:1,id:otherEventId,identityId:otherIdentityId,kind:'genesis',author:otherDeviceId,parents:[],username:'Other preview',device:{id:otherDeviceId,publicKey:otherSigner.publicKey,name:'Second UI test',kind:'android'},credential:otherCredential,time:Date.now()},otherSigner.privateKey); // NEW
+        await db.put('account:'+otherIdentityId,{identityId:otherIdentityId,deviceId:otherDeviceId,username:'Other preview',events:[otherEvent],genesisHash:await p.fingerprint(otherEvent),vault:await p.seal(otherSigner.privateKey,otherKey,otherIdentityId+':'+otherDeviceId)});otherKey.fill(0);await db.put('accounts',[identityId,otherIdentityId]); // NEW: the second identity deliberately has no downloaded field work.
     })()`); // NEW
     await window.reload(); // NEW
     await until("[...document.querySelectorAll('button')].some(b=>b.textContent==='Log in')", 'installed test identity'); // NEW
+    await until('new Set(fieldTestConfigured.map(record=>record.identityId)).size===2', 'both locked identity transports restored'); // NEW
+    assert.equal(await window.webContents.executeJavaScript("document.getElementById('identity').textContent.includes('Logged in as')"), false, 'Background restoration cannot log in an identity.'); // NEW
     await window.webContents.executeJavaScript("document.querySelector('input[type=password]').value='preview-test-password';[...document.querySelectorAll('button')].find(b=>b.textContent==='Log in').click();"); // NEW
     await until("[...document.querySelectorAll('button')].some(b=>b.textContent==='Show planting groups')", 'linked task'); // NEW
     await window.webContents.executeJavaScript(`(async()=>{const {openStore}=await import('/field-store.js'),db=await openStore(),id=await db.get('selected-account'),keys=await db.get('work-index:'+id);window.fieldTestWork=(await db.get(keys[0])).work;[...document.querySelectorAll('button')].find(b=>b.textContent==='Show planting groups').click();})()`); // NEW
@@ -91,7 +97,39 @@ async function run() { // NEW
     await until("document.getElementById('status').textContent.startsWith('Sync available.')", 'network recovery'); // NEW
     assert.equal(await window.webContents.executeJavaScript('fieldTestWrites.length'), 1, 'A queued operation cannot be signed repeatedly after network recovery.'); // NEW
     const pendingAfterRecovery = await window.webContents.executeJavaScript(`(async()=>{const {openStore}=await import('/field-store.js'),db=await openStore(),id=await db.get('selected-account'),key=(await db.get('work-index:'+id))[0];return(await db.get(key)).pending.operations.length;})()`); assert.equal(pendingAfterRecovery, 1, 'Network availability cannot acknowledge an operation.'); // NEW
-    const result = { ok: true, bundledFieldUi: true, wholeGarden: true, onlyLinkedPlantingGroupSelected: true, checks, pollPreservedView: true, wifiBlockedCachedEditing: true, signedOutboxPreserved: true, networkRecoveryIsNotAcknowledgment: true }; // CHANGE
+    await window.webContents.executeJavaScript("(()=>{[...document.querySelectorAll('button')].find(b=>b.textContent==='Log out').click();const select=document.querySelector('select');select.value=[...select.options].find(option=>option.textContent==='Other preview').value;select.dispatchEvent(new Event('change'));})()"); // CHANGE: keep repeated injected script variables inside their own scopes.
+    await until("document.querySelector('h2')?.textContent==='Log in as Other preview'", 'identity switching'); // NEW
+    await window.reload(); // NEW: lose all activity globals while retaining only the transactional installed accounts and edits.
+    await until('new Set(fieldTestConfigured.map(record=>record.identityId)).size===2', 'restart restores the unselected identity transport'); // NEW
+    const restored = await window.webContents.executeJavaScript(`(async()=>{const {openStore}=await import('/field-store.js'),db=await openStore(),ids=await db.get('accounts'),installed=await Promise.all(ids.map(id=>db.get('account:'+id))),first=installed.find(account=>account.username==='Preview test'),second=installed.find(account=>account.username==='Other preview'),record=await db.get((await db.get('work-index:'+first.identityId))[0]);return{pending:record.pending.operations.length,queued:record.queued.length,selected:await db.get('selected-account'),expectedSelected:second.identityId,otherLibrary:await db.get('work-index:'+second.identityId)||[],locked:!document.getElementById('identity').textContent.includes('Logged in as'),onlyPublicConfiguration:fieldTestConfigured.every(value=>Object.keys(value).sort().join(',')==='devices,identityId'),newWrites:fieldTestWrites.length};})()`); // NEW
+    assert.equal(restored.pending, 1); assert.equal(restored.queued, 1); assert.equal(restored.selected, restored.expectedSelected); assert.deepEqual(restored.otherLibrary, []); assert.equal(restored.locked, true); assert.equal(restored.onlyPublicConfiguration, true); assert.equal(restored.newWrites, 0); // NEW
+    await window.webContents.executeJavaScript("document.querySelector('input[type=password]').value='second-preview-password';[...document.querySelectorAll('button')].find(b=>b.textContent==='Log in').click();"); // NEW
+    await until("document.getElementById('main').textContent.includes('No field work downloaded yet.')", 'second identity remains isolated'); // NEW
+    assert.equal(await window.webContents.executeJavaScript('fieldTestWrites.length'), 0, 'Switching identity cannot sign another identity’s pending edit.'); // NEW
+    await window.webContents.executeJavaScript("(()=>{[...document.querySelectorAll('button')].find(b=>b.textContent==='Log out').click();const select=document.querySelector('select');select.value=[...select.options].find(option=>option.textContent==='Preview test').value;select.dispatchEvent(new Event('change'));})()"); // CHANGE
+    await until("document.querySelector('h2')?.textContent==='Log in as Preview test'", 'return to the first identity'); // NEW
+    await window.webContents.executeJavaScript("document.querySelector('input[type=password]').value='preview-test-password';[...document.querySelectorAll('button')].find(b=>b.textContent==='Log in').click();"); // NEW
+    await until("document.getElementById('status').textContent.startsWith('Offline.')", 'first identity synchronization'); // NEW
+    await window.webContents.executeJavaScript(`(async()=>{ // NEW
+        const p=TrellisIdentityProtocol,{openStore}=await import('/field-store.js'),db=await openStore(),id=await db.get('selected-account'),installed=await db.get('account:'+id),head=(await p.reduceEvents(installed.events,id)).passwordHeads[0].payload; // NEW
+        const key=await p.unlockPassword(head.credential,'preview-test-password',id+':'+head.id),signer=await p.open(installed.vault,key,id+':'+installed.deviceId);key.fill(0); // NEW: create a genuinely signed late fixture response inside this throwaway identity only.
+        const record=await db.get((await db.get('work-index:'+id))[0]),work={...record.work,packageId:crypto.randomUUID(),exportedAt:Date.now()+1000},signed=await p.sign({schema:1,id:crypto.randomUUID(),identityId:id,author:installed.deviceId,kind:'field-work',time:Date.now(),work},signer); // NEW
+        fieldTestRecordOwner=id;fieldTestRecords=[{relative:'field/'+work.diagramId+'/'+work.workerId+'/work/'+signed.payload.id+'.json',text:JSON.stringify(signed)}];window.fieldTestPreviousPackageId=record.work.packageId; // NEW
+        const verify=crypto.subtle.verify.bind(crypto.subtle);window.fieldTestOriginalVerify=verify;crypto.subtle.verify=async(...args)=>{const checked=await verify(...args);if(JSON.parse(new TextDecoder().decode(args[3])).kind==='field-work'){window.fieldTestVerificationHeld=true;return new Promise(resolve=>{window.fieldTestReleaseVerification=()=>resolve(checked);});}return checked;}; // NEW: hold a real successful signature verification exactly where logout and identity switching can overlap it.
+        document.getElementById('settings-tab').click();[...document.querySelectorAll('button')].find(b=>b.textContent==='Sync now').click(); // NEW
+    })()`); // NEW
+    await until('globalThis.fieldTestVerificationHeld===true', 'in-flight signature verification'); // CHANGE: the signal is absent until asynchronous verification reaches its held response.
+    await window.webContents.executeJavaScript("(()=>{[...document.querySelectorAll('button')].find(b=>b.textContent==='Log out').click();const select=document.querySelector('select');select.value=[...select.options].find(option=>option.textContent==='Other preview').value;select.dispatchEvent(new Event('change'));})()"); // CHANGE
+    await until("document.querySelector('h2')?.textContent==='Log in as Other preview'", 'switch during verification'); // NEW
+    await window.webContents.executeJavaScript("document.querySelector('input[type=password]').value='second-preview-password';[...document.querySelectorAll('button')].find(b=>b.textContent==='Log in').click();"); // NEW
+    await until("document.getElementById('identity').textContent.includes('Logged in as Other preview')", 'second identity unlocked during the first poll'); // CHANGE
+    await window.webContents.executeJavaScript("document.getElementById('work-tab').click();"); // NEW
+    await until("document.getElementById('main').textContent.includes('No field work downloaded yet.')", 'second library during the first poll'); // NEW
+    await window.webContents.executeJavaScript('window.fieldTestConfiguredBeforeRelease=fieldTestConfigured.length;crypto.subtle.verify=fieldTestOriginalVerify;fieldTestReleaseVerification();'); // NEW
+    await until('fieldTestConfigured.length>fieldTestConfiguredBeforeRelease', 'late poll finishes its background restoration'); // NEW
+    const isolated = await window.webContents.executeJavaScript(`(async()=>{const {openStore}=await import('/field-store.js'),db=await openStore(),installed=await Promise.all((await db.get('accounts')).map(id=>db.get('account:'+id))),first=installed.find(account=>account.username==='Preview test'),second=installed.find(account=>account.username==='Other preview'),record=await db.get((await db.get('work-index:'+first.identityId))[0]);return{otherLibrary:await db.get('work-index:'+second.identityId)||[],originalPackage:record.work.packageId===fieldTestPreviousPackageId,pending:record.pending.operations.length,newWrites:fieldTestWrites.length};})()`); // NEW
+    assert.deepEqual(isolated.otherLibrary, [], 'An old verified response cannot enter the newly selected identity library.'); assert.equal(isolated.originalPackage, true); assert.equal(isolated.pending, 1); assert.equal(isolated.newWrites, 0); // NEW
+    const result = { ok: true, bundledFieldUi: true, wholeGarden: true, onlyLinkedPlantingGroupSelected: true, checks, pollPreservedView: true, wifiBlockedCachedEditing: true, signedOutboxPreserved: true, networkRecoveryIsNotAcknowledgment: true, allLockedTransportsRestored: true, identitySwitchPreservesPendingEdits: true, isolatedLibraries: true, restoreUsesPublicApprovalsOnly: true, lateVerificationCannotCrossIdentities: true }; // CHANGE
     fs.writeFileSync(path.join(output, 'checks.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result)); // NEW
 } // NEW
-run().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => { clearTimeout(timeout); server?.close(); window?.destroy(); app.quit(); }); // NEW
+run().catch(error => { console.error(error); failed = true; }).finally(() => { clearTimeout(timeout); server?.close(); window?.destroy(); if (failed) app.exit(1); else app.quit(); }); // CHANGE: Electron Quit ignores Node's exitCode, so a failed check must explicitly report failure after owned cleanup.

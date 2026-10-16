@@ -488,12 +488,6 @@
             if (text) text.textContent = focus === 'create' ? 'Create New Garden Project' : 'Open Existing Garden Project'; // NEW
             action.addEventListener('click', event => { event.preventDefault(); event.stopImmediatePropagation(); showProjects(ui, { focus }); }, true); // NEW
         } // NEW
-        if (!splash.container.querySelector('.trellis-splash-local-create')) { // NEW
-            const local = button('Create local diagram', async () => { if (!await mayReplace(ui)) return; ui.hideDialog(); ui.actions.get('new').funct(); }); // NEW
-            local.classList.add('trellis-splash-local-create'); // NEW
-            const options = splash.container.querySelector('.trellis-splash-actions'); // NEW
-            if (options) options.append(local); // NEW
-        } // NEW
     } // NEW
     root.TrellisGardenHome = { attachSplash, install, openPath, importCurrent, saveJson, chooseJson, showProjects, distanceBand }; // CHANGE
 })(window);

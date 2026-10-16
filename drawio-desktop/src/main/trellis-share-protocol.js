@@ -98,11 +98,20 @@ export function inspectDiagram(xml) {
 export function activeAdmin(state, userId) {
     return (state.store.users || []).find(user => user.id === userId && user.admin && !user.disabled);
 }
+/** Resolve active access teams from the same role cards and reciprocal links used by Users. */ // NEW
+export function activeAccessTeams(state, userId) { // NEW
+    const flag = (cell, name) => cell.node.getAttribute(name) === '1' || new RegExp('(?:^|;)' + name + '=1(?:;|$)').test(cell.node.getElementsByTagName('mxCell')[0]?.getAttribute('style') || cell.node.getAttribute('style')); // NEW
+    const teams = state.cells.filter(cell => flag(cell, 'trellis_team_section') && cell.node.getAttribute('trellis_team_archived') !== '1' && cell.node.getAttribute('trellis_team_unassigned') !== '1'); // NEW
+    const links = cell => String(cell.node.getAttribute('linkedTo') || '').split(',').map(id => id.trim()); // NEW
+    const roles = state.cells.filter(cell => cell.node.getAttribute('trellis_role_user_id') === userId && cell.node.getAttribute('trellis_role_inactive') !== '1'); // NEW
+    return new Set(teams.filter(team => roles.some(role => role.node.ownerDocument === team.node.ownerDocument && (role.parentId === team.id || links(role).includes(team.id) && links(team).includes(role.id)))).map(team => team.node.getAttribute('trellis_team_id') || team.id)); // NEW
+} // NEW
 export function hasCanvasAccess(state, userId, now = Date.now()) {
     const user = (state.store.users || []).find(entry => entry.id === userId && !entry.disabled);
     const invite = (state.store.invites || []).find(entry => entry.pendingUserId === userId && entry.status === 'pending' && entry.expiresAt > now);
     if (!user && !invite) return false;
     if (user?.admin) return true;
+    const teamIds = activeAccessTeams(state, userId); // NEW: team access remains valid for peer membership and editing.
     return state.cells.some(cell => {
         const visited = new Set();
         for (let scope = cell; scope && !visited.has(scope.id); scope = scope.page.get(scope.parentId)) {
@@ -111,7 +120,7 @@ export function hasCanvasAccess(state, userId, now = Date.now()) {
             if (node.getAttribute('trellis_owner_user_id') === userId) return true;
             if (user && node.getAttribute('trellis_access_open') === '1') return true;
             if (jsonAttr(node, 'trellis_access_user_ids_json', []).includes(userId)) return true;
-            if (jsonAttr(node, 'trellis_access_grants_json', []).some(grant => grant.userId === userId && (grant.capabilities || []).length)) return true;
+            if (jsonAttr(node, 'trellis_access_grants_json', []).some(grant => (grant.userId === userId || grant.subjectType === 'team' && teamIds.has(grant.teamId)) && (grant.capabilities || []).length)) return true; // CHANGE
         }
         return false;
     });
@@ -179,7 +188,7 @@ export function decodeBlock(kind, text) {
     const raw = text.slice(text.indexOf(start) + start.length, text.indexOf(end)).trim();
     if (!text.includes(start) || !text.includes(end) || !/^[A-Za-z0-9+/=\s]+$/.test(raw)) throw new Error('Paste the complete Trellis sharing block.');
     const result = JSON.parse(Buffer.from(raw, 'base64').toString());
-    if (result.schema !== SHARE_SCHEMA) throw new Error('Unsupported Trellis sharing version.');
+    if (![SHARE_SCHEMA, 2].includes(result.schema)) throw new Error('Unsupported Trellis sharing version. Upgrade Trellis before joining.'); // CHANGE: v2 invitations isolate object journals from legacy files.
     safeId(result.shareId);
     safeId(result.diagramId);
     if (typeof result.deviceId !== 'string' || !/^[A-Z2-7-]{63}$/.test(result.deviceId)) throw new Error('Invalid Syncthing device ID.');

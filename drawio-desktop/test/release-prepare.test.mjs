@@ -247,7 +247,7 @@ test('writes package version only after install and tests pass', async () => {
 	const packageChangedIndex = findEventIndex(harness.events, 'requireOnlyPackageChanged:C:\\repo:drawio-desktop/package.json');
 	const addIndex = findEventIndex(harness.events, 'runCommand:git add drawio-desktop/package.json:');
 	const commitIndex = findEventIndex(harness.events, 'runCommand:git commit -m Release v1.2.4:');
-	const tagIndex = findEventIndex(harness.events, 'runCommand:git tag -a v1.2.4 -m Trellis Studio 1.2.4:');
+	const tagIndex = findEventIndex(harness.events, 'runCommand:git tag -a v1.2.4 -m Trellis OS 1.2.4:'); // CHANGE: Trellis OS branding.
 	const branchPushIndex = findEventIndex(harness.events, 'runCommand:git push origin HEAD:main:');
 	const tagPushIndex = findEventIndex(harness.events, 'runCommand:git push origin v1.2.4:');
 

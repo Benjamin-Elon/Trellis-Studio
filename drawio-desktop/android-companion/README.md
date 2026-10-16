@@ -12,6 +12,10 @@ After an Android debug build, run `npm run test:native-engines` to check its com
 
 Wi-Fi-only enforcement belongs to the native foreground service and continues when the web view is suspended or logged out. Cached packages remain readable and unlocked edits can be signed into the local outbox while transport waits for Wi-Fi. Returning to Wi-Fi resumes engines owned by the running service; reopening the app recovers after Android ends the service. Saved edits remain pending until desktop sends a durable acknowledgment. <!-- NEW -->
 
+On restart and subsequent synchronization attempts, the app restores the other installed identities' transports from their verified public approval records. Their vaults and field libraries remain locked, while previously signed native outbox files can resume delivery. A removed device or invalid trust anchor cannot restore that identity, and failure in one background identity does not stop the selected identity. <!-- NEW -->
+
+Each incoming poll, field-library write, signed update, and local operation counter retains the identity that initiated it. Logout or identity switching prevents a late response from updating the newly selected library or signing with its credentials. Already saved edits and signed native outbox files remain with their original identity. <!-- NEW -->
+
 ## Physical-device acceptance
 
 1. Enable USB debugging on an ARM64 phone and connect it. Confirm `adb devices` lists it as authorized.
@@ -28,6 +32,6 @@ Wi-Fi-only enforcement belongs to the native foreground service and continues wh
 
 Android can suspend background work or time out a foreground data-sync service. Resume on application startup without promising continuous background synchronization. File transfer alone is never desktop acknowledgment. <!-- CHANGE -->
 
-The October 12 Moto G Power physical test verified approval/setup, automatic package arrival, airplane-mode edits, restart with retained edits, reconnect, desktop command application/save, and automatic Android acknowledgment. The whole-garden PNG and planting-group highlight change passed production desktop pixel checks, the bundled UI smoke, and the physical phone's pan/zoom checks. Three further queued edits were acknowledged after desktop restart, with planned dates retained. The October 13 build adds native Wi-Fi-only enforcement and startup/shutdown fixes; that build still needs installation and network/background checks on the phone. See `../test/identity-field-implementation-status.md` for the test record and current build checksums. <!-- CHANGE -->
+The October 12 Moto G Power physical test verified approval/setup, automatic package arrival, airplane-mode edits, restart with retained edits, reconnect, desktop command application/save, and automatic Android acknowledgment. The whole-garden PNG and planting-group highlight change passed production desktop pixel checks, the bundled UI smoke, and the physical phone's pan/zoom checks. Three further queued edits were acknowledged after desktop restart, with planned dates retained. The October 14 build includes native Wi-Fi-only enforcement, startup/shutdown fixes, and restoration of other identities' transports; it still needs installation and network/background checks on the phone. See `../test/identity-field-implementation-status.md` for the test record and current build checksums. <!-- CHANGE -->
 
 The temporary Stay awake while charging setting was restored after physical testing. Airplane mode was disabled and Wi-Fi restored after the offline test. Temporary ADB forwarding was removed. <!-- CHANGE -->

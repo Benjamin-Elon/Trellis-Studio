@@ -135,8 +135,8 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --draft \
             --verify-tag \
-            --title "Trellis Studio ${version}" \
-            --notes "Draft release for Trellis Studio ${version}. Verify installer assets, updater metadata, and unsigned build warnings before publishing."
+            --title "Trellis OS ${version}" \
+            --notes "Draft release for Trellis OS ${version}. Verify installer assets, updater metadata, and unsigned build warnings before publishing."
 
   build:
     name: Build ${{ matrix.name }}

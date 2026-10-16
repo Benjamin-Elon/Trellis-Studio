@@ -215,8 +215,8 @@ const trellisReleaseUrl = 'https://github.com/Benjamin-Elon/trellis-studio'; // 
 const trellisSupportUrl = `${trellisReleaseUrl}/issues`; // Trellis release: keep support links on the fork.
 const trellisReleasesApiUrl = 'https://api.github.com/repos/Benjamin-Elon/trellis-studio/releases?per_page=10';
 const trellisReleasesTimeoutMs = 15000;
-const trellisUpdateProgressTitle = 'Trellis Studio Update';
-const trellisUpdateProgressText = 'Downloading Trellis Studio update...';
+const trellisUpdateProgressTitle = 'Trellis OS Update'; // CHANGE: Trellis OS branding.
+const trellisUpdateProgressText = 'Downloading Trellis OS update...'; // CHANGE: Trellis OS branding.
 let trellisUpdateDownloadInProgress = false;
 let trellisUpdateProgressBar = null;
 let trellisUpdateProgressIsDeterminate = false;
@@ -316,7 +316,7 @@ function showTrellisUpdateDownloadError(e) {
 		closable: true,
 		indeterminate: false,
 		initialValue: 100,
-		text: 'Trellis Studio update failed.',
+		text: 'Trellis OS update failed.', // CHANGE: Trellis OS branding.
 		detail: `Error occurred while downloading update. ${message}`,
 	});
 }
@@ -2847,7 +2847,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				else if (args.method === 'joinCanvas') ret = await service.joinCanvas(payload);
 				else if (args.method === 'openAsset') { const reason = await shell.openPath(await service.assetPath(callerId, payload)); ret = { ok: !reason, reason }; } // NEW: open only registered, explicitly copied assets.
 				else if (args.method === 'setPaused') ret = await service.setPausedForContext(callerId, payload); // CHANGE: bind renderer pause controls to its open canvas.
-				else if (['setupCanvas', 'createInviteBlock', 'createDeviceInvite', 'requestMembership', 'listRequests', 'setConflictState', 'saveRecoveryCopy', 'inspectConflict', 'resolveConflict', 'exportHistory', 'importHistory', 'recovery'].includes(args.method)) ret = await service[args.method](callerId, payload);
+				else if (['collaborationAction', 'upgradeCollaboration', 'setupCanvas', 'createInviteBlock', 'createDeviceInvite', 'requestMembership', 'listRequests', 'setConflictState', 'saveRecoveryCopy', 'inspectConflict', 'resolveConflict', 'exportHistory', 'importHistory', 'recovery'].includes(args.method)) ret = await service[args.method](callerId, payload); // CHANGE: all coordination remains bound to the watched document.
 				else throw new Error('Unsupported sharing operation.');
 				if (['setupCanvas', 'joinCanvas', 'recovery'].includes(args.method)) await ensureSharingTray(service);
 				break;

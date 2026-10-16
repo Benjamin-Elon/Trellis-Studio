@@ -69,18 +69,20 @@ test('Linux startup uses persistent AppImage path and rejects entry injection', 
 
 test('tray Open action never interprets Electron MenuItem as a diagram filename', { skip: process.platform === 'linux' }, async () => {
     const { createSharingTray } = await import('../src/main/trellis-sharing-tray.js');
-    let template;
+    let template, tooltip; // CHANGE: verify the tray public name.
     let unsubscribed = false;
     let destroyed = false;
     const opened = [];
     const pause = [];
     class FakeTray extends EventEmitter {
-        setToolTip() {}
+        setToolTip(value) { tooltip = value; } // CHANGE
         setContextMenu(menu) { template = menu; }
         destroy() { destroyed = true; }
     }
     const controller = await createSharingTray({ app: { quit() {} }, Tray: FakeTray, Menu: { buildFromTemplate: items => items }, nativeImage: { createFromPath: () => ({ isEmpty: () => false, resize() { return this; } }) }, iconPath: 'fixture.png', service: { listStatus: () => [{ label: 'Canvas', diagramPath: '/canvas.drawio', state: 'upToDate', connectedCollaborators: 2 }], onStatus: () => () => { unsubscribed = true; }, setPaused: async options => pause.push(options) }, openWindow: filename => opened.push(filename), store: { get: () => false } });
-    template.find(item => item.label === 'Open Trellis Studio').click({ label: 'MenuItem' });
+    assert.equal(tooltip, 'Trellis OS sharing'); // CHANGE
+    assert.ok(template.some(item => item.label === 'Quit Trellis OS')); // CHANGE
+    template.find(item => item.label === 'Open Trellis OS').click({ label: 'MenuItem' }); // CHANGE: Trellis OS branding.
     template.find(item => item.label && item.label.startsWith('Canvas:')).click();
     template.find(item => item.label === 'Pause All Syncing').click();
     assert.deepEqual(opened, [undefined, '/canvas.drawio']);

@@ -2,6 +2,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { AppInfo } = require('app-builder-lib/out/appInfo'); // CHANGE: verify builder-derived launch names and public labels.
+const { getWindowsInstallationDirName } = require('app-builder-lib/out/targets/targetUtil'); // CHANGE: guard the existing installer directory.
 
 const projectRoot = path.resolve(__dirname, '..');
 
@@ -35,7 +37,7 @@ test('Windows installers offer to run Trellis after installation finishes', () =
 	for (const fileName of windowsConfigs) {
 		const config = readBuilderConfig(fileName);
 
-		// Trellis release: NSIS finish pages should offer the checked Run Trellis Studio option.
+		// Trellis release: NSIS finish pages should offer the checked Run Trellis OS option.
 		assert.equal(config.nsis?.runAfterFinish, true, `${fileName} NSIS must run after finish`);
 	}
 
@@ -45,14 +47,14 @@ test('Windows installers offer to run Trellis after installation finishes', () =
 	assert.equal(winConfig.msi?.runAfterFinish, true, 'electron-builder-win.json MSI must run after finish');
 });
 
-test('Electron Builder configs expose Trellis Studio labels while preserving compatibility IDs', () => {
+test('Electron Builder configs expose Trellis OS labels while preserving compatibility IDs', () => { // CHANGE: Trellis OS branding.
 	for (const fileName of getBuilderConfigNames()) {
 		const config = readBuilderConfig(fileName);
 		const diagramAssociation = config.fileAssociations?.find((association) => association.ext === 'drawio'); // CHANGE
 
 		assert.equal(config.appId, 'com.benjaminelon.trellisfordrawio', `${fileName} appId must remain compatible`);
-		assert.equal(diagramAssociation?.name, 'Trellis Studio Diagram', `${fileName} diagram association name must be branded`); // CHANGE
-		assert.equal(diagramAssociation?.description, 'Trellis Studio Diagram', `${fileName} diagram association description must be branded`); // CHANGE
+		assert.equal(diagramAssociation?.name, 'Trellis OS Diagram', `${fileName} diagram association name must be branded`); // CHANGE
+		assert.equal(diagramAssociation?.description, 'Trellis OS Diagram', `${fileName} diagram association description must be branded`); // CHANGE
 		assert.equal(diagramAssociation?.mimeType, 'application/vnd.jgraph.mxfile', `${fileName} diagram MIME type must remain compatible`); // CHANGE
 	}
 
@@ -75,3 +77,21 @@ test('Windows NSIS drawio file associations use the Trellis document icon', () =
 		assert.equal(diagramAssociation?.icon, 'icon.ico', `${fileName} drawio association must use the Trellis icon`); // CHANGE
 	}
 });
+
+test('Trellis OS display names preserve existing launch and installer paths', () => { // CHANGE
+    const metadata = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')); // CHANGE
+    assert.equal(metadata.name, 'trellis-studio'); // CHANGE: internal package identity stays stable.
+    assert.equal(metadata.productName, 'Trellis OS'); // CHANGE
+    assert.equal(metadata.repository.url, 'git+https://github.com/Benjamin-Elon/trellis-studio.git'); // CHANGE
+    for (const fileName of getBuilderConfigNames()) { // CHANGE
+        const config = readBuilderConfig(fileName); // CHANGE
+        assert.equal(config.executableName, 'Trellis Studio', `${fileName} must pin the legacy executable/bundle basename`); // CHANGE
+        for (const platform of ['win', 'mac', 'linux']) { // CHANGE
+            if (platform === 'linux' && !config.linux) continue; // CHANGE
+            const appInfo = new AppInfo({ metadata, config }, undefined, config[platform]); // CHANGE
+            assert.equal(appInfo.productName, 'Trellis OS', `${fileName} ${platform} public name`); // CHANGE
+            assert.equal(appInfo.productFilename, platform === 'linux' ? 'trellis-studio' : 'Trellis Studio', `${fileName} ${platform} launch basename`); // CHANGE
+            if (platform === 'win') assert.equal(getWindowsInstallationDirName(appInfo, true), 'Trellis Studio', `${fileName} installer directory`); // CHANGE
+        } // CHANGE
+    } // CHANGE
+}); // CHANGE

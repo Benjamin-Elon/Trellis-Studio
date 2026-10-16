@@ -15,7 +15,7 @@
     const TRELLIS_DIALOG_Z = 2000000000;
 
     const DEFAULT_APP_INFO = Object.freeze({
-        productName: "Trellis Studio",
+        productName: "Trellis OS", // CHANGE: Trellis OS branding.
         version: "",
         repoUrl: "https://github.com/Benjamin-Elon/trellis-studio",
         releasesUrl: "https://github.com/Benjamin-Elon/trellis-studio/releases",

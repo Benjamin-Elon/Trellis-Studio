@@ -1,7 +1,7 @@
 {
-    "name": "Trellis Studio",
+    "name": "Trellis OS",
     "short_name": "Trellis",
-    "description": "Trellis Studio is a diagrammatic garden planner and diagram editor",
+    "description": "Trellis OS: Build Systems That Grow. A visual garden planning and management workspace.",
     "icons": [
         { "src": "../favicon.ico", "type": "image/x-icon", "sizes": "16x16 32x32" },
         { "src": "icon-192.png", "type": "image/png", "sizes": "192x192" },

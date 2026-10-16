@@ -1,9 +1,9 @@
 {
   "name": "trellis-studio",
-  "productName": "Trellis Studio",
+  "productName": "Trellis OS",
   "version": "2.7.0",
   "drawioBaseVersion": "29.0.3",
-  "description": "Trellis Studio desktop",
+  "description": "Trellis OS: Build Systems That Grow",
   "exports": "./src/main/electron.js",
   "type": "module",
   "main": "src/main/electron.js",

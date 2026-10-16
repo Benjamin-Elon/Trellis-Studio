@@ -455,7 +455,7 @@ var SplashDialog = function(editorUi)
 	var trellisPortfolioProjects = [ // NEW
 		{ name: 'Mystery Lawn', role: 'Umbrella ecological cooperative', detail: 'The cooperative frame for regenerative projects, shared capacity, and community-level coordination.', url: trellisLinks.website }, // NEW
 		{ name: 'LifeCycler', role: 'Small-scale food infrastructure', detail: 'A vertical composter garden that turns food waste, water, and limited space into soil, harvests, and long-term resilience.', url: trellisLinks.website }, // NEW
-		{ name: 'Trellis Studio', role: 'Planning and coordination layer', detail: 'A Draw.io-based support structure for gardens, teams, workflows, and local-first diagrams.', url: trellisLinks.repo } // NEW
+		{ name: 'Trellis OS', role: 'Planning and coordination layer', detail: 'A Draw.io-based support structure for gardens, teams, workflows, and local-first diagrams.', url: trellisLinks.repo } // NEW // CHANGE: Trellis OS branding.
 	]; // NEW
 	var trellisSavedWizard = readTrellisWizardRecord(); // CHANGE
 	var trellisSelectedPath = trellisSavedWizard != null ? trellisSavedWizard.path : null; // NEW
@@ -750,8 +750,8 @@ var SplashDialog = function(editorUi)
 			var header = createTrellisElement('div', 'trellis-splash-identity'); // CHANGE
 			var mark = createTrellisElement('div', 'trellis-splash-brand-mark'); // NEW
 			var copy = createTrellisElement('div', 'trellis-splash-brand-copy'); // NEW
-			var title = createTrellisElement('div', 'trellis-splash-title', 'Trellis Studio'); // CHANGE
-			var slogan = createTrellisElement('div', 'trellis-splash-tagline', 'Build systems that grow.'); // CHANGE
+			var title = createTrellisElement('div', 'trellis-splash-title', 'Trellis OS'); // CHANGE
+			var slogan = createTrellisElement('div', 'trellis-splash-tagline', 'Build Systems That Grow'); // CHANGE
 			mark.setAttribute('aria-hidden', 'true'); // NEW
 			copy.appendChild(title); // NEW
 			copy.appendChild(slogan); // NEW
@@ -805,7 +805,7 @@ var SplashDialog = function(editorUi)
 			writeHeader('A support structure for projects that grow food, people, and shared capacity.'); // NEW
 			var intro = createTrellisInfoSection('Hello, I am Benjamin', 'Trellis is a name pun with a job: a trellis is a support structure. This software is meant to support gardens, teams, planning, and the other regenerative projects growing around it.'); // NEW
 			center.appendChild(intro); // NEW
-			var projects = createTrellisInfoSection('Project ecosystem', 'Mystery Lawn is the umbrella ecological cooperative, LifeCycler is physical food infrastructure, and Trellis Studio is the planning layer that helps coordinate the work.'); // NEW
+			var projects = createTrellisInfoSection('Project ecosystem', 'Mystery Lawn is the umbrella ecological cooperative, LifeCycler is physical food infrastructure, and Trellis OS is the planning layer that helps coordinate the work.'); // NEW // CHANGE: Trellis OS branding.
 			var projectGrid = createTrellisElement('div', 'trellis-project-grid'); // NEW
 			projectGrid.style.cssText = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px;'; // NEW
 			for (var i = 0; i < trellisPortfolioProjects.length; i++) // NEW

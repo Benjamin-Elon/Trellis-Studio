@@ -161,8 +161,8 @@ test('header and native window placements use the Negative Space T mark', () => 
 	assert.doesNotMatch(bootstrap, /Editor\.logoImage = IMAGE_PATH \+ '\/window-icon\.png'/);
 	assert.match(bootstrap, /this\.openLink\('https:\/\/example\.com'\)/);
 	assert.match(bootstrap, /mxEvent\.consume\(evt\)/);
-	assert.match(bootstrap, /setAttribute\('title', 'Trellis Studio'\)/);
-	assert.match(bootstrap, /setAttribute\('aria-label', 'Trellis Studio'\)/);
+	assert.match(bootstrap, /setAttribute\('title', 'Trellis OS'\)/); // CHANGE: Trellis OS branding.
+	assert.match(bootstrap, /setAttribute\('aria-label', 'Trellis OS'\)/); // CHANGE: Trellis OS branding.
 	const devLoad = bootstrap.indexOf("mxscript(drawDevUrl + 'js/diagramly/Devel.js');");
 	const devInstall = bootstrap.indexOf('installTrellisBranding();', devLoad);
 	const devHooks = bootstrap.indexOf('loadElectronDesktopHooks(function()', devInstall);
@@ -177,7 +177,7 @@ test('header and native window placements use the Negative Space T mark', () => 
 	assert.match(graphEditorCss, /\.geAppIcon\s*\{[^}]*width: 64px;[^}]*height: 64px;/s); // Trellis change: lock the doubled header mark dimensions.
 	assert.match(graphEditorCss, /\.geMenubar\s*\{[^}]*padding: 0px 2px 0px 90px;/s); // Trellis change: prevent menu overlap with the larger mark.
 	assert.match(graphEditorCss, /\.geFilenameContainer\s*\{[^}]*left: 92px;/s); // Trellis change: prevent title overlap with the larger mark.
-	for (const url of ['js/bootstrap.js', 'styles/grapheditor.css', 'images/header-icon.png', 'images/window-icon.png']) {
+	for (const url of ['js/bootstrap.js', 'js/app.min.js', 'styles/grapheditor.css', 'images/header-icon.png', 'images/window-icon.png']) {
 		assert.ok(worker.includes(`url:"${url}",revision:"`));
 	}
 });
@@ -246,14 +246,14 @@ test('visible install metadata uses Trellis branding without changing compatibil
 	const snap = readJson('electron-builder-snap.json');
 	const electronMain = fs.readFileSync(path.join(projectRoot, 'src/main/electron.js'), 'utf8');
 
-	assert.equal(manifest.name, 'Trellis Studio');
+	assert.equal(manifest.name, 'Trellis OS'); // CHANGE: Trellis OS branding.
 	assert.equal(manifest.short_name, 'Trellis');
 	assert.equal(manifest.background_color, '#FBFEBD');
 	assert.equal(manifest.theme_color, '#5A2F0A');
-	assert.equal(appx.appx.displayName, 'Trellis Studio');
+	assert.equal(appx.appx.displayName, 'Trellis OS'); // CHANGE: Trellis OS branding.
 	assert.equal(appx.appx.identityName, 'draw.io.draw.ioDiagrams');
 	assert.equal(appx.appId, 'com.benjaminelon.trellisfordrawio');
-	assert.ok(windows.fileAssociations.some((association) => association.ext === 'drawio' && association.name === 'Trellis Studio Diagram' && association.description === 'Trellis Studio Diagram'));
+	assert.ok(windows.fileAssociations.some((association) => association.ext === 'drawio' && association.name === 'Trellis OS Diagram' && association.description === 'Trellis OS Diagram')); // CHANGE: Trellis OS branding.
 	assert.equal(linux.linux.executableName, 'trellis-studio');
 	assert.equal(snap.linux.executableName, 'trellis-studio');
 	assert.match(electronMain, /path\.join\(app\.getPath\('appData'\), 'draw\.io'\)/);

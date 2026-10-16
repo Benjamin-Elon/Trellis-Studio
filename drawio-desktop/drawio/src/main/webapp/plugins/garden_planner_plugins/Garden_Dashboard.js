@@ -2055,7 +2055,7 @@ Draw.loadPlugin(function (ui) {
         const messagesBtn = createToolbarButton("Messages", "Review access requests", "open");
         const exportBtn = createToolbarButton("Export", "Export dashboard CSV", "neutral");
         const shareBtn = createToolbarButton("Share", "Share selected module(s), task board(s), or garden bed(s)", "open");
-        const syncBtn = createToolbarButton("Connected collaborators: --", "Canvas connection status", "neutral"); // NEW
+        const syncBtn = createToolbarButton("Sync: Checking", "Canvas synchronization and collaboration", "neutral"); // NEW
         syncBtn.style.minWidth = "175px"; // NEW: connection updates do not shift toolbar controls.
         syncBtn.addEventListener("click", function () { const sharing = window.Trellis && window.Trellis.sharing; if (sharing) sharing.showSharingDialog(); }); // NEW
         const tableBtn = createToolbarButton("Table", "Show dashboard table", "open");
@@ -2319,8 +2319,8 @@ Draw.loadPlugin(function (ui) {
         const sharing = window.Trellis && window.Trellis.sharing;
         const state = sharing && sharing.getStatus();
         viewportToolbar.syncBtn.style.display = sharing ? "" : "none";
-        viewportToolbar.syncBtn.textContent = "Connected collaborators: " + (state && state.connectedCollaborators != null ? state.connectedCollaborators : "--");
-        viewportToolbar.syncBtn.title = state ? state.state + (state.reason ? ": " + state.reason : "") : "Canvas is not shared";
+        viewportToolbar.syncBtn.textContent = "Sync: " + (sharing && sharing.describeStatus ? sharing.describeStatus(state) : state ? "Checking connection" : "Not shared"); // CHANGE: lead with readable synchronization health.
+        viewportToolbar.syncBtn.title = state ? viewportToolbar.syncBtn.textContent + (state.reason ? ": " + state.reason : "") : "Canvas is not shared"; // CHANGE
     }
 
     function refreshViewportToolbarForSelection() {

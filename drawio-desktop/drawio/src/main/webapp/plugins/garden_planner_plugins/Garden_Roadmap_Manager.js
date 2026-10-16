@@ -1525,9 +1525,10 @@ Draw.loadPlugin(function (ui) {
         renderPricingLayer(); // NEW
         if (!document || !graph.container || gesture) return; // CHANGE
         if (!overlay) { overlay = element('div', null, 'trellis-roadmap-controls'); overlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10020;pointer-events:none;'; (graph.__trellisTaskUi ? graph.__trellisTaskUi.ensureControlHost() : graph.container).appendChild(overlay); }
-        const cell = graph.getSelectionCell && graph.getSelectionCell(); if (!cell) return; // CHANGE
+        const cell = graph.getSelectionCell && graph.getSelectionCell(); // CHANGE
+        clearHiddenObjectIfSelectionChanged(); // CHANGE: deselection must reset the repeated-click toggle as well as its controls.
+        if (!cell) { overlay.replaceChildren(); return; } // CHANGE: clear controls when the selection becomes empty.
         const type = kind(cell), board = ancestor(cell, 'board');
-        clearHiddenObjectIfSelectionChanged(); // NEW
         if (type === 'object' && cell === manuallyHiddenObjectCell) { overlay.replaceChildren(); return; } // NEW
         const activeHost = overlay.contains(document.activeElement) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) ? document.activeElement.closest('.trellis-roadmap-control') : null; // NEW
         if (activeHost && (activeHost.__roadmapAnchor === cell || activeHost.__roadmapAnchor === board)) return; // CHANGE: preserve active editors only while their anchor still belongs to the current selection.
@@ -1759,6 +1760,14 @@ Draw.loadPlugin(function (ui) {
         const schedule = window.requestAnimationFrame || (fn => window.setTimeout(fn, 0));
         schedule(() => { refreshPending = false; if (destroyed) return; if (graph.refresh) graph.refresh(); renderControls(); });
     }
+    let controlsRefreshPending = false; // NEW
+    /** Wait for native selection/pointer handlers to finish before reconciling overlays, without recreating labels. */ // NEW
+    function scheduleControlsRefresh() { // NEW
+        if (destroyed || controlsRefreshPending) return; // NEW
+        controlsRefreshPending = true; // NEW
+        const schedule = window.requestAnimationFrame || (fn => window.setTimeout(fn, 0)); // NEW
+        schedule(() => { controlsRefreshPending = false; if (!destroyed) renderControls(); }); // NEW
+    } // NEW
     function checkToday() { const today = core.todayDay(); if (!gesture && today !== lastToday) { lastToday = today; invalidateLayouts(); refresh(); } }
 
     const disposers = []; // NEW
@@ -1775,7 +1784,7 @@ Draw.loadPlugin(function (ui) {
             mouseMove: function () { }, // NEW
             mouseUp: function (_sender, me) { // NEW
                 const event = me && me.getEvent ? me.getEvent() : null; // NEW
-                if (toggleHiddenObjectAfterSimpleClick(me, event)) refresh(); // NEW
+                if (toggleHiddenObjectAfterSimpleClick(me, event)) scheduleControlsRefresh(); // CHANGE: toggling overlay controls must not recreate native cell labels.
             } // NEW
         }; // NEW
         graph.addMouseListener(listener); // NEW
@@ -1791,7 +1800,7 @@ Draw.loadPlugin(function (ui) {
         const timer = window.setInterval(checkToday, 60000); disposers.push(() => window.clearInterval(timer)); // NEW
     } // NEW
     listenModel(model, mxEvent.CHANGE, () => { boardRegistry = null; invalidateLayouts(); if (gesture && !committingCanonical && !commandDepth) { if (graph.escape) graph.escape(); clearGesture(); } if (!commandDepth) refresh(); }); // NEW
-    listenModel(graph.getSelectionModel && graph.getSelectionModel(), mxEvent.CHANGE, () => { closeAssignmentPicker(); closeCostPicker(); refresh(); }); // CHANGE
+    listenModel(graph.getSelectionModel && graph.getSelectionModel(), mxEvent.CHANGE, () => { closeAssignmentPicker(); closeCostPicker(); scheduleControlsRefresh(); }); // CHANGE: selection changes only overlays; a full refresh exposes saved labels beneath active editors.
     [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE].filter(Boolean).forEach(event => listenModel(graph.view, event, renderControls)); // NEW
     const destroyGraph = graph.destroy; // NEW
     graph.destroy = function () { destroyed = true; disposers.splice(0).forEach(dispose => dispose()); closeAssignmentPicker(); closeCostPicker(); if (overlay) overlay.remove(); if (pricingOverlay) pricingOverlay.remove(); if (dependencyOverlay) dependencyOverlay.remove(); if (objectDateBadgeOverlay) objectDateBadgeOverlay.remove(); if (dateHint) dateHint.remove(); if (dateHud) dateHud.remove(); return destroyGraph.apply(this, arguments); }; // CHANGE

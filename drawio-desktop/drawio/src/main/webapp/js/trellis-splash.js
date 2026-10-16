@@ -1,5 +1,5 @@
 /**
- * Trellis Studio splash presentation.
+ * Trellis OS splash presentation.
  *
  * The licensing state machine remains in Draw.io's SplashDialog. This module
  * adds Trellis-owned structure, styling hooks, background loading, and
@@ -92,7 +92,7 @@
 		if (closeButton != null) {
 			var isComplete = splashDialog.isTrellisLicenseWizardComplete == null ||
 				splashDialog.isTrellisLicenseWizardComplete();
-			var label = isComplete ? 'Continue with a blank diagram' : 'Exit Trellis Studio';
+			var label = isComplete ? 'Continue with a blank diagram' : 'Exit Trellis OS'; // CHANGE: Trellis OS branding.
 			closeButton.setAttribute('title', label);
 			closeButton.setAttribute('aria-label', label);
 		}
@@ -435,7 +435,7 @@
 				if (stateIntro != null && ((' ' + stateIntro.className + ' ').indexOf(' trellis-splash-section ') >= 0 || (' ' + stateIntro.className + ' ').indexOf(' trellis-license-contact-panel ') >= 0 || (' ' + stateIntro.className + ' ').indexOf(' trellis-saved-license-card ') >= 0)) stateIntro = null;
 				var tagline = container.ownerDocument.createElement('div');
 				tagline.className = 'trellis-splash-tagline';
-				tagline.textContent = 'Build systems that grow.';
+				tagline.textContent = 'Build Systems That Grow'; // CHANGE: Trellis OS branding.
 				if (stateIntro != null) addClass(stateIntro, 'trellis-splash-state-intro');
 				center.insertBefore(tagline, insertBeforeNode);
 			}

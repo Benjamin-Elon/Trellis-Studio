@@ -69,3 +69,26 @@ test('three real devices transfer canvas data through a mesh while the coordinat
     assert.equal(a.listStatus()[0].state, 'unavailable');
     assert.notEqual(decodeBlock('REPLY', joinedB.reply).deviceId, decodeBlock('REPLY', joinedC.reply).deviceId);
 });
+
+test('v2 peers exchange object records and preserve independent autosaves with the coordinator offline', { skip: process.env.TRELLIS_SYNCTHING_RUNTIME_TEST !== '1', timeout: 180000 }, async t => { // NEW
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-collaboration-mesh-')); // NEW
+    const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), addresses = new Map(); // NEW
+    const services = ['coordinator', 'alice', 'bob'].map(name => createSyncthingService({ userDataPath: path.join(root, name, 'profile'), documentsPath: path.join(root, name, 'documents'), binaryRoot: path.join(project, 'vendor', 'syncthing'), setStartup: async () => {}, onListening: ({ deviceId, port }) => addresses.set(deviceId, ['tcp://127.0.0.1:' + port]), deviceAddresses: id => addresses.get(id) || ['dynamic'] })); // NEW
+    t.after(async () => { for (const service of services) await service.stop(); await fs.rm(root, { recursive: true, force: true }); }); // NEW
+    const [a, b, c] = services; for (const service of services) await service.start(); // NEW
+    const users = ['admin', 'alice', 'bob'].map(id => ({ id, name: id, email: id + '@example.org', admin: true })); // NEW
+    const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="mesh-v2" trellis_users_json="' + JSON.stringify({ usersEnabled: true, users, invites: [] }).replace(/"/g, '&quot;') + '"><mxCell parent="0"/></object><object id="bed-a" label="Bed A" trellis_owner_user_id="alice"><mxCell vertex="1" parent="1"/></object><object id="bed-b" label="Bed B" trellis_owner_user_id="bob"><mxCell vertex="1" parent="1"/></object></root></mxGraphModel>'; // NEW
+    const source = path.join(root, 'Community.drawio'); await fs.writeFile(source, xml); a.setContext(1, { diagramPath: source, diagramId: 'mesh-v2', userId: 'admin' }); // NEW
+    const shared = await a.setupCanvas(1, { diagramPath: source, diagramId: 'mesh-v2', xml, protocolVersion: 2 }); // NEW
+    const invitedB = await a.createDeviceInvite(1, { shareId: shared.shareId, userId: 'alice' }), joinedB = await b.joinCanvas({ block: invitedB.block }); // NEW
+    const invitedC = await a.createDeviceInvite(1, { shareId: shared.shareId, userId: 'bob' }), joinedC = await c.joinCanvas({ block: invitedC.block }); // NEW
+    await a.requestMembership(1, { shareId: shared.shareId, operation: 'approve', reply: joinedB.reply }); await a.requestMembership(1, { shareId: shared.shareId, operation: 'approve', reply: joinedC.reply }); // NEW
+    await eventually(async () => { for (const service of services) await service.poll(); return (await fs.readFile(joinedB.diagramPath, 'utf8')) === shared.xml && (await fs.readFile(joinedC.diagramPath, 'utf8')) === shared.xml; }); // NEW
+    b.setContext(2, { diagramPath: joinedB.diagramPath, diagramId: 'mesh-v2', userId: 'alice' }); c.setContext(3, { diagramPath: joinedC.diagramPath, diagramId: 'mesh-v2', userId: 'bob' }); // NEW
+    await a.stop(); // NEW
+    assert.equal((await b.collaborationAction(2, { shareId: shared.shareId, kind: 'save', baseXml: shared.xml, xml: shared.xml.replace('Bed A', 'Alice changed A') })).ok, true); // NEW
+    assert.equal((await c.collaborationAction(3, { shareId: shared.shareId, kind: 'save', baseXml: shared.xml, xml: shared.xml.replace('Bed B', 'Bob changed B') })).ok, true); // NEW
+    await eventually(async () => { await b.poll(); await c.poll(); const bx = await fs.readFile(joinedB.diagramPath, 'utf8'), cx = await fs.readFile(joinedC.diagramPath, 'utf8'); return bx === cx && bx.includes('Alice changed A') && bx.includes('Bob changed B'); }); // NEW
+    assert.equal(a.listStatus()[0].state, 'unavailable'); // NEW
+    const records = await fs.readdir(path.join(joinedB.diagramPath, '..', '.trellis', 'collaboration-v2', 'records')); assert.ok(records.length >= 4); // NEW
+}); // NEW

@@ -27,6 +27,6 @@ The production smoke still reports the existing roadmap dependency and external 
 
 ## Running the changes <!-- NEW -->
 
-Quit the currently running Trellis instance completely using its tray's **Quit Trellis Studio** action, then run `npm start` from `drawio-desktop`. Closing the editor with X can intentionally leave the old main process running in the tray, so a second launch alone does not reload this repair. <!-- NEW -->
+Quit the currently running Trellis instance completely using its tray's **Quit Trellis OS** action, then run `npm start` from `drawio-desktop`. Closing the editor with X can intentionally leave the old main process running in the tray, so a second launch alone does not reload this repair. <!-- NEW -->
 
 Use `npm run test:home-production` for the parent-bounded production smoke. The existing direct physical Android helper retains its thirty-minute session behavior; cleanup targets only recorded test-owned processes and verified temporary directories. Package JSON cannot carry end-of-line comments; other changed source and documentation use change markers. <!-- NEW -->

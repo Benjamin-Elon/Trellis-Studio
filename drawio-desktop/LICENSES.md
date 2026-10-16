@@ -1,4 +1,4 @@
-# Trellis Studio Licensing
+# Trellis OS Licensing <!-- CHANGE: Trellis OS branding. -->
 
 This repository is a mixed-license distribution.
 
@@ -6,7 +6,7 @@ This repository is a mixed-license distribution.
 
 The bundled draw.io code, templates, images, dependencies, and third-party assets remain under their existing notices and licenses. See the existing draw.io license files and third-party notices in this repository for those terms.
 
-Trellis Studio does not relicense upstream draw.io code, draw.io trademarks, or third-party material.
+Trellis OS does not relicense upstream draw.io code, draw.io trademarks, or third-party material. <!-- CHANGE: Trellis OS branding. -->
 
 <!-- NEW: bundled sharing service licensing stays separate from Trellis plugin licensing. -->
 Syncthing v2.1.6 is distributed under the Mozilla Public License 2.0. Its upstream LICENSE, AUTHORS, and README notices accompany each architecture-specific executable under packaged `resources/syncthing/`. Upstream source and release artifacts are available at [Syncthing v2.1.6](https://github.com/syncthing/syncthing/releases/tag/v2.1.6).
@@ -51,4 +51,4 @@ Ideas, issue reports, testing notes, and non-code feedback are welcome through t
 
 ## Contact
 
-Commercial licensing, collaboration, support, and contribution questions for Covered Trellis Plugin Files should use the public contact links shown in the Trellis Studio startup dialog and Updates & Links dialog. Placeholder contact links may appear until the public channels are finalized.
+Commercial licensing, collaboration, support, and contribution questions for Covered Trellis Plugin Files should use the public contact links shown in the Trellis OS startup dialog and Updates & Links dialog. Placeholder contact links may appear until the public channels are finalized. <!-- CHANGE: Trellis OS branding. -->

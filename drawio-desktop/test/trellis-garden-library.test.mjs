@@ -37,6 +37,16 @@ async function fixture(t, options = {}) { // CHANGE
     await identities.create({ username: 'Alice', password: 'library-password' });
     return { root, identities, library, logs, services, legacyService, makeTransport }; // CHANGE
 }
+
+test('object collaboration migration retains the identity library worker and follows the new local project', async t => { // NEW
+    const f = await fixture(t), created = await f.library.create({ name: 'Community' }); // NEW
+    const service = await f.identities.transport(f.identities.session().identityId); // NEW
+    service.setContext(10, { diagramPath: created.path, diagramId: created.entry.diagramId, userId: created.entry.workerId }); // NEW
+    const upgraded = await service.upgradeCollaboration(10, { shareId: created.entry.shareId }); // NEW
+    const row = (await f.library.list()).gardens.find(g => g.diagramId === created.entry.diagramId); // NEW
+    assert.equal(row.path, upgraded.diagramPath); assert.equal(row.workerId, created.entry.workerId); assert.equal(row.name, 'Community'); // NEW
+    assert.equal((await f.library.getEntry(created.entry.diagramId)).shareId, upgraded.shareId); // NEW
+}); // NEW
 test('creation, rename, duplication and local deletion retain stable catalog identities', async t => {
     const f = await fixture(t), created = await f.library.create({ name: 'Kitchen garden' });
     assert.equal((await f.library.list()).gardens[0].available, true);

@@ -1,5 +1,6 @@
 {
   "appId": "com.benjaminelon.trellisfordrawio",
+  "executableName": "Trellis Studio",
   "copyright": "Copyright 2026 Benjamin Elon",
   "asar": true,
   "files": [
@@ -28,7 +29,7 @@
     ]
   },
   "appx": {
-    "displayName": "Trellis Studio",
+    "displayName": "Trellis OS",
     "publisherDisplayName": "draw.io Ltd",
     "identityName": "draw.io.draw.ioDiagrams",
     "publisher": "CN=9E628CCB-BE04-4557-A5A8-81EC34B09733"
@@ -37,8 +38,8 @@
   "fileAssociations": [
 	  {
 	  	"ext": "drawio",
-      "name": "Trellis Studio Diagram",
-      "description": "Trellis Studio Diagram",
+      "name": "Trellis OS Diagram",
+      "description": "Trellis OS Diagram",
 	  	"mimeType": "application/vnd.jgraph.mxfile",
 	  	"role": "Editor"
 	  },

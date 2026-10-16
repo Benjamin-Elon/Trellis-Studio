@@ -5,7 +5,7 @@ import { createInterface } from 'readline/promises';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 /**
- * Local release-prep CLI for Trellis Studio.
+ * Local release-prep CLI for Trellis OS.
  *
  * This script intentionally stops at pushing a version commit and tag. GitHub
  * Actions owns installer builds and draft-release asset uploads, and humans own
@@ -432,7 +432,7 @@ export async function runReleasePrepare(argv = process.argv.slice(2), releaseOpe
 
 	operations.runCommand('git', ['add', paths.packageJsonRepoPath], paths.repoRoot);
 	operations.runCommand('git', ['commit', '-m', `Release ${tag}`], paths.repoRoot);
-	operations.runCommand('git', ['tag', '-a', tag, '-m', `Trellis Studio ${version}`], paths.repoRoot);
+	operations.runCommand('git', ['tag', '-a', tag, '-m', `Trellis OS ${version}`], paths.repoRoot); // CHANGE: Trellis OS branding.
 	operations.runCommand('git', ['push', 'origin', `HEAD:${branch}`], paths.repoRoot);
 	operations.runCommand('git', ['push', 'origin', tag], paths.repoRoot);
 
