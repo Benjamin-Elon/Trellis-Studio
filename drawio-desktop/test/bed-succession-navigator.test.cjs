@@ -731,12 +731,13 @@ test("selected cluster occupancy API returns schedule-ordered windows", () => {
         secondTiler: true,
         tiler2State: { x: 29, y: 10, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-03-01", transplant_date: "2026-05-01", harvest_end: "2026-09-15" },
-        tiler2Attrs: { plant_name: "Lettuce", variety_name: "Romaine", sow_date: "2026-02-10", harvest_end: "2026-04-10" }
+        tiler2Attrs: { plant_id: '2', plant_name: "Lettuce", variety_name: "Romaine", sow_date: "2026-02-10", harvest_end: "2026-04-10" } // CHANGE: verify the real provider exposes compatibility identity.
     });
     const api = graph.__trellisBedSuccessionNavigator;
     const result = api.getSelectedClusterOccupancy(tiler1);
 
     assert.equal(result.selectedId, "tiler1");
+    assert.equal(result.items.find(item => item.cellId === 'tiler2').plantId, '2'); // CHANGE
     assert.deepEqual(JSON.parse(JSON.stringify(result.items.map(item => item.cellId))), ["tiler2", "tiler1"]);
     assert.deepEqual(JSON.parse(JSON.stringify(result.items.map(item => [item.label, item.startISO, item.endISO]))), [
         ["Lettuce - Romaine", "2026-02-10", "2026-04-10"],
@@ -792,6 +793,7 @@ test("selected cluster occupancy uses perennial lifespan dates", () => {
     });
     const result = graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy(tiler1);
     assert.deepEqual(JSON.parse(JSON.stringify(result.items.map(item => [item.startISO, item.endISO]))), [["2026-02-01", "2028-12-31"]]);
+    assert.equal(result.items[0].perennial, true); // CHANGE: timeline labels must describe the lifespan boundary accurately.
 });
 
 test("selected cluster occupancy exposes derived relationship snapshots from either side", () => {

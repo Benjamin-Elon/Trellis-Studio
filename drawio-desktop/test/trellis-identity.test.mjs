@@ -250,3 +250,77 @@ test('self-revocation clears access even if the transport cannot publish its new
     assert.equal(a.service.session(), null); assert.equal((await a.restart().list()).session, null); // NEW
     await assert.rejects(fs.stat(path.join(a.root, 'remembered-session.json')), { code: 'ENOENT' }); // NEW
 }); // NEW
+
+test('API keys require sign-in and isolate profiles without exposing values', async t => { // NEW
+    const a = await fixture(t, 'api-keys');
+    await assert.rejects(a.service.apiKeys('status'), /Log in/);
+    const alice = await a.service.create({ username: 'Alice', password: 'first-password' });
+    const initial = await a.service.apiKeys('status');
+    const saved = await a.service.apiKeys('save', { provider: 'openai', value: 'synthetic-alice-api-key', sessionToken: initial.sessionToken, identityId: 'attacker-supplied-profile' });
+    assert.equal(saved.identityId, alice.session.identityId);
+    assert.equal(saved.providers.openai, 'configured');
+    assert.equal(JSON.stringify(saved).includes('synthetic-alice-api-key'), false);
+    const disk = await fs.readFile(path.join(a.root, saved.identityId, 'api-keys/openai.json'), 'utf8');
+    assert.equal(disk.includes('synthetic-alice-api-key'), false);
+    const peer = await fixture(t, 'api-key-pairing'); // NEW: device setup transfers identity records, never local provider credentials.
+    const paired = await pair(a, peer);
+    assert.equal(JSON.stringify(paired.setup).includes('api-keys'), false);
+    await peer.service.unlock({ identityId: paired.identityId, password: 'first-password' });
+    assert.equal((await peer.service.apiKeys('status')).providers.openai, 'missing');
+    await assert.rejects(a.service.apiKeys('read', {}), /Unsupported/);
+    await assert.rejects(a.service.apiKeys('save', { provider: '../../escape', value: 'bad', sessionToken: saved.sessionToken }), /Unsupported/);
+    await assert.rejects(a.service.apiKeys('save', { provider: 'openai', value: '   ', sessionToken: saved.sessionToken }), /nonblank/);
+    await a.service.lock();
+    await a.service.create({ username: 'Bob', password: 'bob-password' });
+    assert.equal((await a.service.apiKeys('status')).providers.openai, 'missing');
+    await assert.rejects(a.service.apiKeys('remove', { provider: 'openai', sessionToken: saved.sessionToken }), /session changed/);
+    await a.service.lock();
+    const restarted = a.restart();
+    await restarted.unlock({ identityId: alice.session.identityId, password: 'first-password' });
+    const restored = await restarted.apiKeys('status');
+    assert.equal(restored.providers.openai, 'configured');
+    await assert.rejects(restarted.apiKeys('remove', { provider: 'openai', sessionToken: saved.sessionToken }), /session changed/);
+    assert.equal((await restarted.apiKeys('remove', { provider: 'openai', sessionToken: restored.sessionToken })).providers.openai, 'missing');
+});
+
+test('profile API-key filesystem failures leave the previous encrypted entry intact', async t => { // NEW
+    const a = await fixture(t, 'api-keys-disk-failure');
+    const created = await a.service.create({ username: 'Alice', password: 'first-password' });
+    const status = await a.service.apiKeys('status');
+    await a.service.apiKeys('save', { provider: 'openai', value: 'synthetic-disk-key', sessionToken: status.sessionToken });
+    const filename = path.join(a.root, created.session.identityId, 'api-keys/openai.json');
+    const before = await fs.readFile(filename, 'utf8');
+    const rename = fs.rename;
+    fs.rename = async (source, target) => { if (target === filename) throw new Error('simulated disk error'); return rename(source, target); };
+    try { await assert.rejects(a.service.apiKeys('save', { provider: 'openai', value: 'synthetic-replacement', sessionToken: status.sessionToken }), /previous key was preserved/); }
+    finally { fs.rename = rename; }
+    assert.equal(await fs.readFile(filename, 'utf8'), before);
+    assert.deepEqual(await fs.readdir(path.dirname(filename)), ['openai.json']);
+});
+
+test('queued logout and profile changes reject stale API-key writes', async t => { // NEW
+    const a = await fixture(t, 'api-keys-race');
+    await a.service.create({ username: 'Alice', password: 'first-password' });
+    const status = await a.service.apiKeys('status');
+    const lock = a.service.lock();
+    const create = a.service.create({ username: 'Bob', password: 'bob-password' });
+    const stale = a.service.apiKeys('save', { provider: 'fdc', value: 'synthetic-stale-key', sessionToken: status.sessionToken });
+    await lock; await create;
+    await assert.rejects(stale, /session changed/);
+    assert.equal((await a.service.apiKeys('status')).providers.fdc, 'missing');
+});
+
+test('encryption failures preserve previously saved profile keys', async t => { // NEW
+    const a = await fixture(t, 'api-keys-failure');
+    const created = await a.service.create({ username: 'Alice', password: 'first-password' });
+    const initial = await a.service.apiKeys('status');
+    await a.service.apiKeys('save', { provider: 'fdc', value: 'synthetic-original-key', sessionToken: initial.sessionToken });
+    const filename = path.join(a.root, created.session.identityId, 'api-keys/fdc.json');
+    const before = await fs.readFile(filename, 'utf8');
+    const restarted = a.restart({ protectSession: () => { throw new Error('synthetic-sensitive-native-error'); } });
+    await restarted.unlock({ identityId: created.session.identityId, password: 'first-password' });
+    const status = await restarted.apiKeys('status');
+    await assert.rejects(restarted.apiKeys('save', { provider: 'fdc', value: 'synthetic-replacement', sessionToken: status.sessionToken }), /previous key was preserved/);
+    assert.equal(await fs.readFile(filename, 'utf8'), before);
+    assert.equal((await restarted.apiKeys('status')).providers.fdc, 'configured');
+});

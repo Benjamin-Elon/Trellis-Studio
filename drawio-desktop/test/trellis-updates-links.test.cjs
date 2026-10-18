@@ -275,15 +275,15 @@ test("Trellis updates integration is registered, default-loaded, and bridged", (
     const preloadSource = readProjectFile("src/main/electron-preload.js");
     const electronSource = readProjectFile("src/main/electron.js");
 
-    assert.match(appSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
+    assert.match(appSource, /(?<![\w$'"])(?:trellisUpdatesLinks|'trellisUpdatesLinks'|"trellisUpdatesLinks")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js\1/); // CHANGE
     assert.match(appSource, /App\.trellisDefaultPlugins = App\.publicPlugin\.slice\(\); \/\/ NEW/);
     assert.match(appSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\); \/\/ CHANGE/);
     assert.ok(appSource.indexOf("App.loadPlugins(App.trellisDefaultPlugins); // CHANGE") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')"));
-    assert.match(bundledSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
+    assert.match(bundledSource, /(?<![\w$'"])(?:trellisUpdatesLinks|'trellisUpdatesLinks'|"trellisUpdatesLinks")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js\1/); // CHANGE
     assert.match(bundledSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/);
     assert.match(bundledSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
     assert.ok(bundledSource.indexOf('App.loadPlugins(App.trellisDefaultPlugins)') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)'));
-    assert.match(integrateSource, /trellisUpdatesLinks:"plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js"/);
+    assert.match(integrateSource, /(?<![\w$'"])(?:trellisUpdatesLinks|'trellisUpdatesLinks'|"trellisUpdatesLinks")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js\1/); // CHANGE
     assert.match(integrateSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/);
     assert.match(integrateSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
     assert.ok(integrateSource.indexOf('App.loadPlugins(App.trellisDefaultPlugins)') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)'));

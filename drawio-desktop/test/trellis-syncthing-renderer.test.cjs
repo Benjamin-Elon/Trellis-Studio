@@ -247,6 +247,18 @@ test('v2 failed durability leaves the draft modified and reports failure once', 
     await new Promise(resolve => h.current.save(false, () => assert.fail('No durable save'), error => { errors++; assert.match(error.message, /Disk is full/); resolve(); })); // NEW
     assert.equal(errors, 1); assert.equal(h.current.modified, true); // NEW
 }); // NEW
+
+test('explicit object forms wait for collaborative durability and receive save rejection before discarding their private drafts', async t => { // CHANGE
+    const h = harness(t, { collaboration: true }); await settle(); h.setXml('posted comment'); h.current.modified = true; // CHANGE
+    let complete; h.bridge.collaborationAction = async input => { // CHANGE
+        if (input.kind !== 'save') return { ok: true, xml: 'posted comment' }; // CHANGE
+        return new Promise(resolve => { complete = () => resolve({ ok: true, xml: 'posted comment', collaboration: { sessionId: 'local', holds: [], presence: [] } }); }); // CHANGE
+    }; // CHANGE
+    let accepted = false; const acceptance = h.sharing.settleObjectEdits().then(() => { accepted = true; }); await settle(); // CHANGE
+    assert.equal(accepted, false); complete(); await acceptance; assert.equal(accepted, true); // CHANGE
+    h.bridge.collaborationAction = async () => { throw new Error('Comment save rejected'); }; // CHANGE
+    await assert.rejects(h.sharing.settleObjectEdits(), /Comment save rejected/); // CHANGE
+}); // CHANGE
 test('guided approval forms retain typing and focus during live status updates', async t => { // NEW
     const h = harness(t); await settle(); h.window.Trellis.users.isAdmin = () => true; await h.sharing.showSharingDialog(); // NEW
     const buttons = () => [...h.window.document.querySelectorAll('button')]; buttons().find(b => b.textContent === 'Approve a computer').click(); await settle(); // NEW

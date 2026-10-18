@@ -226,12 +226,13 @@ test("Trellis database restore bridge and default plugin registration are wired"
     assert.match(electronSource, /ensureCreatedDb\(livePath\)/);
     assert.match(preloadSource, /createIfMissing: !!opts\.createIfMissing/);
 
-    assert.match(appSource, /'trellisDatabaseTools': 'plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js'/);
-    assert.match(appSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/);
+    assert.match(appSource, /(?<![\w$'"])(?:trellisDatabaseTools|'trellisDatabaseTools'|"trellisDatabaseTools")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js\1/); // CHANGE
+    assert.match(appSource, /(?<![\w$'"])(?:trellisUiCleanup|'trellisUiCleanup'|"trellisUiCleanup")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js\1/); // CHANGE
     assert.match(appSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\); \/\/ CHANGE/);
-    assert.match(bundledSource, /'trellisDatabaseTools': 'plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js'/);
-    assert.match(bundledSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/);
+    assert.match(bundledSource, /(?<![\w$'"])(?:trellisDatabaseTools|'trellisDatabaseTools'|"trellisDatabaseTools")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js\1/); // CHANGE
+    assert.match(bundledSource, /(?<![\w$'"])(?:trellisUiCleanup|'trellisUiCleanup'|"trellisUiCleanup")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js\1/); // CHANGE
     assert.match(bundledSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
-    assert.match(integrateSource, /trellisDatabaseTools:"plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js",trellisUiCleanup:"plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js"/);
+    assert.match(integrateSource, /(?<![\w$'"])(?:trellisDatabaseTools|'trellisDatabaseTools'|"trellisDatabaseTools")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js\1/); // CHANGE
+    assert.match(integrateSource, /(?<![\w$'"])(?:trellisUiCleanup|'trellisUiCleanup'|"trellisUiCleanup")\s*:\s*(['"])plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js\1/); // CHANGE
     assert.match(integrateSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
 });

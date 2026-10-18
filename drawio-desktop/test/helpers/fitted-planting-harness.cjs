@@ -33,7 +33,16 @@ function loadFittedPlantingGeometry() { // CHANGE
         function isCollapsedLOD(cell) { return cell.attrs.lod_collapsed === '1'; } // CHANGE
         function getPlantCircleDiameterPx(cell) { return toPx(Number(cell.attrs.veg_diameter_cm || 0)); } // CHANGE
         function getPlantCircleBBoxLogical() { return null; } // CHANGE
-        function createEmptyTilerGroup() { return { attrs: {}, getAttribute(key) { return this.attrs[key]; }, getGeometry() { return this.geometry; } }; } // CHANGE
+        function getCurrentGardenYear() { return 2027; } // CHANGE: proposal creation initializes the final cell directly.
+        function createXmlValue(name, attrs) { return attrs; } // CHANGE
+        function groupFrameStyle() { return ''; } // CHANGE
+        function reorderModuleChildrenForLayering() {} // CHANGE
+        function notifyTilerGroupCreated() {} // CHANGE
+        let bedFitTxnSeq = 0; // CHANGE
+        function mxCell(attrs, geometry) { Object.assign(this, { attrs, geometry }); } // CHANGE
+        mxCell.prototype.getAttribute = function (key) { return this.attrs[key]; }; // CHANGE
+        mxCell.prototype.getGeometry = function () { return this.geometry; }; // CHANGE
+        mxCell.prototype.setVertex = mxCell.prototype.setConnectable = mxCell.prototype.setCollapsed = function () {}; // CHANGE
         function setCellRotationDeg(cell, rotation) { cell.rotation = rotation; } // CHANGE
         function retileGroup(graph, cell, opts) { // CHANGE
             const sx = toPx(Number(cell.attrs.spacing_x_cm)), sy = toPx(Number(cell.attrs.spacing_y_cm)); // CHANGE
@@ -44,6 +53,7 @@ function loadFittedPlantingGeometry() { // CHANGE
         function mxGeometry(x, y, width, height) { Object.assign(this, { x, y, width, height }); } // CHANGE
     `, context); // CHANGE
     model.beginUpdate = () => {}; model.endUpdate = () => {}; model.setGeometry = (cell, geo) => { cell.geometry = geo; }; // CHANGE
+    graph.addCell = cell => cell; graph.setSelectionCell = () => {}; // CHANGE: leave graph rendering to the real-mxGraph integration tests.
     const api = vm.runInContext('({ proposePlantingGeometry, plantingFootprintPolygon, clipPlantingFootprint, plantingFootprintUnionArea, groupLabelMetrics, computeGridStatsXY, classifyPlantingSlots, shiftedSlotCenterLocal, readDisabledSet, createPlantingFromProposal, readPlantingFootprint, modelPointForLocalPoint, toPx })', context); // CHANGE
     return Object.assign(api, { graph }); // CHANGE
 } // CHANGE

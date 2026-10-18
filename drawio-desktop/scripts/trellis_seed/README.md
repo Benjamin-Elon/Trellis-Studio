@@ -17,16 +17,41 @@ Install the OpenAI SDK before generation:
 python -m pip install -r requirements-trellis-seed.txt
 ```
 
-Set OpenAI credentials in the shell before launching the menu:
+On Windows, open **Settings and credentials → API credentials** in the seeder <!-- CHANGE -->
+and enter the OpenAI and FoodData Central keys at the hidden prompts. Keys live <!-- NEW -->
+in Windows Credential Manager as `Trellis/Seeder/OpenAI` and <!-- NEW -->
+`Trellis/Seeder/FoodDataCentral`, for your Windows account on this computer. <!-- NEW -->
+Windows ignores API keys in environment variables and JSON settings. Missing FDC <!-- NEW -->
+credentials use `DEMO_KEY` with one shared-quota warning per session; storage <!-- NEW -->
+errors require repair rather than silently selecting demo access. <!-- NEW -->
+
+Set nonsecret model options in the shell before launching the menu: <!-- CHANGE -->
 
 ```powershell
-$env:OPENAI_API_KEY = "..."
 $env:OPENAI_MODEL = "gpt-5.5"
 $env:OPENAI_REASONING_EFFORT = "high"
 ```
 
 The default model is `gpt-5.5` and the default reasoning effort is `high`.
 Do not put API keys in `trellis_seed.config.json`.
+
+On non-Windows platforms, `OPENAI_API_KEY` and `FDC_API_KEY` environment variables <!-- NEW -->
+remain supported. Use your platform's secret manager or an interactive shell; <!-- NEW -->
+never commit keys or put real values in scripts or command-line arguments. <!-- NEW -->
+
+**Desktop profile keys are separate:** signed-in users open **Extras → API keys…** <!-- NEW -->
+to save, replace, or remove OpenAI and FoodData Central keys for their current <!-- NEW -->
+Trellis profile. These keys use OS encryption and remain private to this device; <!-- NEW -->
+they are excluded from garden exports, identity pairing, and synchronization. <!-- NEW -->
+The standalone seeder never reads them. Saved values are never returned to the <!-- NEW -->
+dialog, and saving a key does not call a provider or verify API permissions. <!-- NEW -->
+
+After reinstalling Windows, changing Windows accounts, or moving to another <!-- NEW -->
+computer, enter keys again. For a damaged entry, remove it and save a replacement. <!-- NEW -->
+If OS encryption is unavailable, repair the Windows session or OS secret store; <!-- NEW -->
+there is no plaintext fallback. Existing applications may retain old environment <!-- NEW -->
+keys until restarted. Both encryption systems protect data at rest; another <!-- NEW -->
+process running as your Windows account can still access OS-protected secrets. <!-- NEW -->
 
 Local tests:
 

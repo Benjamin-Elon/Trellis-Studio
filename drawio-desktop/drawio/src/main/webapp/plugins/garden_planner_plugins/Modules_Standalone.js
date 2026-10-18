@@ -2236,7 +2236,7 @@ Draw.loadPlugin(function (ui) {
 
             // Skip modules themselves; only auto-snap non-module vertices          
             cells = cells.filter(function (c) {
-                return c && !isModule(c);
+                return c && model.getCell(c.id) === c && !isModule(c) && !(c.getAttribute && (c.getAttribute('plant_tiler') === '1' || c.getAttribute('lod_summary') === '1')); // CHANGE: generated children never enter generic auto-parenting, including detached temporary tiles.
             });
             if (!cells.length) return;
 
@@ -2310,11 +2310,13 @@ Draw.loadPlugin(function (ui) {
 
             // Defer to next tick so paste offset/move is already applied             
             setTimeout(function () {
-                sanitizeModuleParents(cells);
+                const liveCells = cells.filter(cell => cell && model.getCell(cell.id) === cell); // CHANGE: a queued addition must not resurrect cells removed by tiling, rollback, or Undo.
+                if (!liveCells.length) return; // CHANGE: do not start a transaction for obsolete additions.
+                sanitizeModuleParents(liveCells); // CHANGE
                 model.beginUpdate();
                 try {
-                    reparentCellsIntoModules(cells);
-                    enforceModuleExternalMarginsFor(cells, { manageUpdate: false }); // NEW
+                    reparentCellsIntoModules(liveCells); // CHANGE
+                    enforceModuleExternalMarginsFor(liveCells, { manageUpdate: false }); // CHANGE
                 } finally {
                     model.endUpdate();
                 }

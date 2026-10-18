@@ -199,6 +199,11 @@ function sharingRequest(method, payload = {}) { // NEW
 function identityRequest(action, method, payload = {}) { // NEW
 	return new Promise((resolve, reject) => requestViaIPC({ action, method, payload }, resolve, message => reject(new Error(message || 'Trellis request failed'))));
 }
+contextBridge.exposeInMainWorld('trellisApiKeys', { // NEW: deliberately no read/export method.
+    status: () => identityRequest('trellisApiKeys', 'status'),
+    save: payload => identityRequest('trellisApiKeys', 'save', payload),
+    remove: payload => identityRequest('trellisApiKeys', 'remove', payload)
+});
 contextBridge.exposeInMainWorld('trellisIdentity', { // NEW
 	list: () => identityRequest('trellisIdentity', 'list'),
 	getSession: () => identityRequest('trellisIdentity', 'getSession'),

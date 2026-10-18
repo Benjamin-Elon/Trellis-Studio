@@ -9,8 +9,9 @@ const helper = path.join(__dirname, 'helpers/trellis-lifecycle-electron.cjs'); /
 const profileRuns = new Map(); // NEW: profile teardown awaits every child even after an assertion fails.
 
 /** Parent deadline requests normal Quit, then kills only its own recorded process tree. */ // NEW
-function launch(profile, mode = 'quit') { // NEW
+function launch(profile, mode = 'quit', forceColor) { // CHANGE: scope color overrides to the children exercising readiness reporting.
     const env = { ...process.env, TRELLIS_LIFECYCLE_PROFILE: profile, TRELLIS_LIFECYCLE_MODE: mode }; delete env.ELECTRON_RUN_AS_NODE; // NEW
+    if (forceColor !== undefined) env.FORCE_COLOR = forceColor; // CHANGE: exercise both console formats without changing the parent environment.
     const child = spawn(require('electron'), [helper, '--no-sandbox'], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); // CHANGE: only test children disable Chromium's inner sandbox; the trailing switch is not forwarded as an input file.
     let output = '', stderr = '', closed = false, forceTimer, forced = false; // CHANGE
     const readyWindows = new Set(), readinessWaiters = new Set(); // CHANGE: every owner window must initialize independently.
@@ -73,14 +74,16 @@ test('production window close, explicit Quit and timer-triggered Quit release pr
     const directory = await profile(t); // NEW
     for (const mode of ['close', 'quit', 'timeout', 'quit']) { const run = launch(directory, mode); t.after(run.terminate); successful(await run.result); } // NEW
 }); // NEW
-test('a second instance is rejected while the owning profile stays reachable', { timeout: 120000 }, async t => { // NEW
-    const directory = await profile(t), owner = launch(directory, 'hold'); t.after(owner.terminate); // NEW
-    assert.equal(await owner.waitForReadyWindows(1), true, owner.diagnostics); // CHANGE
-    const second = launch(directory); t.after(second.terminate); const duplicate = await second.result; // NEW
-    successful(duplicate, 0); assert.doesNotMatch(duplicate.output, /LIFECYCLE_READY/); // CHANGE
-    assert.equal(await owner.waitForReadyWindows(2), true, owner.diagnostics); // CHANGE: the owning process creates a window for the rejected second launch.
-    owner.terminate(); successful(await owner.result, 2); // CHANGE
-}); // NEW
+for (const forceColor of ['0', '1']) { // CHANGE: the owner must remain reachable with numeric console coloring disabled or enabled.
+    test('a second instance is rejected while the owning profile stays reachable: FORCE_COLOR=' + forceColor, { timeout: 120000 }, async t => { // CHANGE
+        const directory = await profile(t), owner = launch(directory, 'hold', forceColor); t.after(owner.terminate); // CHANGE
+        assert.equal(await owner.waitForReadyWindows(1), true, owner.diagnostics); // CHANGE
+        const second = launch(directory, 'quit', forceColor); t.after(second.terminate); const duplicate = await second.result; // CHANGE
+        successful(duplicate, 0); assert.doesNotMatch(duplicate.output, /LIFECYCLE_READY/); // CHANGE
+        assert.equal(await owner.waitForReadyWindows(2), true, owner.diagnostics); // CHANGE: the owning process creates a window for the rejected second launch.
+        owner.terminate(); successful(await owner.result, 2); // CHANGE
+    }); // CHANGE
+} // CHANGE
 test('overlapping production tests use independent profiles and release both', { timeout: 120000 }, async t => { // NEW
     const a = launch(await profile(t)), b = launch(await profile(t)); t.after(a.terminate); t.after(b.terminate); // NEW
     const results = await Promise.all([a.result, b.result]); results.forEach(result => successful(result)); // CHANGE: Array.forEach's index is not the expected window count.

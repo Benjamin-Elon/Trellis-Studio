@@ -6,6 +6,7 @@ const { createRegularSpacingFixture } = require('./regular-spacing-preview.cjs')
 const { measurePreviewGeometry } = require('./planting-preview-geometry.cjs'); // CHANGE
 const root = process.env.TRELLIS_PREVIEW_ROOT || path.resolve(__dirname, '../..'); // CHANGE
 app.commandLine.appendSwitch('disable-gpu'); // CHANGE
+app.commandLine.appendSwitch('disable-frame-rate-limit'); // CHANGE: the hidden software renderer otherwise delivers native animation frames at 1 Hz despite backgroundThrottling:false.
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); // CHANGE: software rendering avoids a separate GPU subprocess in restricted Windows test environments.
 const profile = path.join(app.getPath('temp'), 'trellis-planting-preview-' + process.pid); fs.mkdirSync(profile, { recursive: true }); app.setPath('userData', profile); // CHANGE: the fixture never reuses the running application's encrypted cache.
 
@@ -316,7 +317,7 @@ app.whenReady().then(async () => { // CHANGE
             await win.webContents.capturePage(); // CHANGE
             await new Promise(resolve=>setTimeout(resolve,300)); // CHANGE
             fs.writeFileSync(process.env.TRELLIS_FOOTPRINT_SCREENSHOT,(await win.webContents.capturePage()).toPNG()); // CHANGE
-            if(process.env.TRELLIS_FOOTPRINT_VISUAL_ONLY){process.stdout.write('FOOTPRINT_VISUAL_RESULT:written\n');app.quit();return;} // CHANGE: optional visual inspection can finish before repeating the independent angle suites.
+            if(process.env.TRELLIS_FOOTPRINT_VISUAL_ONLY) return 'FOOTPRINT_VISUAL_RESULT:written'; // CHANGE: use the same cleanup, output flush and explicit exit as the complete fixture.
         } // CHANGE
         const rotatedSpacing={checks:[],undoCleared:true,redoCleared:true}; // CHANGE
         for(const [angle,bedAngle] of [[0,37],[37,-30],[90,0],[-30,90]]){ // CHANGE
@@ -378,7 +379,12 @@ app.whenReady().then(async () => { // CHANGE
         } // CHANGE
         assert.ok(rotatedSpacing.undoCleared&&rotatedSpacing.redoCleared,JSON.stringify(rotatedSpacing)); // CHANGE
         result.rotatedSpacing=rotatedSpacing; // CHANGE
-        process.stdout.write('PREVIEW_RESULT:' + JSON.stringify(result) + '\n'); // CHANGE
+        return 'PREVIEW_RESULT:' + JSON.stringify(result); // CHANGE: publish success only after the finally block has destroyed the fixture window.
     } finally { win.destroy(); } // CHANGE
-    app.quit(); // CHANGE
-}).catch(error => { process.stderr.write(error.stack + '\n'); app.exit(1); }); // CHANGE
+}).then(async result => { // CHANGE: rendering fixtures terminate explicitly; production lifecycle tests cover graceful Quit.
+    await new Promise((resolve, reject) => process.stdout.write(result + '\n', error => error ? reject(error) : resolve())); // CHANGE: app.exit must not truncate the machine-readable result.
+    app.exit(0); // CHANGE
+}).catch(async error => { // CHANGE: startup, assertion and cleanup errors all remain failures.
+    try { await new Promise(resolve => process.stderr.write((error.stack || String(error)) + '\n', resolve)); } // CHANGE: flush diagnostics before terminating the fixture.
+    finally { app.exit(1); } // CHANGE
+}); // CHANGE

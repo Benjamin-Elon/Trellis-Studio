@@ -1,0 +1,180 @@
+/** Persistence, preference isolation and failure handling against real mxGraph rather than implementation-shaped mocks. */ // NEW
+const assert = require('node:assert/strict'); // NEW
+const test = require('node:test'); // NEW
+const harness = require('./helpers/object-details-harness.cjs'); // NEW
+
+test('native selection is allowed only inside this controller editors, including read-only rich text', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<p><b>Nested text</b> <a href="https://example.test/">Link text</a></p>'); // NEW
+    h.graph.setSelectionCell(cell); await h.tick(); const field = h.input(cell); // NEW
+    assert.equal(h.ui.getActiveRichTextTarget(), null, 'the initial click must be allowed before toolbar activation'); // NEW
+    for (const target of [field, field.querySelector('p'), field.querySelector('b'), field.querySelector('a'), field.querySelector('b').firstChild]) assert.equal(h.ui.isSelectionAllowed({ target }), true); // NEW
+    for (const target of [field.closest('section'), field.closest('section').firstChild, field.closest('section').querySelector('button'), h.graph.container, field.cloneNode(true)]) assert.equal(h.ui.isSelectionAllowed({ target }), false); // NEW
+    const unrelated = h.w.document.createElement('div'); unrelated.contentEditable = 'true'; h.w.document.body.appendChild(unrelated); // NEW
+    assert.equal(h.ui.isSelectionAllowed({ target: unrelated }), false); // NEW
+    for (const tag of ['input', 'select']) assert.equal(h.ui.isSelectionAllowed({ target: h.w.document.createElement(tag) }), true); // NEW
+    h.policy.editable = false; h.controller.refresh(); assert.equal(field.contentEditable, 'false'); // NEW
+    assert.equal(h.ui.isSelectionAllowed({ target: field.querySelector('a').firstChild }), true, 'read-only details can still be selected and copied'); // NEW
+    const target = h.w.TrellisDetailsToolbar.createTarget({ element: field, cell, canEdit: () => h.policy.editable, changed() { throw new Error('Read-only text must not change.'); } }); // NEW
+    assert.equal(target.execute('insertText', 'Forbidden'), false); target.dispose(); // NEW
+    assert.equal(h.controller.flush(), true); assert.equal(cell.getAttribute('trellis_details_html'), '<p><b>Nested text</b> <a href="https://example.test/">Link text</a></p>'); // NEW
+}); // NEW
+
+test('the selection hook preserves fallback arguments, receiver and return value and restores on teardown', t => { // NEW
+    const calls = [], result = { original: true }; // NEW
+    function original() { calls.push({ receiver: this, args: Array.from(arguments) }); return result; } // NEW
+    const h = harness(t, { isSelectionAllowed: original }), receiver = { unrelated: true }, event = { target: h.graph.container }, extra = { retained: true }; // NEW
+    assert.equal(h.ui.isSelectionAllowed.call(receiver, event, extra), result); // NEW
+    assert.equal(calls.length, 1); assert.equal(calls[0].receiver, receiver); assert.deepEqual(calls[0].args, [event, extra]); // NEW
+    h.controller.destroy(); assert.equal(h.ui.isSelectionAllowed, original); // NEW
+    assert.equal(h.ui.isSelectionAllowed(event, extra), result); assert.equal(calls[1].receiver, h.ui); // NEW
+}); // NEW
+
+test('details preserve labels and metadata, survive XML roundtrip, and undo as one typing burst', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', null, { custom: 'retain', task_instructions: 'Separate instructions' }); // NEW
+    h.controller.open(cell); h.undo.clear(); h.type(cell, '<b>Notes</b><div>Second paragraph</div>'); // NEW
+    assert.equal(h.controller.flush(), true); assert.match(cell.getAttribute('trellis_details_html'), /<b>Notes/); // NEW
+    assert.equal(cell.getAttribute('label'), 'Label shape'); assert.equal(cell.getAttribute('custom'), 'retain'); assert.equal(cell.getAttribute('task_instructions'), 'Separate instructions'); // NEW
+    const xml = h.ui.getFileData(), document = h.w.mxUtils.parseXml(xml), restored = new h.w.mxGraphModel(); new h.w.mxCodec(document).decode(document.documentElement, restored); // NEW
+    assert.equal(restored.getCell('shape').getAttribute('trellis_details_html'), cell.getAttribute('trellis_details_html')); // NEW
+    h.undo.undo(); assert.equal(cell.value.getAttribute('trellis_details_html'), null); assert.equal(h.input(cell).textContent, ''); // NEW
+    await new Promise(resolve => h.w.setTimeout(resolve, 550)); assert.equal(cell.value.getAttribute('trellis_details_html'), null, 'a stale autosave must not overwrite Undo'); // NEW
+    h.undo.redo(); assert.match(cell.getAttribute('trellis_details_html'), /Notes/); // NEW
+}); // NEW
+
+test('multiple selected shapes have independent fields and a badge remains after deselection', async t => { // NEW
+    const h = harness(t), a = h.vertex('a', '<p>A</p>'), b = h.vertex('b', '<p>B</p>'); // NEW
+    h.graph.setSelectionCells([a, b]); await h.tick(); // NEW
+    assert.equal(h.w.document.querySelectorAll('.trellis-object-details').length, 2); // NEW
+    assert.equal(h.w.document.activeElement, h.w.document.body, 'automatic opening must not steal focus'); // NEW
+    const panel = h.input(a).closest('section'); panel.querySelector('[data-side="left"]').click(); // NEW
+    assert.equal(panel.querySelector('[data-side="left"]').getAttribute('aria-pressed'), 'true'); // NEW
+    h.w.document.querySelector('[data-cell-id="a"]').click(); await h.tick(); assert.equal(h.input(a), undefined); assert.ok(h.input(b)); // NEW
+    h.graph.clearSelection(); await h.tick(); assert.equal(h.w.document.querySelectorAll('.trellis-object-details').length, 0); // NEW
+    assert.equal(h.w.document.querySelectorAll('.trellis-object-details-badge').length, 2); // NEW
+    h.graph.setSelectionCell(a); await h.tick(); assert.equal(h.input(a), undefined, 'the hidden preference survives re-selection'); // NEW
+    h.w.document.querySelector('[data-cell-id="a"]').click(); await h.tick(); assert.ok(h.input(a)); // NEW
+    assert.equal(h.input(a).closest('section').querySelector('[aria-pressed="true"]').dataset.side, 'left'); // NEW
+}); // NEW
+
+test('interacting fields change visual and export stacking without moving their DOM nodes', async t => { // NEW
+    const h = harness(t), a = h.vertex('a', '<p>A</p>'), b = h.vertex('b', '<p>B</p>'); // NEW
+    h.graph.setSelectionCells([a, b]); await h.tick(); // NEW
+    const field = h.input(a), panel = field.closest('section'), sibling = panel.nextSibling; field.focus(); // NEW
+    panel.dispatchEvent(new h.w.Event('pointerdown', { bubbles: true })); // NEW
+    assert.equal(h.w.document.activeElement, field); assert.equal(panel.nextSibling, sibling, 'pointer handling must not reparent the focused editor'); // NEW
+    assert.ok(Number(panel.style.zIndex) > Number(h.input(b).closest('section').style.zIndex)); // NEW
+    assert.ok(Number(panel.style.zIndex) < Number(h.w.document.querySelector('.trellis-object-details-badge').style.zIndex)); // NEW
+    assert.deepEqual(Array.from(h.controller.exportProjection()['page-a'].filter(record => !record.badge), record => record.ownerId), ['b', 'a']); // NEW
+}); // NEW
+
+test('local preferences isolate users, pages, diagrams and copied cell IDs without modifying XML', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<p>Details</p>'); h.graph.setSelectionCell(cell); await h.tick(); // NEW
+    const before = h.ui.getFileData(); h.input(cell).closest('section').querySelector('[data-side="right"]').click(); // NEW
+    h.w.document.querySelector('.trellis-object-details-badge').click(); await h.tick(); assert.equal(h.ui.getFileData(), before); // NEW
+    h.policy.currentUser = 'user-b'; h.w.dispatchEvent(new h.w.Event('trellisUsersSessionChanged')); await h.tick(); // NEW
+    assert.ok(h.input(cell)); assert.equal(h.input(cell).closest('section').querySelector('[aria-pressed="true"]').dataset.side, 'below'); // NEW
+    h.policy.currentUser = 'user-a'; h.w.dispatchEvent(new h.w.Event('trellisUsersSessionChanged')); await h.tick(); assert.equal(h.input(cell), undefined); // NEW
+    h.ui.currentPage = { getId: () => 'page-b' }; h.controller.refresh(); await h.tick(); assert.ok(h.input(cell)); // NEW
+    h.policy.diagram = 'diagram-b'; h.controller.refresh(); assert.equal(h.input(cell).closest('section').querySelector('[aria-pressed="true"]').dataset.side, 'below'); // NEW
+    const duplicate = h.graph.cloneCells([cell])[0]; h.graph.addCell(duplicate); h.graph.setSelectionCell(duplicate); await h.tick(); // NEW
+    assert.equal(duplicate.getAttribute('trellis_details_html'), '<p>Details</p>'); assert.ok(h.input(duplicate)); // NEW
+}); // NEW
+
+test('composition delays saving and clearing removes only the details attribute and badge', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<b>Original</b>'); h.controller.open(cell); // NEW
+    const input = h.input(cell); input.dispatchEvent(new h.w.CompositionEvent('compositionstart')); h.type(cell, '途中'); // NEW
+    assert.equal(h.controller.flush(), false); assert.equal(cell.getAttribute('trellis_details_html'), '<b>Original</b>'); // NEW
+    input.dispatchEvent(new h.w.CompositionEvent('compositionend')); assert.equal(h.controller.flush(), true); assert.equal(cell.getAttribute('trellis_details_html'), '途中'); // NEW
+    h.type(cell, '<div><b><br></b>&nbsp;</div>'); h.controller.flush(); input.blur(); h.graph.clearSelection(); await h.tick(); // NEW
+    assert.equal(cell.value.getAttribute('trellis_details_html'), null); assert.equal(cell.getAttribute('label'), 'Label shape'); assert.equal(h.w.document.querySelectorAll('.trellis-object-details-badge').length, 0); // NEW
+}); // NEW
+
+test('permission loss and removed objects retain drafts and prevent stale writes', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<p>Original</p>'); h.controller.open(cell); h.type(cell, '<p>Retain my draft</p>'); // NEW
+    h.policy.editable = false; assert.equal(h.controller.flush(), false); h.graph.clearSelection(); await h.tick(); // NEW
+    assert.match(h.input(cell).textContent, /Retain my draft/); assert.match(h.input(cell).closest('section').textContent, /Your text is retained/); // NEW
+    assert.equal(cell.getAttribute('trellis_details_html'), '<p>Original</p>'); assert.throws(() => h.controller.exportProjection(), /unsaved/); // NEW
+    h.policy.editable = true; h.graph.removeCells([cell]); await h.tick(); assert.match(h.input(cell).textContent, /Retain my draft/); // NEW
+    assert.equal(h.controller.flush(), false); // NEW
+}); // NEW
+
+test('context menus target the clicked object and generated planting visuals resolve to their stable parent', async t => { // NEW
+    const h = harness(t), group = h.vertex('planting', null, { tiler_group: '1' }), circle = h.vertex('circle', null, { plant_tiler: '1', auto: '1' }), other = h.vertex('other', '<p>Other</p>'); // NEW
+    h.graph.addCell(circle, group); h.graph.setSelectionCell(other); // NEW
+    const items = [], menu = { addItem(label, icon, action) { items.push({ label, action }); }, addSeparator() {} }; // NEW
+    h.graph.popupMenuHandler.factoryMethod(menu, circle, null); // NEW
+    const item = items.find(item => item.label.includes('details')); assert.match(item.label, /planting group/); item.action(); // NEW
+    assert.ok(h.graph.isCellSelected(other)); assert.ok(h.input(group)); assert.equal(h.input(circle), undefined); // NEW
+    const edge = h.graph.insertEdge(null, 'edge', '', group, other); assert.equal(h.core.detailsOwner(edge, h.graph.model), null); // NEW
+}); // NEW
+
+test('text-only HTML sanitization rejects executable markup and media while preserving rich formatting', t => { // NEW
+    const { core } = harness(t); // NEW
+    const html = core.normalizeHtml('<p onclick="alert(1)" style="color:red;position:fixed;background-image:url(https://invalid.test/x)"><b>Keep</b><img src=x onerror=alert(1)><a href="javascript:alert(1)">link</a></p><table><tr><td>Text</td></tr></table><script>alert(2)</script>'); // NEW
+    assert.match(html, /<b>Keep<\/b>/); assert.match(html, /color:\s*red/); assert.match(html, /Text/); // NEW
+    assert.doesNotMatch(html, /onclick|onerror|javascript:|<script|<img|<table|position:|background-image/); // NEW
+    assert.equal(core.normalizeHtml('<p><br></p>'), ''); // NEW
+    const link = core.normalizeHtml('<h2 style=""><a style="color:red" href="https://example.test/">Stable link</a></h2>'); // NEW
+    assert.equal(core.normalizeHtml(link), link, 'sanitizer serialization must remain stable across write and read'); // NEW
+}); // NEW
+
+test('export projections expand text, preserve canonical XML and filter absent owners', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<h2>Title</h2><ul><li>First</li><li>Last</li></ul>'); h.graph.setSelectionCell(cell); await h.tick(); // NEW
+    const before = h.ui.getFileData(), projection = h.controller.exportProjection(), records = projection['page-a']; // NEW
+    assert.equal(records.length, 2); assert.match(records.find(record => !record.badge).html, /Last/); // NEW
+    const exportGraph = h.controller.createExportGraph(); try { // NEW
+        assert.equal(Object.values(exportGraph.model.cells).filter(cell => cell.__trellisDetailsOwner).length, 2); // NEW
+        assert.equal(h.ui.getFileData(), before); // NEW
+    } finally { exportGraph.__trellisDetailsCleanup(); } // NEW
+    const emptyGraph = new h.w.Graph(h.w.document.createElement('div')); h.core.applyProjection(emptyGraph, projection, 'page-a'); // NEW
+    assert.equal(Object.values(emptyGraph.model.cells).filter(cell => cell.__trellisDetailsOwner).length, 0); emptyGraph.destroy(); // NEW
+}); // NEW
+
+test('local storage failure falls back to session preferences and Save flushes the focused field', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<p>Before</p>'); // NEW
+    h.w.Storage.prototype.setItem = () => { throw new Error('Storage unavailable'); }; // NEW
+    h.controller.open(cell); h.input(cell).closest('section').querySelector('[data-side="above"]').click(); // NEW
+    h.type(cell, '<p>Saved through shortcut</p>'); let saves = 0; h.ui.actions.get = name => name === 'save' ? { funct() { saves++; assert.equal(cell.getAttribute('trellis_details_html'), '<p>Saved through shortcut</p>'); } } : null; // NEW
+    h.input(cell).dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true })); assert.equal(saves, 1); // NEW
+    h.graph.clearSelection(); await h.tick(); h.graph.setSelectionCell(cell); await h.tick(); // NEW
+    assert.equal(h.input(cell).closest('section').querySelector('[aria-pressed="true"]').dataset.side, 'above'); // NEW
+}); // NEW
+
+test('remote rollback preserves rejected text and another user cannot see its retained draft', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<p>Original</p>'); h.controller.open(cell); h.type(cell, '<p>My unsaved text</p>'); // NEW
+    const replacement = cell.value.cloneNode(true); replacement.setAttribute('trellis_details_html', '<p>Collaborator text</p>'); // NEW
+    h.graph.__trellisSharingApplying = true; h.graph.model.setValue(cell, replacement); h.graph.__trellisSharingApplying = false; await h.tick(); // NEW
+    assert.match(h.input(cell).textContent, /My unsaved text/); assert.match(h.input(cell).closest('section').textContent, /rejected or replaced/); // NEW
+    h.policy.currentUser = 'user-b'; h.w.dispatchEvent(new h.w.Event('trellisUsersSessionChanged')); await h.tick(); // NEW
+    assert.match(h.input(cell).textContent, /Collaborator text/); assert.equal([...h.w.document.querySelectorAll('.trellis-object-details')].filter(node => node.style.display !== 'none').length, 1); // NEW
+    h.policy.currentUser = 'user-a'; h.w.dispatchEvent(new h.w.Event('trellisUsersSessionChanged')); await h.tick(); // NEW
+    assert.match(h.input(cell).textContent, /My unsaved text/); assert.equal(h.controller.flush(), false); // NEW
+    assert.match(h.ui.getFileData(), /Collaborator text/); assert.equal(cell.getAttribute('trellis_details_html'), '<p>Collaborator text</p>', 'internal serialization cannot replay a rejected edit'); // NEW
+    h.input(cell).closest('section').querySelector('[aria-label="Retry saving details"]').click(); assert.equal(cell.getAttribute('trellis_details_html'), '<p>My unsaved text</p>'); // NEW
+}); // NEW
+
+test('export-only annotations inherit owner layers and keep all four placement directions', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<p>Details</p>'); // NEW
+    const layer = new h.w.mxCell(); layer.setId('second-layer'); h.graph.model.add(h.graph.model.getRoot(), layer); h.graph.model.add(layer, cell); // NEW
+    h.controller.open(cell); const panel = h.input(cell).closest('section'); // NEW
+    for (const side of ['above', 'below', 'left', 'right']) { // NEW
+        panel.querySelector('[data-side="' + side + '"]').click(); // NEW
+        const bounds = { x: parseFloat(panel.style.left), y: parseFloat(panel.style.top), width: 320, height: 180 }, owner = h.graph.view.getState(cell); // NEW
+        assert.equal(side === 'above' ? bounds.y + bounds.height < owner.y : side === 'below' ? bounds.y > owner.y + owner.height : side === 'left' ? bounds.x + bounds.width < owner.x : bounds.x > owner.x + owner.width, true); // NEW
+    } // NEW
+    const temporary = h.controller.createExportGraph(); // NEW
+    try { // NEW
+        const annotations = Object.values(temporary.model.cells).filter(cell => cell.__trellisDetailsOwner); assert.equal(annotations.length, 2); // NEW
+        assert.ok(annotations.every(cell => temporary.model.getParent(cell).id === 'second-layer')); // NEW
+        temporary.model.setVisible(temporary.model.getCell('second-layer'), false); assert.ok(annotations.every(cell => !temporary.view.getState(cell))); // NEW
+    } finally { temporary.__trellisDetailsCleanup(); } // NEW
+}); // NEW
+
+test('a diagram without stable identity keeps personal preferences in memory without adding metadata', async t => { // NEW
+    const h = harness(t); h.policy.diagram = ''; let creates = 0; h.policy.getDiagramKey = options => { if (options.create) creates++; return ''; }; // NEW
+    const cell = h.vertex('shape', '<p>Before</p>'); h.controller.open(cell); h.input(cell).closest('section').querySelector('[data-side="left"]').click(); // NEW
+    h.type(cell, '<p>After</p>'); assert.equal(h.controller.flush(), true); // NEW
+    assert.equal(creates, 0); assert.equal(h.w.localStorage.length, 0); // NEW
+    h.graph.clearSelection(); await h.tick(); h.graph.setSelectionCell(cell); await h.tick(); // NEW
+    assert.equal(h.input(cell).closest('section').querySelector('[aria-pressed="true"]').dataset.side, 'left'); // NEW
+}); // NEW

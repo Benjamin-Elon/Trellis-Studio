@@ -30,7 +30,7 @@ function watchWindowReadiness(win) { // CHANGE
     const cleanup = () => { ipcMain.removeListener('app-load-finished', receive); contents.removeListener('did-finish-load', didLoad); win.removeListener('closed', closed); readinessCleanups.delete(cleanup); }; // CHANGE
     const finish = () => { // CHANGE
         if (win.isDestroyed() || !loaded || !appReady) return; // CHANGE
-        initializedWindows.add(contentsId); cleanup(); console.log('LIFECYCLE_READY:', contentsId); // CHANGE
+        initializedWindows.add(contentsId); cleanup(); process.stdout.write('LIFECYCLE_READY: ' + contentsId + '\n'); // CHANGE: machine-readable IDs must not acquire FORCE_COLOR numeric formatting.
         if (mode !== 'hold' && !quitTimer) quitTimer = setTimeout(quit, mode === 'timeout' ? 30 : 0); // CHANGE: schedule Close/Quit only after the production close handshake is installed.
     }; // CHANGE
     const receive = event => { if (!win.isDestroyed() && event.sender.id === contentsId && event.senderFrame === contents.mainFrame) { appReady = true; finish(); } }; // CHANGE

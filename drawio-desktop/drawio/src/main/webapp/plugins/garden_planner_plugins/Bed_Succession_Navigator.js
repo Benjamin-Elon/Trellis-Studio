@@ -1189,6 +1189,8 @@ Draw.loadPlugin(function (ui) {
             const range = trueOccupancyRangeForCell(member);
             return {
                 cellId: member.id,
+                plantId: String(member.getAttribute?.('plant_id') || '').trim(), // CHANGE: preserve crop identity for current database compatibility lookup.
+                perennial: isPerennialPlanting(member), // CHANGE: scheduler context must distinguish lifespan end from harvest end.
                 label: plantingOccupancyLabel(member),
                 cropName: plantingOccupancyCropName(member), // CHANGE: expose crop-only labels for scheduler relationship hints.
                 varietyName: plantingOccupancyVarietyName(member), // CHANGE: allow duplicate crop-name disambiguation.

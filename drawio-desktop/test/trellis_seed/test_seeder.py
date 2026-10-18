@@ -831,7 +831,8 @@ class TrellisSeederTests(unittest.TestCase):
                 "openai_model": "config-model",
                 "openai_reasoning_effort": "low",
             })
-            self.assertEqual(read_openai_api_key(), "env-key")
+            with patch("trellis_seed.credentials.os.name", "posix"):  # CHANGE: environment credentials remain supported outside Windows.
+                self.assertEqual(read_openai_api_key(), "env-key")
             self.assertEqual(settings.openai_model, "env-model")
             self.assertEqual(settings.openai_reasoning_effort, "high")
         finally:

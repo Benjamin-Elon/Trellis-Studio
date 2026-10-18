@@ -579,17 +579,14 @@ test('garden-module clicks still toggle actions while Planting_Group works witho
     await f.click(); assert.equal(f.actions().style.display, 'flex'); // CHANGE
 }); // CHANGE
 
-test('Plant group creation finalizes tiling and bed fit inside the creation transaction', () => {
+test('standalone circle wrapping retains bed fitting without refitting proposal creation', () => { // CHANGE
     const source = readPlantTilerSource();
     const finalizer = sourceSlice(source, 'function finalizeCreatedTilerGroup', 'function createDefaultGardenBed');
-    const createEmpty = sourceSlice(source, 'function createEmptyTilerGroup', '// ---------- Debug helpers');
     const collapseSource = sourceSlice(source, 'function collapseToSummary', '// ---------------- LOD layout snapshot');
 
     assert.match(finalizer, /retileAndFitToContainingBed\(graph, group, \{ source: debugSource, inTransaction: true, txnId \}\);/);
-    assert.match(createEmpty, /const creationSource = \(opts && opts\.source\) \|\| "empty-group";[\s\S]*const creationTxnId = \+\+bedFitTxnSeq;[\s\S]*model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, moduleCell\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, moduleCell, creationSource, creationTxnId\);[\s\S]*model\.endUpdate\(\);/);
-    assert.match(createEmpty, /notifyTilerGroupCreated\(graph, group, creationSource, creationTxnId\);/);
     assert.match(collapseSource, /const \{ bandPx \} = groupLabelMetrics\(groupCell\);[\s\S]*classifyPlantingSlots\(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet\)/); // CHANGE: collapse cannot clear children and then throw on an undefined label band.
-    assert.doesNotMatch(createEmpty, /retileGroup\(graph, group\);/);
+    assert.ok(source.includes('finalizeCreatedTilerGroup(graph, group, parent, "plant-circle-wrap")')); // CHANGE: ordinary wrapping keeps its established fitting behavior.
 });
 
 test('scheduler sibling plant groups clone footprint and attrs without reusing source id', () => {
@@ -815,5 +812,5 @@ test('Plant Tiler exposes Allocate proposal and creation contracts', () => {
     assert.match(source, /vegHeightCm: Number\.isFinite\(vegHeightCm\) && vegHeightCm > 0 \? vegHeightCm : null/);
     assert.match(source, /veg_height_cm: proposal\.vegHeightCm == null/);
     assert.match(source, /const insideUpdate = !!\(input\.insideUpdate \|\| opts\.insideUpdate\)/);
-    assert.match(source, /createEmptyTilerGroup\(activeGraphArg, moduleCell/);
+    assert.doesNotMatch(source, /createEmptyTilerGroup\(/); // CHANGE: the completed proposal is materialized without a temporary default planting.
 });

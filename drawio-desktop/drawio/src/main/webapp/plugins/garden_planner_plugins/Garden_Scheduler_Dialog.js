@@ -5213,7 +5213,8 @@ Draw.loadPlugin(function (ui) {
         todayISO = null,
         taskRules = [],
         generatedTasks = [], // CHANGE
-        overlappingPlantings = [] // CHANGE: contextual bed starts share the axis without extending its range.
+        overlappingPlantings = [], // CHANGE: retain the existing start-only input for callers of the lifecycle model.
+        nearbyPlantings = null // CHANGE: contextual dates share the axis without extending its range.
     } = {}) {
         if (perennial) return { hidden: true, reason: 'perennial' };
         let bounds = buildLifecycleTimelineBounds({ plant, seasonStartYear });
@@ -5287,6 +5288,11 @@ Draw.loadPlugin(function (ui) {
         const todayPercent = todayDate && todayDate >= bounds.start && todayDate <= bounds.end
             ? timelinePercentForDate(todayDate, bounds.start, totalDays)
             : null;
+        const contextualDates = (nearbyPlantings || overlappingPlantings.map(item => ({ ...item, markerISO: item.startISO, dateLabel: 'Occupancy start' }))).map(item => { // CHANGE: legacy callers retain start markers while dialogs supply contextual boundaries.
+            const date = parseISODateUTCValue(item.markerISO); // CHANGE
+            if (!date || fmtISO(date) !== item.markerISO) return null; // CHANGE
+            return { ...item, percent: date >= bounds.start && date <= bounds.end ? timelinePercentForDate(date, bounds.start, totalDays) : null }; // CHANGE: off-axis dates remain labels without misleading clamped markers.
+        }).filter(Boolean); // CHANGE
         return {
             hidden: false,
             bounds,
@@ -5298,6 +5304,7 @@ Draw.loadPlugin(function (ui) {
             latestHarvestBoundary,
             todayISO: todayPercent == null ? null : fmtISO(todayDate),
             todayPercent, // CHANGE
+            contextualDates, // CHANGE: includes off-axis labels and both occupancy-start and release dates.
             overlappingStarts: overlappingPlantings.filter(item => item.startISO >= bounds.startISO && item.startISO <= bounds.endISO).map(item => ({ ...item, percent: timelinePercentForDate(parseISODateUTCValue(item.startISO), bounds.start, totalDays) })).filter(item => item.percent != null) // CHANGE
         };
     }
@@ -8537,6 +8544,17 @@ Draw.loadPlugin(function (ui) {
         } = options || {};
         const cropMetadataByPlantId = derivedContext?.metadataByPlantId || new Map();
         let scheduleConflictRelationshipByPlantId = new Map(); // CHANGE: regular Start warnings classify overlaps by known companion rating when available.
+        let scheduleRelationshipVersion = 0; // CHANGE: only the newest selected-crop relationship request may publish.
+        /** Refresh pair ratings without letting an older crop selection replace them. */ // CHANGE
+        async function refreshScheduleConflictRelationships() { // CHANGE
+            const plantId = String(formState.plantId); // CHANGE
+            const version = ++scheduleRelationshipVersion; // CHANGE
+            scheduleConflictRelationshipByPlantId = new Map(); // CHANGE: another crop's ratings must not remain active during loading.
+            const relationships = await companionRelationshipMapForPlant(plantId); // CHANGE
+            if (version !== scheduleRelationshipVersion || plantId !== String(formState.plantId)) return false; // CHANGE
+            scheduleConflictRelationshipByPlantId = relationships; // CHANGE
+            return true; // CHANGE
+        } // CHANGE
         const initialGrowthStage = readGrowthStageFromCell(cell);
         let hasPersistedSchedule = !!initialHasPersistedSchedule; // FIX: provenance changes after an automatic replacement
 
@@ -9014,7 +9032,7 @@ Draw.loadPlugin(function (ui) {
             ? initialCityKey
             : (cityOpts.find(o => o.label === initialCityName)?.value || initialCityKey || initialCityName);
         const citySel = makeCityTreePicker(cities, cityValue);
-        setTooltip(citySel, 'City climate is resolved by city_id when available. Edit city latitude and climate data from Garden Settings.');
+        setTooltip(citySel, 'City is inherited from Garden Settings.'); // CHANGE: the garden owns the scheduler location.
         function selectedCityOption() {
             return cityOpts.find(o => String(o.value) === String(citySel.value)) || null;
         }
@@ -9266,7 +9284,7 @@ Draw.loadPlugin(function (ui) {
         let allocationRequiredStatus = allocationDraftContext?.defaultStatus || { missing: allocationDraftContext?.requiredDefaults || [] }; // CHANGE
         const allocationOptionalLifecycle = allocationSaveLifecycle.checked; // CHANGE
         let allocationLifecycleForced = false, allocationTaskDefaultForced = false; // CHANGE: mandatory saves cannot erase separate optional checkbox intent during method refits.
-        let allocationRequiredSaving = false; // CHANGE: required-default persistence is single-flight even for rapid repeated submission.
+        let scheduleSavePending = false; // CHANGE: every scheduler workflow rejects duplicate submissions until its save settles.
         const allocationSaveGrowthStage = makeCheckbox(false); allocationSaveGrowthStage.setAttribute('data-allocation-save-grown-for', '1'); // CHANGE
         const allocationRequiredSummary = document.createElement('div'); allocationRequiredSummary.setAttribute('data-allocation-required-summary', '1'); allocationRequiredSummary.setAttribute('aria-live', 'polite'); // CHANGE
         const allocationRequiredNotes = {}; // CHANGE: note elements stay mounted while readiness changes.
@@ -9290,6 +9308,10 @@ Draw.loadPlugin(function (ui) {
         scheduleGapHint.style.fontSize = '12px';
         scheduleGapHint.style.color = '#6b7280';
         scheduleGapHint.style.display = 'none';
+        scheduleGapHint.setAttribute('data-scheduler-timing', '1'); // CHANGE: timing and compatibility remain independently observable and readable.
+        const scheduleCompatibilityHint = document.createElement('span'); // CHANGE
+        scheduleCompatibilityHint.setAttribute('data-scheduler-compatibility', '1'); // CHANGE
+        scheduleCompatibilityHint.style.cssText = 'display:none;margin-left:8px;font-size:12px;color:#92400e;'; // CHANGE
         let scheduleGapTooltipText = '';
         let companionTimingTooltipText = '';
         function updatePrimaryDateTooltip() {
@@ -9415,7 +9437,7 @@ Draw.loadPlugin(function (ui) {
             transplantDaysOverrideEnabled: transplantDaysOverrideInitial != null,
             transplantDaysOverrideValue: transplantDaysOverrideInitial
         };
-        scheduleConflictRelationshipByPlantId = await companionRelationshipMapForPlant(formState.plantId); // CHANGE: seed Start overlap classification for ordinary scheduling.
+        await refreshScheduleConflictRelationships(); // CHANGE: seed current pair ratings for every scheduler mode.
         const layoutTab = document.createElement('div');
         layoutTab.className = 'usl-scheduler-layout-tab';
         const layoutTemplateSel = makeSelect([
@@ -10111,6 +10133,21 @@ Draw.loadPlugin(function (ui) {
 
         function schedulerClusterOccupancyItemsForGap() {
             const graph = ui?.editor?.graph;
+            if (allocationDraftContext) { // CHANGE: Allocate compares the selected bed, never the current graph selection's cluster.
+                if (allocationFitPending || allocationFitError || !latestScheduleResult) return []; // CHANGE
+                const bedId = String(allocationCurrentDraft.bed?.id || allocationCurrentDraft.bed?.getId?.() || ''); // CHANGE
+                const occupancy = Array.isArray(allocationCurrentDraft.bedOccupancy) ? allocationCurrentDraft.bedOccupancy : []; // CHANGE
+                return occupancy.filter(item => item && bedId && String(item.bedId || '') === bedId).map(item => { // CHANGE
+                    const group = graph?.getModel?.().getCell?.(item.groupId || item.cellId); // CHANGE
+                    return { // CHANGE
+                        ...item, // CHANGE
+                        cellId: String(item.groupId || item.cellId || ''), // CHANGE
+                        startISO: item.bedEntryISO || item.startISO, // CHANGE
+                        endISO: item.harvestEndISO || item.endISO, // CHANGE
+                        perennial: item.perennial || group?.getAttribute?.('perennial') === '1' || !!group?.getAttribute?.('lifespan_start') // CHANGE
+                    }; // CHANGE
+                }); // CHANGE
+            } // CHANGE
             const api = graph?.__trellisBedSuccessionNavigator;
             const anchorCell = derivedContext?.sourceCell || cell;
             if (api && typeof api.getSelectedClusterOccupancy === 'function') {
@@ -10122,6 +10159,8 @@ Draw.loadPlugin(function (ui) {
             if (derivedContext?.sourceOccupancy) {
                 return [{
                     cellId: String(derivedContext.sourceCell?.id || ''),
+                    plantId: String(derivedContext.sourceCell?.getAttribute?.('plant_id') || ''), // CHANGE: derived fallback retains the same compatibility identity as navigator records.
+                    perennial: !!derivedContext.sourceCell?.getAttribute?.('lifespan_start') || derivedContext.sourceCell?.getAttribute?.('perennial') === '1', // CHANGE
                     label: schedulerCellLabelForGap(derivedContext.sourceCell || cell),
                     startISO: derivedContext.sourceOccupancy.startISO,
                     endISO: derivedContext.sourceOccupancy.endISO
@@ -10156,26 +10195,36 @@ Draw.loadPlugin(function (ui) {
             if (cell?.id) excludeCellIds.push(String(cell.id));
             if (derivedContext?.mode === 'turnover') {
                 basisLabel = 'turnover planting';
-                excludeCellIds.splice(0, excludeCellIds.length);
+                if (String(cell?.id || '') === String(derivedContext.sourceCell?.id || '')) excludeCellIds.splice(0, excludeCellIds.length); // CHANGE: retain the source for new turnover, exclude the target when editing.
             }
             return { window: targetWindow, excludeCellIds, basisLabel };
         }
 
-        function updateScheduleGapHint() {
+        /** One complete comparison set feeds compact text, validation, and contextual timeline lanes. */ // CHANGE
+        function currentSchedulerTimingHints() { // CHANGE
             const context = currentSchedulerGapWindowAndExclusions();
-            blockingStartConflictMessage = ''; // CHANGE
-            const hints = context ? computeSchedulerAdjacentGapHints(schedulerClusterOccupancyItemsForGap(), context.window, {
+            return context ? computeSchedulerAdjacentGapHints(schedulerClusterOccupancyItemsForGap(), context.window, { // CHANGE
                 excludeCellIds: context.excludeCellIds,
                 basisLabel: context.basisLabel
             }) : null;
-            const conflicts = context ? (hints?.overlaps || []).map(hint => classifySchedulerOccupancyConflict(hint.item, scheduleConflictRelationshipByPlantId)) : []; // CHANGE
+        } // CHANGE
+
+        function updateScheduleGapHint() { // CHANGE
+            blockingStartConflictMessage = ''; // CHANGE
+            const hints = currentSchedulerTimingHints(); // CHANGE
+            const conflicts = (hints?.allOverlaps || []).map(item => classifySchedulerOccupancyConflict(item, scheduleConflictRelationshipByPlantId)); // CHANGE: validate all overlaps, including ones hidden by the text cap.
             const blocking = conflicts.find(conflict => conflict.kind === 'incompatible');
             if (blocking) blockingStartConflictMessage = blocking.message; // CHANGE
             const text = hints?.text || '';
-            const conflictText = conflicts.length ? conflicts.slice(0, 2).map(conflict => conflict.message).join('; ') + (conflicts.length > 2 ? `; +${conflicts.length - 2} more` : '') : ''; // CHANGE
-            scheduleGapHint.textContent = conflictText || text;
-            scheduleGapHint.style.color = blockingStartConflictMessage ? '#b91c1c' : (conflictText ? '#92400e' : '#6b7280'); // CHANGE
-            scheduleGapHint.style.display = (conflictText || text) ? '' : 'none';
+            const displayed = (hints?.overlaps || []).map(hint => classifySchedulerOccupancyConflict(hint.item, scheduleConflictRelationshipByPlantId)); // CHANGE
+            if (blocking && !displayed.some(conflict => conflict.kind === 'incompatible')) displayed.unshift(blocking); // CHANGE: a hidden blocking crop must still be named beside the date.
+            const visibleConflicts = displayed.slice(0, 2); // CHANGE
+            const conflictText = visibleConflicts.map(conflict => conflict.message).join('; ') + (conflicts.length > visibleConflicts.length ? `; +${conflicts.length - visibleConflicts.length} more` : ''); // CHANGE
+            scheduleGapHint.textContent = text; // CHANGE: compatibility can never replace the calculated start/gap comparison.
+            scheduleGapHint.style.display = text ? '' : 'none'; // CHANGE
+            scheduleCompatibilityHint.textContent = conflictText; // CHANGE
+            scheduleCompatibilityHint.style.color = blocking ? '#b91c1c' : '#92400e'; // CHANGE
+            scheduleCompatibilityHint.style.display = conflictText ? '' : 'none'; // CHANGE
             scheduleGapTooltipText = ''; // CHANGE: occupancy relationship context is shown inline beside Start, not duplicated into native tooltips.
             setTooltip(scheduleGapHint, '');
             updatePrimaryDateTooltip();
@@ -10288,6 +10337,7 @@ Draw.loadPlugin(function (ui) {
         const firstSowRowObj = row('Sow date:', startInput);
         firstSowRowObj.row.appendChild(startNoteSpan); // CHANGE: ordinary conflict warnings can appear even without an initial note.
         firstSowRowObj.row.appendChild(scheduleGapHint);
+        firstSowRowObj.row.appendChild(scheduleCompatibilityHint); // CHANGE: compatibility has a separate text lane from date comparison and sowing-season notes.
         if (derivedContext?.mode === 'companion') firstSowRowObj.row.appendChild(companionTimingHelp);
         const transplantDaysRowObj = row('Transplant lead days:', transplantDaysWrap);
         setTooltip(transplantDaysRowObj.label, 'Days from sowing to transplant for this planting group.');
@@ -10305,6 +10355,7 @@ Draw.loadPlugin(function (ui) {
         legacyMethodControls.appendChild(methodSel);
         contextSection.body.appendChild(legacyMethodControls);
 
+        contextSection.body.appendChild(row('City:', citySel).row); // CHANGE: expose the inherited city as a read-only control.
         const contextSummary = document.createElement('div');
         contextSummary.style.marginTop = '8px';
         contextSummary.style.padding = '6px 8px';
@@ -10314,6 +10365,17 @@ Draw.loadPlugin(function (ui) {
         contextSummary.style.fontSize = '12px';
         contextSummary.style.color = '#374151';
         contextSection.body.appendChild(contextSummary);
+
+        const savedCityId = finiteNumberOrNull(cell?.getAttribute?.('city_id')); // CHANGE: saved location records the last calculation, not an override.
+        const savedCityName = String(cell?.getAttribute?.('city_name') || '').trim(); // CHANGE
+        const savedCityDiffers = savedCityId != null && initialCityId != null // CHANGE: stable IDs distinguish cities with identical names.
+            ? savedCityId !== Number(initialCityId) // CHANGE
+            : !!savedCityName && savedCityName !== initialCityName; // CHANGE: legacy schedules may only record a name.
+        if (initialHasPersistedSchedule && !derivedContext && !allocationDraftContext && savedCityDiffers) { // CHANGE
+            const cityNotice = makeTimelineSmallText(`The garden’s city has changed. This preview uses ${initialCityName}. Save to update this schedule.`); // CHANGE
+            cityNotice.dataset.schedulerCityChanged = '1'; // CHANGE
+            contextSection.body.appendChild(cityNotice); // CHANGE
+        } // CHANGE
 
         function refreshContextSummary() {
             const bed = normalizeBedProfile(formState.bedProfile);
@@ -11039,7 +11101,7 @@ Draw.loadPlugin(function (ui) {
             } finally { // CHANGE
                 if (allocationRequestIsCurrent(version)) { // CHANGE
                     allocationFitPending = false; // CHANGE
-                    okBtn.disabled = !!allocationFitError || allocationRequiredSaving; // CHANGE
+                    okBtn.disabled = !!allocationFitError || scheduleSavePending; // CHANGE
                     previewBtn.disabled = okBtn.disabled; // CHANGE
                     applyModeToUI(); // CHANGE
                     updateTimeline(); // CHANGE
@@ -11402,22 +11464,26 @@ Draw.loadPlugin(function (ui) {
             timelineWrap.appendChild(track);
             applyLifecycleTimelineMarkerOffsets(track);
             timelineWrap.appendChild(renderLifecycleTimelineAxis(model));
-            if (model.overlappingStarts?.length) { // CHANGE: each contextual start has a separate label lane at its true axis position.
-                const heading = makeTimelineSmallText('Overlapping planting starts'); // CHANGE
+            if (model.contextualDates?.length) { // CHANGE: all scheduler modes reuse contextual lanes, including adjacent non-overlaps.
+                const heading = makeTimelineSmallText('Nearby planting timing'); // CHANGE
                 timelineWrap.appendChild(heading); // CHANGE
-                model.overlappingStarts.forEach(item => { // CHANGE
+                model.contextualDates.forEach(item => { // CHANGE
                     const lane = document.createElement('div'); // CHANGE
+                    lane.setAttribute('data-scheduler-context-date', item.cellId); // CHANGE
                     lane.style.cssText = 'position:relative;min-height:36px;padding:12px 0 4px;border-top:1px solid #e2e8f0;box-sizing:border-box;'; // CHANGE
-                    const marker = document.createElement('div'); // CHANGE
-                    marker.setAttribute('data-allocation-overlap-start', item.cellId); // CHANGE
-                    marker.style.cssText = `position:absolute;left:${item.percent}%;top:0;height:10px;border-left:2px solid #64748b;transform:translateX(-50%);`; // CHANGE
-                    const label = makeTimelineSmallText(`${item.displayLabel || item.label} — ${item.startISO}`); // CHANGE
+                    const text = `${item.displayLabel || item.label} — ${item.dateLabel}: ${item.markerISO}`; // CHANGE
+                    const label = makeTimelineSmallText(text); // CHANGE
                     label.style.overflowWrap = 'anywhere'; // CHANGE: full-width label lanes avoid collisions without moving date markers.
-                    const tooltip = `${item.displayLabel || item.label}: bed start ${item.startISO}`; // CHANGE
-                    marker.setAttribute('aria-label', tooltip); // CHANGE
-                    setTooltip(marker, tooltip); // CHANGE
-                    setTooltip(label, tooltip); // CHANGE
-                    lane.appendChild(marker); // CHANGE
+                    if (item.percent != null) { // CHANGE: a true date outside the axis has a label only.
+                        const marker = document.createElement('div'); // CHANGE
+                        marker.setAttribute('data-allocation-overlap-start', item.cellId); // CHANGE: retain the existing allocation marker hook for integrations.
+                        marker.setAttribute('data-scheduler-context-marker', item.dateLabel); // CHANGE
+                        marker.style.cssText = `position:absolute;left:${item.percent}%;top:0;height:10px;border-left:2px solid #64748b;transform:translateX(-50%);`; // CHANGE
+                        marker.setAttribute('aria-label', text); // CHANGE
+                        setTooltip(marker, text); // CHANGE
+                        lane.appendChild(marker); // CHANGE
+                    } // CHANGE
+                    setTooltip(label, text); // CHANGE
                     lane.appendChild(label); // CHANGE
                     timelineWrap.appendChild(lane); // CHANGE
                 }); // CHANGE
@@ -11446,6 +11512,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function updateTimeline() {
+            updateScheduleGapHint(); // CHANGE: completed allocation refits publish matching timing text and timeline context together.
             renderAllocationTimingComparisons(); // CHANGE: contextual offsets and markers use the same current occupancy window.
             const classification = classifySelectedSowDate({
                 perennial: mode.perennial,
@@ -11464,7 +11531,8 @@ Draw.loadPlugin(function (ui) {
                 scheduleResult: latestScheduleResult,
                 taskRules,
                 generatedTasks: generatedPreviewTasks, // CHANGE
-                overlappingPlantings: allocationComparisons() // CHANGE
+                overlappingPlantings: allocationComparisons(), // CHANGE: preserve existing allocation model data and recommendations.
+                nearbyPlantings: currentSchedulerTimingHints()?.nearby || [] // CHANGE: timeline and date field share occupancy scope, windows, and exclusions.
             });
             renderLifecycleTimelineModel(model, classification);
             updateScheduleSummaryFromState();
@@ -11482,7 +11550,7 @@ Draw.loadPlugin(function (ui) {
 
             formState.plantId = Number(plantSel.value);
             currentCropPickerSelectedValue = String(formState.plantId || '');
-            scheduleConflictRelationshipByPlantId = await companionRelationshipMapForPlant(formState.plantId); // CHANGE: refreshed crop selection updates overlap severity copy.
+            if (!await refreshScheduleConflictRelationships()) return; // CHANGE: an older crop request must stop before it changes downstream controls.
 
             const preferredVarietyId = Number(preferVarietyId);
             const hasPreferredVariety = Number.isFinite(preferredVarietyId) && preferredVarietyId > 0;
@@ -12025,8 +12093,8 @@ Draw.loadPlugin(function (ui) {
         applySharedButtonStyle(previewBtn, 'neutral');
 
         const okBtn = mxUtils.button('Save', async () => {
-            if (allocationRequiredMode && allocationRequiredSaving) return; // CHANGE
-            if (allocationRequiredMode) { allocationRequiredSaving = true; okBtn.disabled = true; previewBtn.disabled = true; } // CHANGE
+            if (scheduleSavePending || allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE: queued clicks cannot start another save or reuse a closed dialog.
+            scheduleSavePending = true; okBtn.disabled = true; previewBtn.disabled = true; // CHANGE: lock before the first await in every workflow.
             const allocationVersion = allocationFitVersion; // CHANGE: reject edits or cancellation while submission is resolving inputs.
             try {
                 if (allocationDraftContext && (allocationFitPending || allocationFitError)) throw new Error(allocationFitError || 'Allocation recalculation is still running.'); // CHANGE: never accept stale fit data.
@@ -12038,6 +12106,7 @@ Draw.loadPlugin(function (ui) {
                     selPlant,
                     { currentVarieties }
                 );
+                if (allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE: cancellation during input resolution must not create a planting.
                 if (allocationDraftContext && !allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
                 requireNoBlockingScheduleQualityDiagnostics(inputs);
 
@@ -12051,6 +12120,8 @@ Draw.loadPlugin(function (ui) {
                 const scheduleResult = computeScheduleResult(inputs);
                 syncScheduleWarningState(scheduleResult.warnings || []);
                 latestScheduleResult = scheduleResult; // CHANGE: Save validation reuses the exact computed occupancy window for conflict blocking.
+                if (String(inputs.plant.plant_id) !== String(formState.plantId) || !await refreshScheduleConflictRelationships()) throw new Error('Crop selection changed. Review the current schedule and save again.'); // CHANGE: re-read current ratings before any save mutation.
+                if (allocationDialogClosed || !tabsContainer.isConnected || (allocationDraftContext && !allocationRequestIsCurrent(allocationVersion))) return; // CHANGE: cancellation during relationship refresh must not save.
                 updateScheduleGapHint(); // CHANGE
                 if (blockingStartConflictMessage) throw new Error(blockingStartConflictMessage); // CHANGE: incompatible crop overlap is the only Start conflict that blocks Save.
                 const activeWindow = getActiveSowingSeason(formState);
@@ -12187,6 +12258,7 @@ Draw.loadPlugin(function (ui) {
                 const targetLayoutPatch = Object.assign({}, derivedRelationshipPatch, layoutGraphApplication.targetPatch || {});
 
                 try {
+                    if (allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE: deferred placement must finish before the final lifecycle check.
                     await applyScheduleToGraph(ui, targetCell, inputs, {
                     result: scheduleResult,
                     taskTemplateJson,
@@ -12203,19 +12275,21 @@ Draw.loadPlugin(function (ui) {
                     spacingLayoutBaseline,
                     forceCompanionSetDefaults,
                     createTargetCell: bedTargetCreation && bedTargetCreation.createTargetCell, // CHANGE: bed-first save materializes the planting only after validation.
+                    isCurrent: () => !allocationDialogClosed && tabsContainer.isConnected, // CHANGE: recheck after task/default loading, immediately before graph mutation.
                     afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
                     });
                 } catch (saveError) {
                     if (createdDerivedCell) removeDerivedSiblingIfPresent(ui?.editor?.graph, createdDerivedCell);
                     throw saveError;
                 }
-                ui.hideDialog();
+                allocationDialogClosed = true; ui.hideDialog(); // CHANGE: invalidate queued work before the host removes this dialog.
             } catch (e) {
+                if (allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE: stale continuations cannot write errors into a closed or replaced dialog.
                 clearScheduleWarningState();
                 if (allocationRequiredMode && !allocationDialogClosed) { allocationRequiredSummary.textContent += ' Save failed: ' + e.message; allocationRequiredSummary.setAttribute('role', 'alert'); } // CHANGE: save failures remain visible from Tasks as well as Schedule.
                 showErrorInline('Scheduling error: ' + e.message);
             } finally { // CHANGE
-                if (allocationRequiredMode) { allocationRequiredSaving = false; if (!allocationDialogClosed) { okBtn.disabled = allocationFitPending || !!allocationFitError; previewBtn.disabled = okBtn.disabled; } } // CHANGE
+                scheduleSavePending = false; if (!allocationDialogClosed && tabsContainer.isConnected) { okBtn.disabled = !!allocationDraftContext && (allocationFitPending || !!allocationFitError); previewBtn.disabled = okBtn.disabled; } // CHANGE: failed saves remain retryable; closed dialogs stay inactive.
             }
         });
         okBtn.title = allocationDraftContext ? 'Preview the allocation planting with these schedule settings before creating it.' : 'Save this planting schedule and apply its task rules.'; // CHANGE: explicit action tooltip.
@@ -13590,6 +13664,10 @@ Draw.loadPlugin(function (ui) {
         setActiveTabButton(scheduleTabBtn);
         scheduleCropPickerSuitabilityRefresh(0);
 
+        citySel.querySelectorAll('button, input').forEach(control => { control.disabled = true; control.title = 'City is inherited from Garden Settings.'; }); // CHANGE: reuse the allocation city lock for every schedule.
+        citySel.tabIndex = -1; // CHANGE
+        citySel.setAttribute('aria-disabled', 'true'); // CHANGE
+
         if (allocationDraftContext) { // CHANGE: retain the shared scheduler internals while presenting immutable Year Plan crop identity.
             plantSelectRow.row.style.setProperty('display', 'none', 'important'); // CHANGE: shared responsive CSS uses important display rules.
             varietyRow.row.style.setProperty('display', 'none', 'important'); // CHANGE
@@ -13606,8 +13684,6 @@ Draw.loadPlugin(function (ui) {
                 if (allocationRequiredStatus.missing?.includes('method')) allocationLifecycleLock.checked = false; // CHANGE: required method setup starts editable while sow/entry dates remain demand-derived.
                 applyAllocationLifecycleLock(); renderAllocationRequiredDefaults(); // CHANGE
             } // CHANGE
-            citySel.querySelectorAll('button, input').forEach(control => { control.disabled = true; if (control.tagName === 'BUTTON') control.title = 'Allocation uses the city from the active garden settings.'; }); // CHANGE: explain the fixed city on the disabled picker.
-            citySel.tabIndex = -1; // CHANGE
             climateSection.body.querySelectorAll('input, select, button').forEach(control => { control.disabled = true; if (control.tagName === 'BUTTON') control.title = 'Allocation uses the climate from the active garden settings.'; }); // CHANGE: explain the fixed climate on disabled actions.
             if (allocationDraftContext.isCurrent && !allocationDraftContext.isCurrent()) { allocationDraftContext.onCancel(); return; } // CHANGE: stale async initialization must never open a dialog.
         } // CHANGE
@@ -15606,11 +15682,15 @@ Draw.loadPlugin(function (ui) {
         const applySchedulerTaskReplacement = getSchedulerTaskReplacementCommand();
         if (!applySchedulerTaskReplacement) throw new Error("Cannot save schedule tasks: Task manager command is unavailable.");
         let appliedTargetCell = cell; // CHANGE
+        let graphMutationStarted = false; // CHANGE: cancellation before mutation must not restore an obsolete snapshot.
 
         const applyGraphPatch = async () => {
+            if (options.isCurrent && !options.isCurrent()) throw new Error('Scheduler closed before the schedule could be saved.'); // CHANGE
             return runTrellisHistoryTransaction({ category: "Garden scheduling", action: "saveSchedule", origin: "Garden_Scheduler_Dialog", title: "Save schedule and generated tasks", affectedCellIds: [cell && cell.id].filter(Boolean), tags: ["Tasks"] }, function () {
                 model.beginUpdate();
+                const creationEdit = model.currentEdit, creationStart = creationEdit?.changes?.length || 0; // CHANGE: failed target/task creation is reversed before publication to Undo history.
                 try {
+                    graphMutationStarted = true; // CHANGE: once graph mutation starts, complete it or compensate.
                     const targetCell = hasTargetCreator ? options.createTargetCell({ graph, model, inputs, result, attributePatch, schedule, timelines }) : cell; // CHANGE
                     if (!targetCell || !isTilerGroup(targetCell)) throw new Error('Scheduler save target is not a planting group.'); // CHANGE
                     appliedTargetCell = targetCell; // CHANGE
@@ -15626,22 +15706,36 @@ Draw.loadPlugin(function (ui) {
                     extraAttributePatches.forEach(spec => {
                         if (spec.retile && tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, spec.cell, { inTransaction: true, preferInPlace: true });
                     });
-                    if (options.preserveTargetGeometry) {
+                    if (!hasTargetCreator && options.preserveTargetGeometry) { // CHANGE: new proposal targets already contain their final circles or LOD summary.
                         if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, targetCell, { inTransaction: true });
-                    } else {
+                    } else if (!hasTargetCreator) { // CHANGE
                         retileAndFitGroupIfAvailable(graph, targetCell, { source: 'schedule-save' });
                     }
+                } catch (error) { // CHANGE
+                    if (hasTargetCreator && creationEdit?.changes) { // CHANGE: reverse only this save's provisional mutations, including generated tasks and extra patches.
+                        const changes = creationEdit.changes.splice(creationStart); // CHANGE
+                        for (let index = changes.length - 1; index >= 0; index--) changes[index].execute(); // CHANGE
+                        for (const change of changes) { // CHANGE: intermediate rendering must not retain detached provisional shapes.
+                            const changedCell = change.child || change.cell; // CHANGE
+                            if (changedCell && !model.contains(changedCell)) graph.removeStateForCell?.(changedCell); // CHANGE
+                        } // CHANGE
+                        appliedTargetCell = cell; graphMutationStarted = false; graph.refresh(); // CHANGE
+                    } // CHANGE
+                    throw error; // CHANGE
                 } finally {
                     model.endUpdate();
                 }
+                if (hasTargetCreator && !model.contains(appliedTargetCell)) throw new Error('The planting could not be committed.'); // CHANGE: host permission rejection cannot be reported as a successful creation.
                 graph.refresh(appliedTargetCell);
                 extraAttributePatches.forEach(spec => graph.refresh(spec.cell));
             });
         };
 
         const restoreGraphPatch = async () => {
+            if (!graphMutationStarted) return; // CHANGE
             model.beginUpdate();
             try {
+                if (hasTargetCreator && appliedTargetCell !== cell && model.contains(appliedTargetCell)) graph.removeCells([appliedTargetCell]); // CHANGE: failed bed-first saves must not leave provisional plantings behind.
                 if (attributeSnapshot) restoreCellAttributeSnapshot(cell, attributeSnapshot, model); // CHANGE
                 if (geometrySnapshot && typeof model.setGeometry === 'function') model.setGeometry(cell, geometrySnapshot);
                 extraAttributeSnapshots.forEach(spec => restoreCellAttributeSnapshot(spec.cell, spec.snapshot, model));
@@ -15662,6 +15756,7 @@ Draw.loadPlugin(function (ui) {
                 }
                 graph.refresh(appliedTargetCell || cell);
                 requestSelectionVisualsRefresh(graph, appliedTargetCell || cell);
+                if (hasTargetCreator && graph.setSelectionCell) graph.setSelectionCell(appliedTargetCell); // CHANGE: select only a successfully completed planting.
             },
             restoreGraphPatch
         });
@@ -15769,10 +15864,13 @@ Draw.loadPlugin(function (ui) {
         const endISO = String(item?.endISO || '').trim();
         const start = parseISODateUTCValue(startISO);
         const end = parseISODateUTCValue(endISO);
-        if (!start || !end) return null;
+        if (!start || !end || fmtISO(start) !== startISO || fmtISO(end) !== endISO || end < start) return null; // CHANGE: reject impossible calendar dates and reversed occupancy.
         const labelParts = schedulerGapLabelParts(item); // CHANGE: keep inline relationship labels crop-first while preserving variety for duplicate names.
         return {
             cellId: String(item?.cellId || '').trim(),
+            plantId: String(item?.plantId || item?.plant_id || '').trim(), // CHANGE: normalization must retain the identity used by compatibility lookup.
+            relationship: item?.relationship || null, // CHANGE: preserve derived context without treating snapshots as current compatibility data.
+            perennial: item?.perennial === true || Number(item?.perennial) === 1, // CHANGE: retain the correct meaning of occupancy end.
             label: String(item?.label || item?.cellId || 'Planting').trim(),
             cropName: labelParts.cropName,
             varietyName: labelParts.varietyName,
@@ -15796,6 +15894,14 @@ Draw.loadPlugin(function (ui) {
             const variety = String(item?.varietyName || '').trim();
             labels.set(item, counts.get(key) > 1 && variety ? `${crop} - ${variety}` : crop); // CHANGE: use variety only when crop-only inline labels would collide.
         });
+        const labelCounts = new Map(), ordinals = new Map(); // CHANGE: identical crop/variety names still describe separate plantings.
+        labels.forEach(label => labelCounts.set(label, (labelCounts.get(label) || 0) + 1)); // CHANGE
+        (items || []).slice().sort((a, b) => a.cellId.localeCompare(b.cellId)).forEach(item => { // CHANGE: stable IDs keep duplicate labels consistent when provider order changes.
+            const label = labels.get(item); // CHANGE
+            if (labelCounts.get(label) <= 1) return; // CHANGE
+            const ordinal = (ordinals.get(label) || 0) + 1; ordinals.set(label, ordinal); // CHANGE
+            labels.set(item, `${label} (planting ${ordinal})`); // CHANGE
+        }); // CHANGE
         return labels;
     }
 
@@ -15845,10 +15951,10 @@ Draw.loadPlugin(function (ui) {
     function schedulerAdjacentNonOverlapHints(items, currentWindow) {
         const before = (items || [])
             .filter(item => item.end < currentWindow.start)
-            .sort((a, b) => b.end - a.end)[0] || null;
+            .sort((a, b) => b.end - a.end || a.cellId.localeCompare(b.cellId))[0] || null; // CHANGE: tied neighbor dates use stable planting identity.
         const after = (items || [])
             .filter(item => item.start > currentWindow.end)
-            .sort((a, b) => a.start - b.start)[0] || null;
+            .sort((a, b) => a.start - b.start || a.cellId.localeCompare(b.cellId))[0] || null; // CHANGE
         return { before, after }; // CHANGE: adjacency ignores overlapping occupancy; overlaps are handled as start deltas.
     }
 
@@ -15868,11 +15974,16 @@ Draw.loadPlugin(function (ui) {
     function computeSchedulerAdjacentGapHints(items, currentWindow, options = {}) {
         const currentStart = parseISODateUTCValue(currentWindow?.startISO);
         const currentEnd = parseISODateUTCValue(currentWindow?.endISO);
-        if (!currentStart || !currentEnd || currentEnd < currentStart) return { before: null, after: null, overlaps: [], text: '', tooltip: '' };
+        if (!currentStart || !currentEnd || fmtISO(currentStart) !== currentWindow.startISO || fmtISO(currentEnd) !== currentWindow.endISO || currentEnd < currentStart) return { before: null, after: null, overlaps: [], allOverlaps: [], nearby: [], text: '', tooltip: '' }; // CHANGE: invalid windows cannot invent comparisons.
         const excludeIds = new Set((options.excludeCellIds || []).map(id => String(id || '').trim()).filter(Boolean));
-        const normalized = (items || [])
+        const seenIds = new Set(); // CHANGE: a planting participates only once in validation and timeline context.
+        const normalized = (Array.isArray(items) ? items : []) // CHANGE
             .map(normalizeSchedulerGapItem)
-            .filter(item => item && !excludeIds.has(item.cellId));
+            .filter(item => { // CHANGE
+                if (!item || excludeIds.has(item.cellId) || (item.cellId && seenIds.has(item.cellId))) return false; // CHANGE
+                if (item.cellId) seenIds.add(item.cellId); // CHANGE
+                return true; // CHANGE
+            }); // CHANGE
         const windowWithDates = Object.assign({}, currentWindow, { start: currentStart, end: currentEnd });
         const overlaps = normalized.filter(item => item.start <= currentEnd && currentStart <= item.end);
         const maxOverlapHints = Math.max(1, Math.trunc(Number(options.maxOverlapHints) || 2));
@@ -15895,12 +16006,24 @@ Draw.loadPlugin(function (ui) {
             : [beforeHint?.text, afterHint?.text].filter(Boolean).join('; ');
         const basis = options.basisLabel ? `Basis: ${options.basisLabel} (${currentWindow.startISO} to ${currentWindow.endISO}).` : '';
         const tooltip = [basis].concat(overlapHints.map(hint => hint.tooltip), beforeHint?.tooltip, afterHint?.tooltip).filter(Boolean).join('\n\n');
-        return { before: beforeHint, after: afterHint, overlaps: overlapHints, text, tooltip }; // CHANGE: keep legacy before/after fields while adding overlap-specific hints.
+        const nearby = overlaps.concat([adjacent.before, adjacent.after].filter(Boolean)); // CHANGE: timeline includes every overlap and the nearest neighbors even when overlaps exist.
+        const nearbyLabels = schedulerGapDisplayLabels(nearby); // CHANGE
+        nearby.forEach(item => { item.displayLabel = nearbyLabels.get(item); }); // CHANGE: compatibility warnings use the same unambiguous crop/variety labels as contextual lanes.
+        const contextualDates = nearby.map(item => { // CHANGE
+            const earlier = item.start < currentStart; // CHANGE: earlier-starting crops describe when they release space, including while overlapping.
+            return { // CHANGE
+                ...item, // CHANGE
+                markerISO: earlier ? item.endISO : item.startISO, // CHANGE
+                dateLabel: earlier ? (item.perennial ? 'Occupancy/lifespan end' : 'Harvest end') : 'Occupancy start' // CHANGE
+            }; // CHANGE
+        }).sort((a, b) => a.markerISO.localeCompare(b.markerISO) || a.cellId.localeCompare(b.cellId)); // CHANGE: stable chronological lanes do not depend on provider iteration order.
+        return { before: beforeHint, after: afterHint, overlaps: overlapHints, allOverlaps: overlaps, nearby: contextualDates, text, tooltip }; // CHANGE: display caps never restrict conflict validation or contextual lanes.
     }
 
     function schedulerConflictKindFromRelationship(relationship) {
         if (!relationship || relationship.known === false) return 'unknown'; // CHANGE: missing companion data is explicit but non-blocking.
         const rating = finiteNumberOrNull(relationship.rating);
+        if (rating == null || !String(relationship.rating).trim()) return 'unknown'; // CHANGE: a relationship record without a finite rating does not establish compatibility.
         if (rating != null && rating < 0) return 'incompatible'; // CHANGE: negative companion rating is the only blocking crop relationship.
         return 'companion'; // CHANGE: known neutral/positive relationships may share space with a warning.
     }
@@ -15909,19 +16032,18 @@ Draw.loadPlugin(function (ui) {
         const name = String(label || 'existing planting').trim();
         if (kind === 'incompatible') return `Incompatible overlap with ${name}`;
         if (kind === 'companion') return `Companion overlap with ${name}`;
-        return `Unknown overlap with ${name}`;
+        return `Compatibility unknown with ${name}`; // CHANGE: unknown describes crop compatibility, never whether the dates overlap.
     }
 
     function relationshipForOccupancyItem(item, relationshipByPlantId) {
-        if (item && item.relationship) return item.relationship;
         const plantId = String(item?.plantId || item?.plant_id || '').trim();
-        return plantId && relationshipByPlantId && relationshipByPlantId.get ? relationshipByPlantId.get(plantId) : null;
+        return plantId && relationshipByPlantId && relationshipByPlantId.get ? relationshipByPlantId.get(plantId) : null; // CHANGE: only current crop-pair data governs compatibility; snapshots remain context.
     }
 
     function classifySchedulerOccupancyConflict(item, relationshipByPlantId) {
         const relationship = relationshipForOccupancyItem(item, relationshipByPlantId);
         const kind = schedulerConflictKindFromRelationship(relationship);
-        const label = String(item?.cropName || item?.plantName || item?.label || item?.groupId || item?.cellId || 'planting').trim();
+        const label = String(item?.displayLabel || item?.cropName || item?.plantName || item?.label || item?.groupId || item?.cellId || 'planting').trim(); // CHANGE: duplicate crop/variety warnings identify the same planting as the timeline.
         return {
             kind,
             severity: kind === 'incompatible' ? 'block' : 'warning',
@@ -16006,15 +16128,15 @@ Draw.loadPlugin(function (ui) {
         }
         return {
             proposal,
-            createTargetCell: function () {
+            createTargetCell: function ({ attributePatch }) { // CHANGE: initialize the new planting with the schedule's complete crop attributes.
                 return tiler.createPlantingFromProposal({
                     graph,
                     moduleCell,
                     proposal,
-                    attributes: {},
+                    attributes: attributePatch, // CHANGE
                     source: 'bed-schedule-create',
                     insideUpdate: true
-                }, { insideUpdate: true });
+                }, { insideUpdate: true, select: false }); // CHANGE: provisional groups do not trigger selection side effects.
             }
         }; // CHANGE: target creation is deferred until applyScheduleToGraph enters the save transaction.
     }
@@ -16265,7 +16387,7 @@ Draw.loadPlugin(function (ui) {
         // 1) Load reference data
         const plants = await PlantModel.listBasic();
         const cities = await CityClimate.loadAll();
-        if (!cities.length) throw new Error('Cities not available');
+        if (!cities.length) throw new Error('Cities not available. Select a valid city in Garden Settings before scheduling.'); // CHANGE
         const graph = ui?.editor?.graph;
         const model = graph && typeof graph.getModel === 'function' ? graph.getModel() : null;
         const climateModelModuleCell = model ? findGardenModuleAncestor(model, cell) : null;
@@ -16307,28 +16429,19 @@ Draw.loadPlugin(function (ui) {
             ? Math.trunc(storedSeasonYear)
             : (storedSowDate ? storedSowDate.getUTCFullYear() : currentYear);
         const hasPersistedSchedule = storedSowDate != null;
-        const groupCityId = finiteNumberOrNull(cell?.getAttribute?.('city_id')) ?? finiteNumberOrNull(climateModelModuleCell?.getAttribute?.('city_id'));
-        const groupCityName = (cell && cell.getAttribute && cell.getAttribute('city_name')) || climateModelModuleCell?.getAttribute?.('city_name') || null;
-        const idMatch = cities.find(city => groupCityId != null && Number(city.city_id) === Number(groupCityId));
-        const nameMatches = groupCityName ? cities.filter(city => String(city.city_name || '') === String(groupCityName)) : [];
-        if (!idMatch && groupCityName && nameMatches.length > 1) throw new Error(`City name is ambiguous; select a city in Garden Settings: ${groupCityName}`);
+        const gardenCityId = finiteNumberOrNull(climateModelModuleCell?.getAttribute?.('city_id')); // CHANGE: ignore the crop's previous calculation city.
+        const gardenCityName = String(climateModelModuleCell?.getAttribute?.('city_name') || '').trim(); // CHANGE
+        const idMatch = cities.find(city => gardenCityId != null && Number(city.city_id) === gardenCityId); // CHANGE
+        const nameMatches = gardenCityName ? cities.filter(city => String(city.city_name || '') === gardenCityName) : []; // CHANGE
+        if (!idMatch && gardenCityName && nameMatches.length > 1) throw new Error(`City name is ambiguous; select a city in Garden Settings: ${gardenCityName}`); // CHANGE
         const initialCityRow = idMatch
             || (nameMatches.length === 1 ? nameMatches[0] : null); // CHANGED: old city_name backfill is safe only when the name is unique.
-        const initialCityId = finiteNumberOrNull(initialCityRow?.city_id) ?? groupCityId;
-        const initialCityName = initialCityRow?.city_name || groupCityName || '';
+        const initialCityId = finiteNumberOrNull(initialCityRow?.city_id) ?? gardenCityId; // CHANGE
+        const initialCityName = initialCityRow?.city_name || gardenCityName; // CHANGE
         if (initialCityId == null && !initialCityName) throw new Error('Scheduler city is not set. Select a city in Garden Settings before scheduling.');
 
         const cityInit = await CityClimate.resolveUniqueNameFallback({ cityId: initialCityId, cityName: initialCityName });
-        if (!cityInit) throw new Error(`City not found: ${initialCityName}`);
-        if (!openOptions?.derivedMode && model && cell && cityInit.city_id != null) {
-            model.beginUpdate();
-            try {
-                setAttr(cell, 'city_id', String(cityInit.city_id));
-                setAttr(cell, 'city_name', String(cityInit.city_name || initialCityName));
-            } finally {
-                model.endUpdate();
-            }
-        }
+        if (!cityInit) throw new Error(`City not found: ${initialCityName || initialCityId}. Select a valid city in Garden Settings before scheduling.`); // CHANGE: opening never writes the resolved city to the crop.
 
         if (openOptions?.derivedMode) {
             derivedContext = await prepareDerivedScheduleContext(openOptions.derivedMode, cell, sourcePlantForDerived, plants, {
@@ -17723,7 +17836,8 @@ Draw.loadPlugin(function (ui) {
                 ? (setDefaultRowForSpacingRow(afterContext.setDefault, afterRow) || afterRow.plantDefaultLayout)
                 : afterRow.plantDefaultLayout;
             if (!nextLayout) return;
-            rowsToApply.push(rowWithAppliedLayout(Object.assign({}, afterRow, { enabled: true }), nextLayout));
+            const nextRow = rowWithAppliedLayout(Object.assign({}, afterRow, { enabled: true }), nextLayout); // CHANGE: resolve partial defaults before checking whether layout actually changes.
+            if (!spacingLayoutMatches(afterRow, nextRow)) rowsToApply.push(nextRow); // CHANGE: unchanged defaults must not regenerate the newly created circles.
         });
         if (!rowsToApply.length) return { ok: true, appliedCellIds: [] };
         return applyLayoutRowsToGraph(activeGraph, rowsToApply); // CHANGE: schedule changes reapply set/plant defaults without overwriting manual layout edits.
@@ -18546,6 +18660,7 @@ Draw.loadPlugin(function (ui) {
             applyCellAttributePatch,
             restoreCellAttributeSnapshot,
             runCompensatedSaveSteps,
+            applyScheduleToGraph, prepareBedScheduleCreation, // CHANGE: exercise real new-planting transactions and cancellation through the test-only surface.
             readGraphCellAttribute,
             normalizeLinkedCellIds,
             lifecycleRankForPlant,

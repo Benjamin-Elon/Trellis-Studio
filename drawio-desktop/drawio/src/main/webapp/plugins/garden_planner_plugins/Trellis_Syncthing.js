@@ -540,7 +540,7 @@ Draw.loadPlugin(function (ui) {
             const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
             window.clearTimeout(formActivityTimer); formActivityTimer = window.setTimeout(() => coordinate({ kind: 'claim', targets: [JSON.stringify([page, labelCell.id])] }).catch(err => status(err.message)), 250); return; // NEW
         } // NEW
-        if (!event.target.matches?.('input,textarea,select')) return; // NEW
+        if (!event.target.matches?.('input,textarea,select,[contenteditable="true"]')) return; // CHANGE: independent rich-text details participate in existing object holds.
         const binding = event.target.closest('[data-collaboration-object-id],[data-spacing-row-cell]'); // NEW
         const form = event.target.closest('[role="dialog"],.geDialog,.usl-scheduler-dialog'); if (!binding && !form) return; // NEW
         const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
@@ -609,7 +609,14 @@ Draw.loadPlugin(function (ui) {
         graph.addListener('editingStopped', () => { const wasEditing = editingLabel; editingLabel = false; if (!wasEditing || stoppingForSave || !isCollaborative()) return; labelClaim.then(() => { if (collaboration?.holds.some(h => h.sessionId === localSessionId)) return releaseHolds(); }).catch(err => status(err.message)); }); // NEW
     } // NEW
     window.Trellis = window.Trellis || {};
-    window.Trellis.sharing = { ensureManaged, prepareInvite, showJoinDialog, showSharingDialog, refresh, context, describeStatus, getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying };
+    /** Explicit forms keep their private drafts until the existing claim and collaborative save have both settled. */ // CHANGE
+    async function settleObjectEdits() { // CHANGE
+        if (!isCollaborative()) return; const current = file(); // CHANGE
+        await acquisitionPromise; // CHANGE
+        if (file() !== current) throw new Error('The diagram changed before the comment was accepted.'); // CHANGE
+        await saveCurrent(); // CHANGE
+    } // CHANGE
+    window.Trellis.sharing = { ensureManaged, prepareInvite, showJoinDialog, showSharingDialog, refresh, context, describeStatus, settleObjectEdits, getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying }; // CHANGE
     graph.__trellisSharing = window.Trellis.sharing;
     ui.actions.addAction('trellisJoinSharedCanvas', showJoinDialog).label = 'Join Shared Canvas';
     ui.actions.addAction('trellisCanvasSync', () => showSharingDialog().catch(err => status(err.message))).label = 'Canvas Sync';

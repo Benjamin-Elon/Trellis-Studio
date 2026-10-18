@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import subprocess
+import os  # NEW
+import getpass  # NEW: credentials never echo in the terminal.
+import warnings  # NEW: refuse getpass's plaintext fallback when no secure terminal exists.
 import time
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +11,7 @@ from pathlib import Path
 from .artifacts import artifact_label, artifacts_after_keeping_latest, artifacts_older_than, list_artifacts, select_artifacts_by_indices
 from .climate_benchmarks import generate_climate_benchmark, preflight_climate_benchmark
 from .config import ensure_default_config, load_settings, read_openai_api_key, save_settings
+from .credentials import CredentialError, read_api_key, save_api_key, delete_api_key  # NEW
 from .db import apply_run_to_databases, create_diff_report, print_diff_report, replace_crop_catalog_in_databases, show_pending_migrations
 from .generator import GenerationOptions, estimate_openai_calls, generate_run, normalize_input, preflight
 from .jsonio import read_json
@@ -434,7 +438,7 @@ def _settings_flow(config_path: Path):
         print(f"4. OpenAI reasoning effort: {settings.openai_reasoning_effort} (OPENAI_REASONING_EFFORT overrides config)")
         print(f"5. Apply to live AppData DB: {'yes' if settings.apply_to_live_app_db else 'no'}")
         print(f"6. Live AppData DB path: {settings.live_app_db_path or '[unavailable]'}")
-        print(f"7. OPENAI_API_KEY: {'set' if read_openai_api_key() else 'missing'}")
+        print("7. API credentials (encrypted Windows storage)")  # CHANGE: loading failures remain manageable in the submenu.
         print("8. Back")
         choice = input("Choose setting: ").strip()
         if choice == "1":
@@ -451,12 +455,55 @@ def _settings_flow(config_path: Path):
             current = str(settings.data.get("live_app_db_path") or settings.live_app_db_path or "")
             settings.data["live_app_db_path"] = input(f"Live AppData DB path [{current}]: ").strip() or settings.data.get("live_app_db_path", "")
         elif choice == "7":
-            print("Set OPENAI_API_KEY in your shell environment before launching this menu.")
+            _credentials_flow()  # CHANGE
         elif choice == "8":
             save_settings(settings)
             return settings
         save_settings(settings)
         settings = load_settings(config_path)
+
+
+def _credentials_flow() -> None:  # NEW
+    """Manage maintainer credentials independently of desktop profile credentials."""  # NEW
+    while True:
+        print("\nSeeder maintainer credentials (separate from Extras > API keys)")
+        for provider, label in (("openai", "OpenAI"), ("fdc", "FoodData Central")):
+            try:
+                status = "configured" if read_api_key(provider) else "missing"
+            except CredentialError:
+                status = "storage error; remove and replace the entry"
+            print(f"{label}: {status}")
+        if os.name != "nt":
+            print("Configure OPENAI_API_KEY and FDC_API_KEY in your environment on this platform.")
+            return
+        print("1. Set/replace OpenAI\n2. Set/replace FoodData Central\n3. Remove OpenAI\n4. Remove FoodData Central\n5. Back")
+        choice = input("Choose credential action: ").strip()
+        if choice in {"5", ""}:
+            return
+        if choice not in {"1", "2", "3", "4"}:
+            continue
+        provider = "openai" if choice in {"1", "3"} else "fdc"
+        value = ""
+        try:
+            if choice in {"1", "2"}:
+                with warnings.catch_warnings():  # NEW
+                    warnings.simplefilter("error", getpass.GetPassWarning)
+                    value = getpass.getpass("New API key (hidden): ")
+                save_api_key(provider, value)
+                print("Credential saved and verified.")
+            elif input("Remove this maintainer credential? [y/N]: ").strip().lower() == "y":
+                delete_api_key(provider)
+                print("Credential removed.")
+        except CredentialError as exc:
+            print(str(exc))
+        except getpass.GetPassWarning:
+            print("A secure interactive terminal is required; no credential was changed.")
+            return
+        except (EOFError, KeyboardInterrupt):
+            print("\nCredential change canceled.")
+            return
+        finally:
+            value = ""
 
 
 def _live_tests_flow() -> None:

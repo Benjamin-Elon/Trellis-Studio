@@ -22,6 +22,7 @@ var mxSettings =
 		'trellisUsers', // NEW
 		'trellisSyncthing', // NEW: sharing entry points remain available before diagram login.
 		'trellisContextMenu', // NEW
+		'trellisObjectDetails', // NEW: object details load on fresh and migrated installations.
 		'gardenSuccession', // NEW
 		'plantingGroup', // NEW
 		'gardenTasks', // NEW
@@ -50,6 +51,7 @@ var mxSettings =
 		trellisUsers: 'plugins/garden_planner_plugins/Trellis_Users.js', // NEW
 		trellisSyncthing: 'plugins/garden_planner_plugins/Trellis_Syncthing.js', // NEW
 		trellisContextMenu: 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', // NEW
+		trellisObjectDetails: 'plugins/garden_planner_plugins/Trellis_Object_Details.js', // NEW
 		gardenSuccession: 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js', // NEW
 		plantingGroup: 'plugins/garden_planner_plugins/Planting_Group.js', // CHANGE
 		plantTiler: 'plugins/garden_planner_plugins/Planting_Group.js', // NEW

@@ -53,7 +53,7 @@ Draw.loadPlugin(function (ui) {
         gardener: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS],
         coordinator: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS]
     };
-    const TASK_DETAIL_ATTRS = new Set(["label", "title", "notes", "card_note", "task_instruction_override", "start", "end", "due", "assigned_day", "task_estimated_hours", "scheduler_dates_locked"]); // CHANGE: task guidance uses the existing edit-details capability.
+    const TASK_DETAIL_ATTRS = new Set(["label", "title", "notes", "card_note", "task_instruction_override", "trellis_details_html", "trellis_comments_json", "start", "end", "due", "assigned_day", "task_estimated_hours", "scheduler_dates_locked"]); // CHANGE: discussion uses the existing task-detail capability, with additional lifecycle authorization.
     const TASK_ASSIGNMENT_ATTRS = new Set(["task_assignee_role_ids_json"]);
     const SCOPE_GRANT_ATTRS = new Set([ATTR_ACCESS_USERS, ATTR_ACCESS_GRANTS, ATTR_ACCESS_OPEN]);
     const USER_ID_PREFIX = "user_";
@@ -2830,7 +2830,20 @@ Draw.loadPlugin(function (ui) {
         return null; // NEW
     } // NEW
 
+    /** Inspect both native attribute edits and whole-value replacements before broad owner/admin exceptions. */ // CHANGE
+    function commentChangeAllowed(change) { // CHANGE
+        const key = 'trellis_comments_json', name = change && change.constructor && change.constructor.name; // CHANGE
+        if (!['mxValueChange', 'mxCellAttributeChange'].includes(name) || !changedAttributeNames(change).includes(key)) return true; // CHANGE
+        const cell = cellFromChange(change), core = window.TrellisDetailsCore, user = publicUser(currentUser()); // CHANGE
+        const before = name === 'mxCellAttributeChange' ? change.previous || '' : change.previous && change.previous.getAttribute ? change.previous.getAttribute(key) || '' : ''; // CHANGE
+        const after = cell && cell.value && cell.value.getAttribute ? cell.value.getAttribute(key) || '' : ''; // CHANGE
+        if (before === after) return true; // CHANGE: native metadata commands may include unchanged attributes.
+        const owner = nearestOwnedAncestor(cell); // CHANGE
+        return !!(core && core.commentsChangeAllowed(before, after, { enabled: isEnabled(), user, editable: canEditCell(cell) && (!graph.isEnabled || graph.isEnabled()) && (!graph.isCellLocked || !graph.isCellLocked(cell)), ownerUserId: owner && owner.ownerUserId || '' }, nowMs())); // CHANGE
+    } // CHANGE
+
     function changeAllowed(change, context) {
+        if (!commentChangeAllowed(change)) return false; // CHANGE: authorship and retention apply even to admins and combined metadata edits.
         if (change && change.__trellisUsersActorStamp) return true;
         if (graph.__trellisFieldMetadataChange && change?.constructor?.name === 'mxValueChange') { // NEW: validated field commands may update only their protocol metadata and existing task fields.
             const allowed = new Set(['trellis_field_object_id', 'trellis_field_versions_json', 'trellis_field_acknowledgments_json', 'workflow_state', 'completed', 'card_note']); // CHANGE: mobile updates use the established Task Manager workflow field.
@@ -2904,13 +2917,16 @@ Draw.loadPlugin(function (ui) {
     }
 
     function inspectModelChange(_sender, evt) {
-        if (!isEnabled()) return;
         if (graph[INTERNAL_FLAG] || graph[REJECT_FLAG]) return;
         if ((ui && ui.openingFile) || graphXmlLoading > 0) return;
         const edit = evt && evt.getProperty && evt.getProperty("edit");
         if (edit && (edit.undone || edit.redone)) return;
         const changes = edit && edit.changes || [];
         if (!changes.length) return;
+        if (!isEnabled()) { // CHANGE: disabled Users must not permit anonymous comment mutations through native model commands.
+            if (changes.some(change => !commentChangeAllowed(change))) rejectEdit(edit, 'Enable Trellis users and log in before changing comments.', { cell: cellFromChange(changes.find(change => !commentChangeAllowed(change))) }); // CHANGE
+            return; // CHANGE
+        } // CHANGE
         if (!isLoggedIn()) { rejectEdit(edit, "Log in before editing this diagram.", { action: "login" }); return; }
         const permissionContext = editPermissionContext(changes);
         for (let i = 0; i < changes.length; i++) {

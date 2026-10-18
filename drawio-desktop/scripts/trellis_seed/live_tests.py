@@ -17,7 +17,7 @@ def run_live_tests() -> bool:
     settings = load_settings(DEFAULT_CONFIG_PATH)
     api_key = read_openai_api_key()
     if not api_key:
-        print("OPENAI_API_KEY is missing.")
+        print("OpenAI key is missing. Configure it in Settings and credentials.")  # CHANGE
         return False
     try:
         preflight(settings, {"crops": [{"name": "Lettuce", "sources": ["live test"]}], "cities": [{"name": "Vancouver"}]})

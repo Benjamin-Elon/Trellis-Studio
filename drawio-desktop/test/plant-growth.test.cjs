@@ -125,7 +125,7 @@ test('small markers stay visible, collapsed groups do not expand, hidden badges 
         const group = h.group('young', h.moduleCell, { germ_date: '2026-01-25' }); h.graph.view.setScale(0.25); h.growth.refresh(); // NEW
         const tile = h.graph.getChildVertices(group).find(cell => cell.getAttribute('plant_tiler') === '1'); // NEW
         assert.equal(Number(h.ellipses(tile)[0].getAttribute('rx')) * 2, 4); // NEW
-        assert.equal(h.graph.view.getState(tile).text.node.style.visibility, 'hidden'); // NEW
+        assert.notEqual(h.graph.view.getState(tile).text.node.style.visibility, 'hidden'); // CHANGE: seed labels remain visible at the minimum readable size.
         h.tiler.setPlantingGroupDetail(group, false); const count = h.graph.getChildVertices(group).length; h.growth.refresh(); // NEW
         assert.equal(h.graph.getChildVertices(group).length, count); assert.ok(h.window.document.querySelector('[data-trellis-growth-badge="young"]')); // NEW
         h.graph.model.setVisible(group, false); h.growth.refresh(); assert.equal(h.window.document.querySelector('[data-trellis-growth-badge="young"]').style.display, 'none'); // NEW
@@ -144,7 +144,7 @@ test('export canvas retains target diameter and native labels while the live DOM
         assert.equal(svg.querySelector('ellipse[stroke="#2563eb"]'), null); // NEW
         assert.equal(ellipse.getAttribute('stroke-dasharray'), null); // CHANGE
         assert.ok(Math.abs(Number(ellipse.getAttribute('rx')) * 2 - state.width) < 0.001); // NEW
-        assert.equal(state.text.scale, state.view.scale); assert.match(state.text.node.style.transform, /^scale\(/); // NEW
+        assert.equal(state.text.scale, state.view.scale); assert.doesNotMatch(state.text.node.style.transform, /^scale\(/); // CHANGE: native redraw owns glyph size instead of a deferred CSS transform.
         assert.equal(state.text.value, 'RAD'); // NEW
     } finally { h.close(); } // NEW
 }); // NEW

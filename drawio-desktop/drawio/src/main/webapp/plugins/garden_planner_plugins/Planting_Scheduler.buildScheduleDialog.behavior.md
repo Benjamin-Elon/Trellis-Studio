@@ -33,6 +33,15 @@ dialog DOM, task editing, graph writes, and runtime event bridges remain in
 
 ## External Inputs
 
+### Garden city inheritance <!-- CHANGE -->
+
+- Schedule entrypoints resolve the city from the containing garden's current settings, using its stable ID or a unique legacy name. Missing, unknown, or ambiguous cities require correction in Garden Settings; the crop's saved city is never a fallback. <!-- CHANGE -->
+- The city control is read-only, with the explanation “City is inherited from Garden Settings.” Allocation dialogs retain their existing fixed garden context. <!-- CHANGE -->
+- A saved schedule whose calculation city differs shows: “The garden’s city has changed. This preview uses [city]. Save to update this schedule.” Stable IDs take precedence over names when comparing cities. <!-- CHANGE -->
+- Opening recalculates previews with the current garden city while retaining the saved planting date, including dates outside the new climate's feasible windows. Existing validation explains infeasible dates. <!-- CHANGE -->
+- Opening, cancelling, closing, and validation failures do not write city attributes or dates. A successful save records the city and calculated dates together through the existing schedule transaction. The saved city records the last calculation and is not an override. <!-- CHANGE -->
+- Changing Garden Settings does not recalculate existing schedules in bulk; each schedule adopts the current city when next edited and saved. <!-- CHANGE -->
+
 `buildScheduleDialog(ui, cell, plants, cities, onSubmit, options)` receives:
 
 | Input | Current use |
@@ -46,7 +55,7 @@ dialog DOM, task editing, graph writes, and runtime event bridges remain in
 | `options.earliestFeasibleSowDate` | Initial sow date and earliest display |
 | `options.lastHarvestDate` | Initial season and harvest end |
 | `options.startNote` | Initial sow-date guidance |
-| `options.initialCityName` | Preferred city |
+| `options.initialCityName` | Resolved current garden city | <!-- CHANGE -->
 | `options.hasPersistedSchedule` | Records whether a valid stored start exists |
 | `options.initialWindowFeasible` | Initializes explicit annual feasibility state |
 
@@ -273,6 +282,8 @@ The order below is the current call order.
 4. Render the Tasks header.
 
 ### City change
+
+The city control is now read-only; this flow remains an internal initialization path rather than a user-editable location override. <!-- CHANGE -->
 
 1. Launch an async wrapper.
 2. Run `recomputeAll('cityChanged')`.
@@ -948,6 +959,37 @@ right-column Timeline section stable for short crops and dense milestone dates,
 but close dates can still be visually compressed on the season-scale track. The
 details text is the exact-date fallback.
 
+### Nearby planting timing and crop compatibility <!-- CHANGE -->
+
+The date field and the **Nearby planting timing** lanes share the current computed <!-- CHANGE -->
+occupancy window: transplant/bed entry when present, otherwise sowing, through harvest <!-- CHANGE -->
+end or perennial lifespan end. Edit schedule and derived scheduling use the navigator's <!-- CHANGE -->
+spatial overlap cluster; Allocate uses its selected bed's occupancy. Editing excludes <!-- CHANGE -->
+the target planting, while creating a companion or turnover retains its source. <!-- CHANGE -->
+
+The date field keeps its start differences or neighboring gaps and shows crop <!-- CHANGE -->
+compatibility separately. Its compact timing text shows at most two overlaps plus <!-- CHANGE -->
+an overflow count. Validation checks every overlapping planting and always surfaces <!-- CHANGE -->
+a blocking crop, including one omitted by that display limit. Touching occupancy <!-- CHANGE -->
+dates count as overlap. Invalid calendar dates and reversed ranges are ignored. <!-- CHANGE -->
+
+Compatibility uses current database relationships for the selected crop IDs, refreshed <!-- CHANGE -->
+on opening, crop changes, and Save. Obsolete asynchronous crop lookups cannot replace <!-- CHANGE -->
+the current selection's ratings. Finite negative ratings block Save before mutation; <!-- CHANGE -->
+finite zero/positive ratings are companions. Missing, unreadable, or unrated pairs <!-- CHANGE -->
+show **Compatibility unknown** and permit Save. Saved companion/turnover metadata is <!-- CHANGE -->
+context only and never supplies the compatibility rating. <!-- CHANGE -->
+
+The timeline lanes include all overlaps and the nearest preceding and following <!-- CHANGE -->
+non-overlapping plantings, deduplicated by planting ID. A crop starting before the <!-- CHANGE -->
+current occupancy start shows **Harvest end**; a crop starting on or after it shows <!-- CHANGE -->
+**Occupancy start**. Earlier perennial neighbors show **Occupancy/lifespan end**. <!-- CHANGE -->
+Each entry names the crop, date type, and actual date. Dates outside the existing <!-- CHANGE -->
+timeline range retain their text without a marker; context does not extend the axis. <!-- CHANGE -->
+Lanes use stable chronological ordering, disambiguate crop varieties, and wrap within <!-- CHANGE -->
+the dialog's scrolling body. Allocation recommendation details remain separate. The <!-- CHANGE -->
+timeline remains hidden when the selected crop itself is perennial. <!-- CHANGE -->
+
 Clicking the sow milestone focuses the existing sow date field. Non-sow
 milestones with a task rule whose start anchor matches the milestone show a
 small task dot. Clicking one refreshes the Tasks tab and opens the first
@@ -975,3 +1017,32 @@ restored as empty strings.
 Retiling occurs only after required persistence and task emission succeed.
 Compensation cannot undo a committed DB write or side effects already performed
 by external task-event listeners.
+
+
+## Completed-proposal creation and growth labels <!-- CHANGE -->
+
+Bed-first saves and Allocate create a planting directly from its completed proposal,
+including crop identity, geometry, spacing, offsets, disabled slots, and fit intent.
+The factory generates the initial circles or LOD summary once; it does not create
+or auto-fit a temporary default planting. Selection is deferred until the caller
+has finished creating its planting and tasks. Creation notifications ignore groups
+that have been removed or replaced. <!-- CHANGE -->
+
+All scheduler submissions acquire the same save lock before asynchronous work.
+Closing the dialog invalidates pending submissions before graph mutation. A failed
+new-target/task transaction is reversed before publication to Undo history; later
+save compensation removes a newly created target rather than leaving it in the
+diagram. Companion defaults regenerate a layout only when its spacing or offsets
+actually change. <!-- CHANGE -->
+
+Deferred module parenting processes only cells still registered in the model and
+excludes generated planting circles and summaries from generic auto-parenting.
+It cannot resurrect deleted children after retiling, rollback, or Undo. Existing
+saved stray circles are not automatically removed. <!-- CHANGE -->
+
+Live plant-circle labels are sized inside native SVG/HTML redraw, proportional to
+the current growth diameter with an 8 CSS-pixel on-screen minimum. Labels remain
+visible on tiny circles and may overlap. Selection and LOD expansion do not expose
+a separate mature-size label frame. Model font styles and export painting retain
+the native mature-size label; preview visibility remains owned by the preview.
+<!-- CHANGE -->

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { createApiKeyStore } from './trellis-api-key-store.js'; // NEW
 import '../../drawio/src/main/webapp/js/trellis-identity-protocol.js'; // NEW: the same Web Crypto module is bundled on Android.
 const protocol = globalThis.TrellisIdentityProtocol;
 const id = () => crypto.randomUUID();
@@ -21,6 +22,8 @@ async function json(filename) { return JSON.parse(await fs.readFile(filename, 'u
  */ // NEW
 export function createIdentityService(options) {
     const root = path.resolve(options.root);
+    const apiKeyStore = createApiKeyStore({ root, protect: options.protectSession, unprotect: options.unprotectSession }); // NEW: reuse the existing OS encryption boundary.
+    let apiKeyOwner = null, apiKeySessionToken = null; // NEW: bind dialogs to a particular authenticated session, including re-login.
     const events = new EventEmitter();
     const transports = new Map();
     let index = [], active = null, initialized;
@@ -322,5 +325,18 @@ export function createIdentityService(options) {
             return protocol.sign({ ...value, schema: 1, id: id(), identityId: active.identityId, author: active.deviceId, kind, time: now(), identityHeads: current.heads }, active.privateKey); // NEW: callers cannot override signature context.
         }); // NEW
     }
-    return { initialize, list, create, unlock, lock, session, requireSession, state, changePassword, createPairRequest, approvePairRequest, importSetup, removeDevice, refresh, transport, metadataRoot, identityRoot, signAction, onChange: listener => events.on('change', listener) }; // NEW
+    /** Credential operations share the identity queue so logout/profile changes cannot cross a write. */ // NEW
+    async function apiKeys(method, input = {}) { // NEW
+        return run(async () => {
+            await requireSessionState();
+            if (apiKeyOwner !== active) { apiKeyOwner = active; apiKeySessionToken = id(); }
+            if (!['status', 'save', 'remove'].includes(method)) throw new Error('Unsupported API key operation.');
+            if (method !== 'status' && input.sessionToken !== apiKeySessionToken) throw new Error('Your profile session changed. Reopen API keys.');
+            const identityId = active.identityId; // NEW: ownership never comes from renderer input.
+            if (method === 'save') await apiKeyStore.save(identityId, input.provider, input.value);
+            if (method === 'remove') await apiKeyStore.remove(identityId, input.provider);
+            return { identityId, username: active.username, sessionToken: apiKeySessionToken, providers: await apiKeyStore.status(identityId) };
+        });
+    }
+    return { initialize, list, create, unlock, lock, session, requireSession, state, changePassword, createPairRequest, approvePairRequest, importSetup, removeDevice, refresh, transport, metadataRoot, identityRoot, signAction, apiKeys, onChange: listener => events.on('change', listener) }; // CHANGE
 }

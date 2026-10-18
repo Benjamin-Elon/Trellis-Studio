@@ -19,6 +19,7 @@ const trellisDefaultPluginIds = [
     "trellisUsers",
     "trellisSyncthing", // NEW
     "trellisContextMenu",
+    "trellisObjectDetails", // NEW
     "gardenSuccession",
     "plantingGroup",
     "gardenTasks",
@@ -48,6 +49,7 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Trellis_Users.js",
     "plugins/garden_planner_plugins/Trellis_Syncthing.js", // NEW
     "plugins/garden_planner_plugins/Trellis_Context_Menu.js",
+    "plugins/garden_planner_plugins/Trellis_Object_Details.js", // NEW
     "plugins/garden_planner_plugins/Bed_Succession_Navigator.js",
     "plugins/garden_planner_plugins/Planting_Group.js",
     "plugins/garden_planner_plugins/Garden_Task_Manager.js",
@@ -270,6 +272,31 @@ function runtimeAssignment(source, field) { // NEW
     } // NEW
     throw new Error('Unterminated runtime assignment: ' + field); // NEW
 } // NEW
+
+test('desktop startup migrates saved profiles to object details once and loads its script', async () => { // NEW
+    const source = readProjectFile(path.join(projectRoot, 'drawio/src/main/webapp/js/diagramly/ElectronApp.js')); // NEW
+    const { mxSettings, localStorage } = loadSettings({ localStorage: { // NEW
+        '.drawio-config': storedConfig({ plugins: ['plugins/custom.js'], autosave: true }), // NEW
+        '.trellisSyncthingDefault.v1': '1' // NEW
+    } }); // NEW
+    const requests = [], context = { App: { initPluginCallback() {} }, mxSettings, localStorage, urlParams: {}, EditorUi: {}, document: { getElementsByTagName: () => [] }, mxmeta() {}, origAppMain() {}, mxscript: url => requests.push(url), requestSync: async () => null }; // NEW
+    mxSettings.getDraftSaveDelay = () => null; // NEW
+    for (const field of ['pluginRegistry', 'publicPlugin']) vm.runInNewContext(runtimeAssignment(readProjectFile(appBundlePath), field), context); // NEW
+    vm.runInNewContext(runtimeAssignment(source, 'main'), context); // NEW
+    const details = 'plugins/garden_planner_plugins/Trellis_Object_Details.js'; // NEW
+    await context.App.main(); // NEW
+    assert.deepEqual(hostArray(mxSettings.getPlugins()), ['./plugins/custom.js', './' + details, './plugins/garden_planner_plugins/Trellis_API_Keys.js']); // CHANGE: desktop API credentials also migrate into saved plugin lists.
+    assert.ok(requests.includes('./' + details), 'the actual desktop loader requests the migrated plugin'); // NEW
+    assert.equal(JSON.parse(localStorage.getItem('.drawio-config')).plugins.filter(plugin => plugin.endsWith('Trellis_Object_Details.js')).length, 1); // NEW
+    await context.App.main(); // NEW
+    assert.equal(mxSettings.getPlugins().filter(plugin => plugin.endsWith('Trellis_Object_Details.js')).length, 1, 'restarting does not duplicate the entry'); // NEW
+    mxSettings.setPlugins(['plugins/custom.js']); requests.length = 0; // NEW
+    await context.App.main(); // NEW
+    assert.equal(requests.some(url => url.endsWith('Trellis_Object_Details.js')), false, 'a later deliberate removal is preserved'); // NEW
+    localStorage.removeItem('.trellisObjectDetailsDefault.v1'); mxSettings.setPlugins(['./' + details]); // NEW
+    await context.App.main(); // NEW
+    assert.equal(mxSettings.getPlugins().length, 1, 'already enabled profiles are not duplicated'); // NEW
+}); // NEW
 
 for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // NEW
     test(path.basename(filePath) + ' actual registry, public list, and defaults register Roadmap dependencies', () => { // NEW

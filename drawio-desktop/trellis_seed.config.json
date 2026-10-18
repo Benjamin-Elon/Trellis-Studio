@@ -13,7 +13,7 @@
     "historical_dataset": "open-meteo-archive"
   },
   "live_app_db_path": "",
-  "openai_model": "gpt-5.5",
-  "openai_reasoning_effort": "low",
+  "openai_model": "gpt-6.1-sol",
+  "openai_reasoning_effort": "medium",
   "runs_dir": "trellis_seed_runs"
 }

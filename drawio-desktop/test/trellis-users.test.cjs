@@ -8,6 +8,68 @@ const { JSDOM } = require("jsdom");
 const projectRoot = path.resolve(__dirname, "..");
 const pluginPath = path.join(projectRoot, "drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_Users.js");
 
+/** Exercise comment model authorization with the production sanitizer and lifecycle policy from a real mxGraph. */ // CHANGE
+function commentPolicyHarness(t) { // CHANGE
+    const harness = loadUsersPlugin(), details = require('./helpers/object-details-harness.cjs')(t); // CHANGE
+    harness.context.window.TrellisDetailsCore = details.core; // CHANGE
+    return { ...harness, core: details.core, users: harness.context.window.Trellis.users }; // CHANGE
+} // CHANGE
+
+function commentRecord(user, time, extra = {}) { // CHANGE
+    return { id: 'comment-1', authorUserId: user.id, authorName: user.name, html: '<p>Question</p>', createdAt: time, updatedAt: time, resolvedAt: null, resolvedByUserId: null, resolvedByName: null, ...extra }; // CHANGE
+} // CHANGE
+function nativeCommentEdit(harness, raw, attribute = false) { // CHANGE
+    const previous = harness.card.value.cloneNode(true), oldRaw = previous.getAttribute('trellis_comments_json') || ''; // CHANGE
+    if (raw) harness.card.setAttribute('trellis_comments_json', raw); else harness.card.removeAttribute('trellis_comments_json'); // CHANGE
+    return attribute ? { constructor: { name: 'mxCellAttributeChange' }, cell: harness.card, attribute: 'trellis_comments_json', previous: oldRaw, value: raw } : { constructor: { name: 'mxValueChange' }, cell: harness.card, previous, value: harness.card.value }; // CHANGE
+} // CHANGE
+
+test('comment model guard rejects spoofed authors and admin rewrites through both native change forms', t => { // CHANGE
+    const h = commentPolicyHarness(t); h.users.enableUsers('Alice', '1234'); h.users.stampCreatedOwner(h.module); const alice = h.users.getCurrentUser(), bob = h.users.createUser('Bob', '5678', false).user; // CHANGE
+    const encode = item => JSON.stringify({ version: 1, comments: [item] }); // CHANGE
+    for (const attribute of [false, true]) { // CHANGE
+        h.card.removeAttribute('trellis_comments_json'); // CHANGE
+        const own = commentRecord(alice, Date.now()); assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode(own), attribute)), true); // CHANGE
+        h.card.removeAttribute('trellis_comments_json'); // CHANGE
+        assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode(commentRecord(bob, Date.now())), attribute)), false, 'admin cannot impersonate another author'); // CHANGE
+        const before = commentRecord(bob, Date.now() - 2000); h.card.setAttribute('trellis_comments_json', encode(before)); // CHANGE
+        assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode({ ...before, html: '<p>Admin rewrite</p>', updatedAt: Date.now() }), attribute)), false); // CHANGE
+        h.card.setAttribute('trellis_comments_json', encode(before)); // CHANGE
+        assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode({ ...before, resolvedAt: Date.now(), resolvedByUserId: alice.id, resolvedByName: alice.name }), attribute)), true); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('comment model guard enforces retention and rejects malformed data and combined ownership bypasses', t => { // CHANGE
+    const h = commentPolicyHarness(t); h.users.enableUsers('Alice', '1234'); const alice = h.users.getCurrentUser(), now = Date.now(), old = commentRecord(alice, now - h.core.COMMENT_RETENTION_MS - 10000); // CHANGE
+    const encode = item => JSON.stringify({ version: 1, comments: [item] }); // CHANGE
+    const recent = { ...old, resolvedAt: now - 1000, resolvedByUserId: alice.id, resolvedByName: alice.name }; h.card.setAttribute('trellis_comments_json', encode(recent)); // CHANGE
+    assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, '')), false); // CHANGE
+    const retained = { ...recent, resolvedAt: now - h.core.COMMENT_RETENTION_MS }; h.card.setAttribute('trellis_comments_json', encode(retained)); // CHANGE
+    assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, '')), true); // CHANGE
+    h.card.setAttribute('trellis_comments_json', '{"version":9,"comments":[]}'); assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, '')), false); // CHANGE
+    const bob = h.users.createUser('Bob', '5678', false).user, other = commentRecord(bob, now - 1000); h.card.setAttribute('trellis_comments_json', encode(other)); // CHANGE
+    const previous = h.card.value.cloneNode(true); h.card.setAttribute(h.users.attrs.owner, alice.id); h.card.setAttribute('trellis_comments_json', encode({ ...other, html: '<p>Changed by owner transfer</p>', updatedAt: Date.now() })); // CHANGE
+    assert.equal(h.users._test.changeAllowed({ constructor: { name: 'mxValueChange' }, cell: h.card, previous, value: h.card.value }), false); // CHANGE
+}); // CHANGE
+
+test('disabled Users reject comment mutations at the model boundary while ordinary edits and history replay retain host behavior', t => { // CHANGE
+    const h = commentPolicyHarness(t); let rejected = 0; // CHANGE
+    const actor = { id: 'anonymous', name: 'Anonymous' }, raw = JSON.stringify({ version: 1, comments: [commentRecord(actor, Date.now())] }); // CHANGE
+    const change = nativeCommentEdit(h, raw); h.model.fireChange({ changes: [change], undo() { rejected++; } }); assert.equal(rejected, 1); // CHANGE
+    h.model.fireChange({ changes: [{ constructor: { name: 'mxGeometryChange' }, cell: h.card }], undo() { rejected++; } }); assert.equal(rejected, 1); // CHANGE
+    h.model.fireChange({ undone: true, changes: [change], undo() { rejected++; } }); assert.equal(rejected, 1); // CHANGE
+}); // CHANGE
+
+test('task comments reuse task-detail grants while retaining their own author guard', t => { // CHANGE
+    const h = commentPolicyHarness(t); h.users.enableUsers('Alice', '1234'); h.module.style = 'module=1'; h.users.stampCreatedOwner(h.module); // CHANGE
+    const bob = h.users.createUser('Bob', '5678', false).user; h.card.setAttribute('kanban_card', '1'); // CHANGE
+    const board = appendChild(h.module, makeXmlCell(h.document, 'comment-board', { board_key: 'KANBAN_BOARD' })), lane = appendChild(board, makeXmlCell(h.document, 'comment-lane', { lane_key: 'TODO' })); // CHANGE
+    h.module.children.splice(h.module.children.indexOf(h.card), 1); appendChild(lane, h.card); // CHANGE
+    const planting = appendChild(h.module, makeXmlCell(h.document, 'comment-planting', { tiler_group: '1', [h.users.attrs.owner]: bob.id })); linkCells(planting, h.card); // CHANGE
+    assert.equal(h.users.setScopeGrant(h.module, { userId: bob.id, preset: 'gardener' }).ok, true); h.users.logout(); h.users.login('Bob', '5678'); // CHANGE
+    assert.equal(h.users.canEditTaskDetails(h.card), true); assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, JSON.stringify({ version: 1, comments: [commentRecord(bob, Date.now())] }))), true); // CHANGE
+}); // CHANGE
+
 class TestCell {
     constructor(id, value = null, style = "") {
         this.id = id;
@@ -1797,6 +1859,8 @@ test("gardener grant allows only owned linked or created manual task edits", () 
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: createdManual, attribute: "title" }), true);
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: ownedLinked, attribute: "task_instruction_override" }), true); // CHANGE: Guide edits use the task-detail capability.
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: otherLinked, attribute: "task_instruction_override" }), false); // CHANGE
+    assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: ownedLinked, attribute: "trellis_details_html" }), true); // NEW
+    assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: otherLinked, attribute: "trellis_details_html" }), false); // NEW
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: ownedLinked, attribute: "task_assignee_role_ids_json" }), false);
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: board, attribute: "task_view_mode" }), false);
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: lane, attribute: "lane_key" }), false);

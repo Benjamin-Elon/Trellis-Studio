@@ -290,6 +290,7 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'trellisUsers': 'plugins/garden_planner_plugins/Trellis_Users.js',                            // NEW
     'trellisSyncthing': 'plugins/garden_planner_plugins/Trellis_Syncthing.js',                     // NEW
     'trellisContextMenu': 'plugins/garden_planner_plugins/Trellis_Context_Menu.js',              // NEW
+    'trellisObjectDetails': 'plugins/garden_planner_plugins/Trellis_Object_Details.js', // NEW
     'gardenSuccession': 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js',           // CHANGE
     'plantingGroup': 'plugins/garden_planner_plugins/Planting_Group.js', // CHANGE: canonical plugin name.
     'plantTiler': 'plugins/garden_planner_plugins/Planting_Group.js',                               // CHANGE
@@ -319,6 +320,7 @@ App.publicPlugin = [
     'trellisUsers',                                          // NEW
     'trellisSyncthing',                                      // NEW
     'trellisContextMenu',                                    // NEW
+    'trellisObjectDetails', // NEW
     'gardenSuccession',                                       // CHANGE
     'plantingGroup',                                             // CHANGE
     'gardenTasks',                                            // CHANGE

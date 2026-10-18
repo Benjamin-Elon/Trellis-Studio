@@ -2852,6 +2852,11 @@ ipcMain.on("rendererReq", async (event, args) => {
 				if (['setupCanvas', 'joinCanvas', 'recovery'].includes(args.method)) await ensureSharingTray(service);
 				break;
 			}
+			case 'trellisApiKeys': { // NEW: fixed operations, validated sender, and authenticated identity queue.
+				if (!['status', 'save', 'remove'].includes(args.method)) throw new Error('Unsupported API key operation.');
+				ret = await (await getIdentityService()).apiKeys(args.method, args.payload || {});
+				break;
+			}
 			case 'trellisIdentity': { // NEW: explicit dispatch never exposes credential or transport objects.
 				const identities = await getIdentityService(), payload = args.payload || {};
 				if (args.method === 'getSession') ret = identities.session();

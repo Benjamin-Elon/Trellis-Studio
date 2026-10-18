@@ -161,6 +161,17 @@ Toolbar.prototype.createTextToolbar = function()
 {
 	var ui = this.editorUi;
 	var graph = ui.editor.graph;
+	var detailsTarget = ui.getActiveRichTextTarget && ui.getActiveRichTextTarget(); // NEW: reuse this toolbar for independent details fields.
+	function textCommand(command, value) { // NEW
+		var target = ui.getActiveRichTextTarget && ui.getActiveRichTextTarget(); // NEW
+		if (target) return target.execute(command, value); // NEW
+		return document.execCommand(command, false, value == null ? null : value); // NEW
+	} // NEW
+	function alignText(align, evt) { // NEW
+		var target = ui.getActiveRichTextTarget && ui.getActiveRichTextTarget(); // NEW
+		if (target) { target.execute('justify' + align); return true; } // NEW: a read-only details target still consumes the formatting action.
+		graph.cellEditor.alignText(align, evt); // NEW
+	} // NEW
 
 	var styleElt = this.addMenu(this.editorUi.menus.get('formatBlock'), '');
 	styleElt.style.width = '54px';
@@ -185,6 +196,11 @@ Toolbar.prototype.createTextToolbar = function()
 		[null, Editor.undoImage, Editor.redoImage], 560);
 	this.addItems(['-', 'bold', 'italic', 'underline'], null, null,
 		[null, Editor.boldImage, Editor.italicImage, Editor.underlineImage], 460);
+	var bulletButton = ui.addButton(Editor.unorderedListImage, '', function() { // NEW: expose the existing list command beside the basic text controls.
+		textCommand('insertunorderedlist'); // NEW: resolve the current details field or native label selection at click time.
+	}, this.container); // NEW
+	bulletButton.setAttribute('data-min-width', 460); // NEW: match Bold, Italic and Underline at narrow widths.
+	ui.dependsOnLanguage(function() { bulletButton.setAttribute('title', mxResources.get('bulletedList')); }); // NEW
 	
 	// KNOWN: Lost focus after click on submenu with text (not icon) in quirks and IE8. This is because the TD seems
 	// to catch the focus on click in these browsers. NOTE: Workaround in mxPopupMenu for icon items (without text).
@@ -192,7 +208,7 @@ Toolbar.prototype.createTextToolbar = function()
 	{
 		elt = menu.addItem('', Editor.alignLeftImage, mxUtils.bind(this, function(evt)
 		{
-			graph.cellEditor.alignText(mxConstants.ALIGN_LEFT, evt);
+			if (alignText(mxConstants.ALIGN_LEFT, evt)) return; // CHANGE: details formatting must not emit cell-style changes.
 			ui.fireEvent(new mxEventObject('styleChanged',
 				'keys', [mxConstants.STYLE_ALIGN],
 				'values', [mxConstants.ALIGN_LEFT],
@@ -202,7 +218,7 @@ Toolbar.prototype.createTextToolbar = function()
 
 		elt = menu.addItem('', Editor.alignCenterImage, mxUtils.bind(this, function(evt)
 		{
-			graph.cellEditor.alignText(mxConstants.ALIGN_CENTER, evt);
+			if (alignText(mxConstants.ALIGN_CENTER, evt)) return; // CHANGE
 			ui.fireEvent(new mxEventObject('styleChanged',
 				'keys', [mxConstants.STYLE_ALIGN],
 				'values', [mxConstants.ALIGN_CENTER],
@@ -212,7 +228,7 @@ Toolbar.prototype.createTextToolbar = function()
 
 		elt = menu.addItem('', Editor.alignRightImage, mxUtils.bind(this, function(evt)
 		{
-			graph.cellEditor.alignText(mxConstants.ALIGN_RIGHT, evt);
+			if (alignText(mxConstants.ALIGN_RIGHT, evt)) return; // CHANGE
 			ui.fireEvent(new mxEventObject('styleChanged',
 				'keys', [mxConstants.STYLE_ALIGN],
 				'values', [mxConstants.ALIGN_RIGHT],
@@ -222,31 +238,31 @@ Toolbar.prototype.createTextToolbar = function()
 
 		elt = menu.addItem('', Editor.alignJustifyImage, mxUtils.bind(this, function()
 		{
-			document.execCommand('justifyfull', false, null);
+			textCommand('justifyfull'); // CHANGE
 		}));
 		elt.setAttribute('title', mxResources.get('justifyfull'));
 		
 		elt = menu.addItem('', Editor.orderedListImage, mxUtils.bind(this, function()
 		{
-			document.execCommand('insertorderedlist', false, null);
+			textCommand('insertorderedlist'); // CHANGE
 		}));
 		elt.setAttribute('title', mxResources.get('numberedList'));
 		
 		elt = menu.addItem('', Editor.unorderedListImage, mxUtils.bind(this, function()
 		{
-			document.execCommand('insertunorderedlist', false, null);
+			textCommand('insertunorderedlist'); // CHANGE
 		}));
 		elt.setAttribute('title', mxResources.get('bulletedList'));
 				
 		elt = menu.addItem('', Editor.indentImage, mxUtils.bind(this, function()
 		{
-			document.execCommand('indent', false, null);
+			textCommand('indent'); // CHANGE
 		}));
 		elt.setAttribute('title', mxResources.get('increaseIndent'));
 
 		elt = menu.addItem('', Editor.outdentImage, mxUtils.bind(this, function()
 		{
-			document.execCommand('outdent', false, null);
+			textCommand('outdent'); // CHANGE
 		}));
 		elt.setAttribute('title', mxResources.get('decreaseIndent'));
 	})), null, Editor.alignLeftImage);
@@ -270,7 +286,7 @@ Toolbar.prototype.createTextToolbar = function()
 
 		elt = menu.addItem('', Editor.removeFormatImage, mxUtils.bind(this, function()
 		{
-			document.execCommand('removeformat', false, null);
+			textCommand('removeformat'); // CHANGE
 		}));
 		elt.setAttribute('title', mxResources.get('removeFormat'));
 	})), null, Editor.textFormatImage);
@@ -278,6 +294,7 @@ Toolbar.prototype.createTextToolbar = function()
 	formatMenu.setAttribute('data-min-width', 640);
 	this.addSeparator(null, 780);
 
+	if (!detailsTarget) { // NEW: details support text formatting only.
 	this.editorUi.addButton(Editor.codeImage, mxResources.get('html'), function()
 	{
 		graph.cellEditor.toggleViewMode();
@@ -292,6 +309,7 @@ Toolbar.prototype.createTextToolbar = function()
 			});
 		}
 	}, this.container).setAttribute('data-min-width', 780);
+	} // NEW
 	
 	this.addSeparator(null, 740);
 	
@@ -302,6 +320,7 @@ Toolbar.prototype.createTextToolbar = function()
 			this.editorUi.actions.get('link').funct();
 		}));
 		
+		if (!detailsTarget) { // NEW
 		menu.addItem(mxResources.get('insertImage'), null, mxUtils.bind(this, function()
 		{
 			this.editorUi.actions.get('image').funct();
@@ -311,13 +330,16 @@ Toolbar.prototype.createTextToolbar = function()
 		{
 			document.execCommand('inserthorizontalrule', false, null);
 		}));
+		} // NEW
 	})), null, Editor.plusImage);
 	
 	insertMenu.setAttribute('data-min-width', 700);
 	this.addSeparator(null, 700);
 	
 	// Table changes do no work with undo/redo
-	var tableMenu = this.addMenu(new Menu(mxUtils.bind(this, function(menu)
+	var tableMenu = null; // NEW
+	if (!detailsTarget) { // NEW
+	tableMenu = this.addMenu(new Menu(mxUtils.bind(this, function(menu) // CHANGE
 	{
 		var elt = graph.getSelectedElement();
 		var cell = graph.getParentByNames(elt, ['TD', 'TH'], graph.cellEditor.text2);
@@ -502,6 +524,7 @@ Toolbar.prototype.createTextToolbar = function()
 	})), null, Editor.tableImage);
 
 	tableMenu.setAttribute('data-min-width', 740);
+	} // NEW
 
 	this.editorUi.dependsOnLanguage(mxUtils.bind(this, function()
 	{
@@ -511,7 +534,7 @@ Toolbar.prototype.createTextToolbar = function()
 		fontMenu.setAttribute('title', mxResources.get('fontFamily'));
 		sizeMenu.setAttribute('title', mxResources.get('fontSize'));
 		insertMenu.setAttribute('title', mxResources.get('insert'));
-		tableMenu.setAttribute('title', mxResources.get('table'));
+		if (tableMenu != null) tableMenu.setAttribute('title', mxResources.get('table')); // CHANGE
 	}));
 };
 
@@ -640,7 +663,8 @@ Toolbar.prototype.addItem = function(sprite, key, container)
 
 		var updateEnabledState = mxUtils.bind(this, function()
 		{
-			if (action.enabled)
+			var target = this.editorUi.getActiveRichTextTarget && this.editorUi.getActiveRichTextTarget(); // NEW
+			if (target ? target.canEdit() : action.enabled) // CHANGE: details undo and formatting do not depend on graph history or selected label styles.
 			{
 				elt.removeAttribute('disabled');
 			}

@@ -95,7 +95,8 @@ test("graph overlay plugins share a dialog-safe layer contract", () => {
         "Vertex_Linking_Standalone.js",
         "Bed_Succession_Navigator.js",
         "Created_Change_Map.js",
-        "Allocate_Planner.js"
+        "Allocate_Planner.js",
+        "Trellis_Object_Details.js" // NEW
     ].forEach(assertLayerContract);
 
     assert.match(readProjectFile("drawio/src/main/webapp/js/diagramly/EditorUi.js"), /zIndex: 2e9/);

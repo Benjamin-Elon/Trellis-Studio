@@ -4893,7 +4893,7 @@ Draw.loadPlugin(function (ui) {
         for (const c of (cells || [])) graph.refresh(c);
     }
 
-    function notifyTilerGroupCreated(graph, group, source, debugTxnId) {
+    function notifyTilerGroupCreated(graph, group, source, debugTxnId, opts = {}) { // CHANGE: creation callers can defer selection until their surrounding save succeeds.
         if (!graph || !group) return;
         const groupId = group.id || "";
         const txnId = debugTxnId || null;
@@ -4901,13 +4901,13 @@ Draw.loadPlugin(function (ui) {
         setTimeout(function () {
             const model = graph.getModel && graph.getModel();
             const liveGroup = groupId && model && model.getCell ? model.getCell(groupId) : group;
-            if (!liveGroup || !isTilerGroup(liveGroup)) {
+            if (!liveGroup || liveGroup !== group || (model?.contains && !model.contains(liveGroup)) || !isTilerGroup(liveGroup)) { // CHANGE: rolled-back or replaced groups cannot publish stale creation events.
                 bedFitLog("created-event-skip", { txnId, source: source || "", groupId, reason: "missing-live-group" });
                 return;
             }
             try {
                 bedFitLog("created-event-fire", { txnId, source: source || "", groupId: bedFitCellId(liveGroup), groupGeo: bedFitGeometrySnapshot(liveGroup) });
-                graph.fireEvent(new mxEventObject(TILER_GROUP_CREATED_EVENT, "cell", liveGroup, "cellId", liveGroup.id || groupId, "source", source || ""));
+                graph.fireEvent(new mxEventObject(TILER_GROUP_CREATED_EVENT, "cell", liveGroup, "cellId", liveGroup.id || groupId, "source", source || "", "select", opts.select !== false)); // CHANGE
                 bedFitLog("created-event-fired", { txnId, source: source || "", groupId: bedFitCellId(liveGroup) });
             } catch (e) {
                 bedFitLog("created-event-error", { txnId, source: source || "", groupId: bedFitCellId(liveGroup), errorMessage: e && e.message ? e.message : String(e) });
@@ -4972,81 +4972,6 @@ Draw.loadPlugin(function (ui) {
         return bed;
     }
 
-
-    /**
-     * Creates an empty planting group inside the given garden module.
-     * - No plant is preselected.
-     * - Defaults spacing to 30 cm (both axes).
-     * - Centers a 240x240 group within the module bounds.
-     */
-    function createEmptyTilerGroup(graph, moduleCell, clickX, clickY, opts = {}) {
-        const DEFAULT_GROUP_PX = 240;
-        const spacingCm = 30;
-
-        const modGeo = moduleCell.getGeometry && moduleCell.getGeometry();
-        const gx = modGeo ? modGeo.x : 0;                                           // absolute module x
-        const gy = modGeo ? modGeo.y : 0;                                           // absolute module y
-        const gw = modGeo ? modGeo.width : DEFAULT_GROUP_PX;
-        const gh = modGeo ? modGeo.height : DEFAULT_GROUP_PX;
-
-        const w = DEFAULT_GROUP_PX;
-        const h = DEFAULT_GROUP_PX;
-
-        // Convert click (graph coords) -> local coords in module
-        const localX = (typeof clickX === "number") ? (clickX - gx - w / 2) : (gw - w) / 2;
-        const localY = (typeof clickY === "number") ? (clickY - gy - h / 2) : (gh - h) / 2;
-
-        // Clamp inside module bounds
-        const relX = Math.max(0, Math.min(gw - w, localX));
-        const relY = Math.max(0, Math.min(gh - h, localY));
-
-        const seasonStartYear = getCurrentGardenYear(moduleCell);
-
-        const groupVal = createXmlValue("TilerGroup", {
-            label: "New Plant Group",
-            tiler_group: "1",
-            season_start_year: String(seasonStartYear),
-
-            spacing_cm: String(spacingCm),
-            spacing_x_cm: String(spacingCm),
-            spacing_y_cm: String(spacingCm),
-            veg_diameter_cm: "",
-            yield_per_plant_kg: "",
-            yield_unit: YIELD_UNIT,
-            plant_count: "0",
-            planting_expected_yield_kg: "0",
-            planting_actual_yield_kg: "0"
-        });
-
-        // Note: child geometry should be RELATIVE to parent module
-        const geo = new mxGeometry(relX, relY, w, h);
-        const group = new mxCell(groupVal, geo, groupFrameStyle());
-        group.setVertex(true);
-        group.setConnectable(false);
-        group.setCollapsed(false);
-
-        const model = graph.getModel();
-        const creationSource = (opts && opts.source) || "empty-group";
-        const creationTxnId = ++bedFitTxnSeq;
-        let threw = false;
-        let errorMessage = "";
-        bedFitLog("create-empty-start", { txnId: creationTxnId, source: creationSource, moduleId: bedFitCellId(moduleCell), clickX: bedFitRound(clickX), clickY: bedFitRound(clickY), localX: bedFitRound(localX), localY: bedFitRound(localY), relX: bedFitRound(relX), relY: bedFitRound(relY), groupId: bedFitCellId(group), groupGeo: bedFitGeometrySnapshot(group) });
-        model.beginUpdate();
-        try {
-            graph.addCell(group, moduleCell);
-            finalizeCreatedTilerGroup(graph, group, moduleCell, creationSource, creationTxnId);
-        } catch (e) {
-            threw = true;
-            errorMessage = e && e.message ? e.message : String(e);
-            throw e;
-        } finally {
-            model.endUpdate();
-            bedFitLog("create-empty-end", { txnId: creationTxnId, source: creationSource, moduleId: bedFitCellId(moduleCell), groupId: bedFitCellId(group), finalGeo: bedFitGeometrySnapshot(group), threw, errorMessage });
-        }
-        notifyTilerGroupCreated(graph, group, creationSource, creationTxnId);
-        bedFitLog("create-empty-notify-scheduled", { txnId: creationTxnId, source: creationSource, groupId: bedFitCellId(group) });
-        return group;
-    }
 
     // ---------- Debug helpers (compact, JSON-safe) ----------
     function dbgAttrMap(cell) {
@@ -6388,6 +6313,7 @@ Draw.loadPlugin(function (ui) {
         }).filter(Boolean);
     }
 
+    /** Materialize the completed proposal once; default-group auto-fitting must not run during creation. */ // CHANGE
     function createPlantingFromProposal(input = {}, opts = {}) {
         const activeGraphArg = input.graph || graph;
         const proposal = input.proposal || input;
@@ -6395,32 +6321,28 @@ Draw.loadPlugin(function (ui) {
         const moduleCell = input.moduleCell || proposal.moduleCell || findGardenModuleAncestor(activeGraphArg, proposal.bedCell);
         if (!activeGraphArg || !moduleCell || !isGardenModule(moduleCell)) throw new Error("Planting creation requires a garden module.");
         const geometry = proposal.geometry || {};
-        const centerX = Number(geometry.x || 0) + Number(geometry.width || 240) / 2;
-        const centerY = Number(geometry.y || 0) + Number(geometry.height || 240) / 2;
-        const moduleGeo = moduleCell.getGeometry && moduleCell.getGeometry();
-        const group = createEmptyTilerGroup(activeGraphArg, moduleCell, (moduleGeo ? Number(moduleGeo.x) || 0 : 0) + centerX, (moduleGeo ? Number(moduleGeo.y) || 0 : 0) + centerY, { source: input.source || "allocate-create", select: opts.select !== false }); // CHANGE: transactional callers can defer selection until the planting and tasks succeed.
         const model = activeGraphArg.getModel && activeGraphArg.getModel();
-        const attrs = Object.assign({}, input.attributes || proposal.attributes || {}, {
+        const attrs = Object.assign({ tiler_group: '1', season_start_year: String(getCurrentGardenYear(moduleCell)), yield_unit: YIELD_UNIT, planting_actual_yield_kg: '0' }, input.attributes || proposal.attributes || {}, { // CHANGE: initialize identity and final crop attributes before publishing the group.
             allowed_overhang_pct: String(resolveAllowedOverhangPct(proposal.allowedOverhangPct)), // CHANGE
             ...(proposal.layoutAlignment === 'centered' && !proposal.sharedFootprint ? { layout_alignment: 'centered', // CHANGE
                 layout_base_offset_x_cm: String(proposal.layoutBaseOffsetXCm || 0), layout_base_offset_y_cm: String(proposal.layoutBaseOffsetYCm || 0) } : {}), // CHANGE
             plant_count: String(Math.max(0, Math.trunc(Number(proposal.plantCount) || 0))),
             spacing_x_cm: String(proposal.spacingXCm || 30),
             spacing_y_cm: String(proposal.spacingYCm || 30),
-            spacing_cm: String(proposal.spacingXCm === proposal.spacingYCm ? proposal.spacingXCm || 30 : getXmlAttr(group, "spacing_cm", "30")),
+            spacing_cm: String(proposal.spacingXCm === proposal.spacingYCm ? proposal.spacingXCm || 30 : (input.attributes || proposal.attributes || {}).spacing_cm || 30), // CHANGE
             veg_height_cm: proposal.vegHeightCm == null ? String((input.attributes || proposal.attributes || {}).veg_height_cm || "") : String(proposal.vegHeightCm), // CHANGE
             veg_diameter_cm: proposal.vegDiameterCm == null ? String((input.attributes || proposal.attributes || {}).veg_diameter_cm || "") : String(proposal.vegDiameterCm), // CHANGE
             layout_offset_x_cm: String(proposal.layoutOffsetXCm || 0), layout_offset_y_cm: String(proposal.layoutOffsetYCm || 0), // CHANGE
             ...(proposal.disabledSlots ? { disabled_plants: JSON.stringify(proposal.disabledSlots) } : {}) // CHANGE
         });
+        const groupGeometry = new mxGeometry(Number(geometry.x) || 0, Number(geometry.y) || 0, Number.isFinite(Number(geometry.width)) ? Math.max(1, Number(geometry.width)) : 240, Number.isFinite(Number(geometry.height)) ? Math.max(1, Number(geometry.height)) : 240); // CHANGE: proposal geometry is already module-relative and fitted; preserve legacy missing-size defaults.
+        const group = new mxCell(createXmlValue('TilerGroup', attrs), groupGeometry, groupFrameStyle()); // CHANGE
+        group.setVertex(true); group.setConnectable(false); group.setCollapsed(false); // CHANGE
         if (model) {
             const insideUpdate = !!(input.insideUpdate || opts.insideUpdate);
             if (!insideUpdate) model.beginUpdate();
             try {
-                if (geometry && Number.isFinite(Number(geometry.width)) && Number.isFinite(Number(geometry.height))) {
-                    model.setGeometry(group, new mxGeometry(Number(geometry.x) || 0, Number(geometry.y) || 0, Math.max(1, Number(geometry.width) || 1), Math.max(1, Number(geometry.height) || 1)));
-                }
-                setCellAttrsNoTxn(model, group, attrs);
+                activeGraphArg.addCell(group, moduleCell); // CHANGE: insert only the fully initialized frame, then generate its final children.
                 if (proposal.sharedFootprint) { // CHANGE: companion frames must not auto-fit back to the entire bed.
                     writeBedFitAxesNoTxn(model, group, false, false); // CHANGE
                     setCellAttrsNoTxn(model, group, { bed_auto_fit: '0' }); // CHANGE
@@ -6439,12 +6361,18 @@ Draw.loadPlugin(function (ui) {
                     } // CHANGE
                     writeDisabledSet(model, group, disabled); // CHANGE
                 } // CHANGE
-                retileGroup(activeGraphArg, group, { inTransaction: true, forceExpand: proposal.lodCollapsed !== true });
-                if (proposal.lodCollapsed === true) retileGroup(activeGraphArg, group, { inTransaction: true, forceCollapse: true });
+                retileGroup(activeGraphArg, group, { inTransaction: true, forceExpand: proposal.lodCollapsed !== true, forceCollapse: proposal.lodCollapsed === true }); // CHANGE: collapsed proposals generate a summary directly.
+                reorderModuleChildrenForLayering(model, moduleCell); // CHANGE: retain garden layering without refitting the reviewed proposal.
+            } catch (error) { // CHANGE: never leave a partially created planting or queued child additions behind.
+                if (model.contains(group)) activeGraphArg.removeCells([group]); // CHANGE
+                throw error; // CHANGE
             } finally {
                 if (!insideUpdate) model.endUpdate();
             }
         }
+        if (model?.contains && !model.contains(group)) throw new Error('The planting could not be committed.'); // CHANGE: permission rejection must not publish or select a removed target.
+        if (opts.select !== false) activeGraphArg.setSelectionCell(group); // CHANGE: selection observes complete geometry and circles only.
+        notifyTilerGroupCreated(activeGraphArg, group, input.source || 'allocate-create', ++bedFitTxnSeq, opts); // CHANGE: the deferred notification checks that the group is still live.
         return group;
     }
 
@@ -11232,7 +11160,7 @@ Draw.loadPlugin(function (ui) {
 
     /** Own transient estimates, paint hooks and badges without changing model cells or global prototypes. */ // NEW
     function createPlantGrowthController() { // NEW
-        const entries = new Map(), outlines = new Map(), labelStyles = new Map(), listeners = []; // NEW
+        const entries = new Map(), outlines = new Map(), listeners = []; // CHANGE: native text rendering owns growth sizing; no deferred CSS state is retained.
         const labels = { planned: 'Planned', seed: 'Seed', growing: 'Growing', harvest: 'Harvest window', complete: 'Complete', establishing: 'Establishing', established: 'Established', unavailable: 'Progress unavailable' }; // NEW
         const colors = { seed: '#fb923c', growing: '#fde047', harvest: '#86efac', establishing: '#fde047', established: '#86efac' }; // NEW
         let scheduled = false, disposed = false, revision = 0, rolloverTimer = null; // NEW
@@ -11286,9 +11214,27 @@ Draw.loadPlugin(function (ui) {
             return shape; // NEW
         } // NEW
         const renderer = graph.cellRenderer; // NEW
-        const original = renderer && { createShape: renderer.createShape }; // NEW
+        /** Resize live glyphs before native SVG/HTML drawing; exports continue to read the saved font size. */ // CHANGE
+        function attachLabel(text, state) { // CHANGE
+            if (!text || !isPlantCircle(state.cell) || text.__trellisGrowthLabel) return text; // CHANGE
+            text.__trellisGrowthLabel = true; // CHANGE
+            const redraw = text.redraw; // CHANGE
+            let lastSize = null; // CHANGE
+            text.redraw = function () { // CHANGE
+                const savedSize = this.size; // CHANGE
+                const size = disposed ? savedSize : Math.max(8 / (this.scale || 1), savedSize * diameterRatio(state)); // CHANGE: an 8 CSS-pixel floor remains readable at every zoom, including seed circles.
+                if (size !== lastSize) this.lastValue = null; // CHANGE: HTML caching must not retain glyphs drawn at the previous growth size.
+                this.size = size; lastSize = size; // CHANGE
+                try { return redraw.apply(this, arguments); } // CHANGE: native alignment, visibility and preview rules remain authoritative.
+                finally { this.size = savedSize; } // CHANGE: export paint and model styles retain the mature-size font.
+            }; // CHANGE
+            return text; // CHANGE
+        } // CHANGE
+        const original = renderer && { createShape: renderer.createShape, createTextShape: renderer.createTextShape }; // CHANGE
+        let createGrowthShape, createGrowthText; // CHANGE: disposal must not overwrite renderer hooks installed later by another controller.
         if (original) { // NEW
-            renderer.createShape = function (state) { return attachPaint(original.createShape.apply(this, arguments), state); }; // NEW
+            renderer.createShape = createGrowthShape = function (state) { return attachPaint(original.createShape.apply(this, arguments), state); }; // CHANGE
+            if (original.createTextShape) renderer.createTextShape = createGrowthText = function (state) { return attachLabel(original.createTextShape.apply(this, arguments), state); }; // CHANGE
         } // NEW
         function visible(cell) { // NEW
             for (let current = cell; current; current = model.getParent(current)) if (!graph.isCellVisible(current)) return false; // NEW
@@ -11298,16 +11244,10 @@ Draw.loadPlugin(function (ui) {
             const state = graph.view?.getState?.(cell); // NEW
             if (!state || !visible(cell)) { if (entry.badge) entry.badge.style.display = 'none'; return; } // NEW
             for (const child of graph.getChildVertices(cell) || []) { // NEW
-                if (graph.__trellisBedTransforms?.isPreviewing(child)) continue; // CHANGE: defer redraw and label-style caching until the preview restores its originals.
+                if (graph.__trellisBedTransforms?.isPreviewing(child)) continue; // CHANGE: defer growth repaint until the preview restores its originals.
                 const childState = graph.view.getState(child); // NEW
                 if (childState && isPlantCircle(child) && renderer) { // NEW
-                    attachPaint(childState.shape, childState); renderer.redraw(childState, true); // NEW
-                    const node = childState.text?.node, ratio = diameterRatio(childState); // NEW
-                    if (node) { // NEW: scale only the live label DOM so export text retains its native size and content.
-                        if (!labelStyles.has(node)) labelStyles.set(node, { visibility: node.style.visibility, transform: node.style.transform, transformOrigin: node.style.transformOrigin, transformBox: node.style.transformBox }); // NEW
-                        const saved = labelStyles.get(node); // NEW
-                        Object.assign(node.style, ratio < 1 ? { visibility: Math.min(childState.width, childState.height) * ratio < 18 ? 'hidden' : saved.visibility, transform: 'scale(' + ratio + ')', transformOrigin: 'center', transformBox: 'fill-box' } : saved); // NEW
-                    } // NEW
+                    attachPaint(childState.shape, childState); attachLabel(childState.text, childState); renderer.redraw(childState, true); // CHANGE: redraw already has the correct font size before any browser paint.
                 } // NEW
             } // NEW
             const layer = ensureGraphOverlayHtmlLayer('annotation'); // NEW
@@ -11347,7 +11287,6 @@ Draw.loadPlugin(function (ui) {
                 refreshGroup(cell, entry); // NEW
             } // NEW
             for (const [id, entry] of entries) if (!live.has(id)) { entry.badge?.remove(); entries.delete(id); } // NEW
-            for (const [node, styles] of labelStyles) if (!node.isConnected) { Object.assign(node.style, styles); labelStyles.delete(node); } // NEW
             graph.container?.querySelectorAll('[data-trellis-growth-details]').forEach(node => { const cell = model.getCell(node.dataset.trellisGrowthDetails); if (cell) updateDetail(node, cell); }); // NEW
         } // NEW
         function schedule() { // NEW
@@ -11373,8 +11312,9 @@ Draw.loadPlugin(function (ui) {
         function dispose() { // NEW
             if (disposed) return; disposed = true; window.clearTimeout?.(rolloverTimer); listeners.splice(0).forEach(remove => remove()); // NEW
             entries.forEach(entry => entry.badge?.remove()); entries.clear(); outlines.clear(); // NEW
-            labelStyles.forEach((styles, node) => Object.assign(node.style, styles)); labelStyles.clear(); // NEW
-            if (renderer) Object.assign(renderer, original); // NEW
+            if (renderer?.createShape === createGrowthShape) renderer.createShape = original.createShape; // CHANGE
+            if (renderer?.createTextShape === createGrowthText) renderer.createTextShape = original.createTextShape; // CHANGE
+            for (const cell of Object.values(model.cells || {})) { const state = graph.view?.getState?.(cell); if (state && isPlantCircle(cell)) renderer?.redraw(state, true); } // CHANGE: restore native live glyphs and circles when this controller is disposed.
         } // NEW
         graph.destroy = function () { dispose(); return originalDestroy?.apply(this, arguments); }; // NEW
         armRollover(); schedule(); // NEW
@@ -11451,6 +11391,7 @@ Draw.loadPlugin(function (ui) {
             graph.addListener('trellisPlantingLinkingReady', syncSelection); // CHANGE
             graph.addListener('trellisSelectionVisualsRefresh', syncSelection); // CHANGE
             graph.addListener(TILER_GROUP_CREATED_EVENT, (_sender, event) => { // CHANGE
+                if (event?.getProperty('select') === false) return; // CHANGE: Allocate and transactional saves select explicitly after success.
                 const id = event && event.getProperty && event.getProperty('cellId'); // CHANGE
                 const cell = id && model.getCell(id) || event && event.getProperty && event.getProperty('cell'); // CHANGE
                 if (!cell || !isTilerGroup(cell)) return; // CHANGE

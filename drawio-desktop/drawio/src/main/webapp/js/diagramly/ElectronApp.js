@@ -149,6 +149,19 @@ mxStencilRegistry.allowEval = false;
 			mxSettings.setPlugins(plugins); mxSettings.save(); // NEW
 			localStorage.setItem('.trellisSyncthingDefault.v1', '1'); // NEW
 		} // NEW
+		if (localStorage.getItem('.trellisObjectDetailsDefault.v1') == null) { // NEW: existing desktop profiles use their saved list instead of the web defaults.
+			plugins = (plugins || []).slice(); // NEW
+			if (!plugins.some(plugin => /(?:^|\/)Trellis_Object_Details\.js$/.test(plugin) || plugin === 'trellisObjectDetails')) plugins.push(App.pluginRegistry.trellisObjectDetails); // NEW
+			mxSettings.setPlugins(plugins); mxSettings.save(); // NEW
+			localStorage.setItem('.trellisObjectDetailsDefault.v1', '1'); // NEW: preserve a later deliberate removal.
+		} // NEW
+		App.pluginRegistry.trellisApiKeys = 'plugins/garden_planner_plugins/Trellis_API_Keys.js'; // NEW: desktop-only credential settings, including production builds.
+		if (App.publicPlugin.indexOf('trellisApiKeys') < 0) App.publicPlugin.push('trellisApiKeys'); // NEW
+		if (localStorage.getItem('.trellisApiKeysDefault.v1') == null) { // NEW: preserve other saved plugins and later deliberate removal.
+			plugins = (plugins || []).slice();
+			if (!plugins.some(plugin => /(?:^|\/)Trellis_API_Keys\.js$/.test(plugin) || plugin === 'trellisApiKeys')) plugins.push(App.pluginRegistry.trellisApiKeys);
+			mxSettings.setPlugins(plugins); mxSettings.save(); localStorage.setItem('.trellisApiKeysDefault.v1', '1');
+		} // NEW
 		App.initPluginCallback();
 
 		if (plugins != null && plugins.length > 0)

@@ -467,6 +467,28 @@ test('a partial required-default save leaves setup open, lists remaining records
     assert.equal(fixture.getOverrides().notes, 'preserve'); // CHANGE
 }); // CHANGE
 
+test('ordinary scheduler submission locks immediately and ignores forced duplicate clicks', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture(); // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, defaultStatus: { complete: true, missing: [] } }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const submit = Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Preview Planting'); // CHANGE
+    submit.click(); assert.equal(submit.disabled, true, 'normal saves must lock before asynchronous input loading'); // CHANGE
+    submit.dispatchEvent(new fixture.api.__testWindow.document.defaultView.Event('click')); // CHANGE: exercise a queued event that bypasses the disabled-button UI.
+    const result = await pending; assert.equal(result.action, 'preview'); assert.equal(fixture.getGraphWrites(), 0); // CHANGE
+    submit.dispatchEvent(new fixture.api.__testWindow.document.defaultView.Event('click')); // CHANGE
+    assert.equal(fixture.getGraphWrites(), 0); // CHANGE: a retained button cannot submit its closed dialog again.
+}); // CHANGE
+
+test('closing an ordinary scheduler during submission cancels pending work and leaves no graph changes', async () => { // CHANGE
+    const fixture = allocationSchedulerFixture(); // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true, defaultStatus: { complete: true, missing: [] } }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture); // CHANGE
+    const buttons = Array.from(dialog.querySelectorAll('button')); // CHANGE
+    buttons.find(button => button.textContent === 'Preview Planting').click(); buttons.find(button => button.textContent === 'Cancel').click(); // CHANGE
+    assert.equal((await pending).action, 'cancel'); // CHANGE
+    await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(fixture.getGraphWrites(), 0); assert.equal(dialog.isConnected, false); // CHANGE
+}); // CHANGE
+
 test('allocation Edit opens the full scheduler with fixed crop identity and returns preview without graph writes', async () => { // CHANGE
     const fixture = allocationSchedulerFixture();
     const { api, ui, draft } = fixture;
@@ -953,8 +975,9 @@ test('crop picker row uses custom layout without section overflow workaround', (
     assert.doesNotMatch(schedulerSource, /plantSection\.wrap\.classList\.add\('usl-scheduler-section--allow-popover'\)/);
 });
 
-test('derived dialogs do not persist resolved city onto the source while opening', () => {
-    assert.match(schedulerSource, /if \(!openOptions\?\.derivedMode && model && cell && cityInit\.city_id != null\) \{/);
+test('dialogs do not persist resolved city onto the source while opening', () => { // CHANGE
+    const openingSource = schedulerSource.slice(schedulerSource.indexOf('async function openScheduleDialogForTarget('), schedulerSource.indexOf('async function openDerivedScheduleDialog(')); // CHANGE
+    assert.doesNotMatch(openingSource, /setAttr\(cell, 'city_(?:id|name)'/); // CHANGE
     assert.match(schedulerSource, /city_id: city\.city_id != null \? String\(city\.city_id\) : '',/);
 });
 

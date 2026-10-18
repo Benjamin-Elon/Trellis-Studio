@@ -46,7 +46,8 @@ function loadSchedulerHooks(options = {}) { // CHANGE: full-dialog integration c
             loadPlugin(register) {
                 register({ editor: { graph: options.graph || {} } }); // CHANGE: exercise read-only growth context against an explicit graph fixture.
             }
-        }
+        },
+        ...options.globals // CHANGE: real mxGraph save integration supplies the production change/geometry constructors.
     });
 
     for (const corePath of SCHEDULER_CORE_PATHS) {

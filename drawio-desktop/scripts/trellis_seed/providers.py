@@ -9,7 +9,8 @@ from urllib.error import HTTPError, URLError
 from dataclasses import dataclass
 from typing import Any
 
-from .jsonio import redact_secrets
+from .jsonio import redact_secrets, register_secret  # CHANGE
+from .config import read_fdc_api_key  # NEW
 
 
 class ProviderError(RuntimeError):
@@ -35,12 +36,13 @@ class ProviderTrace:
 class OpenAIJsonClient:
     def __init__(self, api_key: str, model: str, reasoning_effort: str = "high") -> None:
         self.api_key = api_key
+        register_secret(api_key)  # NEW: include actual client keys in free-text diagnostic redaction.
         self.model = model
         self.reasoning_effort = reasoning_effort
 
     def preflight(self) -> ProviderTrace:
         if not self.api_key:
-            raise ProviderError("OPENAI_API_KEY is missing. Set it as an environment variable.")
+            raise ProviderError("OpenAI key is missing. Configure it in Settings and credentials.")  # CHANGE
         result, trace = self.generate_json(
             system="Return only the requested JSON object.",
             user="Return {\"ok\": true} for a Trellis OpenAI preflight check.",
@@ -59,7 +61,7 @@ class OpenAIJsonClient:
 
     def generate_json(self, *, system: str, user: str, schema_name: str, json_schema: dict[str, Any], tools: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], ProviderTrace]:
         if not self.api_key:
-            raise ProviderError("OPENAI_API_KEY is missing.")
+            raise ProviderError("OpenAI key is missing. Configure it in Settings and credentials.")  # CHANGE
         request = {"model": self.model, "reasoning_effort": self.reasoning_effort, "schema_name": schema_name, "system": system, "user": user}
         if tools:
             request["tools"] = tools  # NEW: verify mode can request source-backed web search traces.
@@ -67,11 +69,11 @@ class OpenAIJsonClient:
         try:
             from openai import OpenAI  # type: ignore
         except Exception as exc:
-            trace.error = str(exc)
-            raise ProviderError("Python package 'openai' is required. Install requirements-trellis-seed.txt.") from exc
+            trace.error = redact_secrets(str(exc))  # CHANGE
+            raise ProviderError("Python package 'openai' is required. Install requirements-trellis-seed.txt.") from None  # CHANGE
 
-        client = OpenAI(api_key=self.api_key)
         try:
+            client = OpenAI(api_key=self.api_key)  # CHANGE: initialization failures receive the same redaction as request errors.
             try:
                 response_kwargs: dict[str, Any] = {
                     "model": self.model,
@@ -120,13 +122,13 @@ class OpenAIJsonClient:
             trace.response = {"json": parsed}
             return parsed, trace
         except Exception as exc:
-            trace.error = str(exc)
+            trace.error = redact_secrets(str(exc))  # CHANGE
             if "invalid model ID" in str(exc):
                 raise ProviderError(
                     f"OpenAI model '{self.model}' was rejected by the API. "
                     "Set OPENAI_MODEL to a model ID available to your API key, for example 'gpt-5'."
-                ) from exc
-            raise ProviderError(f"OpenAI generation failed: {exc}") from exc
+                ) from None  # CHANGE: suppress the raw exception chain.
+            raise ProviderError(f"OpenAI generation failed: {trace.error}") from None  # CHANGE
 
     def generate_json_with_web_search(self, *, system: str, user: str, schema_name: str, json_schema: dict[str, Any]) -> tuple[dict[str, Any], ProviderTrace]:
         try:
@@ -149,7 +151,7 @@ class OpenAIJsonClient:
                 trace.request["web_search_fallback"] = "web_search_preview"
                 return result, trace
             except ProviderError as second_exc:
-                raise ProviderError(f"OpenAI web search failed: {first_exc}; fallback failed: {second_exc}") from second_exc
+                raise ProviderError(redact_secrets(f"OpenAI web search failed: {first_exc}; fallback failed: {second_exc}")) from None  # CHANGE
 
 
 class OpenMeteoClient:
@@ -397,7 +399,7 @@ class FoodDataCentralClient:
 
     def search(self, query: str) -> tuple[dict[str, Any], ProviderTrace]:
         params = {
-            "api_key": self.config.get("api_key") or "DEMO_KEY",
+            "api_key": read_fdc_api_key(),  # CHANGE: never use JSON credentials or import-time environment snapshots.
             "query": query,
             "dataType": self.config.get("data_types", "Foundation,SR Legacy,Survey (FNDDS)"),
             "pageSize": int(self.config.get("page_size", 10)),
@@ -405,13 +407,13 @@ class FoodDataCentralClient:
         url = OpenMeteoClient._url(str(self.config["search_url"]), params)
         data = self._get_json(url)
         foods = data.get("foods") or []
-        return data, ProviderTrace("fdc", {"url": url, "query": query}, {"result_count": len(foods)})
+        return data, ProviderTrace("fdc", {"url": redact_secrets(url), "query": query}, {"result_count": len(foods)})  # CHANGE
 
     def food(self, fdc_id: int) -> tuple[dict[str, Any], ProviderTrace]:
-        params = {"api_key": self.config.get("api_key") or "DEMO_KEY"}
+        params = {"api_key": read_fdc_api_key()}  # CHANGE
         url = OpenMeteoClient._url(str(self.config["food_url"]).rstrip("/") + f"/{int(fdc_id)}", params)
         data = self._get_json(url)
-        return data, ProviderTrace("fdc", {"url": url, "fdc_id": int(fdc_id)}, {"description": data.get("description"), "data_type": data.get("dataType")})
+        return data, ProviderTrace("fdc", {"url": redact_secrets(url), "fdc_id": int(fdc_id)}, {"description": data.get("description"), "data_type": data.get("dataType")})  # CHANGE
 
     def _get_json(self, url: str) -> dict[str, Any]:
         last_error: Exception | None = None
@@ -432,7 +434,7 @@ class FoodDataCentralClient:
                 if attempt == max_attempts:
                     break
                 time.sleep(attempt * 2)
-        raise ProviderError(f"FoodData Central request failed after {max_attempts} attempts: {last_error}") from last_error
+        raise ProviderError(redact_secrets(f"FoodData Central request failed after {max_attempts} attempts: {last_error}")) from None  # CHANGE
 
     def _rate_limit_wait_seconds(self, exc: HTTPError, attempt: int) -> float:
         max_wait = float(self.config.get("rate_limit_max_wait_seconds", 300))

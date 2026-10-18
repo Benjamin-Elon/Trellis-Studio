@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .jsonio import read_json, write_json
+from .jsonio import read_json, write_json, strip_secret_fields  # CHANGE
+from .credentials import read_api_key  # NEW
 from .paths import DEFAULT_CONFIG_PATH, DEFAULT_DB_PATH, DEFAULT_RUNS_DIR
 
 
@@ -54,7 +55,6 @@ DEFAULT_CONFIG = {
     "fdc": {
         "search_url": "https://api.nal.usda.gov/fdc/v1/foods/search",
         "food_url": "https://api.nal.usda.gov/fdc/v1/food",
-        "api_key": os.getenv("FDC_API_KEY", "DEMO_KEY"),
         "data_types": "Foundation,SR Legacy,Survey (FNDDS)",
         "page_size": 10,
         "rate_limit_max_attempts": 5,
@@ -111,7 +111,7 @@ class Settings:
 
 
 def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
-    data = DEFAULT_CONFIG | (read_json(path, {}) or {})
+    data = DEFAULT_CONFIG | strip_secret_fields(read_json(path, {}) or {})  # CHANGE: legacy JSON credentials are never used.
     data["open_meteo"] = DEFAULT_CONFIG["open_meteo"] | (data.get("open_meteo") or {})
     data["nasa_power"] = DEFAULT_CONFIG["nasa_power"] | (data.get("nasa_power") or {})
     data["fdc"] = DEFAULT_CONFIG["fdc"] | (data.get("fdc") or {})
@@ -121,7 +121,7 @@ def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
 
 
 def save_settings(settings: Settings) -> None:
-    write_json(settings.path, settings.data)
+    write_json(settings.path, strip_secret_fields(settings.data))  # CHANGE: never persist legacy credentials.
 
 
 def ensure_default_config(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
@@ -132,7 +132,22 @@ def ensure_default_config(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
 
 
 def read_openai_api_key() -> str:
-    return os.environ.get("OPENAI_API_KEY", "").strip()
+    return read_api_key("openai")  # CHANGE: Windows reads only encrypted maintainer credentials.
+
+
+_fdc_demo_warned = False  # NEW
+
+
+def read_fdc_api_key() -> str:
+    """Keep demo compatibility, warning only when a request first needs the fallback."""  # NEW
+    global _fdc_demo_warned
+    value = read_api_key("fdc")
+    if value:
+        return value
+    if not _fdc_demo_warned:
+        print("FoodData Central key is missing; using DEMO_KEY with the shared rate limit.", flush=True)
+        _fdc_demo_warned = True
+    return "DEMO_KEY"
 
 
 def _resolve_project_path(config_path: Path, value: str) -> Path:
