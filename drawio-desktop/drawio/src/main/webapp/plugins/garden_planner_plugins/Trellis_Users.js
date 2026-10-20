@@ -2843,6 +2843,9 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     function changeAllowed(change, context) {
+        const namingAttrs = changedAttributeNames(change); // NEW
+        const namedRemoval = change?.constructor?.name === 'mxChildChange' && change.child?.getAttribute?.('trellis_project_name') != null && !currentParentOfChange(change); // NEW
+        if ((namingAttrs.includes('trellis_project_name') || namedRemoval) && !isAdmin()) return false; // NEW: ownership and field exceptions cannot rename the project.
         if (!commentChangeAllowed(change)) return false; // CHANGE: authorship and retention apply even to admins and combined metadata edits.
         if (change && change.__trellisUsersActorStamp) return true;
         if (graph.__trellisFieldMetadataChange && change?.constructor?.name === 'mxValueChange') { // NEW: validated field commands may update only their protocol metadata and existing task fields.
@@ -3169,21 +3172,123 @@ Draw.loadPlugin(function (ui) {
         return true;
     }
 
-    function openEmailDraft(emailDraft) {
-        const bridge = window.trellisShare;
-        if (!bridge || typeof bridge.openEmailDraft !== "function") {
-            showStatus("Syncthing sharing email bridge is unavailable in this Trellis build.");
-            return Promise.resolve({ ok: false, reason: "Email bridge unavailable." });
-        }
-        return bridge.openEmailDraft(emailDraft).then(function (result) {
-            if (!result || result.ok === false) showStatus((result && result.reason) || "Email draft could not be opened.");
-            else showStatus("Email draft opened. Review and send it from your mail client.");
-            return result || { ok: false };
-        }).catch(function (err) {
-            showStatus(err && err.message ? err.message : "Email draft could not be opened.");
-            return { ok: false, reason: err && err.message ? err.message : String(err) };
-        });
-    }
+    /** Explain browser-profile and mail-handler failures that an external launch cannot detect. */ // NEW
+    function appendInviteDeliveryHelp(parent) { // NEW
+        const help = document.createElement("details"); // NEW
+        help.style.cssText = "margin:12px 0;line-height:18px;"; // NEW
+        const summary = document.createElement("summary"); // NEW
+        summary.textContent = "Email didn’t open?"; // NEW
+        help.appendChild(summary); // NEW
+        const steps = document.createElement("ol"); // NEW
+        [ // NEW
+            "Choose the Chrome profile containing the Gmail account you want to send from.", // NEW
+            "Enter chrome://settings/handlers in Chrome’s address bar.", // NEW
+            "Enable Sites can ask to handle protocols.", // NEW
+            "If mail.google.com appears under Not allowed to handle protocols, click its × to remove that block.", // NEW
+            "Open or refresh Gmail. Allow its protocol-handler prompt, or click the protocol-handler icon beside the address bar and choose Allow.", // NEW
+            "Return here and choose Retry Email, or use Copy Invitation and paste it into a new email manually.", // NEW
+            "For another email app, check your system’s default email application and its MAILTO association." // NEW
+        ].forEach(function (instruction) { // NEW
+            const item = document.createElement("li"); // NEW
+            item.textContent = instruction; // NEW
+            steps.appendChild(item); // NEW
+        }); // NEW
+        help.appendChild(steps); // NEW
+        const limitation = document.createElement("p"); // NEW
+        limitation.textContent = "Trellis cannot check another Chrome profile’s Gmail settings or confirm that a draft appeared. Profile selection, sign-in, blocked email handlers, and long email links can interrupt delivery. Review the draft and send it yourself."; // NEW
+        help.appendChild(limitation); // NEW
+        parent.appendChild(help); // NEW
+    } // NEW
+
+    /** Mount an isolated delivery view; retain its prepared message only for this view's lifetime. */ // NEW
+    function openInviteDelivery(result) { // NEW
+        if (!result || !result.ok || !result.invite || !result.emailDraft) return { ok: false, reason: "Create or renew an invitation before delivering it." }; // NEW
+        const shell = makeAccessDialogShell("Deliver garden invitation", 560); // NEW
+        if (!shell || !document.body) return { ok: false, reason: "Invitation saved. Delivery UI is unavailable; use Resend in People & Access to try again." }; // NEW
+        shell.overlay.classList.add("trellis-invite-delivery-dialog"); // NEW
+        shell.box.style.maxHeight = "calc(100vh - 96px)"; // NEW
+        shell.box.style.overflow = "auto"; // NEW
+        ["mousedown", "mouseup", "pointerdown", "pointerup", "touchstart", "touchend", "click", "dblclick", "keypress", "keyup"].forEach(function (type) { // NEW
+            shell.overlay.addEventListener(type, function (evt) { evt.stopPropagation(); }); // NEW: preserve native controls and text selection.
+        }); // NEW
+        shell.overlay.addEventListener("keydown", function (evt) { // NEW
+            evt.stopPropagation(); // NEW: copy shortcuts must not reach the editor.
+            if (evt.key === "Escape") closeAccessDialog(shell.overlay); // NEW
+        }); // NEW
+        const note = document.createElement("p"); // NEW
+        note.textContent = "Your invitation is pending. Open an email draft or copy the complete invitation below. Closing this view keeps the invitation pending."; // NEW
+        shell.box.appendChild(note); // NEW
+        const preview = makeTextArea("Preparing the complete invitation…"); // NEW
+        preview.readOnly = true; // NEW
+        preview.rows = 10; // NEW
+        preview.setAttribute("aria-label", "Complete invitation, including recipient and subject"); // NEW
+        shell.box.appendChild(preview); // NEW
+        const status = document.createElement("div"); // NEW
+        status.setAttribute("role", "status"); // NEW
+        status.style.cssText = "margin-top:8px;line-height:18px;"; // NEW
+        shell.box.appendChild(status); // NEW
+        appendInviteDeliveryHelp(shell.box); // NEW
+        const actions = document.createElement("div"); // NEW
+        actions.style.cssText = "display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;"; // NEW
+        let draft = null, busy = false; // NEW: retries reuse the complete prepared draft and original invite result.
+        const retry = makeButton("Retry Email", deliver, "open", "Retry delivery of this invitation without changing its code."); // NEW
+        const copy = makeButton("Copy Invitation", copyInvitation, "add", "Copy the recipient, subject, and complete invitation to paste into an email."); // NEW
+        const done = makeButton("Done", function () { closeAccessDialog(shell.overlay); }, "close", "Close this view and keep the invitation pending."); // NEW
+        [retry, copy, done].forEach(function (button) { actions.appendChild(button); }); // NEW
+        shell.box.appendChild(actions); // NEW
+        document.body.appendChild(shell.overlay); // NEW
+        setTimeout(function () { if (shell.overlay.isConnected) done.focus(); }, 0); // NEW: follow queued editor focus restoration, never focus after closure.
+        void deliver(); // NEW: show the retained view before preparing or launching anything.
+        return { ok: true }; // NEW
+
+        /** Serialize preparation and launching; cache only a completely prepared message. */ // NEW
+        async function deliver() { // NEW
+            if (busy || !shell.overlay.isConnected) return; // NEW
+            if (document.activeElement === retry) preview.focus(); // NEW: disabling a focused native button otherwise moves keyboard input outside the dialog.
+            busy = true; retry.disabled = true; copy.disabled = true; // NEW
+            try { // NEW
+                if (!draft) { // NEW
+                    status.textContent = "Preparing the complete invitation…"; // NEW
+                    const sharing = window.Trellis && window.Trellis.sharing; // NEW
+                    const prepared = sharing ? await sharing.prepareInvite(result) : result.emailDraft; // NEW: preserve legacy delivery without the sharing plugin.
+                    if (!shell.overlay.isConnected) return; // NEW
+                    if (!prepared || !prepared.to || !prepared.body) throw new Error("The complete invitation could not be prepared. Choose Retry Email."); // NEW
+                    draft = prepared; // NEW: retain its full setup block without regenerating the invite code.
+                    preview.value = "To: " + draft.to + "\nSubject: " + draft.subject + "\n\n" + draft.body; // NEW
+                } // NEW
+                const bridge = window.trellisShare; // NEW
+                if (!bridge || typeof bridge.openEmailDraft !== "function") throw new Error("Email bridge unavailable. Use Copy Invitation to send this invitation manually."); // NEW
+                status.textContent = "Requesting an email draft…"; // NEW
+                const launched = await bridge.openEmailDraft(draft); // NEW
+                if (!shell.overlay.isConnected) return; // NEW
+                status.textContent = launched && launched.ok === true ? "Email request handed to your mail app. Review and send the draft there." : ((launched && launched.reason) || "Your mail app could not be opened. See Email didn’t open? or use Copy Invitation."); // NEW
+            } catch (err) { // NEW
+                if (shell.overlay.isConnected) status.textContent = (err && err.message ? err.message : "Email delivery failed.") + (draft ? " See Email didn’t open? or use Copy Invitation." : " Choose Retry Email to prepare the same invitation again."); // NEW
+            } finally { // NEW
+                busy = false; // NEW
+                if (shell.overlay.isConnected) { retry.disabled = false; copy.disabled = !draft; } // NEW
+            } // NEW
+        } // NEW
+
+        /** Keep selectable text available when the browser denies clipboard access. */ // NEW
+        async function copyInvitation() { // NEW
+            if (busy || !draft || !shell.overlay.isConnected) return; // NEW
+            if (document.activeElement === copy) preview.focus(); // NEW: keep Escape and copy shortcuts inside the dialog while buttons are disabled.
+            busy = true; retry.disabled = true; copy.disabled = true; // NEW
+            try { // NEW
+                await window.navigator.clipboard.writeText(preview.value); // NEW
+                if (shell.overlay.isConnected) status.textContent = "Invitation copied. Paste it into a new email, review it, and send it."; // NEW
+            } catch (_) { // NEW
+                if (shell.overlay.isConnected) { // NEW
+                    preview.focus(); preview.select(); // NEW
+                    status.textContent = "Automatic copy was unavailable. The complete invitation is selected; press Ctrl+C (Command+C on Mac), then paste it into a new email."; // NEW
+                } // NEW
+            } finally { // NEW
+                busy = false; // NEW
+                if (shell.overlay.isConnected) { retry.disabled = false; copy.disabled = false; } // NEW
+            } // NEW
+        } // NEW
+    } // NEW
 
     function showAuthStatus(message) {
         const text = String(message || "");
@@ -3677,9 +3782,8 @@ Draw.loadPlugin(function (ui) {
             row.appendChild(makeButton("Resend", function () {
                 const result = resendInvite(invite.id, {});
                 if (!result.ok) { showStatus(result.reason); return; }
-                const sharing = window.Trellis && window.Trellis.sharing; // NEW: resends carry the rotated code in a fresh setup block.
-                if (sharing && sharing.getInfo()) sharing.prepareInvite(result).then(openEmailDraft).catch(function (err) { showStatus(err.message); });
-                else openEmailDraft(result.emailDraft);
+                const delivery = openInviteDelivery(result); // CHANGE: resends share the retained preview, copy fallback, and preparation retry.
+                if (!delivery.ok) showStatus(delivery.reason); // NEW
             }, "open", 'Renew this invitation and open an email draft for ' + invite.email + '.')); // CHANGE: explicit action tooltip.
             row.appendChild(makeButton("Revoke", function () {
                 const result = revokeInvite(invite.id);
@@ -4823,6 +4927,7 @@ Draw.loadPlugin(function (ui) {
             teamPermissionBadgeHost.className = "trellis-team-permission-badge-host"; // NEW
             teamPermissionBadgeHost.style.cssText = "position:absolute;left:0;top:0;z-index:" + (USERS_UI_LAYER_Z - 10) + ";pointer-events:none;"; // NEW
             host.appendChild(teamPermissionBadgeHost); // NEW
+            graph.__trellisOverlayVisibility?.mark(teamPermissionBadgeHost); // NEW: informational overlays must not obstruct manipulation.
         } // NEW
         return teamPermissionBadgeHost; // NEW
     }
@@ -4850,6 +4955,7 @@ Draw.loadPlugin(function (ui) {
                 badge.appendChild(label); // NEW
                 if (selectedIds.has(cellId(scope))) badge.appendChild(makeAccessRadios(scope, subjects, true)); // NEW
                 host.appendChild(badge); // NEW
+                graph.__trellisOverlayVisibility?.mark(badge); // NEW: informational overlays must not obstruct manipulation.
             }); // NEW
         }); // NEW
     }
@@ -5023,6 +5129,7 @@ Draw.loadPlugin(function (ui) {
         setUserAdmin,
         setUserDisabled,
         createPendingInvite,
+        openInviteDelivery, // NEW: shared invitation delivery for the garden toolbar and People & Access.
         acceptInvite,
         revokeInvite,
         resendInvite,

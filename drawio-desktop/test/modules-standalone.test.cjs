@@ -859,6 +859,66 @@ test("center-stable module folding excludes non-module and explicitly non-collap
     assert.deepEqual({ x: disabledModule.geometry.x, y: disabledModule.geometry.y }, disabledTopLeft); // NEW
 }); // NEW
 
+/** Empty native drag cleanup must never substitute the current selection. */ // NEW
+test("empty removal targets preserve expanded, collapsed, mixed, and empty selections", async t => { // NEW
+    for (const selection of ["expanded", "collapsed", "mixed", "empty"]) { // NEW
+        for (const includeEdges of [false, undefined]) { // NEW
+            await t.test(`${selection} selection, includeEdges=${includeEdges}`, () => { // NEW
+                const harness = makeHarness(); // NEW
+                const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+                const child = addTestChild(harness, mod); // NEW
+                const ordinary = addTestChild(harness, harness.root); // NEW
+                mod.collapsed = selection === "collapsed"; // NEW
+                harness.graph.setSelectionCells(selection === "empty" ? [] : selection === "mixed" ? [mod, ordinary] : [mod]); // NEW
+                for (let pass = 0; pass < 2; pass += 1) { // NEW
+                    const result = includeEdges === undefined ? harness.graph.removeCells([]) : harness.graph.removeCells([], includeEdges); // NEW
+                    assert.equal(result.length, 0); // NEW
+                } // NEW
+                assert.equal(mod.collapsed, selection === "collapsed"); // NEW
+                [mod, child, ordinary].forEach(cell => assert.equal(harness.model.getCell(cell.id), cell)); // NEW
+                assert.equal(harness.foldCalls.length, 0); // NEW
+                assert.deepEqual(harness.confirmations, []); // NEW
+                assert.deepEqual(harness.alerts, []); // NEW
+                assert.equal(harness.removeCalls.length, 2); // NEW
+                harness.removeCalls.forEach(call => { // NEW
+                    assert.equal(call.cells.length, 0); // NEW
+                    assert.equal(call.includeEdges, includeEdges); // NEW
+                }); // NEW
+            }); // NEW
+        } // NEW
+    } // NEW
+}); // NEW
+
+test("null and omitted removal targets still use the selected module", () => { // NEW
+    for (const omitted of [false, true]) { // NEW
+        const harness = makeHarness(); // NEW
+        const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+        harness.graph.setSelectionCell(mod); // NEW
+        if (omitted) harness.graph.removeCells(); else harness.graph.removeCells(null); // NEW
+        assert.equal(mod.collapsed, true); // NEW
+        assert.equal(harness.foldCalls.length, 1); // NEW
+        assert.equal(harness.model.getCell(mod.id), mod); // NEW
+        assert.deepEqual(harness.confirmations, []); // NEW
+    } // NEW
+}); // NEW
+
+test("explicit removal targets do not substitute a different selected module", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const selected = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    const targeted = harness.graph.__trellisModules.createModuleAtPoint({ x: 400, y: 22 }, "regular"); // NEW
+    const ordinary = addTestChild(harness, harness.root); // NEW
+    harness.graph.setSelectionCell(selected); // NEW
+    harness.graph.removeCells([ordinary], false); // NEW
+    assert.equal(harness.model.getCell(ordinary.id), null); // NEW
+    assert.equal(harness.removeCalls[0].cells[0], ordinary); // NEW
+    assert.equal(harness.removeCalls[0].includeEdges, false); // NEW
+    harness.graph.removeCells([targeted]); // NEW
+    assert.equal(targeted.collapsed, true); // NEW
+    assert.equal(!!selected.collapsed, false); // NEW
+    assert.equal(harness.model.getCell(selected.id), selected); // NEW
+    assert.deepEqual(harness.confirmations, []); // NEW
+}); // NEW
+
 test("delete on expanded module folds without deleting", () => { // NEW
     const harness = makeHarness(); // NEW
     const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW

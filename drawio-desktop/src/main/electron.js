@@ -2533,6 +2533,90 @@ function closeReply(win, phase, approval, timeoutMs = 1000) { // NEW
 	return requestWindowReply({ ipcMain, window: win, channel: 'isModified', replyChannel: 'isModified-result', validateSender, timeoutMs, // NEW
 		payload: { uniqueId: 'close-' + (++closeRequestSequence), phase, snapshotId: approval?.snapshotId } }); // NEW
 } // NEW
+/** Freeze only saves while all open handles and their drafts follow a local projection move. */ // NEW
+const projectRenamePaths = new Map(); // NEW
+async function prepareProjectionRename(input) { // NEW
+	const canonical = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value); // NEW
+	const targets = windowsRegistry.filter(win => !win.isDestroyed() && sharingWindowPaths.get(win.webContents.id) && canonical(sharingWindowPaths.get(win.webContents.id)) === canonical(input.oldPath)); // NEW
+	const ask = (win, phase, extra = {}) => requestWindowReply({ ipcMain, window: win, channel: 'trellisProjectNaming', replyChannel: 'trellisProjectNaming-result', validateSender, timeoutMs: 5000, payload: { ...input, ...extra, phase, uniqueId: 'naming-' + (++closeRequestSequence) } }); // NEW
+	const prepared = []; // NEW
+	try { // NEW
+		for (const win of targets) { const reply = await ask(win, 'prepare'); if (reply.error) throw new Error(reply.error); prepared.push(win); } // NEW
+	} catch (error) { for (const win of targets) if (!win.isDestroyed()) win.webContents.send('trellisProjectNaming', { ...input, phase: 'cancel' }); throw error; } // NEW
+	projectRenamePaths.set(input.oldPath, null); // NEW
+	for (const win of prepared) fileWatchRegistry.unwatch(input.oldPath, win); // NEW
+	return async outcome => { // NEW
+		const drafts = new Map(), errors = []; // CHANGE
+		try { // NEW
+			if (outcome.committed) { // NEW
+				projectRenamePaths.delete(outcome.path); projectRenamePaths.set(input.oldPath, outcome.path); // CHANGE
+				for (const previousPath of new Set([input.oldPath, ...(outcome.previousPaths || [])])) if (previousPath !== outcome.path && path.dirname(previousPath) === path.dirname(outcome.path)) { // CHANGE
+					try { // NEW
+						for (const draft of await getFileDrafts({ path: previousPath })) { // NEW
+							const target = getDraftFileName({ path: outcome.path }); // NEW
+							try { await fsProm.link(draft.path, target); await fsProm.unlink(draft.path); drafts.set(draft.path, target); } catch (error) { errors.push(error); } // NEW
+						} // NEW
+					} catch (error) { errors.push(error); } // NEW
+				} // NEW
+			} else projectRenamePaths.delete(input.oldPath); // NEW
+			for (const win of prepared) if (!win.isDestroyed()) { // NEW
+				const watched = sharingWindowPaths.get(win.webContents.id); // NEW
+				if (watched && canonical(watched) !== canonical(input.oldPath) && canonical(watched) !== canonical(outcome.path)) continue; // NEW: navigation to another document must not inherit this project's watcher.
+				try { // NEW
+					const nextPath = outcome.committed ? outcome.path : input.oldPath; // NEW
+					sharingWindowPaths.set(win.webContents.id, nextPath); fileWatchRegistry.watch(nextPath, win); // NEW
+					const reply = await ask(win, outcome.committed ? 'commit' : 'cancel', { ...outcome, drafts: [...drafts] }); // NEW
+					if (reply.error) throw new Error(reply.error); // NEW
+				} catch (error) { errors.push(error); } // NEW: notify other prepared editors even if one editor fails to acknowledge.
+			} // NEW
+			if (errors.length) throw new Error('Filename update pending: ' + errors.map(error => error.message).join('; ')); // NEW
+		} finally { for (const win of prepared) if (!win.isDestroyed()) win.webContents.send('trellisProjectNaming', { ...input, phase: 'cancel' }); } // NEW
+	}; // NEW
+} // NEW
+/** Preserve remote drafts before retiring a project; an unresponsive editor blocks file removal. */ // NEW
+async function prepareProjectRetirement(input) { // NEW
+	let filename = input.path; // NEW
+	if (!filename) { // NEW
+		for (const service of [sharingService, ...identityTransports.values()].filter(Boolean)) { // NEW
+			const canvas = (await service.listCanvases()).find(c => c.shareId === input.shareId); // NEW
+			if (canvas) { filename = canvas.path; break; } // NEW
+		} // NEW
+	} // NEW
+	if (!filename) return; // NEW
+	const canonical = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value); // NEW
+	const targets = windowsRegistry.filter(win => !win.isDestroyed() && sharingWindowPaths.get(win.webContents.id) && canonical(sharingWindowPaths.get(win.webContents.id)) === canonical(filename)); // NEW
+	try { // NEW
+		for (const win of targets) { // NEW
+			const ask = phase => requestWindowReply({ ipcMain, window: win, channel: 'trellisProjectRetiring', replyChannel: 'trellisProjectRetiring-result', validateSender, timeoutMs: 10000, payload: { uniqueId: 'project-' + (++closeRequestSequence), phase, path: filename } }); // NEW
+			const draft = await ask('prepare'); if (draft.error) throw new Error(draft.error); // NEW
+			if (draft.modified) { // NEW
+				if (typeof draft.xml !== 'string' || Buffer.byteLength(draft.xml) > 128 * 1024 * 1024) throw new Error('The project draft could not be preserved.'); // NEW
+				const recoveryRoot = path.join(app.getPath('userData'), 'project-draft-recovery'); await fsProm.mkdir(recoveryRoot, { recursive: true }); // NEW
+				await fsProm.writeFile(path.join(recoveryRoot, 'draft-' + Date.now() + '-' + win.webContents.id + '.drawio'), draft.xml, { flag: 'wx', mode: 0o600, flush: true }); // NEW
+			} // NEW
+			const committed = await ask('commit'); if (committed.error) throw new Error(committed.error); // NEW
+		} // NEW
+	} finally { for (const win of targets) if (!win.isDestroyed()) win.webContents.send('trellisProjectRetiring', { phase: 'cancel', path: filename }); } // NEW
+} // NEW
+/** The local-file actions must never bypass synchronized project retirement. */ // NEW
+async function assertStandaloneProject(filename) { // NEW
+	await assertSharingFileAccess(filename, path.join(app.getPath('userData'), 'trellis-identities')); // NEW
+	await assertSharingFileAccess(filename, path.join(app.getPath('userData'), 'trellis-sharing')); // NEW
+	await assertSharingFileAccess(filename, path.join(app.getPath('userData'), 'garden-file-trash')); // NEW
+	const canonical = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value); // NEW
+	for (const service of [sharingService, ...identityTransports.values()].filter(Boolean)) { // NEW
+		if ((await service.listCanvases()).some(canvas => canonical(canvas.path) === canonical(filename))) throw new Error('Use the identity library actions to delete or restore this synchronized project.'); // NEW
+	} // NEW
+} // NEW
+/** Late editor saves cannot recreate files in a retired managed folder. */ // NEW
+async function assertProjectWriteAllowed(filename) { // NEW
+	if (typeof filename !== 'string') return; // NEW
+	if (projectRenamePaths.has(filename) && projectRenamePaths.get(filename) !== filename) throw new Error('This project file is being renamed. Retry the save after its filename updates.'); // NEW
+	const canonical = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value); // NEW
+	for (const service of [sharingService, ...identityTransports.values()].filter(Boolean)) { // NEW
+		if ((await service.listCanvases()).some(canvas => (canvas.retired || canvas.fenced) && canonical(canvas.path) === canonical(filename))) throw new Error('This project is retired. Restore it from Trash before saving or opening it.'); // NEW
+	} // NEW
+} // NEW
 /** Keep all drafts and transports intact while asking the existing unsaved-change questions. */ // NEW
 async function prepareWindowClose(win) { // NEW
 	try { // NEW
@@ -2578,7 +2662,7 @@ async function stopTrellisResources({ deadline }) { // NEW
 async function getSharingService() { // NEW: single service for all application windows.
 	assertTrellisRunning(); // NEW
 	if (!sharingService) {
-		sharingService = createSyncthingService({ userDataPath: app.getPath('userData'), documentsPath: app.getPath('documents'), privatePaths: [path.join(app.getPath('userData'), 'trellis-sharing'), path.join(app.getPath('userData'), 'trellis-identities')], binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onLifecycle: entry => log.info('Syncthing lifecycle:', entry.phase, entry.pids) }); // CHANGE // CHANGE: explicit asset import cannot copy identity credentials.
+		sharingService = createSyncthingService({ beforeProjectionRename: prepareProjectionRename, userDataPath: app.getPath('userData'), documentsPath: app.getPath('documents'), privatePaths: [path.join(app.getPath('userData'), 'trellis-sharing'), path.join(app.getPath('userData'), 'trellis-identities')], beforeStart: async () => { for (const identity of configuredIdentities) await gardenLibraryService?.fenceTransport(identity.id); }, binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onLifecycle: entry => log.info('Syncthing lifecycle:', entry.phase, entry.pids) }); // CHANGE // CHANGE: explicit asset import cannot copy identity credentials.
 		sharingService.onStatus(status => {
 			sharingEvents.emit('status'); maybeFinishBackground(); // CHANGE
 			for (const win of windowsRegistry) if (canNotifyWindow(win)) win.webContents.send('trellisShareStatus', sharingService.listStatus(win.webContents.id)); // CHANGE: exclude each window's current actor from its count.
@@ -2604,7 +2688,7 @@ async function getIdentityService() { // NEW
 			transportFactory: async (identityId, profileRoot) => {
 				assertTrellisRunning(); // NEW
 				if (!identityTransports.has(identityId)) {
-					const service = createSyncthingService({ userDataPath: profileRoot, profilePath: path.join(profileRoot, 'transport'), privatePaths: [root, path.join(app.getPath('userData'), 'trellis-sharing')], documentsPath: app.getPath('documents'), canvasesRoot: path.join(app.getPath('documents'), 'Trellis', 'Garden Library', identityId), binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onLifecycle: entry => log.info('Syncthing lifecycle:', entry.phase, entry.pids) }); // CHANGE // CHANGE
+					const service = createSyncthingService({ beforeProjectionRename: prepareProjectionRename, userDataPath: profileRoot, profilePath: path.join(profileRoot, 'transport'), privatePaths: [root, path.join(app.getPath('userData'), 'trellis-sharing')], beforeStart: () => gardenLibraryService?.fenceTransport(identityId), documentsPath: app.getPath('documents'), canvasesRoot: path.join(app.getPath('documents'), 'Trellis', 'Garden Library', identityId), binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onLifecycle: entry => log.info('Syncthing lifecycle:', entry.phase, entry.pids) }); // CHANGE // CHANGE
 					service.onStatus(() => { sharingEvents.emit('status'); maybeFinishBackground(); for (const win of windowsRegistry) if (canNotifyWindow(win)) { win.webContents.send('trellisIdentityStatus', { session: identityService.session() }); win.webContents.send('trellisShareStatus', service.listStatus(win.webContents.id)); } }); // CHANGE: managed gardens reuse existing sharing status and conflict UI.
 					identityTransports.set(identityId, service);
 				}
@@ -2618,6 +2702,8 @@ async function getIdentityService() { // NEW
 		});
 		gardenLibraryService = createGardenLibraryService({ // CHANGE
 			identities: identityService, legacyService: getSharingService, // NEW
+			getTrashRoot: () => path.join(app.getPath('userData'), 'garden-file-trash'), beforeRetire: prepareProjectRetirement, // NEW
+			validateStandalonePath: assertStandaloneProject, // NEW
 			getLocalFolder: () => store?.get('trellis.localGardenProjectsFolder') || path.join(app.getPath('documents'), 'Trellis', 'Local Garden Projects'), // NEW
 			setLocalFolder: folder => { if (!store) throw new Error('Local folder settings could not be saved.'); store.set('trellis.localGardenProjectsFolder', folder); }, // NEW
 			validateLocalPath: filename => assertSharingFileAccess(filename, path.join(app.getPath('userData'), 'trellis-identities')), // NEW
@@ -2693,14 +2779,20 @@ app.on('before-quit', event => { // CHANGE: approve every document before stoppi
 	event.preventDefault(); void lifecycle.requestQuit('explicit quit'); // CHANGE
 }); // CHANGE
 
-function openTrellisEmailDraft(args) {
+async function openTrellisEmailDraft(args) { // CHANGE: await the email-specific handoff without changing other external links.
 	const source = args || {};
 	const to = String(source.to || '').trim();
 	const subject = String(source.subject || 'Trellis garden canvas invite');
 	const body = String(source.body || '');
 	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { ok: false, reason: 'A valid recipient email is required.' };
 	const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
-	return openExternal(url) ? { ok: true } : { ok: false, reason: 'Email draft could not be opened.' };
+	if (process.platform === 'win32' && url.length > 2081) return { ok: false, reason: 'This invitation is too long for a Windows email link. Use Copy Invitation and paste it into a new email.' }; // NEW
+	try { // NEW
+		await shell.openExternal(url); // NEW: a successful handoff cannot confirm that a compose window appeared.
+		return { ok: true }; // NEW
+	} catch (_) { // NEW
+		return { ok: false, reason: 'Your mail app could not be opened. Check your default email app, see Email didn’t open?, or use Copy Invitation.' }; // NEW
+	} // NEW
 }
 
 async function getTrellisReleases() {
@@ -2751,6 +2843,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 		for (const filename of paths) { await assertSharingFileAccess(filename, profile); await assertSharingFileAccess(filename, path.join(app.getPath('userData'), 'trellis-identities')); } // CHANGE: generic IPC cannot read pairing or identity credentials.
 
 		assertTrellisRunning(); // NEW: path validation may have overlapped committed Quit.
+		if (['saveFile', 'writeFile', 'saveDraft', 'watchFile'].includes(args.action)) await assertProjectWriteAllowed(args.path || args.fileObject?.path); // NEW
 		switch (args.action) {
 			case 'saveFile':
 				ret = await saveFile(args.fileObject, args.data, args.origStat, args.overwrite, args.defEnc);
@@ -2878,7 +2971,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 					if (!payload.path || path.resolve(payload.path) !== path.resolve(sharingWindowPaths.get(event.sender.id) || '')) throw new Error('Import the currently opened, saved diagram.');
 					await assertSharingFileAccess(payload.path, path.join(app.getPath('userData'), 'trellis-identities'));
 				}
-				if (!['list', 'create', 'completeStarter', 'importCurrent', 'rename', 'duplicate', 'download', 'setOffline', 'removeLocal', 'listLocal', 'cities', 'getReferenceCity', 'setReferenceCity'].includes(args.method)) throw new Error('Unsupported Garden library operation.'); // CHANGE
+				if (!['list', 'create', 'completeStarter', 'importCurrent', 'rename', 'setSuffix', 'duplicate', 'download', 'setOffline', 'removeLocal', 'listLocal', 'cities', 'getReferenceCity', 'setReferenceCity', 'actions', 'trash', 'restore', 'purge', 'leave', 'listTrash'].includes(args.method)) throw new Error('Unsupported Garden library operation.'); // CHANGE
 				ret = await gardenLibraryService[args.method](payload);
 				break;
 			}
@@ -2889,7 +2982,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				ret = await fieldService[args.method](payload); break;
 			}
 			case 'openTrellisEmailDraft':
-				ret = openTrellisEmailDraft(args);
+				ret = await openTrellisEmailDraft(args); // CHANGE: report rejected launches through the existing IPC result.
 				break;
 			case 'getTrellisSplashBackground':
 				ret = await getTrellisSplashBackground();

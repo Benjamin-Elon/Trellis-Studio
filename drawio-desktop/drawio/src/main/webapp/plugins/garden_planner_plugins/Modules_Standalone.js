@@ -2827,7 +2827,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function selectedCellsForRemove(cells) { // NEW
-        if (cells && cells.length) return Array.from(cells).filter(Boolean); // NEW
+        if (cells != null) return Array.from(cells).filter(Boolean); // CHANGE: an explicit empty cleanup list must not fall back to the selection.
         return graph.getSelectionCells ? graph.getSelectionCells().filter(Boolean) : []; // NEW
     } // NEW
 
@@ -3068,6 +3068,7 @@ Draw.loadPlugin(function (ui) {
             overlay.appendChild(makeOverlayButton("Add Roadmap Module", "roadmap", "Create a roadmap module for project timelines.")); // NEW
             const host = ensureOverlayHost();
             if (host) host.appendChild(overlay);
+            graph.__trellisOverlayVisibility?.mark(overlay); // NEW: informational overlays must not obstruct manipulation.
             return overlay;
         }
 
@@ -3476,6 +3477,7 @@ Draw.loadPlugin(function (ui) {
             overlay.appendChild(marginsButton); // NEW
             const host = ensureOverlayHost();
             if (host) host.appendChild(overlay);
+            graph.__trellisOverlayVisibility?.mark(overlay); // NEW: informational overlays must not obstruct manipulation.
             return overlay;
         }
 

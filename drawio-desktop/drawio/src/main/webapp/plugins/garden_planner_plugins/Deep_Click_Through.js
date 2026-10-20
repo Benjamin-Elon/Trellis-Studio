@@ -17,11 +17,17 @@ Draw.loadPlugin(function (ui) {
     const workspaceCalloutSeenByType = { module: false, lane: false };
     let workspaceHoveredCell = null;
     let workspaceDraggingHandleCell = null;
+    let cancelWorkspaceHandleDrag = null; // NEW
     let workspaceHandleRefreshThread = null;
     let workspaceCalloutDiv = null;
     let workspaceCursorOverrideActive = false;
     let workspaceCursorPreviousValue = '';
     const workspaceHandleEntries = new Map();
+    const destroyGraph = graph.destroy; // NEW
+    if (typeof destroyGraph === 'function') graph.destroy = function () { // NEW: native mxGraph destruction does not publish a graph event.
+        if (cancelWorkspaceHandleDrag) cancelWorkspaceHandleDrag(); // NEW
+        return destroyGraph.apply(this, arguments); // NEW
+    }; // NEW
 
     graph.selectParentAfterCollapse = false;
     graph.cellsSelectable = true;
@@ -809,6 +815,7 @@ Draw.loadPlugin(function (ui) {
             let entry = workspaceHandleEntries.get(id);
             if (!entry) {
                 entry = { cell: cell, handle: createWorkspaceHandle(cell) };
+                graph.__trellisOverlayVisibility?.mark(entry.handle); // NEW: informational overlays must not obstruct manipulation.
                 workspaceHandleEntries.set(id, entry);
             }
             if (entry.handle.parentNode !== host) host.appendChild(entry.handle);
@@ -822,6 +829,9 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
+    graph.addListener && graph.addListener('trellisOverlayVisibilityChanged', function (_sender, event) { // NEW
+        if (!event.getProperty('suppressed')) refreshWorkspaceHandles(); // NEW: reveal handles at their committed positions.
+    }); // NEW
     function scheduleWorkspaceHandleRefresh() {
         if (workspaceHandleRefreshThread) return;
         workspaceHandleRefreshThread = window.setTimeout(refreshWorkspaceHandles, 0);
@@ -892,6 +902,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function beginWorkspaceHandleDrag(cell, evt) {
+        if (cancelWorkspaceHandleDrag) cancelWorkspaceHandleDrag(); // NEW: detach an incomplete earlier document gesture.
         consumeWorkspaceHandleDragEvent(evt); // NEW
         if (!cell || !graph.isCellMovable(cell)) return; // CHANGE
         const dragCells = getWorkspaceHandleDragCells(cell);
@@ -922,22 +933,33 @@ Draw.loadPlugin(function (ui) {
                     consumeWorkspaceHandleDragEvent(moveEvt); // NEW
                 } // NEW
             };
-            const up = function (upEvt) {
+            let finished = false; // NEW
+            function finishHandleDrag(evt, cancelled) { // NEW
+                if (finished) return; finished = true; // NEW: cancellation and release may both end one gesture.
                 try {
-                    handler.mouseUp(graph, createWorkspaceMouseEvent(upEvt, cell));
+                    if (cancelled) handler.reset(); // NEW: cancellation must not commit a move.
+                    else handler.mouseUp(graph, createWorkspaceMouseEvent(evt, cell)); // CHANGE
                 } finally {
                     graph.isMouseDown = oldMouseDown;
+                    cancelWorkspaceHandleDrag = null; // NEW
                     workspaceDraggingHandleCell = null;
                     handler.__trellisWorkspaceHandleDragCells = null;
                     graph.__trellisWorkspaceHandleDragActive = false; // NEW
                     handler.__trellisWorkspaceHandleDragActive = false; // NEW
                     mxEvent.removeGestureListeners(document, null, move, up);
+                    window.removeEventListener('blur', cancel); window.removeEventListener('pointercancel', cancel); window.removeEventListener('touchcancel', cancel); // NEW
+                    if (graph.removeListener) graph.removeListener(cancel); // NEW
                     finishIrrigationWorkspaceHandleSuppression(irrigationSuppressionApi); // CHANGE
-                    consumeWorkspaceHandleDragEvent(upEvt); // NEW
+                    consumeWorkspaceHandleDragEvent(evt); // CHANGE
                     scheduleWorkspaceHandleRefresh();
                 }
-            };
+            } // NEW
+            const up = function (evt) { finishHandleDrag(evt, false); }; // CHANGE
+            const cancel = function () { finishHandleDrag(null, true); }; // NEW
+            cancelWorkspaceHandleDrag = cancel; // NEW
             mxEvent.addGestureListeners(document, null, move, up);
+            window.addEventListener('blur', cancel); window.addEventListener('pointercancel', cancel); window.addEventListener('touchcancel', cancel); // NEW
+            if (graph.addListener) { graph.addListener(mxEvent.ESCAPE, cancel); graph.addListener(mxEvent.DESTROY, cancel); } // NEW
         }
         scheduleWorkspaceHandleRefresh();
     }
@@ -992,6 +1014,7 @@ Draw.loadPlugin(function (ui) {
         div.style.top = Math.round(pt.y + 8) + 'px';
         host.appendChild(div);
         workspaceCalloutDiv = div;
+        graph.__trellisOverlayVisibility?.mark(div); // NEW: informational overlays must not obstruct manipulation.
         window.setTimeout(function () {
             if (div.parentNode) div.parentNode.removeChild(div);
             if (workspaceCalloutDiv === div) workspaceCalloutDiv = null;

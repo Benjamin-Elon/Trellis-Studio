@@ -979,6 +979,7 @@ Draw.loadPlugin(function (ui) {
                 applyLinkOverlayBadgeStyle(txt, entry.color);
                 txt.dialect = graph.dialect;
                 txt.init(pane);
+                graph.__trellisOverlayVisibility?.mark(txt.node); // NEW: informational overlays must not obstruct manipulation.
                 txt.redraw();
                 applyLinkOverlayBadgeStyle(txt, entry.color);
 
@@ -1037,6 +1038,7 @@ Draw.loadPlugin(function (ui) {
                 const poly = new mxPolyline(pts, stroke, STANDARD_LINK_OVERLAY_STROKE_WIDTH); // CHANGE: halve ordinary standard connector width.
                 poly.dialect = graph.dialect;
                 poly.init(pane);
+                graph.__trellisOverlayVisibility?.mark(poly.node); // NEW: informational overlays must not obstruct manipulation.
                 poly.redraw();
 
                 if (poly.node) {

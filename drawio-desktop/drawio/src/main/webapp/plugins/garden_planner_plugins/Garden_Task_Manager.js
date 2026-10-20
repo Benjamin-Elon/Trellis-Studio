@@ -5090,6 +5090,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         if (!host || !document || !document.createElement) return;
         const overlay = document.createElement('div');
         overlay.className = 'trellis-task-unseen-created-highlight';
+        graph.__trellisOverlayVisibility?.mark(overlay); // NEW: informational overlays must not obstruct manipulation.
         overlay.style.cssText = 'position:absolute;box-sizing:border-box;border:4px solid #FACC15;border-radius:6px;pointer-events:none;background:transparent;z-index:' + GRAPH_OVERLAY_Z.ANNOTATION + ';';
         host.appendChild(overlay);
         if (!positionUnseenHighlightOverlay(card, overlay)) { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); return; }
@@ -6070,6 +6071,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (!host) {
                 host = document.createElement('div');
                 host.className = 'trellis-task-control-layer';
+                graph.__trellisOverlayVisibility?.mark(host); // NEW: informational overlays must not obstruct manipulation.
                 host.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:' + GRAPH_OVERLAY_Z.CONTROL + ';';
                 baseHost.appendChild(host);
                 graph.__trellisTaskControlLayer = host;
@@ -6229,6 +6231,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     }
 
     function registerTaskOverlayGestureElement(element) {
+        graph.__trellisOverlayVisibility?.mark(element); // NEW: also cover non-HTML host fallbacks.
         if (!element || taskOverlayGestureElements.indexOf(element) >= 0) return;
         taskOverlayGestureElements.push(element);
     }
@@ -6266,6 +6269,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     }
 
     function beginTaskOverlayGesture() {
+        if (graph.__trellisOverlayVisibility) return; // NEW: shared manipulation state leaves clicks and panning unchanged.
         if (taskOverlayGestureActive) return;
         taskOverlayGestureActive = true;
         hideTaskOverlayGestureElements();
@@ -6278,6 +6282,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     }
 
     function installTaskOverlayGestureGate() {
+        graph.addListener && graph.addListener('trellisOverlayVisibilityChanged', function (_sender, event) { // NEW
+            if (!event.getProperty('suppressed')) Array.from(taskOverlayGestureRefreshers).forEach(refresh => refresh()); // NEW: measure and reconcile before paint.
+        }); // NEW
         if (graph.__trellisTaskOverlayGestureGateInstalled) return;
         graph.__trellisTaskOverlayGestureGateInstalled = true;
         if (graph.addMouseListener) {

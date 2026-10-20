@@ -2535,7 +2535,7 @@ App.prototype.updateDocumentTitle = function()
 	
 	if (file != null)
 	{
-		var filename = (file.getTitle() != null) ? file.getTitle() : this.defaultFilename;
+		var filename = file.__trellisDisplayName ? file.__trellisDisplayName + '.drawio' : (file.getTitle() != null) ? file.getTitle() : this.defaultFilename; // CHANGE: display text stays independent of the portable filename.
 		title = filename + ' - ' + title;
 	}
 	
@@ -7127,7 +7127,7 @@ App.prototype.descriptorChanged = function()
 		if (this.fname != null)
 		{
 			this.fname.innerText = '';
-			var filename = (file.getTitle() != null) ? file.getTitle() : this.defaultFilename;
+			var filename = file.__trellisDisplayName ? file.__trellisDisplayName + '.drawio' : (file.getTitle() != null) ? file.getTitle() : this.defaultFilename; // CHANGE: display text stays independent of the portable filename.
 			mxUtils.write(this.fname, filename);
 		}
 		

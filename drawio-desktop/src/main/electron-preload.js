@@ -225,10 +225,31 @@ contextBridge.exposeInMainWorld('trellisGardenLibrary', { // NEW
 	completeStarter: payload => identityRequest('trellisGardenLibrary', 'completeStarter', payload), // NEW
 	importCurrent: payload => identityRequest('trellisGardenLibrary', 'importCurrent', payload),
 	rename: payload => identityRequest('trellisGardenLibrary', 'rename', payload),
+	setSuffix: payload => identityRequest('trellisGardenLibrary', 'setSuffix', payload), // NEW
+	onNaming(listener) { // NEW
+		const receive = async (_event, payload) => { // NEW
+			try { const result = await listener(payload); if (payload.uniqueId) ipcRenderer.send('trellisProjectNaming-result', { ...result, uniqueId: payload.uniqueId }); } // NEW
+			catch (error) { if (payload.uniqueId) ipcRenderer.send('trellisProjectNaming-result', { uniqueId: payload.uniqueId, error: error.message }); } // NEW
+		}; // NEW
+		ipcRenderer.on('trellisProjectNaming', receive); return () => ipcRenderer.removeListener('trellisProjectNaming', receive); // NEW
+	}, // NEW
 	duplicate: payload => identityRequest('trellisGardenLibrary', 'duplicate', payload),
 	download: payload => identityRequest('trellisGardenLibrary', 'download', payload),
 	setOffline: payload => identityRequest('trellisGardenLibrary', 'setOffline', payload),
 	removeLocal: payload => identityRequest('trellisGardenLibrary', 'removeLocal', payload), // CHANGE
+	actions: payload => identityRequest('trellisGardenLibrary', 'actions', payload), // NEW
+	trash: payload => identityRequest('trellisGardenLibrary', 'trash', payload), // NEW
+	restore: payload => identityRequest('trellisGardenLibrary', 'restore', payload), // NEW
+	purge: payload => identityRequest('trellisGardenLibrary', 'purge', payload), // NEW
+	leave: payload => identityRequest('trellisGardenLibrary', 'leave', payload), // NEW
+	listTrash: () => identityRequest('trellisGardenLibrary', 'listTrash'), // NEW
+	onRetiring(listener) { // NEW
+		const receive = async (_event, payload) => { // NEW
+			try { ipcRenderer.send('trellisProjectRetiring-result', { ...await listener(payload), uniqueId: payload.uniqueId }); } // NEW
+			catch (error) { ipcRenderer.send('trellisProjectRetiring-result', { uniqueId: payload.uniqueId, error: error.message }); } // NEW
+		}; // NEW
+		ipcRenderer.on('trellisProjectRetiring', receive); return () => ipcRenderer.removeListener('trellisProjectRetiring', receive); // NEW
+	}, // NEW
 	listLocal: () => identityRequest('trellisGardenLibrary', 'listLocal'), // NEW
 	selectLocalFolder: () => identityRequest('trellisGardenLibrary', 'selectLocalFolder'), // NEW
 	cities: () => identityRequest('trellisGardenLibrary', 'cities'), // NEW

@@ -190,6 +190,7 @@ integrity failures, tray dispatch, and persistent AppImage startup commands with
 altering local login settings. Service tests cover bounded crash retries and Quit
 while startup requests are still pending.
 
-Git controls, automatic coordinator takeover, planned coordinator transfer, mobile
-clients, and historical backfill remain intentionally deferred. Object co-editing
+Git controls, automatic coordinator takeover, mobile clients, and historical backfill
+remain intentionally deferred. Planned coordinator transfer is supported by the
+authenticated project-departure flow described in garden-projects-library.md. <!-- CHANGE --> Object co-editing
 is available for upgraded shares through the v2 protocol described above. <!-- CHANGE -->

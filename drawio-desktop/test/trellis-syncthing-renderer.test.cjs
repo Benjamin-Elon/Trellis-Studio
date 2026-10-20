@@ -61,9 +61,33 @@ function harness(t, options = {}) {
     window.electron = { request(args, resolve) { resolve({ mtimeMs: 2 }); } };
     window.fsBridge = { readText: filename => read(filename) };
     vm.runInNewContext(fs.readFileSync(plugin, 'utf8'), { window, document: window.document, Draw: { loadPlugin: callback => callback(ui) }, URL, TextEncoder, setTimeout, clearTimeout, console, Promise, Set, Map }, { filename: plugin });
-    return { window, calls, current, graph, ui, bridge, history, actions, state, sharing: window.Trellis.sharing, setXml(value) { xml = value; }, setRead(callback) { read = callback; }, originalSaves: () => originalSaves, fireStatus: () => statusListener([state]) }; // CHANGE: expose injected history for asynchronous arrival tests.
+    return { window, calls, current, graph, ui, bridge, history, actions, state, editorListeners, sharing: window.Trellis.sharing, setXml(value) { xml = value; }, setRead(callback) { read = callback; }, originalSaves: () => originalSaves, fireStatus: () => statusListener([state]) }; // CHANGE: expose injected history for asynchronous arrival tests.
 }
 
+test('v2 first save uses the signed snapshot rather than an editor-normalized initial document', async t => { // NEW
+    const h = harness(t, { collaboration: true }); // NEW
+    h.bridge.collaborationAction = async input => { h.calls.push({ collaboration: input }); return { ok: true, xml: input.kind === 'get' ? 'signed initial snapshot' : input.xml, collaboration: { sessionId: 'local', holds: [], presence: [], reservations: [] } }; }; // NEW
+    await settle(); h.setXml('normalized editor draft'); h.current.modified = true; // NEW
+    await new Promise((resolve, reject) => h.current.save(false, resolve, reject)); // NEW
+    assert.equal(h.calls.find(call => call.collaboration?.kind === 'save').collaboration.baseXml, 'signed initial snapshot'); // NEW
+}); // NEW
+test('collaborative save completion emits the native notification after the filename save gate opens', async t => { // NEW
+    const h = harness(t, { collaboration: true }); await settle(); // NEW
+    let notified = 0; h.current.contentChanged = () => { assert.equal(h.current.__trellisCollaborativeSaving, false); assert.equal(h.current.data, 'saved draft'); notified++; }; // NEW
+    h.setXml('saved draft'); h.current.modified = true; await new Promise((resolve, reject) => h.current.save(false, resolve, reject)); // NEW
+    assert.equal(notified, 1); // NEW
+}); // NEW
+test('a delayed previous-project refresh cannot initialize the newly opened project with old sharing context', async t => { // NEW
+    const h = harness(t, { collaboration: true }); await settle(); // NEW
+    let completeOld; const oldInfo = h.sharing.getInfo(); h.bridge.getSyncthingShareInfo = () => new Promise(resolve => { completeOld = resolve; }); // NEW
+    const pending = h.sharing.refresh(); await settle(); assert.equal(typeof completeOld, 'function'); // NEW
+    const next = { ...h.current, data: 'next saved XML', fileObject: { path: 'C:/shared/Next.drawio', name: 'Next.drawio' } }; delete next.__trellisSharingHooks; // NEW
+    h.ui.getCurrentFile = () => next; h.history.getDiagramId = () => 'next-diagram'; // NEW
+    const nextInfo = { ...oldInfo, diagramId: 'next-diagram', shareId: 'next-share', diagramPath: next.fileObject.path }; // NEW
+    h.bridge.getStatus = async () => ({ canvases: [{ ...h.state, ...nextInfo }] }); h.bridge.getSyncthingShareInfo = async () => nextInfo; // NEW
+    h.editorListeners.get('fileLoaded')(); completeOld(oldInfo); await pending; await settle(); await h.sharing.refresh(); // NEW
+    assert.equal(h.sharing.getInfo().diagramId, 'next-diagram'); assert.equal(h.sharing.getInfo().diagramPath, next.fileObject.path); // NEW
+}); // NEW
 test('clean remote replacement is trusted synchronization and revalidates the current session', async t => {
     const h = harness(t);
     await settle();

@@ -2,7 +2,8 @@
  * Trellis plugin: Garden Dashboard (Garden-Module Viewport Toolbar)
  *
  * Features:
- * - Floating garden-relative toolbar appears when a garden module or descendant is selected
+ * - Viewport toolbar uses the sole garden by default, or resolves a garden from selection // CHANGE
+ * - Garden picker searches words across garden names and cities while retaining city groups // NEW
  * - Dashboard table is an expandable viewport overlay section, collapsed by default
  * - Prev/Next year buttons + current year label are stored on the garden module
  * - Metrics are computed from tiler groups under that module
@@ -1066,6 +1067,7 @@ Draw.loadPlugin(function (ui) {
 
     function resolveDashboardToolbarContext() {
         const allGardens = sortGardensForPicker(collectGardenModules());
+        if (allGardens.length === 1) return { moduleCell: allGardens[0], candidates: allGardens, allGardens, reason: "sole" }; // NEW: the current page's only garden needs no selection.
         const selected = selectedCellsForDashboard();
         if (!selected.length) return { moduleCell: null, candidates: allGardens, allGardens, reason: "none" };
 
@@ -1208,11 +1210,12 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
-    function getActiveWorkspaceForSelection() {
+    function getActiveWorkspaceForSelection(moduleCell) { // CHANGE: workspace state belongs to the active garden.
         const selected = selectedCellsForDashboard();
         if (!selected.length) return null;
         const workspaces = new Set();
         selected.forEach(function (cell) {
+            if (!resolvedGardenCandidatesForCell(cell).includes(moduleCell)) return; // NEW: unrelated companions cannot disable the default garden's tools.
             const workspace = getSelectedWorkspaceForCell(cell);
             if (workspace) workspaces.add(workspace);
         });
@@ -1376,9 +1379,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     function groupedGardensForPicker(gardens, searchText) {
-        const query = String(searchText || "").trim().toLocaleLowerCase();
+        const words = String(searchText || "").trim().toLocaleLowerCase().split(/\s+/).filter(Boolean); // CHANGE: every search word may match either field, in any order.
         const visible = sortGardensForPicker(gardens).filter(function (garden) {
-            return !query || gardenLabel(garden).toLocaleLowerCase().indexOf(query) >= 0;
+            const name = gardenLabel(garden).toLocaleLowerCase(); // NEW
+            const city = gardenCity(garden).toLocaleLowerCase(); // NEW: reuse city-name/city-ID fallback without matching the display-only "No city" label.
+            return words.every(function (word) { return name.includes(word) || city.includes(word); }); // CHANGE
         });
         const byCity = new Map();
         for (const garden of visible) {
@@ -1415,8 +1420,8 @@ Draw.loadPlugin(function (ui) {
         const search = document.createElement("input");
         search.type = "search";
         search.className = "trellis-garden-dashboard-garden-search";
-        search.placeholder = "Search gardens";
-        search.setAttribute("aria-label", "Search gardens");
+        search.placeholder = "Search gardens or cities"; // CHANGE
+        search.setAttribute("aria-label", "Search gardens or cities"); // CHANGE
         search.value = gardenPickerSearchText;
         search.style.cssText = "box-sizing:border-box;width:100%;height:26px;margin-bottom:6px;padding:4px 6px;border:1px solid #9ca3af;border-radius:4px;font:12px Arial,sans-serif;";
         search.addEventListener("input", function () {
@@ -1847,17 +1852,14 @@ Draw.loadPlugin(function (ui) {
         const cancel = createToolbarButton("Cancel", "Close share dialog", "close"); // CHANGE: share cancellation uses the red outline.
         const send = createToolbarButton("Create Email", "Create invite and open an email draft", "open");
         cancel.addEventListener("click", function () { closeShareDialog(overlay); });
-        send.addEventListener("click", async function () { // CHANGE: persist the invite before publishing its setup block.
+        send.addEventListener("click", function () { // CHANGE: hand the saved invite to the shared, retained delivery view.
+            if (send.disabled) return; // NEW
+            send.disabled = true; // NEW: prevent duplicate invitation creation.
             const result = users.createPendingInvite({ email: email.value, scopeCellIds: scopes.map(function (scope) { return scope.id; }), preset: preset.value, capabilities: selectedInviteCapabilities(), shareInfo });
-            if (!result.ok) { status.textContent = result.reason; return; }
-            const bridge = window.trellisShare;
-            const sharing = window.Trellis && window.Trellis.sharing; // NEW
-            let draft = result.emailDraft; // NEW
-            try { if (sharing) draft = await sharing.prepareInvite(result); } catch (err) { status.textContent = err.message; return; } // NEW
-            bridge.openEmailDraft(draft).then(function (draftResult) {
-                if (!draftResult || draftResult.ok === false) { status.textContent = (draftResult && draftResult.reason) || "Email draft could not be opened."; return; }
-                closeShareDialog(overlay);
-            }).catch(function (err) { status.textContent = err && err.message ? err.message : String(err); });
+            if (!result.ok) { status.textContent = result.reason; send.disabled = false; return; } // CHANGE
+            const delivery = users.openInviteDelivery(result); // NEW: preparation and retries keep this invite's original code.
+            if (delivery.ok) closeShareDialog(overlay); // NEW: the delivery view remains open until explicitly dismissed.
+            else status.textContent = delivery.reason; // NEW: the saved invite remains pending if delivery UI is unavailable.
         });
         buttons.appendChild(cancel);
         buttons.appendChild(send);
@@ -2241,7 +2243,7 @@ Draw.loadPlugin(function (ui) {
         entry.gardenPickerWrap.style.display = "none";
         entry.createGardenBtn.style.display = "none";
         const year = getToolbarYear(moduleCell);
-        const activeWorkspace = getActiveWorkspaceForSelection() || "garden"; // NEW
+        const activeWorkspace = getActiveWorkspaceForSelection(moduleCell) || "garden"; // CHANGE: only this garden's selected companions determine its workspace.
         const gardenToolsDisabled = activeWorkspace === "tasks" || activeWorkspace === "team" || activeWorkspace === "roadmap"; // CHANGE
         const growth = graph.__trellisPlantingGroup?.growth; // NEW
         entry.harvestSizeInput.checked = growth?.getShowHarvestSize(moduleCell) === true; // NEW

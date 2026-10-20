@@ -20,7 +20,7 @@ async function run() { // NEW
             if (process.platform === 'win32') execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {}); // NEW
             else child.kill('SIGKILL'); // NEW
         }, 16000); // NEW
-    }, process.env.TRELLIS_PHYSICAL_ANDROID_TEST === '1' ? 1830000 : process.env.TRELLIS_TEST_DEBUG === '1' ? 330000 : 140000); // CHANGE: preserve the existing thirty-minute physical-test session.
+    }, process.env.TRELLIS_PHYSICAL_ANDROID_TEST === '1' ? 1830000 : process.env.TRELLIS_TEST_DEBUG === '1' ? 330000 : process.env.TRELLIS_GARDEN_PROJECTS_TEST === '1' ? 220000 : 140000); // CHANGE: keep the parent bound beyond the extended project regression suite's cleanup deadline.
     try { // NEW
         process.exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve(signal ? 1 : code ?? 1)); }); // NEW
     } finally { clearTimeout(timeout); clearTimeout(force); await fs.rm(directory, { recursive: true, force: true }); } // NEW

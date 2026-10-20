@@ -15,6 +15,17 @@ module.exports = function harness(t, options = {}) { // CHANGE
     const ui = { editor, isSelectionAllowed: options.isSelectionAllowed || w.EditorUi.prototype.isSelectionAllowed, actions: { get: () => null }, menus: { get: () => null }, currentPage: { getId: () => 'page-a' }, getFileData: () => w.mxUtils.getXml(new w.mxCodec().encode(graph.model)) }; // CHANGE: exercise the host selection hook rather than omitting it.
     const policy = { currentUser: 'user-a', editable: true, enabled: true, owner: 'owner', admin: false, diagram: 'diagram-a', isEnabled() { return this.enabled; }, getCurrentUser() { return this.currentUser ? { id: this.currentUser, name: this.currentUser, admin: this.admin } : null; }, getAccessSummary() { return { ownerUserId: this.owner }; }, getDiagramKey() { return this.diagram; }, canEditCell() { return this.editable; } }; // CHANGE
     w.Trellis = { users: policy }; w.Draw = { loadPlugin: fn => fn(ui) }; // NEW
+    const resizeObservers = []; // NEW
+    if (options.observePanelResizes) w.ResizeObserver = class { // NEW: explicitly deliver notifications, including callbacks queued before disconnect.
+        constructor(callback) { this.callback = callback; resizeObservers.push(this); } // NEW
+        observe(node) { this.node = node; } // NEW
+        disconnect() { this.disconnected = true; } // NEW
+        emit(entries = []) { this.callback(entries, this); } // NEW
+    }; // NEW
+    if (options.overlayVisibility) { // NEW: exercise the production controller without changing the fixture's toolbar or menus.
+        const cleanup = fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8'); // NEW
+        w.eval(cleanup.slice(0, cleanup.indexOf('\nDraw.loadPlugin'))); w.Trellis.ui.installOverlayVisibility(graph); // NEW
+    } // NEW
     for (const name of ['Trellis_Context_Menu.js', 'Trellis_Details_Core.js', 'Trellis_Details_Toolbar.js', 'Trellis_Details_Comments.js', 'Trellis_Object_Details.js']) w.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins', name), 'utf8')); // CHANGE
     const controller = graph.__trellisObjectDetails; // NEW
     t.after(() => { controller.destroy(); graph.destroy(); dom.window.close(); }); // NEW
@@ -26,5 +37,5 @@ module.exports = function harness(t, options = {}) { // CHANGE
     const tick = () => new Promise(resolve => w.setTimeout(resolve, 15)); // NEW
     const input = cell => [...w.document.querySelectorAll('.trellis-object-details')].find(node => node.dataset.collaborationObjectId === cell.id && node.style.display !== 'none')?.querySelector('.trellis-object-details-editor'); // NEW
     function type(cell, html) { const node = input(cell); node.innerHTML = html; node.dispatchEvent(new w.InputEvent('input', { bubbles: true, inputType: 'insertText', data: node.textContent })); return node; } // NEW
-    return { w, graph, ui, undo, policy, controller, vertex, tick, input, type, core: w.TrellisDetailsCore }; // NEW
+    return { w, graph, ui, undo, policy, controller, vertex, tick, input, type, resizeObservers, core: w.TrellisDetailsCore }; // CHANGE
 }; // NEW

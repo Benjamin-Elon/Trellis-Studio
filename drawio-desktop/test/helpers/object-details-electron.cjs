@@ -11,8 +11,67 @@ const output = path.join(project, '.test-artifacts/object-details', String(proce
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); // NEW
 app.setPath('userData', fs.mkdtempSync(path.join(app.getPath('temp'), 'trellis-details-'))); // NEW
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms)); // NEW
-let stage = 'startup'; const watchdog = setTimeout(() => { console.error('Object details smoke stalled at ' + stage); app.exit(1); }, 60000); // CHANGE: allow the added native list, viewport and reopen scenarios while retaining the watchdog.
+let stage = 'startup'; const watchdog = setTimeout(() => { console.error('Object details smoke stalled at ' + stage); app.exit(1); }, 90000); // CHANGE: include real ResizeObserver delivery across the added manipulation scenarios.
 app.once('will-quit', () => clearTimeout(watchdog)); // NEW
+
+/** Exercise hidden ancestor layout with the real details observer, not a generic input panel. */ // NEW
+async function verifyManipulationSizing(win, evaluate, until) { // NEW
+    await evaluate(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Deep_Click_Through.js'), 'utf8') + '\n;void 0;'); // NEW
+    await evaluate(` // NEW
+        window.editable=true;window.user='alice';graph.stopEditing(true);graph.view.setScale(1);graph.view.setTranslate(0,0);graph.panGraph(0,0); // NEW
+        graph.container.scrollLeft=0;graph.container.scrollTop=0; // NEW
+        const value=mxUtils.createXmlDocument().createElement('object');value.setAttribute('label','Sizing regression');value.setAttribute('trellis_details_html','<p>Preserve extra-info content</p>'); // NEW
+        window.sizing=graph.insertVertex(null,'details-sizing',value,120,240,160,90,'html=1;whiteSpace=wrap;'); // NEW
+        graph.setSelectionCell(sizing);graph.__trellisObjectDetails.refresh(); // NEW
+        window.sizePanel=document.querySelector('[data-collaboration-object-id="details-sizing"]');window.sizeField=sizePanel.querySelector('.trellis-object-details-editor'); // NEW
+        sizePanel.querySelector('[data-side=right]').click(); // NEW
+        window.sizeFrames=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))); // NEW
+        window.sizeKey=Object.keys(localStorage).find(key=>key.startsWith('trellis.details.view.v1:')&&key.includes('details-sizing')); // NEW
+        window.sizeState=()=>({width:sizePanel.offsetWidth,height:sizePanel.offsetHeight,saved:localStorage.getItem(sizeKey),side:sizePanel.querySelector('[aria-pressed=true]').dataset.side,html:sizeField.innerHTML,same:sizePanel.querySelector('.trellis-object-details-editor')===sizeField}); // NEW
+        window.sizeMouse=(x,y)=>{const r=graph.container.getBoundingClientRect();return graph.updateMouseEvent(new mxMouseEvent(new MouseEvent('mousemove',{clientX:r.left+x,clientY:r.top+y,button:0}),graph.view.getState(sizing)));}; // NEW
+        void 0; // NEW
+    `); // NEW
+    await evaluate('sizeFrames()'); // NEW: settle selection-driven positioning before simulating the user's initial resize.
+    await evaluate('sizePanel.style.width="360px";sizePanel.style.height="220px";void 0;'); // NEW
+    await until('JSON.parse(localStorage.getItem(sizeKey)).width===360&&JSON.parse(localStorage.getItem(sizeKey)).height===220', 'sizing regression baseline'); // NEW
+    const expected = await evaluate('sizeState()'); // NEW
+    await evaluate(`window.sizeWrites=[];window.sizeSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key===sizeKey)sizeWrites.push(value);return sizeSetItem.call(this,key,value);};void 0;`); // NEW
+    async function checkGesture(label, begin, end) { // NEW
+        stage = 'extra-info size: ' + label; await begin(); // NEW
+        await until('graph.__trellisOverlayVisibility.isSuppressed()', label + ' suppression'); await evaluate('sizeFrames()'); // NEW
+        assert.equal(await evaluate('sizePanel.offsetWidth'), 0, label + ' actually hides the panel'); // NEW
+        assert.equal(await evaluate('localStorage.getItem(sizeKey)'), expected.saved, label + ' must not persist zero-sized layout'); // NEW
+        await end(); await evaluate('sizeFrames()'); // NEW
+        assert.equal(await evaluate('graph.__trellisOverlayVisibility.isSuppressed()'), false, label); // NEW
+        assert.deepEqual(await evaluate('sizeState()'), expected, label + ' preserves dimensions, side, content and editor identity'); // NEW
+        assert.equal(await evaluate('sizeWrites.length'), 0, label + ' does not rewrite size preferences'); // NEW
+    } // NEW
+    const run = source => () => evaluate(source + ';void 0;'); // NEW
+    const origin = await evaluate('(()=>{const s=graph.view.getState(sizing),r=graph.container.getBoundingClientRect();return {x:Math.round(r.left+s.x+40),y:Math.round(r.top+s.y+35)}})()'); // NEW
+    await checkGesture('native move', async () => { // NEW
+        win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...origin }); // NEW
+        win.webContents.sendInputEvent({ type: 'mouseMove', x: origin.x + 45, y: origin.y + 25 }); // NEW
+    }, async () => { win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: origin.x + 45, y: origin.y + 25 }); }); // NEW
+    const handleBegin = `const r=graph.container.getBoundingClientRect(),s=graph.view.getState(sizing);window.sizeHandleStart={x:r.left+s.x+20,y:r.top+s.y+20};graph.__trellisWorkspaceDragPolicy.beginHandleDragForTests(sizing,new MouseEvent('mousedown',{clientX:sizeHandleStart.x,clientY:sizeHandleStart.y,button:0}));document.dispatchEvent(new PointerEvent(mxClient.IS_POINTER?'pointermove':'mousemove',{clientX:sizeHandleStart.x+40,clientY:sizeHandleStart.y+30,pointerType:'mouse',bubbles:true}));`; // NEW
+    await checkGesture('handle move', run(handleBegin), run(`document.dispatchEvent(new PointerEvent(mxClient.IS_POINTER?'pointerup':'mouseup',{clientX:sizeHandleStart.x+40,clientY:sizeHandleStart.y+30,pointerType:'mouse',bubbles:true}));`)); // NEW
+    for (const rotation of [false, true]) { // NEW
+        const begin = `const s=graph.view.getState(sizing);window.sizeVertex=new mxVertexHandler(s);sizeVertex.rotationEnabled=true;sizeVertex.start(s.x+s.width,s.y+s.height,${rotation ? 'mxEvent.ROTATION_HANDLE' : '7'});sizeVertex.mouseMove(graph,sizeMouse(s.x+s.width+30,s.y+s.height+25));`; // NEW
+        await checkGesture(rotation ? 'rotation' : 'resize', run(begin), run('const s=graph.view.getState(sizing);sizeVertex.mouseUp(graph,sizeMouse(s.x+s.width+30,s.y+s.height+25));sizeVertex.destroy()')); // NEW
+    } // NEW
+    const libraryBegin = `window.sizeSource=new mxDragSource(document.getElementById('normal-toolbar'),()=>{});sizeSource.createPreviewElement=()=>document.createElement('div');sizeSource.dragEnter(graph,new MouseEvent('mousemove'));sizeSource.currentGraph=graph;`; // NEW
+    await checkGesture('library exit', run(libraryBegin), run('sizeSource.dragExit(graph);sizeSource.currentGraph=null;sizeSource.reset()')); // NEW
+    await checkGesture('library drop', run(libraryBegin), run('sizeSource.currentPoint=new mxPoint(600,500);sizeSource.mouseUp(new MouseEvent("mouseup"))')); // NEW
+    for (const ending of ['escape', 'pointercancel', 'blur']) { // NEW
+        await checkGesture(ending, run(handleBegin), run(ending === 'escape' ? 'graph.escape()' : 'window.dispatchEvent(new Event("' + ending + '"))')); // NEW
+    } // NEW
+    await evaluate('Storage.prototype.setItem=sizeSetItem;sizePanel.style.width="420px";sizePanel.style.height="250px";void 0;'); // NEW
+    await until('JSON.parse(localStorage.getItem(sizeKey)).width===420&&JSON.parse(localStorage.getItem(sizeKey)).height===250', 'real resizing still persists after suppression'); // NEW
+    await evaluate('sizePanel.style.width="180px";sizePanel.style.height="100px";void 0;'); // NEW
+    await until('JSON.parse(localStorage.getItem(sizeKey)).width===180&&JSON.parse(localStorage.getItem(sizeKey)).height===100', 'intentional minimum panel dimensions'); // NEW
+    await evaluate('graph.clearSelection();graph.__trellisObjectDetails.refresh();graph.setSelectionCell(sizing);graph.__trellisObjectDetails.refresh();void 0;'); // NEW
+    assert.deepEqual(await evaluate('(()=>{const panel=document.querySelector("[data-collaboration-object-id=details-sizing]");return [panel.offsetWidth,panel.offsetHeight,panel.querySelector("[aria-pressed=true]").dataset.side]})()'), [180, 100, 'right']); // NEW
+    console.log('EXTRA_INFO_SIZE_PRESERVED: native/handle/resize/rotation/library/cancellation and subsequent user resizing'); // NEW
+} // NEW
 app.whenReady().then(async () => { // NEW
     const win = new BrowserWindow({ show: false, width: 1100, height: 850, webPreferences: { sandbox: false, backgroundThrottling: false } }); // NEW
     win.webContents.on('console-message', event => { if (event.level === 'error') console.error('Details renderer: ' + event.message); }); // NEW
@@ -73,6 +132,8 @@ app.whenReady().then(async () => { // NEW
             ui.showLinkDialog=(_value,_label,apply)=>{window.applyLink=apply;};ui.pickColor=(_value,apply)=>{window.applyColor=apply;}; // NEW
             void 0; // NEW
         `); // NEW
+        const visibilitySource = fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8'); // NEW
+        await evaluate(visibilitySource.slice(0, visibilitySource.indexOf('\nDraw.loadPlugin')) + '\n;Trellis.ui.installOverlayVisibility(graph);void 0;'); // NEW: production suppression without unrelated menu/toolbar cleanup.
         const editorUiSource = fs.readFileSync(path.join(webapp, 'js/grapheditor/EditorUi.js'), 'utf8'); // NEW
         let textEditing, hideToolbarElements; // CHANGE
         traverse(parse(editorUiSource), { VariableDeclarator({ node }) { if (node.id.name === 'textEditing') textEditing = editorUiSource.slice(node.init.start, node.init.end); if (node.id.name === 'hideToolbarElements') hideToolbarElements = editorUiSource.slice(node.init.start, node.init.end); } }); // CHANGE: exercise the production responsive toolbar rule.
@@ -85,6 +146,10 @@ app.whenReady().then(async () => { // NEW
         const loader = require('@babel/parser').parse(bootstrap).program.body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'mxscript'); // NEW
         await evaluate(bootstrap.slice(loader.start, loader.end) + ';mxscript("plugins/garden_planner_plugins/Trellis_Object_Details.js");void 0;'); // CHANGE: test production dependency loading instead of preloading helpers.
         await until('!!graph.__trellisObjectDetails && !!window.TrellisContextMenu?._getOrderedIdsForTests().includes("objectDetails")', 'details plugin and context menu dependencies'); // NEW
+        if (process.argv.includes('--size-regression-only')) { // NEW: exercise real observers independently of native PDF printing availability.
+            win.webContents.focus(); await verifyManipulationSizing(win, evaluate, until); // NEW
+            console.log('OBJECT_DETAILS_SIZE_RESULT:passed'); win.destroy(); app.exit(0); return; // NEW
+        } // NEW
         win.webContents.focus(); // NEW: a hidden test window must receive native focus before opening its field.
         await evaluate(` // NEW
             window.a=graph.insertVertex(null,'details-a','First object',220,110,220,90,'html=1;whiteSpace=wrap;rounded=1;'); // NEW
@@ -323,10 +388,33 @@ app.whenReady().then(async () => { // NEW
         stage = 'PDF renderer'; await exportWindow.webContents.executeJavaScript('window.exportGraph=render(' + JSON.stringify(options) + ');void 0;'); // NEW
         await until('!!document.getElementById("LoadingComplete")', 'PDF and print rendering', exportWindow); // NEW
         assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("FINAL EXPORT PARAGRAPH")'), true); // NEW
-        stage = 'native PDF printing'; const pdf = await exportWindow.webContents.printToPDF({ printBackground: true }); fs.writeFileSync(path.join(output, 'details.pdf'), pdf); // NEW
         assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("COMMENT EXCLUDED FROM EXPORT")'), false, 'PDF and print projections exclude comments'); // CHANGE
-        const parsed = await PDFDocument.load(pdf); assert.ok(parsed.getPageCount() >= 2); // NEW
         assert.equal(await evaluate('ui.getFileData()'), canonical, 'image and PDF export must never modify the live model'); // NEW
+        stage = 'badge states and native keyboard activation'; // CHANGE
+        await evaluate(` // CHANGE
+            graph.clearSelection();graph.useCssTransforms=false;graph.view.scaleAndTranslate(1,0,0);graph.view.revalidate(); // CHANGE
+            const posted=TrellisDetailsCore.parseComments(a.getAttribute('trellis_comments_json'))[0]; // CHANGE
+            const resolved={...posted,resolvedAt:Date.now(),resolvedByUserId:'alice',resolvedByName:'alice'}; // CHANGE
+            const cases=[['details','Details only',true,[]],['unresolved','Unresolved comments',false,[posted]],['both','Details + unresolved',true,[posted]],['resolved','Resolved comments',false,[resolved]],['empty','No extra content',false,[]]]; // CHANGE
+            cases.forEach(([id,label,hasDetails,comments],index)=>{const value=mxUtils.createXmlDocument().createElement('object');value.setAttribute('label',label);if(hasDetails)value.setAttribute('trellis_details_html','<p>Saved details</p>');if(comments.length)value.setAttribute('trellis_comments_json',JSON.stringify({version:1,comments}));graph.insertVertex(null,'badge-'+id,value,30+index*205,300,180,70,'html=1;whiteSpace=wrap;rounded=1;');}); // CHANGE
+            graph.__trellisObjectDetails.refresh();graph.container.scrollLeft=0;graph.container.scrollTop=0;window.scrollTo(0,0);void 0; // CHANGE
+        `); // CHANGE
+        const badgeStates = await evaluate(`['details','unresolved','both','resolved'].map(id=>{const badge=document.querySelector('[data-cell-id="badge-'+id+'"]'),center=badge.firstElementChild,bounds=badge.getBoundingClientRect(),inner=center.getBoundingClientRect();return {id,width:bounds.width,height:bounds.height,centerWidth:inner.width,outer:getComputedStyle(badge).backgroundColor,center:getComputedStyle(center).backgroundColor,inset:inner.left-bounds.left,label:badge.getAttribute('aria-label')};})`); // CHANGE
+        assert.deepEqual(badgeStates.map(item => [item.width, item.height, item.centerWidth, item.inset]), Array.from({ length: 4 }, () => [20, 20, 14, 3])); // CHANGE
+        assert.deepEqual(badgeStates.map(item => [item.outer, item.center]), [['rgb(30, 64, 175)', 'rgb(239, 246, 255)'], ['rgb(239, 246, 255)', 'rgb(250, 204, 21)'], ['rgb(30, 64, 175)', 'rgb(250, 204, 21)'], ['rgb(239, 246, 255)', 'rgb(239, 246, 255)']]); // CHANGE
+        assert.equal(await evaluate('!!document.querySelector("[data-cell-id=badge-empty]")'), false); // CHANGE
+        win.webContents.invalidate(); await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));'); // CHANGE
+        await screenshot('badge-states'); // CHANGE
+        win.webContents.focus(); win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' }); // CHANGE
+        await evaluate('document.querySelector("[data-cell-id=badge-both]").focus();void 0;'); // CHANGE
+        assert.equal(await evaluate('document.activeElement.matches("[data-cell-id=badge-both]:focus-visible")'), true, 'the native keyboard focus indicator remains available'); // CHANGE
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' }); // CHANGE
+        await until('!!document.querySelector("[data-collaboration-object-id=badge-both]")&&document.querySelector("[data-cell-id=badge-both]").getAttribute("aria-expanded")==="true"', 'Enter to open the badge panel'); // CHANGE
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'char', keyCode: ' ' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' }); // CHANGE
+        await until('!document.querySelector("[data-collaboration-object-id=badge-both]")&&document.querySelector("[data-cell-id=badge-both]").getAttribute("aria-expanded")==="false"', 'Space to close the badge panel'); // CHANGE
+        await verifyManipulationSizing(win, evaluate, until); // NEW: validate observer behavior before invoking the independent native printing service.
+        stage = 'native PDF printing'; const pdf = await exportWindow.webContents.printToPDF({ printBackground: true }); fs.writeFileSync(path.join(output, 'details.pdf'), pdf); // CHANGE: exercise canvas badge states before the native printing service, which can stall independently.
+        const parsed = await PDFDocument.load(pdf); assert.ok(parsed.getPageCount() >= 2); // CHANGE
         stage = 'controller teardown and normal label editing'; // NEW
         await evaluate('graph.__trellisObjectDetails.destroy();void 0;'); // NEW
         assert.equal(await evaluate('ui.isSelectionAllowed===originalSelectionAllowed'), true, 'teardown restores the original host selection hook'); // NEW

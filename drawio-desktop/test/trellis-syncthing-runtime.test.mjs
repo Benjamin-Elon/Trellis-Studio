@@ -92,3 +92,30 @@ test('v2 peers exchange object records and preserve independent autosaves with t
     assert.equal(a.listStatus()[0].state, 'unavailable'); // NEW
     const records = await fs.readdir(path.join(joinedB.diagramPath, '..', '.trellis', 'collaboration-v2', 'records')); assert.ok(records.length >= 4); // NEW
 }); // NEW
+
+/** Native transport must deliver departure receipts before severing the departing peer. */ // NEW
+for (const version of [1, 2]) test('project lifecycle v' + version + ' hands coordination to a real connected peer and admits a later device', { skip: process.env.TRELLIS_SYNCTHING_RUNTIME_TEST !== '1', timeout: 180000 }, async t => { // NEW
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-project-lifecycle-runtime-')), project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), addresses = new Map(); // NEW
+    const services = ['owner', 'successor', 'later'].map(name => createSyncthingService({ userDataPath: path.join(root, name, 'profile'), documentsPath: path.join(root, name, 'documents'), binaryRoot: path.join(project, 'vendor/syncthing'), setStartup: async () => {}, onListening: ({ deviceId, port }) => addresses.set(deviceId, ['tcp://127.0.0.1:' + port]), deviceAddresses: id => addresses.get(id) || ['dynamic'] })); // NEW
+    t.after(async () => { for (const service of services) await service.stop(); await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }); // NEW
+    const [a, b, c] = services; await a.start(); await b.start(); await c.start(); // NEW
+    const users = [{ id: 'owner', name: 'Owner', email: 'owner@example.test', admin: true, portableIdentityId: 'owner-identity' }, { id: 'successor', name: 'Successor', email: 'successor@example.test', admin: false, portableIdentityId: 'successor-identity' }]; // NEW
+    const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="lifecycle-runtime" trellis_users_json="' + JSON.stringify({ usersEnabled: true, users, invites: [] }).replace(/"/g, '&quot;') + '"><mxCell parent="0"/></object><object id="bed" label="Retained bed" trellis_access_user_ids_json="[&quot;successor&quot;]" trellis_owner_user_id="owner"><mxCell vertex="1" parent="1"/></object></root></mxGraphModel>'; // NEW
+    a.setContext(1, { diagramId: 'lifecycle-runtime', userId: 'owner' }); const created = await a.setupCanvas(1, { diagramId: 'lifecycle-runtime', xml, protocolVersion: version }); // NEW
+    const invite = await a.createDeviceInvite(1, { shareId: created.shareId, userId: 'successor' }), joined = await b.joinCanvas({ block: invite.block }); // NEW
+    await a.requestMembership(1, { shareId: created.shareId, operation: 'approve', reply: joined.reply }); // NEW
+    const leaving = { shareId: created.shareId, userId: 'owner', identityId: 'owner-identity', successorUserId: 'successor' }; // NEW
+    await eventually(async () => { await a.poll(); await b.poll(); const eligibility = await a.projectActions(leaving); if (!eligibility.canLeave) throw new Error('Departure eligibility: ' + JSON.stringify({ eligibility, owner: a.listStatus(), successor: b.listStatus() })); return true; }); // CHANGE // NEW
+    await a.leaveProject(leaving); let receipt; // NEW
+    await eventually(async () => { await a.poll(); await b.poll(); receipt = await a.leaveProject(leaving); return receipt.complete; }, 90000); // NEW
+    assert.equal(receipt.receipt.payload.type, 'departure-finalized'); const successor = await b.shareInfo({ diagramPath: joined.diagramPath }); // NEW
+    assert.notEqual(successor.coordinatorDeviceId, created.coordinatorDeviceId); // NEW
+    await a.applyProjectLifecycle({ ...leaving, operation: 'left', recordId: 'native-retirement' }); await assert.rejects(fs.access(created.diagramPath)); // NEW
+    const snapshot = inspectDiagram(await fs.readFile(joined.diagramPath, 'utf8')); assert.equal(snapshot.store.users.find(u => u.id === 'owner').disabled, true); assert.equal(snapshot.store.users.find(u => u.id === 'successor').admin, true); // NEW
+    b.setContext(1, { diagramPath: joined.diagramPath, diagramId: 'lifecycle-runtime', userId: 'successor' }); // NEW
+    const laterInvite = await b.createDeviceInvite(1, { shareId: created.shareId, userId: 'successor' }), later = await c.joinCanvas({ block: laterInvite.block }); // NEW
+    await b.requestMembership(1, { shareId: created.shareId, operation: 'approve', reply: later.reply }); // NEW
+    await eventually(async () => { await b.poll(); await c.poll(); return (await c.listCanvases())[0].available && !c.listStatus()[0].pending; }); // NEW
+    assert.equal(inspectDiagram(await fs.readFile(later.diagramPath, 'utf8')).store.users.find(u => u.id === 'successor').admin, true); // NEW
+    t.diagnostic('Native lifecycle v' + version + ': signed handover, delivered final receipt, departing files retired, later device verified original genesis.'); // NEW
+}); // NEW

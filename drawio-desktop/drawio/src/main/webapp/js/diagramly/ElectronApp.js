@@ -1526,6 +1526,7 @@ mxStencilRegistry.allowEval = false;
 
 	LocalFile.prototype.save = function(revision, success, error, unloading, overwrite)
 	{
+		if (this.__trellisNamingMove) { const args = arguments; this.__trellisNamingMove.then(() => this.save.apply(this, args)); return; } // NEW
 		if (!this.isEditable())
 		{
 			this.saveAs(this.title, success, error);
@@ -1799,6 +1800,7 @@ mxStencilRegistry.allowEval = false;
 	
 	LocalFile.prototype.saveDraft = function(data)
 	{
+		if (this.__trellisNamingMove) { this.__trellisNamingMove.then(() => this.saveDraft(data)); return; } // NEW
 		// Save draft only if file is not saved (prevents creating draft file after actual file is saved)
 		if (!this.isModified()) return;
 

@@ -8,7 +8,7 @@ const { JSDOM } = require('jsdom');
 const dashboardPath = path.join(__dirname, '../drawio/src/main/webapp/plugins/garden_planner_plugins/Garden_Dashboard.js');
 
 /** Execute the production dialog builders without starting the rest of the dashboard. */
-function createFixture(t) {
+function createFixture(t, users = {}) { // CHANGE: exercise the production invitation-to-delivery handoff.
     const dom = new JSDOM('<!doctype html><body><div id="graph" tabindex="0"></div></body>');
     t.after(() => dom.window.close());
     const source = fs.readFileSync(dashboardPath, 'utf8');
@@ -23,7 +23,7 @@ function createFixture(t) {
         window: dom.window,
         TRELLIS_DIALOG_Z: 2000000000,
         setTimeout(callback) { timers.push(callback); },
-        trellisUsersApi() { return {}; },
+        trellisUsersApi() { return users; }, // CHANGE
         createToolbarButton(label) {
             const button = dom.window.document.createElement('button');
             button.textContent = label;
@@ -110,3 +110,30 @@ test('Escape closes share and cancelled dialogs cannot steal focus later', (t) =
     fixture.flushTimers();
     assert.equal(fixture.document.activeElement, fixture.graph);
 });
+
+test('Create Email hands one saved invite to the retained delivery view', (t) => { // NEW
+    const result = { ok: true, invite: { id: 'invite-1' }, code: 'ORIGINAL', emailDraft: { body: 'Invitation' } }; // NEW
+    const created = [], delivered = []; // NEW
+    const fixture = createFixture(t, { // NEW
+        createPendingInvite(options) { created.push(options); return result; }, // NEW
+        openInviteDelivery(invite) { delivered.push(invite); return { ok: true }; } // NEW
+    }); // NEW
+    fixture.openShare(); // NEW
+    fixture.document.querySelector('input[type=email]').value = 'grower@example.com'; // NEW
+    const send = Array.from(fixture.document.querySelectorAll('button')).find(button => button.textContent === 'Create Email'); // NEW
+    send.click(); send.click(); // NEW
+    assert.equal(created.length, 1); // NEW
+    assert.equal(created[0].email, 'grower@example.com'); // NEW
+    assert.equal(delivered[0], result); // NEW
+    assert.equal(send.isConnected, false); // NEW
+}); // NEW
+
+test('invalid invitation input leaves Create Email available for correction', (t) => { // NEW
+    const fixture = createFixture(t, { createPendingInvite() { return { ok: false, reason: 'Enter a complete recipient email address.' }; } }); // NEW
+    fixture.openShare(); // NEW
+    const send = Array.from(fixture.document.querySelectorAll('button')).find(button => button.textContent === 'Create Email'); // NEW
+    send.click(); // NEW
+    assert.equal(send.disabled, false); // NEW
+    assert.equal(send.isConnected, true); // NEW
+    assert.match(fixture.document.body.textContent, /complete recipient email/); // NEW
+}); // NEW

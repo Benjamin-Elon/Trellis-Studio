@@ -68,6 +68,18 @@ test('real paired desktops download a garden and resume an interrupted signed fi
     const received = await fs.readFile(path.join(receiver, filename)); assert.equal(crypto.createHash('sha256').update(received).digest('hex'), crypto.createHash('sha256').update(bytes).digest('hex')); // NEW
     const verified = await b.library.verifiedRecords(identityId, receiver); assert.equal(verified.length, 1); assert.equal(verified[0].payload.work.packageId, work.packageId); assert.deepEqual(verified[0].payload.work.acknowledgments, []); // NEW: complete delivery is still not a desktop acknowledgment.
     t.diagnostic('Interrupted signed field package resumed: ' + bytes.length + ' bytes, preserved temporary file, matching SHA-256 and signature, no acknowledgment.'); // NEW
+    const peerPath = (await b.library.list()).gardens[0].path; // NEW
+    await a.library.trash({ diagramId: garden.entry.diagramId, confirm: true }); // NEW
+    await until(async () => (await b.library.list()).gardens.length === 0, 'Paired project Trash'); // NEW
+    await assert.rejects(fs.access(peerPath)); const retained = (await b.library.listTrash()).gardens[0]; // NEW
+    await b.library.restore({ diagramId: garden.entry.diagramId, trashId: retained.trashId }); // NEW
+    await until(async () => (await a.library.list()).gardens[0]?.available === true, 'Paired restoration'); // NEW
+    assert.equal((await b.library.list()).gardens[0].available, true); // NEW
+    await a.library.trash({ diagramId: garden.entry.diagramId, confirm: true }); const second = (await a.library.listTrash()).gardens[0]; // NEW
+    await a.library.purge({ diagramId: garden.entry.diagramId, trashId: second.trashId, confirm: true }); // NEW
+    await until(async () => { await b.library.processLifecycle(identityId); return (await b.library.lifecycle(identityId, garden.entry.diagramId)).state === 'purged'; }, 'Paired permanent deletion'); // NEW
+    assert.equal((await b.library.list()).gardens.length, 0); assert.equal((await b.library.listTrash()).gardens.length, 0); // NEW
+    t.diagnostic('Native paired lifecycle: Trash, Restore, permanent deletion, retained catalog identity, and no resurrection.'); // NEW
     await a.identities.lock(); // CHANGE: await completion of device-local credential cleanup.
-    assert.equal((await b.library.list()).gardens[0].available, true);
+    assert.equal((await b.library.list()).gardens.length, 0); // CHANGE
 });

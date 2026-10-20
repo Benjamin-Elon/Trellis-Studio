@@ -10,6 +10,71 @@ function compose(h, cell, html) { // CHANGE
     const element = panel(h, cell).querySelector('.trellis-comment-editor'); element.innerHTML = html; element.dispatchEvent(new h.w.InputEvent('input', { bubbles: true })); return element; // CHANGE
 } // CHANGE
 
+test('badges independently indicate saved details and unresolved comments while preserving resolved history', async t => { // CHANGE
+    const h = harness(t), now = Date.now(), resolved = record('resolved', now - 2000, { resolvedAt: now - 1000, resolvedByUserId: 'user-a', resolvedByName: 'user-a' }); // CHANGE
+    const cases = [ // CHANGE
+        { id: 'details', html: '<p>Info</p>', records: [], outer: 'rgb(30, 64, 175)', center: 'rgb(239, 246, 255)', count: 0 }, // CHANGE
+        { id: 'unresolved', html: null, records: [record('one')], outer: 'rgb(239, 246, 255)', center: 'rgb(250, 204, 21)', count: 1 }, // CHANGE
+        { id: 'both', html: '<p>Info</p>', records: [record('one'), record('two'), resolved], outer: 'rgb(30, 64, 175)', center: 'rgb(250, 204, 21)', count: 2 }, // CHANGE
+        { id: 'resolved-only', html: null, records: [resolved], outer: 'rgb(239, 246, 255)', center: 'rgb(239, 246, 255)', count: 0 }, // CHANGE
+        { id: 'details-resolved', html: '<p>Info</p>', records: [resolved], outer: 'rgb(30, 64, 175)', center: 'rgb(239, 246, 255)', count: 0 }, // CHANGE
+        { id: 'empty', html: null, records: [] }, // CHANGE
+        { id: 'whitespace', html: '<p> \u200b<br></p>', records: [] } // CHANGE
+    ]; // CHANGE
+    for (const item of cases) h.vertex(item.id, item.html, { trellis_comments_json: encode(item.records) }); // CHANGE
+    const before = h.ui.getFileData(); h.controller.refresh(); // CHANGE
+    for (const item of cases) { // CHANGE
+        const badge = h.w.document.querySelector('.trellis-object-details-badge[data-cell-id="' + item.id + '"]'); // CHANGE
+        if (!item.outer) { assert.equal(badge, null, item.id); continue; } // CHANGE
+        assert.equal(badge.style.backgroundColor, item.outer, item.id); assert.equal(badge.firstElementChild.style.backgroundColor, item.center, item.id); // CHANGE
+        assert.equal(badge.style.width, '20px'); assert.equal(badge.firstElementChild.style.width, '14px'); assert.equal(badge.firstElementChild.textContent, 'i'); // CHANGE
+        assert.equal(badge.firstElementChild.getAttribute('aria-hidden'), 'true'); assert.equal(badge.getAttribute('aria-expanded'), 'false'); // CHANGE
+        assert.equal(badge.getAttribute('aria-label'), badge.title); assert.ok(badge.title.includes(item.count + ' unresolved comment' + (item.count === 1 ? '.' : 's.')), badge.title); // CHANGE
+        assert.ok(badge.title.includes(item.html ? 'Extra details available' : 'No extra details')); // CHANGE
+    } // CHANGE
+    assert.equal(h.ui.getFileData(), before, 'reading badge state must not rewrite model data'); // CHANGE
+    const cell = h.graph.model.getCell('resolved-only'), badge = h.w.document.querySelector('[data-cell-id="resolved-only"]'); // CHANGE
+    badge.firstElementChild.click(); await h.tick(); assert.ok(h.graph.isCellSelected(cell)); assert.ok(panel(h, cell)); assert.equal(badge.getAttribute('aria-expanded'), 'true'); // CHANGE
+    badge.firstElementChild.click(); await h.tick(); assert.equal(panel(h, cell), undefined); assert.equal(badge.getAttribute('aria-expanded'), 'false'); // CHANGE
+}); // CHANGE
+
+test('badge fills follow posting, resolving, reopening, description commits and undo/redo without reflecting private drafts', async t => { // CHANGE
+    const h = harness(t), cell = h.vertex('shape', '<p>Info</p>'); h.controller.open(cell); await h.tick(); // CHANGE
+    const badge = h.w.document.querySelector('[data-cell-id="shape"]'); // CHANGE
+    panel(h, cell).querySelector('[data-details-tab="comments"]').click(); compose(h, cell, '<p>Private draft</p>'); h.controller.refresh(); // CHANGE
+    assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(239, 246, 255)'); assert.match(badge.title, /0 unresolved comments/); // CHANGE
+    panel(h, cell).querySelector('[data-comment-action="submit"]').click(); await h.tick(); assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(250, 204, 21)'); // CHANGE
+    panel(h, cell).querySelector('[data-comment-action="resolve"]').click(); await h.tick(); // CHANGE
+    assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(239, 246, 255)'); assert.match(badge.title, /0 unresolved comments/); // CHANGE
+    h.undo.undo(); await h.tick(); assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(250, 204, 21)'); // CHANGE
+    h.undo.redo(); await h.tick(); assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(239, 246, 255)'); // CHANGE
+    panel(h, cell).querySelector('[data-comment-action="reopen"]').click(); await h.tick(); assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(250, 204, 21)'); // CHANGE
+    panel(h, cell).querySelector('[data-details-tab="info"]').click(); h.type(cell, ''); h.controller.refresh(); // CHANGE
+    assert.equal(badge.style.backgroundColor, 'rgb(30, 64, 175)', 'uncommitted description clearing does not change the signal'); // CHANGE
+    h.controller.flush(); await h.tick(); assert.equal(badge.style.backgroundColor, 'rgb(239, 246, 255)'); assert.match(badge.title, /No extra details/); // CHANGE
+    h.undo.undo(); await h.tick(); assert.equal(badge.style.backgroundColor, 'rgb(30, 64, 175)'); // CHANGE
+    h.undo.redo(); await h.tick(); assert.equal(badge.style.backgroundColor, 'rgb(239, 246, 255)'); // CHANGE
+    h.graph.clearSelection(); await h.tick(); assert.ok(badge.isConnected); assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(250, 204, 21)'); // CHANGE
+}); // CHANGE
+
+test('malformed and externally updated comments keep badge state readable without rewriting discussion', async t => { // CHANGE
+    const h = harness(t), broken = '{"version":2,"comments":[]}', cell = h.vertex('shape', null, { trellis_comments_json: broken }); h.controller.refresh(); // CHANGE
+    const badge = h.w.document.querySelector('[data-cell-id="shape"]'); // CHANGE
+    assert.ok(badge); assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(239, 246, 255)'); assert.match(badge.title, /Comment status unavailable/); assert.equal(cell.getAttribute('trellis_comments_json'), broken); // CHANGE
+    const remote = cell.value.cloneNode(true); remote.setAttribute('trellis_comments_json', encode([record('remote')])); h.graph.model.setValue(cell, remote); await h.tick(); // CHANGE
+    assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(250, 204, 21)'); assert.match(badge.title, /1 unresolved comment\./); // CHANGE
+    const empty = remote.cloneNode(true); empty.setAttribute('trellis_comments_json', encode([])); h.graph.model.setValue(cell, empty); await h.tick(); // CHANGE
+    assert.equal(h.w.document.querySelector('[data-cell-id="shape"]'), null); // CHANGE
+}); // CHANGE
+
+test('deleting the last retained comment removes a comment-only badge and undo restores its neutral state', async t => { // CHANGE
+    const h = harness(t), now = Date.now(), old = record('old', now - h.core.COMMENT_RETENTION_MS - 2000, { resolvedAt: now - h.core.COMMENT_RETENTION_MS, resolvedByUserId: 'user-a', resolvedByName: 'user-a' }); // CHANGE
+    const cell = h.vertex('shape', null, { trellis_comments_json: encode([old]) }); h.controller.open(cell); await h.tick(); // CHANGE
+    assert.equal(h.w.document.querySelector('[data-cell-id="shape"]').firstElementChild.style.backgroundColor, 'rgb(239, 246, 255)'); // CHANGE
+    h.w.confirm = () => true; panel(h, cell).querySelector('[data-comment-action="delete"]').click(); await h.tick(); assert.equal(h.w.document.querySelector('[data-cell-id="shape"]'), null); // CHANGE
+    h.undo.undo(); await h.tick(); assert.equal(h.w.document.querySelector('[data-cell-id="shape"]').firstElementChild.style.backgroundColor, 'rgb(239, 246, 255)'); // CHANGE
+}); // CHANGE
+
 test('tabs prefer existing content, preserve selection, and discover comment-only objects without exporting discussion', async t => { // CHANGE
     const h = harness(t), a = h.vertex('a', '<p>Description</p>', { trellis_comments_json: encode([record('a-comment')]) }), b = h.vertex('b', null, { trellis_comments_json: encode([record('b-comment')]) }); // CHANGE
     h.graph.setSelectionCells([a, b]); await h.tick(); // CHANGE

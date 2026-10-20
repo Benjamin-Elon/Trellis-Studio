@@ -664,7 +664,7 @@ Draw.loadPlugin(function (ui) {
         button.addEventListener("click", () => { isOpen ? closePicker() : openPicker(); });
         search.addEventListener("input", renderList);
         search.addEventListener("keydown", evt => {
-            if (evt.key === "Escape") { evt.preventDefault(); closePicker(); button.focus(); }
+            if (evt.key === "Escape") { evt.preventDefault(); evt.stopPropagation(); closePicker(); button.focus(); } // CHANGE: handled picker dismissal must not reach the editor's dialog-close shortcut.
             if (evt.key === "Enter") {
                 const filter = normalizeCityGeoText(search.value).toLowerCase();
                 const first = cityRows.find(city => !filter || citySearchText(city).indexOf(filter) >= 0);
@@ -2909,6 +2909,7 @@ Draw.loadPlugin(function (ui) {
 
             const host = ensureOverlayHost();
             if (host) host.appendChild(toolbar);
+            graph.__trellisOverlayVisibility?.mark(toolbar); // NEW: informational overlays must not obstruct manipulation.
             return toolbar;
         }
 
@@ -3248,6 +3249,9 @@ Draw.loadPlugin(function (ui) {
             refreshTimer = setTimeout(refreshForSelection, 0);
         }
 
+        graph.addListener('trellisOverlayVisibilityChanged', function (_sender, event) { // NEW
+            if (!event.getProperty('suppressed') && toolbar && toolbar.style.display !== 'none') positionToolbar(); // NEW
+        }); // NEW
         graph.__plantTilerRefreshGardenModuleOverlay = scheduleRefresh;
         graph.addListener(mxEvent.FIRE_MOUSE_EVENT, captureBedToggleBeforeSelection); // CHANGE: mouseDown listeners run after native selection handlers.
 
@@ -3272,8 +3276,8 @@ Draw.loadPlugin(function (ui) {
                 if (!gestureActive || gestureMoved || !evt || !lastMouseAnchor) return; // CHANGE
                 if (isSimpleAnchorClick(evt)) return; // CHANGE
                 gestureMoved = true; // CHANGE: latch movement even if the pointer returns.
-                gestureHidden = true; // CHANGE
-                hideToolbar(); // CHANGE
+                gestureHidden = !graph.__trellisOverlayVisibility; // CHANGE: shared state distinguishes manipulation from marquee/pan.
+                if (gestureHidden) hideToolbar(); // CHANGE: retain legacy standalone behavior.
             }, // CHANGE
             mouseUp: function (_sender, me) {
                 if (!gestureActive) return; // CHANGE: cancellation or a bubbled release cannot toggle twice.
@@ -10794,6 +10798,7 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE: migrated planting overlay.
 
         function positionPanel(entry, source) { // CHANGE: migrated planting overlay.
+            if (graph.__trellisOverlayVisibility?.isSuppressed()) return true; // NEW: do not position from zero-sized hidden panels.
             const host = getPanelHost(); // CHANGE: migrated planting overlay.
             const sourceBounds = getClusterBoundsForPanel(source); // CHANGE: migrated planting overlay.
             if (!host || !entry.panel || !sourceBounds) return false; // CHANGE: migrated planting overlay.
@@ -10858,6 +10863,7 @@ Draw.loadPlugin(function (ui) {
                 poly = new mxPolyline(points, stroke, 2); // CHANGE: migrated planting overlay.
                 poly.dialect = graph.dialect; // CHANGE: migrated planting overlay.
                 poly.init(pane); // CHANGE: migrated planting overlay.
+                graph.__trellisOverlayVisibility?.mark(poly.node); // NEW: informational overlays must not obstruct manipulation.
                 poly.redraw(); // CHANGE: migrated planting overlay.
                 if (poly.node) { // CHANGE: migrated planting overlay.
                     poly.node.style.pointerEvents = 'none'; // CHANGE: migrated planting overlay.
@@ -10868,6 +10874,7 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE: migrated planting overlay.
 
         function refreshLines(entry) { // CHANGE: migrated planting overlay.
+            if (graph.__trellisOverlayVisibility?.isSuppressed()) return; // NEW: retained annotations are remeasured after restoration.
             const liveIds = new Set(); // CHANGE: migrated planting overlay.
             for (const item of entry.visibleItems || []) { // CHANGE: migrated planting overlay.
                 liveIds.add(item.cardId); // CHANGE: migrated planting overlay.
@@ -10912,8 +10919,10 @@ Draw.loadPlugin(function (ui) {
                     entry.panel.className = 'manual-link-task-schedule-overlay manual-link-task-schedule-only'; // CHANGE: migrated planting overlay.
                     applyPanelStyle(entry.panel); // CHANGE: migrated planting overlay.
                     panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
+                    graph.__trellisOverlayVisibility?.mark(entry.panel); // NEW: informational overlays must not obstruct manipulation.
                 } else if (entry.panel.parentNode !== panelHost) { // CHANGE: migrated planting overlay.
                     panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
+                    graph.__trellisOverlayVisibility?.mark(entry.panel); // NEW: informational overlays must not obstruct manipulation.
                 } // CHANGE: migrated planting overlay.
                 while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild); // CHANGE: migrated planting overlay.
                 entry.visibleItems = []; // CHANGE: migrated planting overlay.
@@ -10946,8 +10955,10 @@ Draw.loadPlugin(function (ui) {
                 entry.panel.className = 'manual-link-task-schedule-overlay'; // CHANGE: migrated planting overlay.
                 applyPanelStyle(entry.panel); // CHANGE: migrated planting overlay.
                 panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
+                graph.__trellisOverlayVisibility?.mark(entry.panel); // NEW: informational overlays must not obstruct manipulation.
             } else if (entry.panel.parentNode !== panelHost) { // CHANGE: migrated planting overlay.
                 panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
+                graph.__trellisOverlayVisibility?.mark(entry.panel); // NEW: informational overlays must not obstruct manipulation.
             } // CHANGE: migrated planting overlay.
 
             while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild); // CHANGE: migrated planting overlay.
@@ -11134,6 +11145,7 @@ Draw.loadPlugin(function (ui) {
                     refresh(); // NEW
                 }); // NEW
                 layer.appendChild(button); // NEW
+                graph.__trellisOverlayVisibility?.mark(button); // NEW: informational overlays must not obstruct manipulation.
             } // NEW
             target = group; // NEW
             const collapsed = isCollapsedLOD(group), admission = collapsed ? plantCircleAdmission(group) : { ok: true }; // NEW
@@ -11257,6 +11269,7 @@ Draw.loadPlugin(function (ui) {
                 entry.badge.style.cssText = 'position:absolute;width:30px;height:30px;box-sizing:border-box;border:1px solid #6b7280;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 11px Arial,sans-serif;color:#111827;pointer-events:auto;'; // NEW
                 ['mousedown', 'pointerdown', 'click', 'dblclick'].forEach(name => entry.badge.addEventListener(name, event => event.stopPropagation())); // NEW
                 layer.appendChild(entry.badge); // NEW
+                graph.__trellisOverlayVisibility?.mark(entry.badge); // NEW: informational overlays must not obstruct manipulation.
             } // NEW
             const growth = estimate(cell), bounds = state.text?.boundingBox || state.text?.bounds || state; // NEW
             entry.badge.textContent = growth.percentage == null ? (['complete', 'established'].includes(growth.stage) ? '✓' : '—') : growth.percentage + '%'; // NEW
@@ -11400,7 +11413,10 @@ Draw.loadPlugin(function (ui) {
             }); // CHANGE
         } // CHANGE
         if (graph.container && graph.container.addEventListener) graph.container.addEventListener('scroll', onViewChange); // CHANGE
-        if (graph.addMouseListener) graph.addMouseListener({ mouseDown: () => detailControl.hide(), mouseMove() {}, mouseUp: onViewChange }); // NEW: hide during canvas gestures and restore after native handlers finish.
+        if (graph.addMouseListener) graph.addMouseListener({ mouseDown: () => { if (!graph.__trellisOverlayVisibility) detailControl.hide(); }, mouseMove() {}, mouseUp: onViewChange }); // CHANGE: a press retains controls until manipulation starts.
+        graph.addListener('trellisOverlayVisibilityChanged', (_sender, event) => { // NEW
+            if (!event.getProperty('suppressed')) { taskScheduleOverlay.refreshView(); detailControl.refresh(); } // NEW: reposition in place to preserve drafts.
+        }); // NEW
         if (window.addEventListener) { // CHANGE
             window.addEventListener('resize', onViewChange); // CHANGE
             window.addEventListener('trellisTeamPermissionModeChanged', syncSelection); // CHANGE

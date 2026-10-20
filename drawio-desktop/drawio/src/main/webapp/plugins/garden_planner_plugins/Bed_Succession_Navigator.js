@@ -1351,6 +1351,7 @@ Draw.loadPlugin(function (ui) {
         b.alt = alt;
         b.title = title;
         if (b.parentNode !== host) host.appendChild(b);
+        graph.__trellisOverlayVisibility?.mark(b); // NEW: informational overlays must not obstruct manipulation.
         return b;
     }
 
@@ -1446,6 +1447,7 @@ Draw.loadPlugin(function (ui) {
             });
 
             host.appendChild(st.btnPrev);
+            graph.__trellisOverlayVisibility?.mark(st.btnPrev); // NEW: informational overlays must not obstruct manipulation.
         } else if (st.btnPrev.parentNode !== host) { host.appendChild(st.btnPrev); }
 
         if (!st.btnNext) {
@@ -1463,6 +1465,7 @@ Draw.loadPlugin(function (ui) {
             });
 
             host.appendChild(st.btnNext);
+            graph.__trellisOverlayVisibility?.mark(st.btnNext); // NEW: informational overlays must not obstruct manipulation.
         } else if (st.btnNext.parentNode !== host) { host.appendChild(st.btnNext); }
 
         st.btnPrev.style.display = '';
@@ -1497,6 +1500,7 @@ Draw.loadPlugin(function (ui) {
             });
 
             host.appendChild(b);
+            graph.__trellisOverlayVisibility?.mark(b); // NEW: informational overlays must not obstruct manipulation.
             st.btnSelectAll = b;
         } else if (st.btnSelectAll.parentNode !== host) {
             host.appendChild(st.btnSelectAll);
@@ -1551,6 +1555,7 @@ Draw.loadPlugin(function (ui) {
                 selectContainedBedForCluster(key);
             });
             host.appendChild(b);
+            graph.__trellisOverlayVisibility?.mark(b); // NEW: informational overlays must not obstruct manipulation.
             st.btnSelectBed = b;
         } else if (st.btnSelectBed.parentNode !== host) {
             host.appendChild(st.btnSelectBed);
@@ -1750,6 +1755,7 @@ Draw.loadPlugin(function (ui) {
                 selectCoveredTarget(key, target);
             });
             host.appendChild(b);
+            graph.__trellisOverlayVisibility?.mark(b); // NEW: informational overlays must not obstruct manipulation.
             st.coveredTargetButtons.push({ el: b, target });
         }
         positionCoveredTargetSelectorsFor(key);
@@ -2106,6 +2112,8 @@ Draw.loadPlugin(function (ui) {
         if (!bedState) { preview.panel.style.display = 'none'; return; }
         const host = getHost();
         if (preview.panel.parentNode !== host) host.appendChild(preview.panel);
+        graph.__trellisOverlayVisibility?.mark(preview.panel); // NEW: informational overlays must not obstruct manipulation.
+        if (graph.__trellisOverlayVisibility?.isSuppressed()) return; // NEW: restore measures the retained preview before paint.
         const width = preview.width;
         preview.panel.style.display = '';
         const minLeft = (graph.container.scrollLeft || 0) + 8; // CHANGE
@@ -2245,6 +2253,7 @@ Draw.loadPlugin(function (ui) {
             rail.dataset.occupancyNavigator = '1'; // CHANGE: Occupancy now lives above the cluster instead of inside the selected overlay.
             styleMiniRail(rail);
             host.appendChild(rail);
+            graph.__trellisOverlayVisibility?.mark(rail); // NEW: informational overlays must not obstruct manipulation.
             st.miniRail = rail;
         } else if (st.miniRail.parentNode !== host) {
             host.appendChild(st.miniRail);
@@ -2412,7 +2421,7 @@ Draw.loadPlugin(function (ui) {
             const railWidth = Math.round(clampNumber(Math.max(box.w, MINI_RAIL_MIN_W), MINI_RAIL_MIN_W, MINI_RAIL_MAX_W)); // CHANGE: size the rail from the selected cluster footprint.
             const railHeight = st.miniRailHeight || 72;
             const left = Math.round(box.x + box.w / 2 - railWidth / 2);
-            const aboveTop = Math.round(box.y - railHeight - MINI_RAIL_GAP);
+            const aboveTop = Math.round(box.y - railHeight - MINI_RAIL_GAP - 24); // CHANGE: lift occupancy above the bed drag handle and selector badges.
             st.miniRail.style.width = railWidth + 'px';
             st.miniRail.style.left = left + 'px';
             st.miniRail.style.top = aboveTop + 'px'; // CHANGE: occupancy navigator stays vertically above the cluster and does not fall below.
@@ -2776,6 +2785,9 @@ Draw.loadPlugin(function (ui) {
     }
 
 
+    graph.addListener('trellisOverlayVisibilityChanged', (_sender, event) => { // NEW
+        if (!event.getProperty('suppressed')) repositionAllUI(); // NEW: measure restored occupancy without rebuilding drafts.
+    }); // NEW
     // -------------------- Events --------------------
     let lastSelectedPlantingId = null;
     let lastSelectedPlantingParent = null;

@@ -21,6 +21,7 @@
         const entries = new Map(), retainedEntries = new Set(), badges = new Map(), preferences = new Map(), readCache = new WeakMap(), rootIds = new WeakMap(), removers = []; // NEW
         let refreshTimer = null, disposed = false, writing = false, flushing = false, rootSequence = 0, interactionSequence = 0; // CHANGE
         const layer = document.createElement('div'); layer.className = 'trellis-object-details-layer'; // NEW
+        graph.__trellisOverlayVisibility?.mark(layer); // NEW: informational overlays must not obstruct manipulation.
         layer.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;z-index:' + GRAPH_OVERLAY_Z.CONTROL + ';pointer-events:none;'; // NEW
         graph.container.appendChild(layer); // NEW
         const previousSelectionAllowed = ui.isSelectionAllowed; // NEW
@@ -229,31 +230,47 @@
             if (root.ResizeObserver) { // NEW
                 entry.observer = new ResizeObserver(() => { // NEW
                     if (disposed || panel.hidden || !exists(entry) || entry.user !== userKey()) return; // NEW
+                    if (graph.__trellisOverlayVisibility?.isSuppressed() || !panel.isConnected || !panel.getClientRects().length) return; // NEW: temporary ancestor hiding and detachment are not user resizes.
                     const width = Math.round(panel.offsetWidth), height = Math.round(panel.offsetHeight); // NEW
+                    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return; // NEW: read live layout, ignoring zero-sized notifications queued during suppression.
                     if (width !== entry.preferences.width || height !== entry.preferences.height) { entry.preferences = savePreferences(cell, { ...entry.preferences, width, height }); positionEntry(entry); } // NEW
                 }); entry.observer.observe(panel); // NEW
             } // NEW
             entry.editor.contentEditable = String(canEdit(entry)); state(entry, 'saved'); positionEntry(entry); bringToFront(entry); return entry; // CHANGE
         } // NEW
 
+        /** Read saved content only; unsupported discussion remains discoverable without implying a known resolution state. */ // CHANGE
+        function badgeStatus(cell) { // CHANGE
+            const hasDetails = !!read(cell); // CHANGE
+            try { // CHANGE
+                const comments = core.parseComments(readComments(cell)); // CHANGE
+                return { hasDetails, commentCount: comments.length, unresolvedCount: comments.filter(comment => comment.resolvedAt === null).length }; // CHANGE
+            } catch (_) { return { hasDetails, commentCount: null, unresolvedCount: null }; } // CHANGE
+        } // CHANGE
+
         /** Badges occupy the inside corner; collaboration activity labels occupy the outside corner. */ // NEW
         function updateBadge(cell) { // NEW
-            const cellState = cellBounds(cell); let badge = badges.get(cell); // NEW
-            if (!cellState || !hasContent(cell)) { if (badge) { badge.remove(); badges.delete(cell); } return; } // CHANGE
+            const cellState = cellBounds(cell), status = badgeStatus(cell); let badge = badges.get(cell); // CHANGE
+            if (!cellState || !status.hasDetails && status.commentCount === 0) { if (badge) { badge.remove(); badges.delete(cell); } return; } // CHANGE
             if (!badge) { // NEW
-                badge = makeButton('ⓘ', 'Show or hide details for ' + title(cell), () => { // NEW
+                badge = makeButton('', '', () => { // CHANGE
                     const selected = selectedOwners().has(cell), preferences = getPreferences(cell); // NEW
                     if (!selected) graph.setSelectionCell(cell); // NEW
                     const entry = entries.get(cell); if (selected && entry && !flushEntry(entry)) return; // NEW
                     savePreferences(cell, { ...preferences, visible: selected ? !preferences.visible : true }); requestRefresh(); // NEW
                 }); // NEW
                 badge.className = 'trellis-object-details-badge'; badge.dataset.cellId = cell.id; // NEW
-                badge.style.cssText = 'position:absolute;z-index:' + GRAPH_OVERLAY_Z.CONTROL_TOP + ';pointer-events:auto;width:18px;height:18px;min-width:18px;padding:0;border:1px solid #2563eb;border-radius:9px;background:#eff6ff;color:#2563eb;font:14px Arial;line-height:16px;cursor:pointer;'; // NEW
+                badge.style.cssText = 'position:absolute;z-index:' + GRAPH_OVERLAY_Z.CONTROL_TOP + ';pointer-events:auto;box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:20px;height:20px;min-width:20px;padding:2px;border:1px solid #2563eb;border-radius:50%;color:#1e40af;font:bold 12px Arial;cursor:pointer;'; // CHANGE
+                const center = document.createElement('span'); center.setAttribute('aria-hidden', 'true'); center.textContent = 'i'; // CHANGE
+                center.style.cssText = 'display:block;flex:none;width:14px;height:14px;border-radius:50%;line-height:14px;text-align:center;'; badge.appendChild(center); // CHANGE
                 for (const name of ['pointerdown', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup']) badge.addEventListener(name, event => event.stopPropagation()); // NEW
                 badges.set(cell, badge); layer.appendChild(badge); // NEW
             } // NEW
-            badge.style.left = cellState.x + Math.max(4, cellState.width - 22) + 'px'; badge.style.top = cellState.y + 4 + 'px'; // NEW
-            const entry = entries.get(cell); badge.setAttribute('aria-expanded', String(!!entry && !entry.panel.hidden)); // NEW
+            badge.style.backgroundColor = status.hasDetails ? '#1e40af' : '#eff6ff'; // CHANGE
+            badge.firstElementChild.style.backgroundColor = status.unresolvedCount > 0 ? '#facc15' : '#eff6ff'; // CHANGE
+            const commentStatus = status.unresolvedCount === null ? 'Comment status unavailable' : status.unresolvedCount + ' unresolved comment' + (status.unresolvedCount === 1 ? '' : 's'); // CHANGE
+            badge.title = 'Show or hide details for ' + title(cell) + '. ' + (status.hasDetails ? 'Extra details available' : 'No extra details') + '. ' + commentStatus + '.'; badge.setAttribute('aria-label', badge.title); // CHANGE
+            badge.style.left = cellState.x + Math.max(4, cellState.width - 24) + 'px'; badge.style.top = cellState.y + 4 + 'px'; // CHANGE
         } // NEW
         function refresh() { // NEW
             if (disposed) return; refreshTimer = null; // NEW
@@ -282,6 +299,7 @@
                 } else if (!entry.error) state(entry, 'failed', new Error('The original object is no longer available.')); // NEW
                 if (!entry.error && !entry.draft.dirty()) state(entry, 'saved'); // NEW
             } // NEW
+            for (const [cell, badge] of badges) { const entry = entries.get(cell); badge.setAttribute('aria-expanded', String(!!entry && !entry.panel.hidden)); } // CHANGE: announce the final panel state after creation or removal in this refresh.
         } // NEW
         function requestRefresh() { if (!disposed && refreshTimer == null) refreshTimer = root.setTimeout(refresh, 0); } // NEW
         function open(cell) { // NEW
@@ -308,9 +326,10 @@
                 const html = '<div style="font-size:' + 13 / scale + 'px;line-height:1.4;font-family:Arial,sans-serif;">' + measuring.innerHTML + '</div>'; measuring.remove(); // NEW
                 records.push({ ownerId: entry.cell.id, html, fontSize: 13 / scale, padding: 8 / scale, geometry: geometry(bounds) }); // NEW
             } // NEW
-            for (const [cell, badge] of badges) { // NEW
+            for (const cell of badges.keys()) { // CHANGE
                 if (!read(cell)) continue; // CHANGE: comment-only badges never enter rendered exports.
-                records.push({ ownerId: cell.id, badge: true, fontSize: 14 / scale, geometry: geometry({ x: parseFloat(badge.style.left), y: parseFloat(badge.style.top), width: 18, height: 18 }) }); // NEW
+                const cellState = cellBounds(cell); // CHANGE: keep the original 18px export geometry independent of the 20px canvas badge.
+                records.push({ ownerId: cell.id, badge: true, fontSize: 14 / scale, geometry: geometry({ x: cellState.x + Math.max(4, cellState.width - 22), y: cellState.y + 4, width: 18, height: 18 }) }); // CHANGE
             } // NEW
             return { [pageKey()]: records }; // NEW
         } // NEW

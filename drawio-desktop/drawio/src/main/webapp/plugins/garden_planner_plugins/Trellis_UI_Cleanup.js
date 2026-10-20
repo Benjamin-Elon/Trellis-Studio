@@ -110,6 +110,125 @@
     window.Trellis.ui.button = window.Trellis.ui.button || button;
     window.Trellis.ui.classForVariant = window.Trellis.ui.classForVariant || classForVariant;
     window.Trellis.ui.ensureButtonStyles = window.Trellis.ui.ensureButtonStyles || ensureButtonStyles;
+
+    let overlayGraphSequence = 0; // NEW
+
+    /** Keep informational DOM alive, but remove it from rendering and hit-testing during manipulation. */ // NEW
+    function installOverlayVisibility(graph) { // NEW
+        if (!graph || !graph.container) return; // NEW
+        if (graph.__trellisOverlayVisibility) return graph.__trellisOverlayVisibility; // NEW
+        const doc = graph.container.ownerDocument, win = doc.defaultView; // NEW
+        const owner = 'trellis-overlay-' + (++overlayGraphSequence); // NEW
+        const selector = '[data-trellis-overlay-owner="' + owner + '"]'; // NEW
+        const style = doc.createElement('style'), sources = new Set(); // NEW
+        let suppressed = false, pendingFrame = null, destroyed = false; // NEW
+        (doc.head || doc.documentElement).appendChild(style); // NEW
+        const requestFrame = win.requestAnimationFrame ? win.requestAnimationFrame.bind(win) : callback => win.setTimeout(callback, 0); // NEW
+        const cancelFrame = win.cancelAnimationFrame ? win.cancelAnimationFrame.bind(win) : win.clearTimeout.bind(win); // NEW
+
+        /** Owners reposition after normal view validation; CSS is removed before the browser paints. */ // NEW
+        function notify() { // NEW
+            if (graph.fireEvent && typeof mxEventObject !== 'undefined') graph.fireEvent(new mxEventObject('trellisOverlayVisibilityChanged', 'suppressed', suppressed)); // NEW
+        } // NEW
+        function restoreSoon() { // NEW
+            if (!suppressed || pendingFrame != null || destroyed) return; // NEW
+            pendingFrame = requestFrame(function () { // NEW
+                pendingFrame = null; // NEW
+                if (sources.size || destroyed) return; // NEW
+                suppressed = false; style.textContent = ''; // NEW: preserve each owner's inline display and visibility policies.
+                notify(); // NEW: synchronous measurement is now possible, before this frame paints.
+            }); // NEW
+        } // NEW
+        const api = graph.__trellisOverlayVisibility = { // NEW
+            mark(node) { if (node && node.setAttribute && !destroyed) node.setAttribute('data-trellis-overlay-owner', owner); return node; }, // NEW
+            begin(source) { // NEW
+                if (destroyed || source == null) return; // NEW
+                sources.add(source); // NEW
+                if (pendingFrame != null) { cancelFrame(pendingFrame); pendingFrame = null; } // NEW
+                if (!suppressed) { // NEW
+                    suppressed = true; // NEW
+                    style.textContent = selector + '{display:none!important;pointer-events:none!important}'; // NEW
+                    notify(); // NEW
+                } // NEW
+            }, // NEW
+            end(source) { sources.delete(source); if (!sources.size) restoreSoon(); }, // NEW
+            isSuppressed() { return suppressed; } // NEW
+        }; // NEW
+        function release() { sources.clear(); restoreSoon(); } // NEW
+        function cancel() { // NEW
+            const active = Array.from(sources); sources.clear(); // NEW
+            try { active.forEach(source => { if (source && typeof source.reset === 'function') source.reset(); }); } // NEW
+            finally { restoreSoon(); } // NEW
+        } // NEW
+        const releases = ['mouseup', 'pointerup', 'touchend']; // NEW
+        const cancellations = ['pointercancel', 'touchcancel', 'blur']; // NEW
+        releases.forEach(name => win.addEventListener(name, release)); // NEW: bubble after native document commits.
+        cancellations.forEach(name => win.addEventListener(name, cancel)); // NEW
+        function destroy() { // NEW
+            if (destroyed) return; // NEW
+            destroyed = true; suppressed = false; sources.clear(); // NEW
+            if (pendingFrame != null) cancelFrame(pendingFrame); // NEW
+            style.remove(); // NEW
+            releases.forEach(name => win.removeEventListener(name, release)); // NEW
+            cancellations.forEach(name => win.removeEventListener(name, cancel)); // NEW
+            if (graph.removeListener) { graph.removeListener(cancel); graph.removeListener(destroy); } // NEW
+        } // NEW
+        if (graph.addListener && typeof mxEvent !== 'undefined') { // NEW
+            graph.addListener(mxEvent.ESCAPE, cancel); graph.addListener(mxEvent.DESTROY, destroy); // NEW
+        } // NEW
+        const graphDestroy = graph.destroy; // NEW
+        if (typeof graphDestroy === 'function') graph.destroy = function () { // NEW: stock mxGraph does not emit a DESTROY event.
+            try { cancel(); return graphDestroy.apply(this, arguments); } // NEW
+            finally { destroy(); } // NEW
+        }; // NEW
+        installOverlayGestureHooks(); // NEW
+        return api; // NEW
+    } // NEW
+
+    /** Wrap shared handlers once, resolving the graph-local controller on every call. */ // NEW
+    function installOverlayGestureHooks() { // NEW
+        function wrap(prototype, method, before, after) { // NEW
+            if (!prototype || typeof prototype[method] !== 'function') return; // NEW
+            const original = prototype[method]; // NEW
+            prototype[method] = function () { // NEW
+                const api = (this.graph || this.currentGraph)?.__trellisOverlayVisibility; // NEW
+                if (before) before.call(this, api, arguments); // NEW
+                try { return original.apply(this, arguments); } // NEW
+                finally { if (after) after.call(this, api, arguments); } // NEW
+            }; // NEW
+        } // NEW
+        function end(api) { if (api) api.end(this); } // NEW
+        if (typeof mxGraphHandler !== 'undefined' && !mxGraphHandler.prototype.__trellisOverlayGestureHooks) { // NEW
+            const prototype = mxGraphHandler.prototype; prototype.__trellisOverlayGestureHooks = true; // NEW
+            wrap(prototype, 'mouseMove', function (api, args) { // NEW
+                const me = args[1], graph = this.graph; // NEW
+                if (!api || !me || me.isConsumed() || !graph.isMouseDown || !this.cell || this.suspended) return; // NEW
+                const delta = this.first ? this.getDelta(me) : null, evt = me.getEvent(); // NEW
+                const dx = delta ? delta.x : mxEvent.getClientX(evt) - this.mouseDownX; // NEW
+                const dy = delta ? delta.y : mxEvent.getClientY(evt) - this.mouseDownY; // NEW
+                if ((this.first || this.delayedSelection) && (Math.abs(dx) > graph.tolerance || Math.abs(dy) > graph.tolerance)) api.begin(this); // NEW: hide before native drop-target evaluation, including handle-delayed starts.
+            }); // NEW
+            ['mouseUp', 'reset', 'destroy'].forEach(method => wrap(prototype, method, null, end)); // NEW
+        } // NEW
+        if (typeof mxVertexHandler !== 'undefined' && !mxVertexHandler.prototype.__trellisOverlayGestureHooks) { // NEW
+            const prototype = mxVertexHandler.prototype; prototype.__trellisOverlayGestureHooks = true; // NEW
+            wrap(prototype, 'mouseMove', function (api, args) { // NEW
+                const me = args[1]; // NEW
+                if (!api || !me || me.isConsumed() || this.index == null || !(this.index >= 0 || this.index === mxEvent.ROTATION_HANDLE)) return; // NEW
+                const dx = me.getGraphX() - this.startX, dy = me.getGraphY() - this.startY; // NEW
+                const moved = dx !== 0 || dy !== 0; // NEW
+                if (moved && (!this.inTolerance || mxEvent.isMouseEvent(me.getEvent()) || Math.abs(dx) > this.graph.tolerance || Math.abs(dy) > this.graph.tolerance)) api.begin(this); // NEW: match native mouse/touch resize tolerance without treating a press as movement.
+            }); // NEW
+            ['mouseUp', 'reset', 'destroy'].forEach(method => wrap(prototype, method, null, end)); // NEW
+        } // NEW
+        if (typeof mxDragSource !== 'undefined' && !mxDragSource.prototype.__trellisOverlayGestureHooks) { // NEW
+            const prototype = mxDragSource.prototype; prototype.__trellisOverlayGestureHooks = true; // NEW
+            wrap(prototype, 'dragEnter', function (_api, args) { args[0]?.__trellisOverlayVisibility?.begin(this); }); // NEW
+            wrap(prototype, 'dragExit', null, function (api, args) { (args[0]?.__trellisOverlayVisibility || api)?.end(this); }); // NEW
+            ['mouseUp', 'reset'].forEach(method => wrap(prototype, method, null, end)); // NEW
+        } // NEW
+    } // NEW
+    window.Trellis.ui.installOverlayVisibility = window.Trellis.ui.installOverlayVisibility || installOverlayVisibility; // NEW: retain graph ownership sequencing if the plugin is loaded twice.
 })();
 
 Draw.loadPlugin(function (ui) {
@@ -118,6 +237,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     ui.__trellisUiCleanupInstalled = true;
+    window.Trellis.ui.installOverlayVisibility(ui.editor && ui.editor.graph); // NEW
 
     /** Rebind replaced labels so native stopEditing restores the live node without restarting the draft. */ // NEW
     function installEditingLabelGuard(graph) { // NEW

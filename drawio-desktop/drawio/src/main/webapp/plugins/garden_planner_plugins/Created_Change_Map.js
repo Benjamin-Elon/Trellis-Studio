@@ -2251,6 +2251,7 @@ Draw.loadPlugin(function (ui) {
     });
     if (label) div.title = label;
     overlayHost().appendChild(div);
+    graph.__trellisOverlayVisibility?.mark(div); // NEW: informational overlays must not obstruct manipulation.
     graph.__ccHistoryCompareOverlays.push(div);
   }
 

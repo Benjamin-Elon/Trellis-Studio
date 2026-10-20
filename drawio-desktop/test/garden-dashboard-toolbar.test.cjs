@@ -2,6 +2,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm"); // NEW
+const { parse } = require("@babel/parser"); // NEW: extract production declarations without duplicating their implementation.
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 const DASHBOARD_PATH = path.join(PROJECT_ROOT, "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins", "Garden_Dashboard.js");
@@ -9,6 +11,82 @@ const DASHBOARD_PATH = path.join(PROJECT_ROOT, "drawio", "src", "main", "webapp"
 function source() {
     return fs.readFileSync(DASHBOARD_PATH, "utf8");
 }
+
+// Execute production context/search functions against a replaceable current-page model. // NEW
+function dashboardContextHarness() {
+    const text = source();
+    const declarations = parse(text).program.body[0].expression.arguments[0].body.body;
+    const names = [
+        "getStyleSafe", "isModule", "isGardenModule", "isTaskModule", "isTeamModule", "isRoadmapModule",
+        "getCellAttr", "getDescendants", "findGardenModuleAncestor", "findTaskModuleAncestor",
+        "findTeamModuleAncestor", "findRoadmapModuleAncestor", "cellId", "plainTextLabel", "gardenLabel",
+        "gardenCity", "allModelCells", "collectGardenModules", "linkIdSet", "linkedGardenModulesForCompanion",
+        "resolvedGardenCandidatesForCell", "selectedCellsForDashboard", "uniqueGardenList", "sortGardensForPicker",
+        "resolveDashboardToolbarContext", "selectedGardenModuleForToolbar", "getSelectedWorkspaceForCell",
+        "getActiveWorkspaceForSelection", "groupedGardensForPicker", "dashboardDiagramIsOpen",
+        "refreshViewportToolbarForSelection", "trellisUsersApi", "selectedCellsForShare", "shareSelectionState"
+    ];
+    const functions = names.map(function (name) {
+        const node = declarations.find(item => item.type === "FunctionDeclaration" && item.id.name === name);
+        assert.ok(node, "Missing production function: " + name);
+        return text.slice(node.start, node.end);
+    });
+    const model = {
+        cells: {},
+        root: { children: [] },
+        getRoot() { return this.root; },
+        getCell(id) { return this.cells[id] || null; },
+        getParent(cell) { return cell.parent || null; },
+        getChildCount(cell) { return (cell.children || []).length; },
+        getChildAt(cell, index) { return cell.children[index]; }
+    };
+    const unexpectedMutation = () => assert.fail("Default resolution must preserve selection and viewport");
+    const graph = {
+        selection: [],
+        getModel() { return model; },
+        getSelectionCells() { return this.selection; },
+        view: { scale: 0.75, translate: { x: 14, y: 28 } },
+        container: { scrollLeft: 35, scrollTop: 60 },
+        setSelectionCell: unexpectedMutation,
+        fitWindow: unexpectedMutation,
+        zoomTo: unexpectedMutation,
+        scrollCellToVisible: unexpectedMutation
+    };
+    const renders = [];
+    const shareSelections = [];
+    const context = {
+        graph, model, document: {}, GARDEN_PICKER_NO_CITY: "No city",
+        ui: { getCurrentFile() { return {}; } },
+        window: { Trellis: { users: { getEligibleShareScopes(cells) {
+            shareSelections.push(cells);
+            return { ok: cells.length > 0, reason: cells.length ? "" : "Select a scope" };
+        } } } },
+        renderViewportToolbar(moduleCell) { renders.push(moduleCell); },
+        renderBlankViewportToolbar() { context.activeToolbarModule = null; renders.push(null); },
+        hideViewportToolbar() { renders.push(null); },
+        saveResolvedGardenSelection() {},
+        toolbarRefreshTimer: null, lastToolbarContext: null, activeToolbarModule: null
+    };
+    vm.runInNewContext(functions.join("\n"), context, { filename: DASHBOARD_PATH });
+    return {
+        context, graph, model, renders, shareSelections,
+        showPage(...cells) {
+            model.cells = Object.fromEntries(cells.map(cell => [cell.id, cell]));
+            model.root = { children: cells.filter(cell => !cell.parent) };
+            graph.selection = [];
+        }
+    };
+} // NEW
+
+// Cells keep attributes mutable so conversion and undo can be checked without replacing production logic. // NEW
+function dashboardCell(id, attrs = {}, parent = null) {
+    const cell = {
+        id, attrs, parent, children: [], style: "module=1;",
+        getAttribute(key) { return this.attrs[key]; }
+    };
+    if (parent) parent.children.push(cell);
+    return cell;
+} // NEW
 
 function viewportToolbarSource() {
     const text = source();
@@ -36,6 +114,159 @@ function activeViewportToolbarSource() {
     assert.notEqual(end, -1, "Missing toolbar hide function");
     return text.slice(start, end);
 }
+
+test("sole garden remains active for empty, unrelated, descendant, and mixed selections", () => {
+    const { context, graph, showPage } = dashboardContextHarness();
+    const garden = dashboardCell("garden", { garden_module: "1" });
+    const bed = dashboardCell("bed", {}, garden);
+    const unrelated = dashboardCell("unrelated");
+    showPage(garden, bed, unrelated);
+    for (const selection of [[], [unrelated], [garden], [bed], [bed, unrelated]]) {
+        graph.selection = selection;
+        const resolved = context.resolveDashboardToolbarContext();
+        assert.equal(resolved.moduleCell, garden);
+        assert.deepEqual(Array.from(resolved.allGardens), [garden]);
+        assert.equal(context.selectedGardenModuleForToolbar(), garden);
+    }
+}); // NEW
+
+test("only companions associated with the active garden determine its workspace", () => {
+    const { context, graph, showPage } = dashboardContextHarness();
+    const garden = dashboardCell("garden", { garden_module: "1" });
+    for (const [attribute, linkAttribute, workspace] of [
+        ["task_module", "trellis_garden_module_id", "tasks"],
+        ["team_module", "linkedTo", "team"],
+        ["roadmap_module", "roadmap_garden_module_id", "roadmap"]
+    ]) {
+        const linked = dashboardCell("linked", { [attribute]: "1", [linkAttribute]: garden.id });
+        const child = dashboardCell("child", {}, linked);
+        const unlinked = dashboardCell("unlinked", { [attribute]: "1", linkedTo: "missing-garden" });
+        const unlinkedChild = dashboardCell("unlinked-child", {}, unlinked);
+        showPage(garden, linked, child, unlinked, unlinkedChild);
+        for (const selection of [[linked], [child], [child, unlinkedChild]]) {
+            graph.selection = selection;
+            assert.equal(context.resolveDashboardToolbarContext().moduleCell, garden);
+            assert.equal(context.getActiveWorkspaceForSelection(garden), workspace);
+        }
+        for (const selection of [[], [unlinked], [unlinkedChild], [garden, unlinked]]) {
+            graph.selection = selection;
+            assert.equal(context.getActiveWorkspaceForSelection(garden) || "garden", "garden");
+        }
+        graph.selection = [garden, child];
+        assert.equal(context.getActiveWorkspaceForSelection(garden), null, "Mixed workspaces retain the Garden fallback");
+    }
+}); // NEW
+
+test("zero and multiple gardens preserve selection and ambiguity rules", () => {
+    const { context, graph, showPage } = dashboardContextHarness();
+    const unrelated = dashboardCell("unrelated");
+    showPage(unrelated);
+    assert.equal(context.resolveDashboardToolbarContext().moduleCell, null);
+    assert.equal(context.resolveDashboardToolbarContext().candidates.length, 0);
+
+    const first = dashboardCell("first", { garden_module: "1" });
+    const second = dashboardCell("second", { garden_module: "1" });
+    const child = dashboardCell("child", {}, first);
+    const linked = dashboardCell("linked", { task_module: "1", linkedTo: "first" });
+    const ambiguous = dashboardCell("ambiguous", { team_module: "1", linkedTo: "first,second" });
+    showPage(first, second, child, linked, ambiguous, unrelated);
+    for (const [selection, expected, reason] of [
+        [[], null, "none"], [[unrelated], null, "unrelated"],
+        [[first], first, "selected"], [[child], first, "selected"],
+        [[linked], first, "selected"], [[ambiguous], null, "ambiguous"],
+        [[first, second], null, "mixed"], [[first, unrelated], null, "unrelated"]
+    ]) {
+        graph.selection = selection;
+        const resolved = context.resolveDashboardToolbarContext();
+        assert.equal(resolved.moduleCell, expected);
+        assert.equal(resolved.reason, reason);
+        assert.equal(resolved.allGardens.length, 2);
+    }
+}); // NEW
+
+test("default context follows garden count, conversion, undo, and current-page changes", () => {
+    const { context, graph, model, renders, showPage } = dashboardContextHarness();
+    const first = dashboardCell("first", { garden_module: "1" });
+    const second = dashboardCell("second", { garden_module: "1" });
+    const unrelated = dashboardCell("unrelated");
+    showPage(first, unrelated);
+    graph.selection = [unrelated];
+    context.refreshViewportToolbarForSelection();
+    model.cells.second = second;
+    context.refreshViewportToolbarForSelection();
+    delete model.cells.second;
+    context.refreshViewportToolbarForSelection();
+    delete first.attrs.garden_module;
+    context.refreshViewportToolbarForSelection();
+    first.attrs.garden_module = "1";
+    context.refreshViewportToolbarForSelection();
+    assert.deepEqual(renders, [first, null, first, null, first]);
+
+    showPage(second);
+    context.refreshViewportToolbarForSelection();
+    assert.equal(context.activeToolbarModule, second);
+    showPage();
+    context.refreshViewportToolbarForSelection();
+    assert.equal(context.activeToolbarModule, null);
+    showPage(first);
+    delete model.cells; // NEW: exercise the production root-traversal fallback too.
+    context.refreshViewportToolbarForSelection();
+    assert.equal(context.activeToolbarModule, first);
+}); // NEW
+
+test("default activation preserves selection, viewport, and selection-based share eligibility", () => {
+    const { context, graph, renders, shareSelections, showPage } = dashboardContextHarness();
+    const garden = dashboardCell("garden", { garden_module: "1" });
+    const unrelated = dashboardCell("unrelated");
+    showPage(garden, unrelated);
+    const viewBefore = JSON.stringify(graph.view);
+    const scrollBefore = JSON.stringify(graph.container);
+    for (const selection of [[], [unrelated]]) {
+        graph.selection = selection;
+        context.refreshViewportToolbarForSelection();
+        assert.equal(context.activeToolbarModule, garden);
+        assert.equal(graph.selection, selection);
+        assert.equal(context.shareSelectionState().ok, selection.length > 0);
+        assert.equal(shareSelections.at(-1), selection, "Share receives only the actual selection");
+    }
+    assert.deepEqual(renders, [garden, garden]);
+    assert.equal(JSON.stringify(graph.view), viewBefore);
+    assert.equal(JSON.stringify(graph.container), scrollBefore);
+    context.ui.getCurrentFile = () => null;
+    context.refreshViewportToolbarForSelection();
+    assert.equal(renders.at(-1), null, "No toolbar without an open diagram");
+}); // NEW
+
+test("picker matches every word across name and city and retains sorted city groups", () => {
+    const { context } = dashboardContextHarness();
+    const kitchen = dashboardCell("kitchen", { garden_module: "1", label: "<b>Kitchen Garden</b>", city_name: "Seattle" });
+    const roof = dashboardCell("roof", { garden_module: "1", label: "Rooftop", city_name: "Seattle" });
+    const boston = dashboardCell("boston", { garden_module: "1", label: "Kitchen North", city_id: "Boston" });
+    const cityless = dashboardCell("cityless", { garden_module: "1", label: "Kitchen Orchard" });
+    const newYork = dashboardCell("new-york", { garden_module: "1", label: "Kitchen East", city_name: "New York", city_id: "ignored-id" });
+    const gardens = [roof, cityless, newYork, kitchen, boston];
+    const matches = query => Array.from(context.groupedGardensForPicker(gardens, query), group =>
+        Array.from(group.gardens, cell => cell.id)).flat();
+    for (const [query, expected] of [
+        ["Seattle", ["kitchen", "roof"]], ["roof", ["roof"]],
+        ["seattle kitchen", ["kitchen"]], ["kitchen seattle", ["kitchen"]],
+        ["  SEAttLE\t  KITchen\n", ["kitchen"]], ["sea kit", ["kitchen"]],
+        ["kitchen", ["boston", "new-york", "kitchen", "cityless"]],
+        ["Boston north", ["boston"]], ["york kitchen new", ["new-york"]],
+        ["orchard", ["cityless"]], ["unknown kitchen", []],
+        ["Seattle Boston", []], ["ignored-id", []], ["No city", []],
+        ["", ["boston", "new-york", "kitchen", "roof", "cityless"]],
+        [" \t\n ", ["boston", "new-york", "kitchen", "roof", "cityless"]]
+    ]) assert.deepEqual(matches(query), expected, "Query: " + JSON.stringify(query));
+    const groups = Array.from(context.groupedGardensForPicker(gardens, ""), group => ({
+        city: group.city, ids: Array.from(group.gardens, cell => cell.id)
+    }));
+    assert.deepEqual(groups, [
+        { city: "Boston", ids: ["boston"] }, { city: "New York", ids: ["new-york"] },
+        { city: "Seattle", ids: ["kitchen", "roof"] }, { city: "No city", ids: ["cityless"] }
+    ]);
+    assert.equal(context.groupedGardensForPicker([], "Seattle").length, 0);
+}); // NEW
 
 test("garden dashboard toolbar is mounted to the graph viewport and sized from the viewport", () => {
     const text = viewportToolbarSource();
@@ -203,7 +434,8 @@ test("garden dashboard blank state keeps controls visible and exposes searchable
     assert.match(text, /gardenPickerWrap\.className = "trellis-garden-dashboard-picker";/);
     assert.match(text, /const gardenPickerBtn = createToolbarButton\("Select garden\.\.\.", "Select a garden module", "open"\);/);
     assert.match(text, /const search = document\.createElement\("input"\);[\s\S]*search\.type = "search";[\s\S]*search\.className = "trellis-garden-dashboard-garden-search";/);
-    assert.match(text, /search\.placeholder = "Search gardens";/);
+    assert.match(text, /search\.placeholder = "Search gardens or cities";/); // CHANGE
+    assert.match(text, /search\.setAttribute\("aria-label", "Search gardens or cities"\);/); // NEW
 });
 
 test("garden dashboard waits for an opened diagram before rendering toolbar", () => {
@@ -217,11 +449,9 @@ test("garden dashboard waits for an opened diagram before rendering toolbar", ()
     assert.match(fullSource, /ui\.editor\.addListener\("fileLoaded", handleDashboardDiagramOpened\);/);
 });
 
-test("garden dashboard picker searches by garden name while preserving city grouping", () => {
+test("garden dashboard picker searches names and cities while preserving city grouping", () => { // CHANGE
     const text = viewportToolbarSource();
     assert.match(text, /function groupedGardensForPicker\(gardens, searchText\)/);
-    assert.match(text, /gardenLabel\(garden\)\.toLocaleLowerCase\(\)\.indexOf\(query\) >= 0/);
-    assert.doesNotMatch(text, /gardenCity\(garden\)\.toLocaleLowerCase\(\)\.indexOf\(query\)/);
     assert.match(text, /const city = gardenCity\(garden\) \|\| GARDEN_PICKER_NO_CITY;/);
     assert.match(text, /if \(left === GARDEN_PICKER_NO_CITY && right !== GARDEN_PICKER_NO_CITY\) return 1;/);
     assert.match(text, /gardenLabel\(left\)\.localeCompare\(gardenLabel\(right\)\)/);
@@ -339,7 +569,7 @@ test("garden dashboard applies selected year to linked task module cards", () =>
 
 test("garden dashboard derives active workspace from selection", () => {
     const text = viewportToolbarSource();
-    assert.match(text, /function getActiveWorkspaceForSelection\(\)/);
+    assert.match(text, /function getActiveWorkspaceForSelection\(moduleCell\)/); // CHANGE
     assert.match(text, /function getSelectedWorkspaceForCell\(cell\)/);
     assert.match(text, /if \(isGardenModule\(cell\) \|\| findGardenModuleAncestor\(graph, cell\)\) return "garden";/);
     assert.match(text, /if \(isTaskModule\(cell\) \|\| findTaskModuleAncestor\(graph, cell\)\) return "tasks";/);

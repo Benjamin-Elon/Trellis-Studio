@@ -129,7 +129,7 @@ export function hasCanvasAccess(state, userId, now = Date.now()) {
 export function preserveAccess(chosenXml, currentXml) {
     const chosen = inspectDiagram(chosenXml);
     const current = inspectDiagram(currentXml);
-    const protectedName = name => /^trellis_(users|owner|access|role_|team_|garden_team)/.test(name); // CHANGE: archived/inactive role bindings are permission metadata too.
+    const protectedName = name => name === 'trellis_project_name' || /^trellis_(users|owner|access|role_|team_|garden_team)/.test(name); // CHANGE: conflict recovery preserves the current administrator-controlled name.
     const currentPages = new Map(current.document.pages.map(page => [page.container?.getAttribute('id') || '', page.doc])); // NEW: page ordering is content, not an authorization identity.
     for (const page of chosen.document.pages) {
         const currentDocument = chosen.document.pages.length === 1 && current.document.pages.length === 1 ? current.document.pages[0].doc : currentPages.get(page.container?.getAttribute('id') || ''); // CHANGE: allow raw/wrapped single-page representations.

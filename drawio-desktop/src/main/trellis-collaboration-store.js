@@ -3,9 +3,10 @@
  * materialized XML and rejected proposals remain local. // NEW */
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
+import { naming, withProjectName, validateProjectNameChange } from './trellis-project-naming.js'; // NEW
 import { digest, makeId, signRecord, verifyRecord, safeId, inspectDiagram } from './trellis-share-protocol.js'; // NEW
 import { replay, diffObjects, applyChanges, authorityFor, invitationAcceptance, objects, logicalKey, targetsForObject, COLLABORATION_VERSION, HOLD_MS } from './trellis-collaboration-protocol.js'; // NEW
-export function createCollaborationStore({ canvas, deviceId, keys, profile, now = Date.now, writeAtomic, writeImmutable, prepareXml = async xml => xml }) { // NEW
+export function createCollaborationStore({ canvas, deviceId, keys, profile, now = Date.now, writeAtomic, writeImmutable, prepareXml = async xml => xml, beforeMaterialize = async () => {} }) { // CHANGE
     const directory = path.join(canvas.folderPath, '.trellis', 'collaboration-v2'), sessions = new Map(); // NEW
     let queue = Promise.resolve(), latest = null, recoveryPaths = []; // NEW
     const sessionFor = (callerId, userId) => { const key = callerId + ':' + userId; if (!sessions.has(key)) sessions.set(key, makeId()); return sessions.get(key); }; // NEW
@@ -29,7 +30,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         const savedCopies = await fs.readFile(indexFile, 'utf8').then(JSON.parse).catch(err => { if (err.code === 'ENOENT') return []; throw err; }); // NEW
         recoveryPaths = savedCopies.filter(p => /^local-[a-f0-9-]{36}\.drawio$/.test(p.filename) || p.filename === canvas.filename).map(p => ({ ...p, recoveryPath: path.join(profile, 'recovery', canvas.shareId, p.filename) })); // NEW
         const genesis = JSON.parse(await fs.readFile(path.join(directory, 'genesis.json'), 'utf8')); // NEW
-        if (!verifyRecord(genesis, canvas.coordinatorPublicKey) || genesis.payload.schema !== COLLABORATION_VERSION || genesis.payload.shareId !== canvas.shareId || genesis.payload.diagramId !== canvas.diagramId || digest(genesis.payload.xml) !== genesis.payload.hash) throw new Error('The project snapshot could not be verified.'); // NEW
+        if (!verifyRecord(genesis, canvas.genesisCoordinatorPublicKey || canvas.coordinatorPublicKey) || genesis.payload.schema !== COLLABORATION_VERSION || genesis.payload.shareId !== canvas.shareId || genesis.payload.diagramId !== canvas.diagramId || digest(genesis.payload.xml) !== genesis.payload.hash) throw new Error('The project snapshot could not be verified.'); // CHANGE: handover retains the original signed genesis.
         const records = [], errors = []; // NEW
         const names = await fs.readdir(path.join(directory, 'records')).catch(err => { if (err.code === 'ENOENT') return []; throw err; }); // NEW
         const members = new Map(canvas.members.map(m => [m.deviceId, m])); // NEW
@@ -81,6 +82,9 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         await writeAtomic(path.join(profile, 'recovery', canvas.shareId, 'index.json'), JSON.stringify(recoveryPaths)); return recoveryPath; // NEW
     } // NEW
     async function materialize(state) { // NEW
+        if (canvas.localRemoved || canvas.projectRetired) return; // NEW: queued refreshes must never recreate a retired projection.
+        await beforeMaterialize(state.xml); // NEW: naming runs inside the same queue as every projection write.
+        if (canvas.localRemoved || canvas.projectRetired) return; // NEW
         const existing = await fs.readFile(canvas.diagramPath, 'utf8').catch(err => { if (err.code === 'ENOENT') return null; throw err; }); // NEW
         const markerPath = path.join(profile, 'recovery', canvas.shareId, 'projection.json'); // NEW
         const marker = await fs.readFile(markerPath, 'utf8').then(JSON.parse).catch(err => { if (err.code === 'ENOENT') return null; throw err; }); // NEW
@@ -102,6 +106,10 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
             const actor = { userId, sessionId: sessionFor(callerId, userId) }; // NEW
             let state = await read(); // NEW
             const roster = inspectDiagram(state.xml).store; // NEW
+            if (input.kind === 'projectName') { // NEW
+                if (!roster.users?.some(user => user.id === userId && user.admin && !user.disabled)) throw new Error('Only an active project administrator can change the shared project name.'); // NEW
+                input = { kind: 'save', baseXml: state.xml, xml: withProjectName(state.xml, naming.projectName(input.name)) }; // NEW
+            } // NEW
             if (!roster.users?.some(u => u.id === userId && !u.disabled) && !roster.invites?.some(i => i.pendingUserId === userId && i.status === 'pending' && i.expiresAt > now())) throw new Error('Log in with an active project user.'); // NEW
             if (input.kind === 'get') { // NEW
                 await materialize(state); // NEW
@@ -114,13 +122,14 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
                 if (holds.some(h => authorityFor(state.xml, h.key, userId) < 1)) throw new Error('You cannot request editing access to this object.'); // NEW
                 await append(state, actor, 'request', { claimIds: [...new Set(holds.map(h => h.claimId))] }); // NEW
             } else if (input.kind === 'release') { // NEW
-                await append(state, actor, 'release', { targets: input.targets }); // NEW
+                await append(state, actor, 'release', input.targets === undefined ? {} : { targets: input.targets }); // CHANGE: omitted fields must stay omitted after signing and JSON serialization.
             } else if (input.kind === 'claim' || input.kind === 'save') { // NEW
                 const index = objects(state.xml); // NEW
-                if (input.kind === 'save') input = { ...input, xml: await prepareXml(input.xml) }; // NEW: newly referenced assets enter the existing hashed asset transport.
+                if (input.kind === 'save') input = { ...input, xml: await prepareXml(input.xml) }; // CHANGE
                 const delta = input.kind === 'claim' && !input.xml ? { changes: [{}], targets: [...new Set((input.targets || []).filter(k => index.has(k)).flatMap(k => targetsForObject(index, k)))] } : diffObjects(input.baseXml, input.xml); // NEW
                 if (input.kind === 'claim' && !delta.targets.length) throw new Error('Select the object to edit first.'); // NEW
                 if (delta.changes.length) { // NEW
+                    if (input.xml) validateProjectNameChange(input.baseXml, input.xml, userId, state.xml); // CHANGE: target-only claims contain no naming edit to validate.
                     const blocked = state.holds.filter(h => (delta.targets.includes(h.key) || h.key === '*' || delta.targets.includes('*')) && h.sessionId !== actor.sessionId); // NEW
                     const reserved = state.reservations.filter(h => delta.targets.includes(h.key) && h.sessionId !== actor.sessionId); // NEW
                     if (blocked.length || reserved.length) { // NEW
@@ -162,5 +171,5 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
             return { ok: true, xml: state.xml, collaboration: publicState(state, actor.sessionId) }; // NEW
         }); // NEW
     } // NEW
-    return { initialize, refresh, action, read, saveRecovery: xml => serialized(async () => { await read(); const recoveryPath = await preserve(xml, 'Manually saved recovery copy.'); return { recoveryPath, filename: path.basename(recoveryPath) }; }), flush: () => queue, forget: callerId => { for (const key of [...sessions.keys()]) if (key.startsWith(callerId + ':')) { const userId = key.slice(String(callerId).length + 1); action(callerId, userId, { kind: 'release' }).catch(() => {}).finally(() => sessions.delete(key)); } } }; // NEW
+    return { initialize, refresh, action, read, snapshot: () => serialized(read), runExclusive: serialized, saveRecovery: xml => serialized(async () => { await read(); const recoveryPath = await preserve(xml, 'Manually saved recovery copy.'); return { recoveryPath, filename: path.basename(recoveryPath) }; }), flush: () => queue, forget: callerId => { for (const key of [...sessions.keys()]) if (key.startsWith(callerId + ':')) { const userId = key.slice(String(callerId).length + 1); action(callerId, userId, { kind: 'release' }).catch(() => {}).finally(() => sessions.delete(key)); } } }; // CHANGE
 } // NEW

@@ -143,7 +143,7 @@ test("irrigation controls render above irrigation annotations and connection ove
 
     assert.match(source, /function overlayHost\(\)/);
     assert.match(source, /const pane = graph\.view && graph\.view\.overlayPane \? graph\.view\.overlayPane : null/);
-    assert.match(source, /function appendOverlayNode\(node\)[\s\S]*host\.appendChild\(node\)/);
+    assert.match(source, /function appendOverlayNode\(node, manipulationFeedback\)[\s\S]*host\.appendChild\(node\)/); // CHANGE: creation feedback can opt out of suppression.
     assert.match(source, /function ensureIrrigationControlLayer\(\)[\s\S]*trellis-irrigation-control-layer/);
     assert.match(source, /const baseHost = graph\.container \|\| \(pane && !paneIsSvg \? pane : null\)/);
     assert.match(source, /function inlineConnectionActionStyle[\s\S]*GRAPH_OVERLAY_Z\.CONTROL_TOP/);

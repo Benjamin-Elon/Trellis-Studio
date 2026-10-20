@@ -1130,6 +1130,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function positionSelectedBedOverlay(entry) {
+        if (graph.__trellisOverlayVisibility?.isSuppressed()) return true; // NEW: hidden panels cannot be measured; restore repositions in place.
         const state = graph.view && graph.view.getState ? graph.view.getState(entry.cell) : null;
         if (!state) return false;
         const width = selectedBedOverlayWidth(entry);
@@ -1240,6 +1241,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function updateSelectedBedOverlayDrag(evt) { // NEW
+        if (graph.__trellisOverlayVisibility) return false; // NEW: shared hiding preserves panel DOM.
         if (!selectedBedOverlayDrag.candidate || selectedBedOverlayDrag.suppressed) return false; // NEW
         const start = selectedBedOverlayDrag.startPoint; // NEW
         const point = selectedBedOverlayDragPoint(evt); // NEW
@@ -1276,6 +1278,7 @@ Draw.loadPlugin(function (ui) {
             if (!entry) {
                 entry = { cell: bed, div: createSelectedBedOverlay() };
                 graph.container.appendChild(entry.div);
+                graph.__trellisOverlayVisibility?.mark(entry.div); // NEW: informational overlays must not obstruct manipulation.
                 selectedBedOverlays.set(id, entry);
             }
             entry.cell = bed;
@@ -1293,6 +1296,9 @@ Draw.loadPlugin(function (ui) {
         setTimeout(function () { refreshSelectedBedOverlaysSoon.pending = false; syncGeneratedBedLabels(); syncSelectedBedOverlays(); }, 0);
     }
 
+    graph.addListener && graph.addListener('trellisOverlayVisibilityChanged', function (_sender, event) { // NEW
+        if (!event.getProperty('suppressed')) selectedBedOverlays.forEach(positionSelectedBedOverlay); // NEW: remeasure without rebuilding inputs.
+    }); // NEW
     const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null;
     model.addListener && model.addListener(mxEvent.CHANGE, refreshSelectedBedOverlaysSoon);
     if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedBedOverlaysSoon);

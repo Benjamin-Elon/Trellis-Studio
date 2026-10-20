@@ -7671,6 +7671,7 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     function updateIrrigationDragSuppression(session, evt) { // CHANGE
+        if (graph.__trellisOverlayVisibility) return false; // NEW: shared suppression keeps HUD drafts mounted.
         if (!session || activeIrrigationMode !== session || !session.dragCandidate || session.suppressHudDuringDrag) return false; // CHANGE
         const start = session.dragStartPoint; // CHANGE
         const point = mouseEventClientPoint(evt); // CHANGE
@@ -12532,13 +12533,15 @@ Draw.loadPlugin(function (ui) {
         if (index >= 0) parent.children.splice(index, 1);
     }
 
-    function appendOverlayNode(node) {
+    function appendOverlayNode(node, manipulationFeedback) { // CHANGE
+        if (!manipulationFeedback) graph.__trellisOverlayVisibility?.mark(node); // NEW: creation ghosts remain visible.
         const host = overlayHost();
         if (host) host.appendChild(node);
         else irrigationDebug("appendOverlayNode:no-host", { nodeClass: node && node.className });
     }
 
     function appendIrrigationControlNode(node) {
+        graph.__trellisOverlayVisibility?.mark(node); // NEW: informational overlays must not obstruct manipulation.
         const host = ensureIrrigationControlLayer();
         if (host) { host.appendChild(node); return host; }
         else irrigationDebug("appendIrrigationControlNode:no-host", { nodeClass: node && node.className });
@@ -12656,6 +12659,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function positionHudForSelection(hud, selected, session) {
+        if (graph.__trellisOverlayVisibility?.isSuppressed()) return; // NEW: defer hidden HUD measurements.
         if (session && session.creationMode && session.creationModelPoint) { // CHANGE
             positionHudBelowCreationPreview(hud, session); // CHANGE
             return; // NEW
@@ -12687,7 +12691,7 @@ Draw.loadPlugin(function (ui) {
         const node = createAssemblyPreviewNode(label, session.creationMode); // NEW
         const modelBox = creationPreviewModelBox(session); // CHANGE
         session.creationPreviewBounds = positionModelBox(node, modelBox); // CHANGE
-        appendOverlayNode(node); // NEW
+        appendOverlayNode(node, true); // CHANGE: active creation feedback remains visible.
         session.creationPreviewNodes.push(node); // NEW
     } // NEW
 
@@ -13392,4 +13396,10 @@ Draw.loadPlugin(function (ui) {
 
     addActionAndMenus();
     installInactiveIrrigationEntryOverlay();
+    graph.addListener && graph.addListener('trellisOverlayVisibilityChanged', function (_sender, event) { // NEW
+        if (event.getProperty('suppressed')) return; // NEW
+        const session = activeIrrigationMode; // NEW
+        if (session && session.hud) positionHudForSelection(session.hud, graph.getSelectionCell(), session); // NEW: preserve retained form controls.
+        if (inactiveEntryOverlay) positionInactiveEntryOverlay(inactiveEntryOverlay, graph.getSelectionCell()); // NEW
+    }); // NEW
 });

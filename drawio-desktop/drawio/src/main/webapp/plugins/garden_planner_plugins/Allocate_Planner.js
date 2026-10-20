@@ -1957,6 +1957,7 @@ Draw.loadPlugin(function (ui) {
             if (!host) {
                 host = document.createElement("div");
                 host.className = "trellis-allocate-overlay-layer";
+                graph.__trellisOverlayVisibility?.mark(host); // NEW: informational overlays must not obstruct manipulation.
                 host.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;font:12px Arial,sans-serif;";
                 if (layer && layer.appendChild) layer.appendChild(host);
             }

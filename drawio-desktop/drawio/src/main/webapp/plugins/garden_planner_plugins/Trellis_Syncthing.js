@@ -61,21 +61,29 @@ Draw.loadPlugin(function (ui) {
         await bridge.setContext(context());
     }
     async function refresh() {
-        if (refreshing) return refreshFinished; // CHANGE
+        if (refreshing) { const generation = contextGeneration; await refreshFinished; if (generation === contextGeneration && file() && info?.diagramPath !== context().diagramPath) return refresh(); return; } // CHANGE: a previous document's refresh cannot initialize a newly opened file.
+        const openedFile = file(), generation = contextGeneration; // NEW
         refreshing = true;
         refreshFinished = new Promise(resolve => { finishRefresh = resolve; }); // NEW
         try {
             await synchronizeContext();
+            if (file() !== openedFile || generation !== contextGeneration) return; // NEW
             const current = context();
             if (!current.diagramPath) { info = null; lastStatus = null; announce(); return; }
             const result = await bridge.getStatus();
+            if (file() !== openedFile || generation !== contextGeneration) return; // NEW
             const entry = (result.canvases || []).find(canvas => canvas.diagramPath === current.diagramPath);
             if (!entry) { info = null; lastStatus = null; announce(); return; }
-            info = await bridge.getSyncthingShareInfo({ diagramPath: current.diagramPath });
+            const nextInfo = await bridge.getSyncthingShareInfo({ diagramPath: current.diagramPath }); // CHANGE
+            if (file() !== openedFile || generation !== contextGeneration) return; info = nextInfo; // NEW
             if (graph.refresh) graph.refresh(); // NEW: refresh images after their managed asset base becomes available.
             lastStatus = entry;
             if (entry.state === 'conflict' && info.protocolVersion !== 2) pauseAutosave(); // CHANGE: object arbitration does not stop unrelated autosaves.
-            if (isCollaborative() && collaborationBaseline == null) { collaborationBaseline = ui.getFileData(); observedXml = collaborationBaseline; collaboration = entry.collaboration || null; } // NEW
+            if (isCollaborative() && collaborationBaseline == null) { // CHANGE: first-load normalization is an edit against the actual signed snapshot.
+                const opened = file(); collaborationBaseline = opened.data; observedXml = collaborationBaseline; // NEW
+                const baseline = await coordinate({ kind: 'get' }); // NEW
+                if (file() !== opened) return; collaborationBaseline = baseline.xml; collaboration = baseline.collaboration; // NEW
+            } // NEW
             await importNewHistory();
             announce();
         } catch (err) { status(err.message); }
@@ -195,6 +203,8 @@ Draw.loadPlugin(function (ui) {
         current.isAutosave = function () { return file() === current && isCollaborative() ? !!current.fileObject && !lastStatus?.pending && !['revoked', 'awaitingApproval'].includes(lastStatus?.state) : originalAutosave ? originalAutosave.apply(this, arguments) : false; }; // NEW
         current.isAutosaveOptional = function () { return file() === current && isCollaborative() ? false : originalOptional ? originalOptional.apply(this, arguments) : true; }; // NEW
         current.save = function () {
+            if (current.__trellisNamingMove) { const args = arguments; current.__trellisNamingMove.then(() => current.save.apply(current, args)); return; } // NEW
+            if (file() === current && refreshing) { const args = arguments; refreshFinished.then(() => current.save.apply(current, args)); return; } // NEW: never fall back to a native write while managed status is unresolved.
             if (file() === current && isCollaborative()) { saveCollaborative(current, arguments[1], arguments[2]); return; } // NEW
             if (file() === current && info && current.fileObject && current.fileObject.path === info.diagramPath && (conflicted || remoteUpdatePending)) {
                 if (typeof arguments[2] === 'function') arguments[2]({ message: 'Resolve the shared canvas conflict before saving. Save a recovery copy to retain local work.' });
@@ -468,29 +478,33 @@ Draw.loadPlugin(function (ui) {
         const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; return (graph.getSelectionCells?.() || []).map(cell => JSON.stringify([pageId, cell.id])); // NEW
     } // NEW
     async function coordinate(input) { // NEW
-        if (!isCollaborative()) return null; const current = file(), shareId = info.shareId; await synchronizeContext(); // NEW
+        if (!isCollaborative()) return null; const current = file(), shareId = info.shareId, generation = contextGeneration; await synchronizeContext(); // CHANGE
+        if (file() !== current || info?.shareId !== shareId || generation !== contextGeneration) throw new Error('The project changed before the collaboration action.'); // NEW
         const result = await bridge.collaborationAction({ shareId, ...input }); // NEW
         if (file() === current && info?.shareId === shareId) { collaboration = result.collaboration; localSessionId = collaboration?.sessionId || localSessionId; if (lastStatus) lastStatus.collaboration = collaboration; announce(); } return result; // NEW
     } // NEW
     async function releaseHolds(targets) { // NEW
+        const current = file(), shareId = info?.shareId; // NEW
         if (graph.isEditing?.()) { // NEW: finish a native label only at handoff, keeping ordinary autosave from closing the editor.
             stoppingForSave = true; // NEW
             try { graph.stopEditing(false); } finally { stoppingForSave = false; } // NEW
         } // NEW
-        await saveCurrent(); return coordinate({ kind: 'release', targets }); // NEW
+        await saveCurrent(); if (file() !== current || info?.shareId !== shareId) return; return coordinate({ kind: 'release', targets }); // CHANGE
     } // NEW
     async function saveCollaborative(current, success, error) { // NEW
         const operation = async () => { // NEW
+            await current.__trellisNamingSync; // NEW: capture a draft only after a shared-name update has patched its saved baseline.
             await acquisitionPromise; if (file() !== current || !isCollaborative()) throw new Error('The project changed before saving.'); // NEW
             const captured = ui.getFileData(), baseline = collaborationBaseline || current.data; // NEW
             const claimIds = [...new Set((collaboration?.holds || []).filter(h => h.sessionId === localSessionId).map(h => h.claimId))]; // NEW: saves retain their editing generation; delayed drafts cannot reacquire a released hold.
-            const result = await coordinate({ kind: 'save', baseXml: baseline, xml: captured, claimIds }); // NEW
+            let result; current.__trellisCollaborativeSaving = true; // NEW
+            try { result = await coordinate({ kind: 'save', baseXml: baseline, xml: captured, claimIds }); } finally { current.__trellisCollaborativeSaving = false; } // CHANGE
             if (!result.ok) { status((result.reason || 'Editing hold lost.') + ' Recovery copy: ' + result.recoveryPath); if (ui.getFileData() === captured) applyRemote(result.xml, current); throw new Error((result.reason || 'Editing hold lost.') + ' Your changes were preserved: ' + result.recoveryPath); } // NEW
             current.stat = await request('fileStat', { file: current.fileObject.path }); current.data = result.xml; // NEW
             if (ui.getFileData() === captured) { collaborationBaseline = result.xml; if (captured !== result.xml) applyRemote(result.xml, current, current.stat); else { current.setModified(false); observedXml = captured; } } // NEW
             else if (current.patch && ui.diffPages && ui.getPagesForXml && ui.pages?.length) applyRemote(result.xml, current, current.stat, captured); // NEW: apply only differences returned by the captured save, leaving subsequent local changes intact.
             else { collaborationBaseline = captured; current.setModified(true); } // NEW: compatibility fallback keeps the captured object bases so unseen peer changes cannot be mistaken for local reversions.
-            return new Promise((resolve, reject) => current.fileSaved(result.xml, null, () => { if (success) success(); resolve(); }, err => { reject(err); })); // NEW
+            return new Promise((resolve, reject) => current.fileSaved(result.xml, null, () => { current.contentChanged?.(); if (success) success(); resolve(); }, err => { reject(err); })); // CHANGE: reuse native save notifications so pending naming and library updates retry after the save gate opens.
         }; // NEW
         collaborationSave = collaborationSave.catch(() => {}).then(operation); // NEW
         return collaborationSave.catch(err => { if (error) error({ message: err.message }); else status('Autosave failed: ' + err.message); }); // NEW
@@ -610,11 +624,12 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     window.Trellis = window.Trellis || {};
     /** Explicit forms keep their private drafts until the existing claim and collaborative save have both settled. */ // CHANGE
-    async function settleObjectEdits() { // CHANGE
+    async function settleObjectEdits(options = {}) { // CHANGE
         if (!isCollaborative()) return; const current = file(); // CHANGE
         await acquisitionPromise; // CHANGE
         if (file() !== current) throw new Error('The diagram changed before the comment was accepted.'); // CHANGE
         await saveCurrent(); // CHANGE
+        if (options.release) await coordinate({ kind: 'release' }); // NEW: naming commands cannot borrow an editor's metadata hold.
     } // CHANGE
     window.Trellis.sharing = { ensureManaged, prepareInvite, showJoinDialog, showSharingDialog, refresh, context, describeStatus, settleObjectEdits, getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying }; // CHANGE
     graph.__trellisSharing = window.Trellis.sharing;
@@ -623,6 +638,17 @@ Draw.loadPlugin(function (ui) {
     const extras = ui.menus.get('extras');
     if (extras) { const original = extras.funct; extras.funct = function (menu, parent) { original.apply(this, arguments); ui.menus.addMenuItems(menu, ['-', 'trellisJoinSharedCanvas', 'trellisCanvasSync'], parent); }; }
     window.addEventListener('trellisUsersSessionChanged', () => synchronizeContext().catch(err => status(err.message)));
+    window.addEventListener('trellisProjectNamed', event => { // CHANGE
+        if (info && info.diagramId === event.detail.diagramId) info.diagramPath = event.detail.path; // NEW
+        const current = file(), metadata = graph.getModel?.().getCell?.('1'); // NEW
+        if (!isCollaborative() || metadata?.getAttribute?.('trellis_project_name') === event.detail.projectName) { synchronizeContext().catch(err => status(err.message)); return; } // NEW
+        const task = (current.__trellisNamingSync || Promise.resolve()).then(async () => { // NEW
+            const result = await coordinate({ kind: 'get' }); // NEW
+            if (file() !== current || !result) return; // NEW
+            applyRemote(result.xml, current, current.stat, current.isModified() ? collaborationBaseline : undefined); // NEW: patch changes since the saved baseline, retaining unrelated unsaved objects.
+        }); // NEW
+        current.__trellisNamingSync = task; task.catch(err => status(err.message)).finally(() => { if (current.__trellisNamingSync === task) current.__trellisNamingSync = null; }); // NEW
+    }); // NEW
     window.addEventListener('trellisHistoryRevisionRecorded', historyRecorded);
     bridge.onStatus(canvases => {
         const current = context();

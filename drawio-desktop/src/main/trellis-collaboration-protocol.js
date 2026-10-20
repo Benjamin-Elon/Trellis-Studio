@@ -2,6 +2,7 @@
  * A saved proposal is durable, not globally final: delayed concurrent claims can // NEW
  * reject it. All replicas replay the same signed causal records from genesis. // NEW */
 import { XMLSerializer } from '@xmldom/xmldom'; // NEW
+import { validateProjectNameChange } from './trellis-project-naming.js'; // NEW
 import { diagramDocument, inspectDiagram, parseXml, digest, canonical, activeAccessTeams } from './trellis-share-protocol.js'; // NEW
 export const COLLABORATION_VERSION = 2; // NEW
 export const HOLD_MS = 300000; // NEW
@@ -277,6 +278,7 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
                 if (!Array.isArray(r.targets) || !r.targets.length || r.targets.some(key => !holds.has(key) || !sameActor(holds.get(key), r) || !r.claimIds?.includes(holds.get(key)?.claimId) || !accountSetup && authorityFor(xml, key, r.userId) < 1)) throw new Error('The editing hold expired or another editor has priority.'); // NEW
                 const required = diffObjects(xml, proposed).targets; // NEW
                 if (required.some(key => !r.targets.includes(key))) throw new Error('The group edit did not acquire every dependent object.'); // NEW
+                validateProjectNameChange(xml, proposed, r.userId); // NEW: applies even to invitation acceptance and metadata removal.
                 const before = inspectDiagram(xml), after = inspectDiagram(proposed); // NEW
                 if (canonical(before.store) !== canonical(after.store) && !rosterChangeAllowed(before.store, after.store, r.userId, xml, r.at)) throw new Error('The roster change is not an authorized invitation or account action.'); // NEW
                 if (!accountSetup) validateProtectedChanges(xml, proposed, r.userId); // NEW: keep the existing validated Users bootstrap for generated role bindings.

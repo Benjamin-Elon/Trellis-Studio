@@ -3,6 +3,66 @@ const assert = require('node:assert/strict'); // NEW
 const test = require('node:test'); // NEW
 const harness = require('./helpers/object-details-harness.cjs'); // NEW
 
+/** Supply real-world layout outcomes explicitly; JSDOM has neither rendered boxes nor a native ResizeObserver. */ // NEW
+async function resizedPanel(t) { // NEW
+    const h = harness(t, { observePanelResizes: true, overlayVisibility: true }); // NEW
+    const cell = h.vertex('resize-shape', '<p>Keep this description</p>'); h.graph.setSelectionCell(cell); await h.tick(); // NEW
+    const field = h.input(cell), panel = field.closest('section'), layout = { width: 360, height: 220, rendered: true }; // NEW
+    Object.defineProperties(panel, { offsetWidth: { get: () => layout.width }, offsetHeight: { get: () => layout.height } }); // NEW
+    panel.getClientRects = () => layout.rendered ? [{ width: layout.width, height: layout.height }] : []; // NEW
+    const observer = h.resizeObservers.find(observer => observer.node === panel), writes = []; // NEW
+    const setItem = h.w.Storage.prototype.setItem; // NEW
+    h.w.Storage.prototype.setItem = function (key, value) { if (key.startsWith('trellis.details.view.v1:')) writes.push(value); return setItem.call(this, key, value); }; // NEW
+    panel.querySelector('[data-side=right]').click(); observer.emit(); // NEW
+    const key = Object.keys(h.w.localStorage).find(key => key.startsWith('trellis.details.view.v1:')); // NEW
+    return { ...h, cell, field, panel, layout, observer, writes, saved: () => JSON.parse(h.w.localStorage.getItem(key)) }; // NEW
+} // NEW
+
+test('extra-info dimensions survive suppression and stale callbacks without preference writes', async t => { // NEW
+    const h = await resizedPanel(t), expected = h.saved(), before = h.writes.length, xml = h.ui.getFileData(); // NEW
+    assert.equal(expected.width, 360); assert.equal(expected.height, 220); assert.equal(expected.side, 'right'); // NEW
+    for (let cycle = 0; cycle < 3; cycle++) { // NEW
+        h.graph.__trellisOverlayVisibility.begin('drag'); h.layout.width = 0; h.layout.height = 0; h.layout.rendered = false; h.observer.emit(); // NEW
+        assert.deepEqual(h.saved(), expected); // NEW
+        h.layout.width = 400; h.layout.height = 260; h.layout.rendered = true; h.observer.emit(); // NEW: even nonzero interim measurements must not save while suppressed.
+        assert.deepEqual(h.saved(), expected); // NEW
+        h.layout.width = 360; h.layout.height = 220; h.graph.__trellisOverlayVisibility.end('drag'); // NEW
+        await new Promise(resolve => h.w.requestAnimationFrame(resolve)); // NEW
+        h.observer.emit([{ target: h.panel, contentRect: { width: 0, height: 0 } }]); // NEW: queued hidden-state data must not replace the current live measurements.
+        h.controller.refresh(); assert.deepEqual(h.saved(), expected); // NEW
+        assert.equal(h.panel.style.width, '360px'); assert.equal(h.panel.style.height, '220px'); assert.equal(h.input(h.cell), h.field); // NEW
+    } // NEW
+    assert.equal(h.writes.length, before); assert.equal(h.ui.getFileData(), xml); // NEW
+}); // NEW
+
+test('extra-info rejects unrendered, detached, zero, and nonfinite resize measurements', async t => { // NEW
+    const h = await resizedPanel(t), expected = h.saved(), before = h.writes.length; // NEW
+    h.layout.width = 410; h.layout.rendered = false; h.observer.emit(); h.layout.rendered = true; // NEW: an ancestor can be hidden without setting panel.hidden.
+    h.panel.hidden = true; h.layout.width = 410; h.observer.emit(); h.panel.hidden = false; // NEW
+    const host = h.panel.parentNode; h.panel.remove(); h.observer.emit(); host.appendChild(h.panel); // NEW
+    for (const [width, height] of [[0, 220], [360, 0], [NaN, 220], [360, Infinity], [-1, 220]]) { h.layout.width = width; h.layout.height = height; h.observer.emit(); } // NEW
+    assert.deepEqual(h.saved(), expected); assert.equal(h.writes.length, before); // NEW
+}); // NEW
+
+test('extra-info still persists real resizes and an intentional minimum size across reopening', async t => { // NEW
+    for (const [width, height] of [[480, 280], [180, 100]]) { // NEW
+        const h = await resizedPanel(t); // NEW
+        h.layout.width = width; h.layout.height = height; const before = h.writes.length; h.observer.emit(); // NEW
+        assert.equal(h.saved().width, width); assert.equal(h.saved().height, height); assert.equal(h.writes.length, before + 1); // NEW
+        h.observer.emit(); assert.equal(h.writes.length, before + 1); // NEW: unchanged dimensions do not write preferences again.
+        h.graph.clearSelection(); h.controller.refresh(); h.graph.setSelectionCell(h.cell); h.controller.refresh(); // NEW
+        const panel = h.input(h.cell).closest('section'); assert.equal(panel.style.width, width + 'px'); assert.equal(panel.style.height, height + 'px'); assert.equal(h.saved().side, 'right'); // NEW
+    } // NEW
+}); // NEW
+
+test('extra-info resize callbacks respect user ownership, removed objects, and controller disposal', async t => { // NEW
+    const h = await resizedPanel(t), expected = h.saved(), before = h.writes.length; // NEW
+    h.layout.width = 440; h.policy.currentUser = 'other-user'; h.observer.emit(); h.policy.currentUser = 'user-a'; // NEW
+    const parent = h.graph.model.getParent(h.cell); h.graph.model.remove(h.cell); h.observer.emit(); h.graph.model.add(parent, h.cell); // NEW
+    h.controller.destroy(); h.observer.emit(); assert.equal(h.observer.disconnected, true); // NEW
+    assert.deepEqual(h.saved(), expected); assert.equal(h.writes.length, before); // NEW
+}); // NEW
+
 test('native selection is allowed only inside this controller editors, including read-only rich text', async t => { // NEW
     const h = harness(t), cell = h.vertex('shape', '<p><b>Nested text</b> <a href="https://example.test/">Link text</a></p>'); // NEW
     h.graph.setSelectionCell(cell); await h.tick(); const field = h.input(cell); // NEW
@@ -129,6 +189,23 @@ test('export projections expand text, preserve canonical XML and filter absent o
     const emptyGraph = new h.w.Graph(h.w.document.createElement('div')); h.core.applyProjection(emptyGraph, projection, 'page-a'); // NEW
     assert.equal(Object.values(emptyGraph.model.cells).filter(cell => cell.__trellisDetailsOwner).length, 0); emptyGraph.destroy(); // NEW
 }); // NEW
+
+test('canvas badge enlargement preserves the original export geometry and appearance at each zoom mode', async t => { // CHANGE
+    const h = harness(t), cell = h.vertex('shape', '<p>Info</p>'); // CHANGE
+    for (const useCssTransforms of [false, true]) for (const scale of [1, 1.5]) { // CHANGE
+        h.graph.useCssTransforms = useCssTransforms; h.graph.view.scaleAndTranslate(scale, 12, 18); h.graph.view.revalidate(); h.controller.refresh(); // CHANGE
+        const badge = h.w.document.querySelector('[data-cell-id="shape"]'), projection = h.controller.exportProjection(), record = projection['page-a'].find(item => item.badge), state = h.graph.view.getState(cell); // CHANGE
+        const x = useCssTransforms ? (state.x + 12) * scale : state.x, y = useCssTransforms ? (state.y + 18) * scale : state.y, width = useCssTransforms ? state.width * scale : state.width; // CHANGE
+        assert.equal(badge.style.width, '20px'); assert.equal(parseFloat(badge.style.left), x + Math.max(4, width - 24)); // CHANGE
+        assert.equal(record.geometry.x, (x + Math.max(4, width - 22)) / scale - 12); assert.equal(record.geometry.y, (y + 4) / scale - 18); // CHANGE
+        assert.equal(record.geometry.width, 18 / scale); assert.equal(record.geometry.height, 18 / scale); assert.equal(record.fontSize, 14 / scale); // CHANGE
+        const exported = h.controller.createExportGraph(projection); // CHANGE
+        try { // CHANGE
+            const exportedBadge = Object.values(exported.model.cells).find(item => item.__trellisDetailsOwner?.id === cell.id && item.value === '&#9432;'); // CHANGE
+            assert.ok(exportedBadge); assert.match(exportedBadge.style, /fillColor=#eff6ff;strokeColor=#2563eb;fontColor=#2563eb;/); assert.doesNotMatch(exportedBadge.style, /#1e40af|#facc15/); // CHANGE
+        } finally { exported.__trellisDetailsCleanup(); } // CHANGE
+    } // CHANGE
+}); // CHANGE
 
 test('local storage failure falls back to session preferences and Save flushes the focused field', async t => { // NEW
     const h = harness(t), cell = h.vertex('shape', '<p>Before</p>'); // NEW

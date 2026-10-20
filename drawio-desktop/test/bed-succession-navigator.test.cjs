@@ -523,7 +523,7 @@ test("selected overlap cluster shows Occupancy navigator instead of numeric badg
     assert.ok(rail, "expected visible Occupancy navigator");
     assert.equal(numericBadge, undefined);
     assert.equal(visibleOccupancyNavigatorBars(document).length, 2);
-    assert.equal(rail.style.top, "-107px"); // CHANGE: reserve room for the new today caption above the selected cluster.
+    assert.equal(rail.style.top, "-131px"); // CHANGE: reserve an extra 24 screen pixels above the bed controls.
 });
 
 test("Occupancy navigator bars center crop variety names with a planting label column", () => {

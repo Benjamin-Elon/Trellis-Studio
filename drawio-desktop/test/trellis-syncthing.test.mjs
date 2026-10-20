@@ -524,3 +524,89 @@ test('automatic sign-in registration is one-time and does not override later opt
     await f.service.recovery(1, { shareId: result.shareId });
     assert.equal(f.calls.filter(call => call.startup === true).length, 1);
 });
+
+/** A two-device shared folder exercises real signatures, membership replay, and both projections. */ // NEW
+async function departurePair(t, version = 1) { // NEW
+    const a = await fixture(t, 'A'), b = await fixture(t, 'B'); // NEW
+    const store = { usersEnabled: true, users: [{ id: 'admin', name: 'Owner', email: 'owner@example.org', admin: true, portableIdentityId: 'owner-identity' }, { id: 'invite-user', name: 'Guest', email: 'guest@example.org', admin: false, portableIdentityId: 'guest-identity' }], pendingUsers: [], invites: [] }; // NEW
+    let { result } = await setup(a, xml({ store })); // NEW
+    if (version === 2) result = await a.service.upgradeCollaboration(1, { shareId: result.shareId }); // NEW
+    const invitation = await a.service.createDeviceInvite(1, { shareId: result.shareId, userId: 'invite-user' }); // NEW
+    const joined = await b.service.joinCanvas({ block: invitation.block }); // NEW
+    await a.service.requestMembership(1, { shareId: result.shareId, operation: 'approve', reply: joined.reply }); // NEW
+    a.connections[device('B')] = { connected: true }; b.connections[device('A')] = { connected: true }; // NEW
+    const folders = [result.folderPath, path.dirname(joined.diagramPath)]; // NEW
+    async function copy(from, to) { await fs.cp(path.join(folders[from], '.trellis'), path.join(folders[to], '.trellis'), { recursive: true }); } // NEW
+    async function pump() { // NEW
+        await a.service.poll(); await copy(0, 1); // NEW
+        if (version === 1) await fs.copyFile(result.diagramPath, joined.diagramPath); // NEW
+        await b.service.poll(); await copy(1, 0); await a.service.poll(); // NEW
+    } // NEW
+    await pump(); await pump(); // NEW
+    return { a, b, result, joined, invitation, folders, pump, copy }; // NEW
+} // NEW
+
+for (const version of [1, 2]) test('v' + version + ' coordinator departure promotes a connected successor and preserves the project and genesis', async t => { // NEW
+    const f = await departurePair(t, version), input = { shareId: f.result.shareId, userId: 'admin', identityId: 'owner-identity', successorUserId: 'invite-user' }; // NEW
+    const eligibility = await f.a.service.projectActions(input); assert.equal(eligibility.requiresSuccessor, true); assert.equal(eligibility.canLeave, true); assert.deepEqual(eligibility.successors.map(u => u.id), ['invite-user']); // NEW
+    assert.equal((await f.a.service.leaveProject(input)).complete, false); // NEW
+    for (let step = 0; step < 5; step++) await f.pump(); // NEW
+    const finished = await f.a.service.leaveProject(input); assert.equal(finished.complete, true, JSON.stringify(f.a.service.listStatus())); // NEW
+    const info = await f.b.service.shareInfo({ diagramPath: f.joined.diagramPath }); assert.equal(info.coordinatorDeviceId, device('B')); // NEW
+    const state = inspectDiagram(await fs.readFile(f.joined.diagramPath, 'utf8')); assert.equal(state.store.users.find(u => u.id === 'admin').disabled, true); assert.equal(state.store.users.find(u => u.id === 'invite-user').admin, true); // NEW
+    await f.a.service.applyProjectLifecycle({ ...input, operation: 'left', recordId: crypto.randomUUID() }); // NEW
+    await assert.rejects(fs.access(f.result.diagramPath)); assert.ok(await fs.readFile(f.joined.diagramPath, 'utf8')); // NEW
+    assert.equal((await f.b.service.libraryDescriptor(f.result.shareId)).coordinatorDeviceId, device('B')); // NEW
+    await assert.rejects(f.a.service.joinCanvas({ block: f.invitation.block }), /predates departure/); // NEW
+}); // NEW
+
+for (const version of [1, 2]) test('v' + version + ' ordinary member departure waits for an applied acknowledgement and retains the administrator', async t => { // NEW
+    const f = await departurePair(t, version), input = { shareId: f.result.shareId, userId: 'invite-user', identityId: 'guest-identity' }; // NEW
+    assert.equal((await f.b.service.projectActions(input)).canLeave, true); // NEW
+    assert.equal((await f.b.service.leaveProject(input)).complete, false); // NEW
+    for (let step = 0; step < 6; step++) await f.pump(); // NEW
+    assert.equal((await f.b.service.leaveProject(input)).complete, true, JSON.stringify(f.b.service.listStatus())); // NEW
+    const state = inspectDiagram(await fs.readFile(f.result.diagramPath, 'utf8')); assert.equal(state.store.users.find(u => u.id === 'admin').disabled, undefined); assert.equal(state.store.users.find(u => u.id === 'invite-user').disabled, true); // NEW
+    assert.equal((await f.a.service.shareInfo({ diagramPath: f.result.diagramPath })).coordinatorDeviceId, device('A')); // NEW
+}); // NEW
+
+test('departure blocks offline successors and pending requests retain their files through a disconnection', async t => { // NEW
+    const f = await departurePair(t), input = { shareId: f.result.shareId, userId: 'admin', identityId: 'owner-identity', successorUserId: 'invite-user' }; // NEW
+    f.a.connections[device('B')].connected = false; // NEW
+    assert.equal((await f.a.service.projectActions(input)).successors.length, 0); await assert.rejects(f.a.service.leaveProject(input), /connected/); // NEW
+    f.a.connections[device('B')].connected = true; await f.a.service.leaveProject(input); f.a.connections[device('B')].connected = false; // NEW
+    await f.pump(); assert.equal((await f.a.service.leaveProject(input)).complete, false); assert.ok(await fs.readFile(f.result.diagramPath, 'utf8')); // NEW
+    f.a.connections[device('B')].connected = true; for (let step = 0; step < 5; step++) await f.pump(); assert.equal((await f.a.service.leaveProject(input)).complete, true); // NEW
+}); // NEW
+
+test('a forged handover manifest cannot replace the previously trusted coordinator', async t => { // NEW
+    const f = await departurePair(t), signer = crypto.generateKeyPairSync('ed25519'); // NEW
+    const descriptor = await f.a.service.libraryDescriptor(f.result.shareId); // NEW
+    const forged = signRecord({ schema: 1, shareId: f.result.shareId, diagramId: 'diagram-1', version: 3, coordinatorDeviceId: device('A'), members: descriptor.members, nextCoordinator: { deviceId: device('B'), publicKey: descriptor.members.find(m => m.deviceId === device('B')).publicKey } }, signer.privateKey); // NEW
+    await fs.writeFile(path.join(f.folders[1], '.trellis', 'membership', '000000000003.json'), JSON.stringify(forged)); await f.b.service.poll(); // NEW
+    assert.match(f.b.service.listStatus()[0].reason, /signature/); assert.equal((await f.b.service.shareInfo({ diagramPath: f.joined.diagramPath })).coordinatorDeviceId, device('A')); // NEW
+}); // NEW
+
+for (const version of [1, 2]) test('v' + version + ' a fresh invitation reapproves a departed device without reviving its old setup', async t => { // NEW
+    const f = await departurePair(t, version), input = { shareId: f.result.shareId, userId: 'admin', identityId: 'owner-identity', successorUserId: 'invite-user' }; // NEW
+    await f.a.service.leaveProject(input); for (let step = 0; step < 5; step++) await f.pump(); assert.equal((await f.a.service.leaveProject(input)).complete, true); // NEW
+    await f.a.service.applyProjectLifecycle({ ...input, operation: 'left', recordId: crypto.randomUUID() }); // NEW
+    await assert.rejects(f.a.service.joinCanvas({ block: f.invitation.block }), /predates departure/); // NEW
+    f.b.service.setContext(1, { diagramPath: f.joined.diagramPath, diagramId: 'diagram-1', userId: 'invite-user' }); // NEW
+    const baseXml = await fs.readFile(f.joined.diagramPath, 'utf8'), state = inspectDiagram(baseXml), original = state.store.users.find(u => u.id === 'admin'); original.disabled = false; original.admin = false; // NEW
+    for (const cell of state.cells) if (cell.node.hasAttribute('trellis_users_json')) cell.node.setAttribute('trellis_users_json', JSON.stringify(state.store)); // NEW
+    if (version === 2) assert.equal((await f.b.service.collaborationAction(1, { shareId: f.result.shareId, kind: 'save', baseXml, xml: state.document.serialize() })).ok, true); else await fs.writeFile(f.joined.diagramPath, state.document.serialize()); // NEW
+    const invitation = await f.b.service.createDeviceInvite(1, { shareId: f.result.shareId, userId: 'admin' }), rejoined = await f.a.service.joinCanvas({ block: invitation.block }); // NEW
+    await f.b.service.requestMembership(1, { shareId: f.result.shareId, operation: 'approve', reply: rejoined.reply }); // NEW
+    await fs.cp(path.join(f.folders[1], '.trellis'), path.join(path.dirname(rejoined.diagramPath), '.trellis'), { recursive: true }); // NEW
+    if (version === 1) await fs.copyFile(f.joined.diagramPath, rejoined.diagramPath); await f.a.service.poll(); // NEW
+    const local = (await f.a.service.listCanvases()).find(canvas => canvas.shareId === f.result.shareId); assert.equal(local.pending, false); assert.equal(local.revoked, false); assert.equal(local.rejoined, true); assert.equal(local.available, true, JSON.stringify(f.a.service.listStatus())); // CHANGE
+}); // NEW
+
+test('an interrupted roster commit resumes after restartable storage failure without losing the successor', async t => { // NEW
+    const f = await departurePair(t), input = { shareId: f.result.shareId, userId: 'admin', identityId: 'owner-identity', successorUserId: 'invite-user' }; // NEW
+    await f.a.service.leaveProject(input); const write = fs.writeFile; // NEW
+    const failure = t.mock.method(fs, 'writeFile', async (filename, ...args) => { if (String(filename) === path.join(f.folders[0], '.trellis', 'membership', '000000000003.json')) throw Object.assign(new Error('Injected disk full'), { code: 'ENOSPC' }); return write(filename, ...args); }); // NEW
+    await f.pump(); assert.equal((await f.a.service.leaveProject(input)).complete, false); assert.ok(await fs.readFile(f.result.diagramPath, 'utf8')); // NEW
+    failure.mock.restore(); for (let step = 0; step < 6; step++) await f.pump(); assert.equal((await f.a.service.leaveProject(input)).complete, true, JSON.stringify(f.a.service.listStatus())); // NEW
+}); // NEW

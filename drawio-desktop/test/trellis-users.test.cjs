@@ -301,6 +301,13 @@ function resetUiNotifications(harness) {
 function rejectedPopover(document) {
     return document.querySelector(".trellis-users-rejected-edit-popover");
 }
+test('project-name edits require an admin even when a regular user owns the metadata cell', () => { // NEW
+    const h = loadUsersPlugin(), users = h.context.window.Trellis.users; users.enableUsers('Alice', '1234'); users.createUser('Bob', '5678', false); users.logout(); users.login('Bob', '5678'); // NEW
+    h.layer.value.setAttribute('trellis_owner_user_id', users.getCurrentUser().id); // NEW
+    const previous = h.layer.value.cloneNode(true); h.layer.value.setAttribute('trellis_project_name', 'Forged name'); let undone = false; // NEW
+    h.model.fireChange({ changes: [{ constructor: { name: 'mxValueChange' }, cell: h.layer, previous, value: h.layer.value }], undo() { undone = true; } }); // NEW
+    assert.equal(undone, true); // NEW
+}); // NEW
 
 function fireGraphPointer(harness, x, y, type = "mousemove") {
     const evt = new harness.context.window.MouseEvent(type, { clientX: x, clientY: y, bubbles: true });
@@ -2463,3 +2470,182 @@ test("expired invites are hidden and remove pending grants", () => {
     assert.doesNotMatch(harness.module.getAttribute(users.attrs.accessGrants) || "", new RegExp(invite.invite.pendingUserId));
     assert.equal(users.acceptInvite({ email: "bob@example.com", code: invite.code, name: "Bob", pin: "5678" }).ok, false);
 });
+
+/** Use real invitation policy and UI with mocked email, sharing, and clipboard boundaries. */ // NEW
+function inviteDeliveryFixture(t, options = {}) { // NEW
+    const h = loadUsersPlugin(), win = h.context.window, users = win.Trellis.users; // NEW
+    t.after(() => win.close()); // NEW
+    users.enableUsers('Alice', '1234'); // NEW
+    h.module.style = 'module=1'; users.stampCreatedOwner(h.module); // NEW
+    const result = users.createPendingInvite({ email: 'grower@example.com', scopeCellIds: [h.module.id] }); // NEW
+    const prepared = [], launches = [], copies = []; // NEW
+    win.Trellis.sharing = { async prepareInvite(invite) { // NEW
+        prepared.push(invite); // NEW
+        if (options.prepare) return options.prepare(invite); // NEW
+        return { to: invite.emailDraft.to, subject: 'Jalapeño & herbs 🌱', body: 'First line\nSecond line\n\nTRELLIS INVITE\n' + invite.code + '\nEND INVITE' }; // NEW
+    } }; // NEW
+    win.trellisShare = { async openEmailDraft(draft) { launches.push(draft); return options.launch ? options.launch(draft) : { ok: true }; } }; // NEW
+    Object.defineProperty(win.navigator, 'clipboard', { configurable: true, value: { async writeText(value) { copies.push(value); if (options.copy) return options.copy(value); } } }); // NEW
+    return { ...h, win, users, result, prepared, launches, copies, // NEW
+        delivery() { return h.document.querySelector('.trellis-invite-delivery-dialog'); }, // NEW
+        button(text) { return buttonByText(this.delivery(), text); }, // NEW
+        preview() { return this.delivery().querySelector('textarea'); }, // NEW
+        status() { return this.delivery().querySelector('[role=status]').textContent; } // NEW
+    }; // NEW
+} // NEW
+
+test('retained invite delivery retries and copies one full Unicode message without changing the pending invite', async t => { // NEW
+    const h = inviteDeliveryFixture(t); // NEW
+    const before = JSON.stringify(h.users._test.readStore()); // NEW
+    assert.equal(h.users.openInviteDelivery(h.result).ok, true); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.ok(h.delivery()); // NEW
+    assert.match(h.status(), /Email request handed to your mail app/); // NEW
+    assert.equal(h.prepared.length, 1); // NEW
+    assert.equal(h.launches.length, 1); // NEW
+    assert.equal(h.preview().readOnly, true); // NEW
+    assert.match(h.delivery().querySelector('details').textContent, /chrome:\/\/settings\/handlers/); // NEW
+    assert.match(h.delivery().querySelector('details').textContent, /Not allowed.*×/); // NEW
+    assert.match(h.delivery().querySelector('details').textContent, /cannot.*confirm that a draft appeared/); // NEW
+    h.button('Retry Email').focus(); h.button('Retry Email').click(); // NEW
+    assert.equal(h.document.activeElement, h.preview()); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(h.prepared.length, 1); // NEW
+    assert.equal(h.launches.length, 2); // NEW
+    assert.equal(h.launches[0], h.launches[1]); // NEW
+    h.button('Copy Invitation').focus(); h.button('Copy Invitation').click(); // NEW
+    assert.equal(h.document.activeElement, h.preview()); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(h.copies[0], 'To: grower@example.com\nSubject: Jalapeño & herbs 🌱\n\nFirst line\nSecond line\n\nTRELLIS INVITE\n' + h.result.code + '\nEND INVITE'); // NEW
+    assert.equal(h.copies[0], h.preview().value); // NEW
+    assert.equal(JSON.stringify(h.users._test.readStore()), before); // NEW
+    h.button('Done').click(); // NEW
+    assert.equal(h.delivery(), null); // NEW
+    assert.equal(h.users.listPendingInvites()[0].id, h.result.invite.id); // NEW
+}); // NEW
+
+test('email result failures and rejections keep the prepared invitation available for retry', async t => { // NEW
+    let count = 0; // NEW
+    const h = inviteDeliveryFixture(t, { launch() { // NEW
+        count++; // NEW
+        if (count === 1) return { ok: false, reason: 'Missing mail handler. Use Copy Invitation.' }; // NEW
+        if (count === 2) throw new Error('Launch rejected'); // NEW
+        return { ok: true }; // NEW
+    } }); // NEW
+    h.users.openInviteDelivery(h.result); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.match(h.status(), /Missing mail handler/); // NEW
+    assert.equal(h.button('Copy Invitation').disabled, false); // NEW
+    h.button('Retry Email').click(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.match(h.status(), /Launch rejected/); // NEW
+    assert.match(h.preview().value, /END INVITE/); // NEW
+    h.button('Retry Email').click(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.match(h.status(), /Email request handed/); // NEW
+    assert.equal(h.prepared.length, 1); // NEW
+    assert.equal(h.users.listPendingInvites().length, 1); // NEW
+}); // NEW
+
+test('preparation failure never exposes partial invitation text and retry keeps the original code', async t => { // NEW
+    let count = 0, finish; // NEW
+    const h = inviteDeliveryFixture(t, { prepare(result) { // NEW
+        count++; // NEW
+        if (count === 1) throw new Error('Save failed'); // NEW
+        return new Promise(resolve => { finish = () => resolve({ ...result.emailDraft, body: 'FULL SETUP ' + result.code }); }); // NEW
+    } }); // NEW
+    h.users.openInviteDelivery(h.result); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.match(h.status(), /Save failed.*Retry Email/); // NEW
+    assert.equal(h.preview().value, ''); // NEW
+    assert.equal(h.button('Copy Invitation').disabled, true); // NEW
+    assert.equal(h.launches.length, 0); // NEW
+    h.button('Retry Email').click(); h.button('Retry Email').click(); // NEW
+    assert.equal(h.button('Retry Email').disabled, true); // NEW
+    assert.equal(h.button('Copy Invitation').disabled, true); // NEW
+    assert.equal(count, 2); // NEW
+    finish(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(h.prepared[0], h.result); assert.equal(h.prepared[1], h.result); // NEW
+    assert.match(h.preview().value, new RegExp('FULL SETUP ' + h.result.code)); // NEW
+    assert.equal(h.launches.length, 1); // NEW
+    assert.equal(h.users.listPendingInvites().length, 1); // NEW
+}); // NEW
+
+test('clipboard failure selects complete text and preserves editor isolation and native input defaults', async t => { // NEW
+    const h = inviteDeliveryFixture(t, { copy() { throw new Error('Clipboard denied'); } }); // NEW
+    h.users.openInviteDelivery(h.result); // NEW
+    await new Promise(setImmediate); // NEW
+    let editorEvents = 0; // NEW
+    for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'click', 'dblclick', 'keydown', 'keypress', 'keyup']) { // NEW
+        h.document.addEventListener(type, evt => { editorEvents++; evt.preventDefault(); }); // NEW
+        const evt = new h.win.Event(type, { bubbles: true, cancelable: true }); // NEW
+        h.preview().dispatchEvent(evt); // NEW
+        assert.equal(evt.defaultPrevented, false, type); // NEW
+    } // NEW
+    h.button('Copy Invitation').click(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(editorEvents, 0); // NEW
+    assert.match(h.status(), /complete invitation is selected.*Ctrl\+C.*Command\+C/); // NEW
+    assert.equal(h.document.activeElement, h.preview()); // NEW
+    assert.equal(h.preview().selectionStart, 0); // NEW
+    assert.equal(h.preview().selectionEnd, h.preview().value.length); // NEW
+    assert.equal(h.button('Retry Email').disabled, false); // NEW
+    assert.equal(h.button('Copy Invitation').disabled, false); // NEW
+}); // NEW
+
+test('closing during preparation stops email launch and delayed focus without revoking the invite', async t => { // NEW
+    let finish; // NEW
+    const h = inviteDeliveryFixture(t, { prepare(result) { return new Promise(resolve => { finish = () => resolve({ ...result.emailDraft, body: 'FULL SETUP' }); }); } }); // NEW
+    h.users.openInviteDelivery(h.result); // NEW
+    const done = h.button('Done'); // NEW
+    done.dispatchEvent(new h.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); // NEW
+    const outside = h.document.createElement('button'); h.document.body.appendChild(outside); outside.focus(); // NEW
+    finish(); h.flushTimers(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(h.delivery(), null); // NEW
+    assert.equal(h.launches.length, 0); // NEW
+    assert.equal(h.document.activeElement, outside); // NEW
+    assert.equal(h.users.listPendingInvites()[0].id, h.result.invite.id); // NEW
+}); // NEW
+
+test('closing during email launch or clipboard copy never reopens the view or steals focus', async t => { // NEW
+    let finishLaunch, failCopy; // NEW
+    const h = inviteDeliveryFixture(t, { launch() { return new Promise(resolve => { finishLaunch = () => resolve({ ok: true }); }); }, copy() { return new Promise((resolve, reject) => { failCopy = () => reject(new Error('Clipboard denied')); }); } }); // NEW
+    h.users.openInviteDelivery(h.result); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(h.button('Retry Email').disabled, true); // NEW
+    assert.equal(h.button('Copy Invitation').disabled, true); // NEW
+    h.button('Done').click(); // NEW
+    const outside = h.document.createElement('button'); h.document.body.appendChild(outside); outside.focus(); // NEW
+    finishLaunch(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(h.delivery(), null); assert.equal(h.document.activeElement, outside); // NEW
+    h.win.trellisShare.openEmailDraft = async () => ({ ok: true }); // NEW
+    h.users.openInviteDelivery(h.result); // NEW
+    await new Promise(setImmediate); // NEW
+    h.button('Copy Invitation').click(); h.button('Done').click(); outside.focus(); // NEW
+    failCopy(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(h.delivery(), null); assert.equal(h.document.activeElement, outside); // NEW
+}); // NEW
+
+test('People & Access Resend renews once and uses the same retained delivery and stable retries', async t => { // NEW
+    const h = inviteDeliveryFixture(t); // NEW
+    const previousHash = h.users._test.readStore().invites[0].codeHash; // NEW
+    h.actions.trellisUsers.funct(); // NEW
+    buttonByText(h.document, 'Resend').click(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.ok(h.delivery()); // NEW
+    const renewedHash = h.users._test.readStore().invites[0].codeHash; // NEW
+    assert.notEqual(renewedHash, previousHash); // NEW
+    assert.equal(h.prepared[0].invite.id, h.result.invite.id); // NEW
+    assert.notEqual(h.prepared[0].code, h.result.code); // NEW
+    h.button('Retry Email').click(); // NEW
+    await new Promise(setImmediate); // NEW
+    assert.equal(h.prepared.length, 1); // NEW
+    assert.equal(h.launches[0], h.launches[1]); // NEW
+    assert.equal(h.users._test.readStore().invites[0].codeHash, renewedHash); // NEW
+    h.button('Done').click(); // NEW
+    assert.equal(h.users.listPendingInvites().length, 1); // NEW
+}); // NEW

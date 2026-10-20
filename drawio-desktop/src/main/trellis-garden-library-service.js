@@ -4,6 +4,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { inspectDiagram, diagramDocument, hasCanvasAccess } from './trellis-share-protocol.js';
 import { cityRecord, projectSummary, averageDistance } from './trellis-project-summary.js'; // NEW
+import { createGardenLifecycle } from './trellis-garden-lifecycle.js'; // NEW
+import { createLibraryNaming } from './trellis-library-naming.js'; // NEW
+import { naming, withProjectName } from './trellis-project-naming.js'; // NEW
 const p = globalThis.TrellisIdentityProtocol;
 const uuid = () => crypto.randomUUID();
 const safe = value => { if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(value)) throw new Error('Invalid garden identifier.'); return value; };
@@ -11,7 +14,7 @@ const escape = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quo
 async function readJson(filename) { return JSON.parse(await fs.readFile(filename, 'utf8')); }
 async function writeJson(filename, value) { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename, JSON.stringify(value), { flag: 'wx', mode: 0o600 }); }
 
-export function createGardenLibraryService({ identities, legacyService, listCities = async () => [], getLocalFolder = () => '', setLocalFolder, validateLocalPath = async () => {} }) { // CHANGE
+export function createGardenLibraryService({ identities, legacyService, listCities = async () => [], getLocalFolder = () => '', getTrashRoot = () => path.join(getLocalFolder(), '.trellis-trash'), beforeRetire, setLocalFolder, validateLocalPath = async () => {}, validateStandalonePath = validateLocalPath }) { // CHANGE
     const privatePath = identityId => path.join(identities.identityRoot(identityId), 'local-gardens');
     const catalogPath = identityId => path.join(identities.metadataRoot(identityId), 'catalog');
     const own = () => { const session = identities.session(); if (!session) throw new Error('Log in to Garden library first.'); return session; };
@@ -58,6 +61,8 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
         await fs.writeFile(temporary, JSON.stringify(value), { mode: 0o600 }); await fs.rename(temporary, filename);
     }
     async function sourceService(identityId, local) { return local?.legacy ? legacyService() : identities.transport(identityId); }
+    const lifecycle = createGardenLifecycle({ identities, own, catalog, verifiedRecords, localSource, setLocalSource, sourceService, getLocalFolder, getTrashRoot, validateLocalPath, validateStandalonePath, beforeRetire }); // NEW
+    const projectNaming = createLibraryNaming({ identities, own, getEntry, catalog, localSource, setLocalSource, sourceService, verifiedRecords, writeJson, publish }); // NEW
     /** Use the same city catalog for module resolution and the identity reference city. */ // NEW
     async function cities() { return { ok: true, cities: (await listCities()).map(cityRecord).filter(city => city && city.cityId) }; } // NEW
     async function getReferenceCity() { // NEW
@@ -99,21 +104,27 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
     } // NEW
     async function list() {
         const session = own();
+        await lifecycle.processLifecycle(session.identityId); // NEW
         const errors = [], entries = await catalog(session.identityId, errors), daemon = await identities.transport(session.identityId); // CHANGE
         const registered = await daemon.listCanvases();
         const cityList = await cities().then(result => result.cities).catch(() => null); // CHANGE
         const reference = await getReferenceCity().then(result => result.city).catch(() => null); // NEW
         const result = [];
         for (const entry of entries) {
+            const retirement = await lifecycle.lifecycle(session.identityId, entry.diagramId); // NEW
+            if (retirement.state !== 'active' || retirement.pending) continue; // NEW
             let source, local, summary = entry.summary || null, stale = true, metadataError = ''; // CHANGE
             try { // NEW
                 source = await localSource(session.identityId, entry.diagramId); // CHANGE
+                if (retirement.record?.operation === 'restore' && source?.lifecycleStatus) continue; // NEW: failed restoration stays reviewable in Trash.
                 const localList = source?.legacy ? await (await legacyService()).listCanvases() : registered; // CHANGE
                 local = localList.find(canvas => canvas.shareId === entry.shareId);
                 const replacement = localList.find(canvas => canvas.protocolVersion === 2 && canvas.replacesShareId === entry.shareId && canvas.diagramId === entry.diagramId && canvas.available); // NEW: an admin upgrade keeps this identity's library entry attached to the replacement.
                 if (replacement) { const descriptor = await (source?.legacy ? await legacyService() : daemon).libraryDescriptor(replacement.shareId); const updated = { ...entry, ...descriptor, name: entry.name, workerId: entry.workerId }; await publish(updated); Object.assign(entry, updated); local = replacement; } // NEW
  // CHANGE
                 if (local?.available) { // NEW
+                    const descriptor = await (await sourceService(session.identityId, source)).libraryDescriptor(entry.shareId); // NEW
+                    if (descriptor.coordinatorDeviceId !== entry.coordinatorDeviceId) { Object.assign(entry, descriptor, { name: entry.name }); await publish(entry); } // NEW
                     const knownCities = new Map((cityList || []).map(city => [city.cityId, city])); // NEW
                     const cachedCities = new Map((summary?.moduleCities || []).filter(city => !knownCities.has(city.cityId)).map(city => [city.cityId, city])); // NEW
                     const fresh = projectSummary(await fs.readFile(local.path, 'utf8'), [...knownCities.values(), ...cachedCities.values()], true, Date.now(), entry.workerId); // CHANGE: retain signed coordinates absent from this device's city catalog and revalidate the linked user's access.
@@ -127,9 +138,11 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
                     } // NEW
                 } // NEW
             } catch (error) { metadataError = error.message; } // NEW
-            if (summary?.accessible === false || local?.state === 'revoked') continue; // NEW: a stale catalog entry must not keep a revoked garden in the accessible list.
+            if (!source?.departing && (summary?.accessible === false || local?.state === 'revoked')) continue; // CHANGE: a pending departure remains visible until its signed acknowledgement.
             const classification = summary?.classification || (entry.shared ? 'shared' : 'private'); // NEW
             result.push({ ...entry, summary, classification, shared: classification === 'shared', starterPending: entry.starterPending === true && !summary?.gardenModuleCount, source: 'library', userCount: summary?.userCount ?? null, moduleCities: summary?.moduleCities || [], gardenModuleCount: summary?.gardenModuleCount ?? null, summaryUpdatedAt: summary?.updatedAt || null, metadataStale: stale, metadataError, distanceKm: averageDistance(reference, summary?.moduleCities), seeds: local?.seeds ?? null, path: local?.path || null, folderPath: local?.folderPath || null, available: !!local?.available, state: local?.state || 'not-downloaded', reason: local?.reason || (!local?.available ? 'Download from another approved device.' : ''), conflicts: local?.conflicts || [], keepOffline: !!source?.keepOffline }); // CHANGE
+            result.at(-1).departing = !!source?.departing; // NEW
+            Object.assign(result.at(-1), await projectNaming.describe(session.identityId, entry).catch(error => ({ canRename: false, canEditSuffix: false, namingError: error.message }))); // NEW
         }
         result.sort((a, b) => a.name.localeCompare(b.name) || a.diagramId.localeCompare(b.diagramId));
         return { ok: true, gardens: result, errors }; // CHANGE
@@ -137,40 +150,48 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
     async function getEntry(diagramId) {
         const session = own(), entry = (await catalog(session.identityId)).find(item => item.diagramId === diagramId);
         if (!entry) throw new Error('Garden is not in this identity library.');
+        await lifecycle.assertActive(session.identityId, diagramId); // NEW
         return entry;
     }
     /** Import only a saved diagram that explicitly links this authenticated identity. */
     async function importCurrent(input) {
         const session = own(); await identities.requireSession();
         const xml = await fs.readFile(input.path, 'utf8'), diagram = inspectDiagram(xml);
+        const retirement = input.diagramId ? await lifecycle.lifecycle(session.identityId, input.diagramId) : { state: 'active' }; // CHANGE
+        if (retirement.state !== 'left' && input.diagramId) await lifecycle.assertActive(session.identityId, input.diagramId); // NEW
         const user = (diagram.store.users || []).find(entry => entry.id === input.userId && entry.portableIdentityId === session.identityId && !entry.disabled);
         if (!user || !hasCanvasAccess(diagram, user.id)) throw new Error('Log in to the diagram and link your identity before importing it.');
         const legacy = await legacyService(), legacyList = await legacy.listCanvases();
-        const existing = legacyList.find(entry => path.resolve(entry.path) === path.resolve(input.path)); // CHANGE
+        const identityDaemon = await identities.transport(session.identityId), identityList = await identityDaemon.listCanvases(); // NEW
+        const matchesPath = entry => entry.available && !entry.pending && !entry.revoked && path.resolve(entry.path) === path.resolve(input.path); // NEW
+        const legacyExisting = legacyList.find(matchesPath), identityExisting = identityList.find(matchesPath), existing = legacyExisting || identityExisting; // CHANGE
+        if (retirement.state === 'left' && (!existing?.rejoined || existing.diagramId !== input.diagramId)) throw new Error('Rejoin through a fresh approved invitation before adding this project again.'); // NEW
         let daemon, managed, descriptor;
-        if (existing) { daemon = legacy; descriptor = await legacy.libraryDescriptor(existing.shareId); }
+        if (existing) { daemon = legacyExisting ? legacy : identityDaemon; descriptor = await daemon.libraryDescriptor(existing.shareId); } // CHANGE
         else {
             daemon = await identities.transport(session.identityId);
             daemon.setContext(virtualCaller(session.identityId), { diagramPath: input.path, diagramId: input.diagramId, userId: user.id });
-            managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramPath: input.path, diagramId: input.diagramId, xml });
+            managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramPath: input.path, diagramId: input.diagramId, xml, protocolVersion: 2 }); // CHANGE: newly managed imports use the local-projection transport.
             descriptor = await daemon.libraryDescriptor(managed.shareId);
         }
         const entry = { ...descriptor, workerId: user.id, shared: !!existing, ownerIdentityId: session.identityId };
-        await setLocalSource(session.identityId, entry.diagramId, { legacy: !!existing, keepOffline: true });
+        await setLocalSource(session.identityId, entry.diagramId, { legacy: !!legacyExisting, keepOffline: true }); // CHANGE
         await publish(entry);
+        if (retirement.state === 'left') await lifecycle.completeRejoin(entry); // NEW
         return { ok: true, entry, path: managed?.diagramPath || input.path };
     }
     async function create(input = {}) {
         const session = own(); await identities.requireSession();
         const diagramId = uuid(), workerId = uuid();
-        const name = String(input.name || 'New garden').trim().slice(0, 120);
+        const name = naming.projectName(input.name || 'New garden'); // CHANGE
         if (!name) throw new Error('Enter a garden name.');
         const store = { schemaVersion: 1, usersEnabled: true, users: [{ id: workerId, name: session.username, portableIdentityId: session.identityId, admin: true, disabled: false, pinSalt: '', pinHash: '', createdAt: Date.now() }], pendingUsers: [], invites: [], accessRequests: [], accessMessages: [] };
         const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_users_diagram_id="' + diagramId + '" trellis_history_id="' + diagramId + '" trellis_users_json="' + escape(JSON.stringify(store)) + '"><mxCell parent="0"/></object></root></mxGraphModel>';
         const daemon = await identities.transport(session.identityId);
         daemon.setContext(virtualCaller(session.identityId), { diagramId, userId: workerId });
-        const managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramId, xml, filename: 'Garden.drawio' });
-        const entry = { ...(await daemon.libraryDescriptor(managed.shareId)), name, workerId, shared: false, ownerIdentityId: session.identityId, starterPending: true, summary: projectSummary(xml, [], true) }; // CHANGE: interrupted creation can resume starter setup without seeding older empty diagrams.
+        const namedXml = withProjectName(xml, name); // NEW
+        const managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramId, xml: namedXml, protocolVersion: 2, filename: naming.filename(name) }); // CHANGE
+        const entry = { ...(await daemon.libraryDescriptor(managed.shareId)), name, projectName: name, workerId, shared: false, ownerIdentityId: session.identityId, starterPending: true, summary: projectSummary(namedXml, [], true) }; // CHANGE
         await publish(entry); await setLocalSource(session.identityId, diagramId, { keepOffline: true });
         return { ok: true, entry, path: managed.diagramPath };
     }
@@ -190,9 +211,7 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
         return { ok: true }; // NEW
     } // NEW
     async function rename(input) {
-        const entry = await getEntry(input.diagramId), name = String(input.name || '').trim().slice(0, 120);
-        if (!name) throw new Error('Enter a garden name.');
-        await publish({ ...entry, name }); return { ok: true };
+        return projectNaming.rename(input); // CHANGE: main-process administrator and identity checks precede the shared edit.
     }
     /** Copies retain attribution but gain fresh document/cell/task identities. */
     async function duplicate(input) {
@@ -221,8 +240,9 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
         }
         const daemon = await identities.transport(session.identityId);
         daemon.setContext(virtualCaller(session.identityId), { diagramId, userId: entry.workerId });
-        const managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramId, xml: document.serialize(), assetBasePath: path.dirname(local.path), filename: 'Garden.drawio' });
-        const copy = { ...(await daemon.libraryDescriptor(managed.shareId)), name: input.name || entry.name + ' copy', workerId: entry.workerId, shared: false, ownerIdentityId: session.identityId };
+        const copyName = naming.projectName(input.name || Array.from(local.projectName || entry.projectName || entry.name).slice(0, 115).join('') + ' copy'); // NEW
+        const managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramId, xml: withProjectName(document.serialize(), copyName), protocolVersion: 2, assetBasePath: path.dirname(local.path), filename: naming.filename(copyName) }); // CHANGE
+        const copy = { ...(await daemon.libraryDescriptor(managed.shareId)), name: copyName, projectName: copyName, workerId: entry.workerId, shared: false, ownerIdentityId: session.identityId }; // CHANGE
         await publish(copy); await setLocalSource(session.identityId, diagramId, { keepOffline: true });
         return { ok: true, entry: copy, path: managed.diagramPath };
     }
@@ -250,10 +270,13 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
     }
     /** Signed self-device requests cannot approve somebody else's shared access. */
     async function processDownloads(identityId) {
+        await lifecycle.processLifecycle(identityId); // NEW
         const entries = await catalog(identityId);
         for (const record of await verifiedRecords(identityId, path.join(identities.metadataRoot(identityId), 'downloads'))) {
             const request = record.payload, entry = entries.find(item => item.diagramId === request.diagramId && item.workerId === request.workerId);
             if (!entry || request.kind !== 'garden-download') continue;
+            const retirement = await lifecycle.lifecycle(identityId, entry.diagramId); // NEW
+            if (retirement.state !== 'active' || retirement.pending) continue; // NEW
             const local = await localSource(identityId, entry.diagramId);
             if (!local) continue;
             const current = await identities.state(identityId), device = current.devices.find(item => item.id === request.device?.id);
@@ -262,6 +285,7 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
             try { await daemon.approveLibraryDevice({ shareId: entry.shareId, userId: entry.workerId, deviceId: device.syncthingId, publicKey: device.sharingPublicKey }); }
             catch (err) { if (!/needs approval/.test(err.message)) throw err; }
         }
+        for (const entry of entries) { const retirement = await lifecycle.lifecycle(identityId, entry.diagramId); if (retirement.state === 'active' && !retirement.pending) await projectNaming.reconcile(identityId, [entry]); } // CHANGE
     }
-    return { list, create, completeStarter, importCurrent, rename, duplicate, download, setOffline, removeLocal, getEntry, catalog, verifiedRecords, processDownloads, cities, getReferenceCity, setReferenceCity, listLocal, configureLocalFolder }; // CHANGE
+    return { list, create, completeStarter, importCurrent, rename, setSuffix: projectNaming.setSuffix, duplicate, download, setOffline, removeLocal, getEntry, catalog, verifiedRecords, processDownloads, cities, getReferenceCity, setReferenceCity, listLocal, configureLocalFolder, ...lifecycle }; // CHANGE
 }

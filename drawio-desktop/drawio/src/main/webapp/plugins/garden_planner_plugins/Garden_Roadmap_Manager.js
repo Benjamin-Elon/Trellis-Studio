@@ -1136,6 +1136,7 @@ Draw.loadPlugin(function (ui) {
     function showCostEditor(cell) { // NEW
         closeAssignmentPicker(); closeCostPicker(); const board = ancestor(cell, 'board'), shared = graph.__trellisTaskUi; // NEW
         const host = shared ? shared.ensureControlHost() : graph.container, picker = element('div', null, 'trellis-roadmap-cost-picker trellis-roadmap-control'); // NEW
+        graph.__trellisOverlayVisibility?.mark(picker); // NEW: cover the graph-container fallback as well as the shared control layer.
         picker.style.cssText = 'position:absolute;z-index:10030;background:#fff;border:1px solid #111;padding:10px;font:12px Arial;pointer-events:auto;min-width:300px;max-width:360px;width:max-content;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;overflow:visible;'; // CHANGE
         ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'keydown', 'keypress', 'keyup'].forEach(type => picker.addEventListener(type, stopDomPropagation)); host.appendChild(picker); costPicker = picker; // CHANGE
         const mode = element('select'); mode.setAttribute('aria-label', 'Cost mode'); mode.style.cssText = 'width:100%;padding:5px;box-sizing:border-box;'; // NEW
@@ -1158,6 +1159,7 @@ Draw.loadPlugin(function (ui) {
     function showAssignmentDialog(cellOrCells) { // CHANGE
         closeCostPicker(); closeAssignmentPicker(); const cells = Array.isArray(cellOrCells) ? cellOrCells : [cellOrCells], board = ancestor(cells[0], 'board'), shared = graph.__trellisTaskUi; // NEW
         const host = shared ? shared.ensureControlHost() : graph.container, picker = element('div', null, 'trellis-task-assignment-picker trellis-roadmap-control'); // NEW
+        graph.__trellisOverlayVisibility?.mark(picker); // NEW: cover standalone Roadmap controls.
         picker.style.cssText = 'position:absolute;z-index:10030;background:#fff;border:1px solid #111;padding:8px;font:12px Arial;pointer-events:auto;min-width:260px;max-height:400px;overflow:auto;'; // NEW
         picker.addEventListener('mousedown', event => mxEvent.consume(event)); host.appendChild(picker); assignmentPicker = picker; // NEW
         const signature = selectionSignature(cells), roster = roleRoster(board).slice(), rosterSignature = roster.map(role => role.id).sort().join(','), initial = cells.map(cell => new Set(parseIds(attr(cell, 'roadmap_assignee_role_ids_json')))); // NEW
@@ -1384,6 +1386,7 @@ Draw.loadPlugin(function (ui) {
         const today = core.todayDay(new Date()), sideGap = 14; // CHANGE: give resize handles breathing room beside the date badges.
         function badge(className, text, left, top, transform, size) { // CHANGE
             const node = element('div', text, 'trellis-roadmap-date-badge ' + className); // NEW
+            if (!gesture) graph.__trellisOverlayVisibility?.mark(node); // NEW: active date feedback stays visible.
             node.style.cssText = 'position:absolute;background:#fff;border:1px solid #111;border-radius:4px;padding:2px 5px;line-height:13px;white-space:pre;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.12);'; // NEW
             if (size) { node.style.boxSizing = 'border-box'; node.style.width = Math.round(size.width) + 'px'; node.style.height = Math.round(size.height) + 'px'; node.style.padding = '1px 5px'; node.style.whiteSpace = 'nowrap'; } // NEW
             node.style.left = Math.round(left) + 'px'; node.style.top = Math.round(top) + 'px'; node.style.transform = transform; // NEW
@@ -1405,6 +1408,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     function objectDateBadge(host, className, text, left, top, transform, size) { // CHANGE
         const node = element('div', text, 'trellis-roadmap-date-badge trellis-roadmap-object-date-badge ' + className); // NEW
+        graph.__trellisOverlayVisibility?.mark(node); // NEW: non-active date annotations follow global visibility.
         node.style.cssText = 'position:absolute;background:#fff;border:1px solid #111;border-radius:4px;padding:2px 5px;line-height:13px;white-space:pre;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.12);'; // NEW
         if (size) { node.style.boxSizing = 'border-box'; node.style.width = Math.round(size.width) + 'px'; node.style.height = Math.round(size.height) + 'px'; node.style.padding = '1px 5px'; node.style.whiteSpace = 'nowrap'; } // NEW
         node.style.left = Math.round(left) + 'px'; node.style.top = Math.round(top) + 'px'; node.style.transform = transform; host.appendChild(node); return node; // NEW
@@ -1423,6 +1427,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     function ensurePricingOverlay() { // NEW
         if (!pricingOverlay) { pricingOverlay = element('div', null, 'trellis-roadmap-pricing-layer'); pricingOverlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10026;pointer-events:none;font:11px Arial,sans-serif;color:#111827;'; graph.container.appendChild(pricingOverlay); } // CHANGE
+        graph.__trellisOverlayVisibility?.mark(pricingOverlay); // NEW: informational overlays must not obstruct manipulation.
         return pricingOverlay; // NEW
     } // NEW
     function pricingBadge(host, className, text, left, top, transform) { // NEW
@@ -1437,6 +1442,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     function ensureDependencyOverlay() { // NEW
         if (!dependencyOverlay) { dependencyOverlay = element('div', null, 'trellis-roadmap-dependency-layer'); dependencyOverlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10027;pointer-events:none;font:11px Arial,sans-serif;color:#111827;'; graph.container.appendChild(dependencyOverlay); } // NEW
+        graph.__trellisOverlayVisibility?.mark(dependencyOverlay); // NEW: informational overlays must not obstruct manipulation.
         return dependencyOverlay; // NEW
     } // NEW
     function renderDependencyArrowLayer(host, reveal) { // NEW
@@ -1525,6 +1531,7 @@ Draw.loadPlugin(function (ui) {
         renderPricingLayer(); // NEW
         if (!document || !graph.container || gesture) return; // CHANGE
         if (!overlay) { overlay = element('div', null, 'trellis-roadmap-controls'); overlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10020;pointer-events:none;'; (graph.__trellisTaskUi ? graph.__trellisTaskUi.ensureControlHost() : graph.container).appendChild(overlay); }
+        graph.__trellisOverlayVisibility?.mark(overlay); // NEW: informational overlays must not obstruct manipulation.
         const cell = graph.getSelectionCell && graph.getSelectionCell(); // CHANGE
         clearHiddenObjectIfSelectionChanged(); // CHANGE: deselection must reset the repeated-click toggle as well as its controls.
         if (!cell) { overlay.replaceChildren(); return; } // CHANGE: clear controls when the selection becomes empty.
