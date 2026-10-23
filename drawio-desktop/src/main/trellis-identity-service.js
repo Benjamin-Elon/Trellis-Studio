@@ -26,7 +26,7 @@ export function createIdentityService(options) {
     let apiKeyOwner = null, apiKeySessionToken = null; // NEW: bind dialogs to a particular authenticated session, including re-login.
     const events = new EventEmitter();
     const transports = new Map();
-    let index = [], active = null, initialized;
+    let index = [], active = null, initialized, loginGeneration = 0; // CHANGE: distinguish repeated logins by the same identity without retaining credentials in caches.
     let queue = Promise.resolve();
     const now = options.now || Date.now;
     const rememberedPath = path.join(root, 'remembered-session.json'); // NEW: device-local; never included in identity metadata synchronization.
@@ -65,7 +65,7 @@ export function createIdentityService(options) {
         try { await fs.writeFile(filename, JSON.stringify(record), { flag: 'wx', mode: 0o600 }); }
         catch (err) { if (err.code !== 'EEXIST' || protocol.canonical(await json(filename)) !== protocol.canonical(record)) throw err; }
     }
-    function session() { return active ? { identityId: active.identityId, username: active.username, deviceId: active.deviceId, passwordConflict: !!active.passwordConflict } : null; }
+    function session() { return active ? { identityId: active.identityId, username: active.username, deviceId: active.deviceId, passwordConflict: !!active.passwordConflict, generation: loginGeneration } : null; } // CHANGE
     /** Validate inside the operation queue; internal callers must not enqueue recursively. */ // NEW
     async function requireSessionState(allowConflict = false) { // CHANGE
         await initialize(); // NEW
@@ -137,7 +137,7 @@ export function createIdentityService(options) {
             const privateKey = await protocol.open(device.vault, vaultKey, saved.identityId + ':' + saved.deviceId); // NEW
             const proof = await protocol.sign({ identityId: saved.identityId, deviceId: saved.deviceId }, privateKey); // NEW
             if (!await protocol.verify(proof, current.devices.find(item => item.id === saved.deviceId).publicKey)) throw new Error('The device signing key does not match its membership.'); // NEW
-            active = { identityId: saved.identityId, username: current.username, deviceId: saved.deviceId, vaultKey, privateKey, passwordConflict: current.passwordHeads.length > 1, passwordHeads: saved.passwordHeads, keepLoggedIn: true }; // NEW
+            active = { identityId: saved.identityId, username: current.username, deviceId: saved.deviceId, vaultKey, privateKey, passwordConflict: current.passwordHeads.length > 1, passwordHeads: saved.passwordHeads, keepLoggedIn: true }; loginGeneration++; // CHANGE: a fresh login owns fresh browsing snapshots.
             vaultKey = null; notify(); // NEW: ownership of the key transfers to the active session.
         } catch (_) { // NEW: also discard a record whose device vault or identity files are missing.
             try { await fs.rm(rememberedPath, { force: true }); } catch (_) { /* NEW: invalid credentials never activate; explicit logout still reports deletion errors. */ } // NEW
@@ -169,7 +169,7 @@ export function createIdentityService(options) {
             await atomic(path.join(identityRoot(identityId), 'device.json'), { deviceId, vault: await protocol.seal(signer.privateKey, vaultKey, identityId + ':' + deviceId) });
             const entry = { id: identityId, username, deviceId, genesisHash: await protocol.fingerprint(genesis) };
             index.push(entry); await persistIndex();
-            active = { identityId, username, deviceId, vaultKey, privateKey: signer.privateKey, passwordConflict: false, passwordHeads: [eventId], keepLoggedIn: false }; // CHANGE
+            active = { identityId, username, deviceId, vaultKey, privateKey: signer.privateKey, passwordConflict: false, passwordHeads: [eventId], keepLoggedIn: false }; loginGeneration++; // CHANGE: a fresh login owns fresh browsing snapshots.
             await daemon.configureIdentityMetadata({ identityId, directory: metadataRoot(identityId), devices: [device] });
             const warning = await rememberSession(input.keepLoggedIn === true); // NEW
             notify(); return { ok: true, session: session(), ...(warning ? { persistenceWarning: warning } : {}) }; // CHANGE
@@ -194,7 +194,7 @@ export function createIdentityService(options) {
             let privateKey;
             try { privateKey = await protocol.open(device.vault, vaultKey, input.identityId + ':' + device.deviceId); }
             catch (err) { vaultKey.fill(0); throw err; }
-            clearActiveSession(); active = { identityId: input.identityId, username: current.username, deviceId: device.deviceId, vaultKey, privateKey, passwordConflict: current.passwordHeads.length > 1, passwordHeads: passwordHeads(current), keepLoggedIn: false }; // CHANGE
+            clearActiveSession(); active = { identityId: input.identityId, username: current.username, deviceId: device.deviceId, vaultKey, privateKey, passwordConflict: current.passwordHeads.length > 1, passwordHeads: passwordHeads(current), keepLoggedIn: false }; loginGeneration++; // CHANGE: a fresh login owns fresh browsing snapshots.
             const warning = await rememberSession(input.keepLoggedIn === true); // NEW
             notify(); return { ok: true, session: session(), ...(warning ? { persistenceWarning: warning } : {}) }; // CHANGE
         });
@@ -325,6 +325,16 @@ export function createIdentityService(options) {
             return protocol.sign({ ...value, schema: 1, id: id(), identityId: active.identityId, author: active.deviceId, kind, time: now(), identityHeads: current.heads }, active.privateKey); // NEW: callers cannot override signature context.
         }); // NEW
     }
+    /** Main-process-only archive encryption shares the existing vault across paired devices. */ // NEW
+    async function communityArchive(method, value, context) { // NEW
+        return run(async () => { // NEW
+            await requireSessionState(); // NEW
+            if (typeof context !== 'string' || !context.startsWith('trellis-community-request:')) throw new Error('Invalid community archive context.'); // NEW
+            if (method === 'seal') return protocol.seal(value, active.vaultKey, context); // NEW
+            if (method === 'open') return protocol.open(value, active.vaultKey, context); // NEW
+            throw new Error('Unsupported community archive operation.'); // NEW
+        }); // NEW
+    } // NEW
     /** Credential operations share the identity queue so logout/profile changes cannot cross a write. */ // NEW
     async function apiKeys(method, input = {}) { // NEW
         return run(async () => {
@@ -338,5 +348,5 @@ export function createIdentityService(options) {
             return { identityId, username: active.username, sessionToken: apiKeySessionToken, providers: await apiKeyStore.status(identityId) };
         });
     }
-    return { initialize, list, create, unlock, lock, session, requireSession, state, changePassword, createPairRequest, approvePairRequest, importSetup, removeDevice, refresh, transport, metadataRoot, identityRoot, signAction, apiKeys, onChange: listener => events.on('change', listener) }; // CHANGE
+    return { communityArchive, initialize, list, create, unlock, lock, session, requireSession, state, changePassword, createPairRequest, approvePairRequest, importSetup, removeDevice, refresh, transport, metadataRoot, identityRoot, signAction, apiKeys, onChange: listener => events.on('change', listener) }; // CHANGE
 }

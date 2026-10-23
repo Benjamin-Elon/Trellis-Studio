@@ -125,70 +125,18 @@ export function hasCanvasAccess(state, userId, now = Date.now()) {
         return false;
     });
 }
-/** Content conflict resolution never restores stale Users or scope permissions. */
-export function preserveAccess(chosenXml, currentXml) {
-    const chosen = inspectDiagram(chosenXml);
-    const current = inspectDiagram(currentXml);
-    const protectedName = name => name === 'trellis_project_name' || /^trellis_(users|owner|access|role_|team_|garden_team)/.test(name); // CHANGE: conflict recovery preserves the current administrator-controlled name.
-    const currentPages = new Map(current.document.pages.map(page => [page.container?.getAttribute('id') || '', page.doc])); // NEW: page ordering is content, not an authorization identity.
-    for (const page of chosen.document.pages) {
-        const currentDocument = chosen.document.pages.length === 1 && current.document.pages.length === 1 ? current.document.pages[0].doc : currentPages.get(page.container?.getAttribute('id') || ''); // CHANGE: allow raw/wrapped single-page representations.
-        const currentCells = new Map(current.cells.filter(cell => cell.node.ownerDocument === currentDocument).map(cell => [cell.id, cell]));
-        for (const cell of chosen.cells.filter(entry => entry.node.ownerDocument === page.doc)) {
-            for (const attr of Array.from(cell.node.attributes)) if (protectedName(attr.name)) cell.node.removeAttribute(attr.name);
-            const source = currentCells.get(cell.id);
-            if (source) for (const attr of Array.from(source.node.attributes)) if (protectedName(attr.name)) cell.node.setAttribute(attr.name, attr.value);
-        }
-    }
-    // Keep the latest roster even when the chosen version removed its metadata cell.
-    if (!chosen.cells.some(cell => cell.node.hasAttribute('trellis_users_json'))) throw new Error('Chosen version removes the canvas user metadata. Reconcile it before publishing.');
-    return chosen.document.serialize();
-}
+/** Sharing handoff blocks always identify the current protocol. */ // CHANGE
 export function encodeBlock(kind, payload) {
-    return `-----BEGIN TRELLIS ${kind}-----\n${Buffer.from(JSON.stringify({ schema: SHARE_SCHEMA, ...payload })).toString('base64')}\n-----END TRELLIS ${kind}-----`;
-}
-/** Compare cells within stable page identities without attempting an XML merge. */
-export function compareDiagramVersions(currentXml, chosenXml) { // NEW: bounded, inspectable content differences for admin review.
-    function snapshot(node) {
-        if (node.nodeType !== 1) return node.nodeValue;
-        return { name: node.nodeName, attributes: Object.fromEntries(Array.from(node.attributes).map(attr => [attr.name, attr.value])), children: Array.from(node.childNodes).filter(child => child.nodeType === 1 || child.nodeType === 3 && child.nodeValue.trim()).map(snapshot) };
-    }
-    function index(xml) {
-        const state = inspectDiagram(xml);
-        const result = new Map();
-        for (const page of state.document.pages) {
-            const pageId = page.container?.getAttribute('id') || '';
-            for (const cell of state.cells.filter(entry => entry.node.ownerDocument === page.doc)) {
-                const model = cell.node.nodeName === 'mxCell' ? cell.node : cell.node.getElementsByTagName('mxCell')[0];
-                if (!model || model.getAttribute('vertex') !== '1' && model.getAttribute('edge') !== '1') continue;
-                result.set(JSON.stringify([pageId, cell.id]), { pageId, cellId: cell.id, label: cell.node.getAttribute('label') || cell.node.getAttribute('value') || cell.id, content: canonical(snapshot(cell.node)) });
-            }
-        }
-        return result;
-    }
-    const before = index(currentXml);
-    const after = index(chosenXml);
-    const counts = { added: 0, changed: 0, removed: 0 };
-    const cells = [];
-    for (const key of new Set([...before.keys(), ...after.keys()])) {
-        const original = before.get(key);
-        const updated = after.get(key);
-        const kind = !original ? 'added' : !updated ? 'removed' : original.content !== updated.content ? 'changed' : null;
-        if (!kind) continue;
-        counts[kind]++;
-        const cell = updated || original;
-        if (cells.length < 100) cells.push({ kind, pageId: cell.pageId, cellId: cell.cellId, label: cell.label.slice(0, 200) });
-    }
-    return { ...counts, cells, truncated: counts.added + counts.changed + counts.removed > cells.length };
+    return `-----BEGIN TRELLIS ${kind}-----\n${Buffer.from(JSON.stringify({ schema: 2, ...payload })).toString('base64')}\n-----END TRELLIS ${kind}-----`; // CHANGE
 }
 export function decodeBlock(kind, text) {
     if (typeof text !== 'string' || text.length > 65536) throw new Error('Invalid Trellis sharing block.');
     const start = `-----BEGIN TRELLIS ${kind}-----`;
-    const end = `-----END TRELLIS ${kind}-----`;
+    const end = `-----END TRELLIS ${kind}-----`; // CHANGE
     const raw = text.slice(text.indexOf(start) + start.length, text.indexOf(end)).trim();
     if (!text.includes(start) || !text.includes(end) || !/^[A-Za-z0-9+/=\s]+$/.test(raw)) throw new Error('Paste the complete Trellis sharing block.');
     const result = JSON.parse(Buffer.from(raw, 'base64').toString());
-    if (![SHARE_SCHEMA, 2].includes(result.schema)) throw new Error('Unsupported Trellis sharing version. Upgrade Trellis before joining.'); // CHANGE: v2 invitations isolate object journals from legacy files.
+    if (result.schema !== 2 || result.protocolVersion !== 2) throw new Error('Unsupported Trellis sharing protocol. Only version 2 invitations and replies are supported.'); // CHANGE
     safeId(result.shareId);
     safeId(result.diagramId);
     if (typeof result.deviceId !== 'string' || !/^[A-Z2-7-]{63}$/.test(result.deviceId)) throw new Error('Invalid Syncthing device ID.');

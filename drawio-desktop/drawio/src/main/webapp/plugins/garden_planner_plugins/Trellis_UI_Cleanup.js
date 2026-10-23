@@ -232,6 +232,45 @@
 })();
 
 Draw.loadPlugin(function (ui) {
+    /** Native XML values already contain encoded data; avoid a failed DOM-constructor codec probe for every cell. */ // CHANGE
+    function installXmlNodeEncoding() { // CHANGE
+        if (typeof mxCodec === 'undefined' || typeof mxCodecRegistry === 'undefined') return; // CHANGE
+        if (!mxCodecRegistry.__trellisCodecNames) { // CHANGE
+            const getCodec = mxCodecRegistry.getCodec; // CHANGE
+            mxCodecRegistry.getCodec = function (constructor) { // CHANGE
+                if (typeof constructor === 'string') return mxCodecRegistry.codecs[mxCodecRegistry.aliases[constructor] ?? constructor]; // CHANGE: decodeCell passes tag names; strings cannot be constructed for automatic codec registration.
+                return getCodec.apply(this, arguments); // CHANGE
+            }; // CHANGE
+            mxCodecRegistry.__trellisCodecNames = true; // CHANGE
+        } // CHANGE
+        if (mxCodec.prototype.__trellisXmlNodeEncoding) return; // CHANGE
+        const encode = mxCodec.prototype.encode; // CHANGE
+        mxCodec.prototype.encode = function (object) { // CHANGE
+            if (object?.constructor && mxUtils.isNode(object)) { // CHANGE
+                if (this.isObjectIgnored(object)) return null; // CHANGE
+                const name = mxUtils.getFunctionName(object.constructor), registered = mxCodecRegistry.codecs[mxCodecRegistry.aliases[name] ?? name]; // CHANGE
+                return registered ? registered.encode(this, object) : mxUtils.importNode(this.document, object, true); // CHANGE: retain dynamic custom-codec precedence and native XML import semantics.
+            } // CHANGE
+            return encode.apply(this, arguments); // CHANGE
+        }; // CHANGE
+        mxCodec.prototype.__trellisXmlNodeEncoding = true; // CHANGE
+    } // CHANGE
+    installXmlNodeEncoding(); // CHANGE
+    /** Native sizeDidChange redraws every page separator even when an interior cell cannot change their layout. */ // CHANGE
+    function installPageBreakReuse(graph) { // CHANGE
+        if (!graph?.updatePageBreaks || graph.__trellisPageBreakReuse) return; // CHANGE
+        const update = graph.updatePageBreaks; let previous = null; // CHANGE
+        graph.updatePageBreaks = function (visible) { // CHANGE
+            const bounds = this.getGraphBounds(), view = this.view, format = this.pageFormat; // CHANGE
+            const inputs = [visible, bounds.x, bounds.y, bounds.width, bounds.height, view.scale, view.translate.x, view.translate.y, format.width, format.height, this.pageScale, this.minPageBreakDist, this.pageBreakColor, this.pageBreakDashed, this.dialect, this.useCssTransforms, view.backgroundPane, this.isDarkMode?.()]; // CHANGE: retain native updates for geometry, zoom, theme, page settings, and replaced render targets.
+            if (previous && inputs.every((value, index) => Object.is(value, previous.inputs[index])) && this.horizontalPageBreaks === previous.horizontal && this.verticalPageBreaks === previous.vertical && this.horizontalPageBreaks?.length === previous.horizontalCount && this.verticalPageBreaks?.length === previous.verticalCount) return; // CHANGE
+            previous = null; const result = update.apply(this, arguments); // CHANGE: a failed native render must remain retryable.
+            previous = { inputs, horizontal: this.horizontalPageBreaks, vertical: this.verticalPageBreaks, horizontalCount: this.horizontalPageBreaks?.length, verticalCount: this.verticalPageBreaks?.length }; // CHANGE
+            return result; // CHANGE
+        }; // CHANGE
+        graph.__trellisPageBreakReuse = true; // CHANGE
+    } // CHANGE
+    installPageBreakReuse(ui?.editor?.graph); // CHANGE
     if (!ui || ui.__trellisUiCleanupInstalled) {
         return;
     }

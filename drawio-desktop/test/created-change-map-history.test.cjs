@@ -66,40 +66,18 @@ test("change map stamps Trellis user actor metadata before deferred history reco
     assert.doesNotMatch(source, /Promise\.resolve\(\)\.then\(function \(\) \{[\s\S]{0,900}stampCreatedOnInsert\(edit\)/);
 });
 
+// NEW: run the renderer against the real transactional history implementation.
+const { DatabaseSync } = require('node:sqlite');
+const { createHistoryService } = require('../src/main/trellis-history-service.js');
+const { encodeRevision, normalizeDocument } = require('../src/main/trellis-history-codec.js');
 function createDbBridge() {
-    const state = { snapshots: new Map(), events: [], execs: [] };
-    return {
-        state,
-        resolvePath() { return Promise.resolve({ ok: true, dbPath: "C:/Users/user/AppData/Roaming/draw.io/trellis_database/Trellis_history.sqlite" }); },
-        open() { return Promise.resolve({ ok: true, dbId: "history-db" }); },
-        exec(dbId, sql, params = []) {
-            state.execs.push({ sql, params });
-            if (/INSERT OR IGNORE INTO history_snapshots/.test(sql)) {
-                state.snapshots.set(params[0], { snapshot_id: params[0], diagram_id: params[1], hash: params[2], compressed_kind: params[3], compressed_xml: params[4], byte_size: params[5], checksum: params[6] });
-            }
-            if (/INSERT INTO history_events/.test(sql)) {
-                state.events.push({ id: params[0], diagram_id: params[1], timestamp: params[2], category: params[3], action: params[4], origin: params[5], title: params[6], affected_cell_ids: params[7], change_types: params[8], counts_json: params[9], snapshot_id: params[10], parent_revision_id: params[11], restored_from_revision_id: params[12], tags_json: params[13], metadata_json: params[14], checkpoint: params[15], diagram_hash: params[16] });
-            }
-            return Promise.resolve({ ok: true, changes: 1, lastInsertRowid: "1" });
-        },
-        query(dbId, sql, params = []) {
-            if (/SELECT id FROM history_events WHERE id/.test(sql)) return Promise.resolve({ ok: true, rows: state.events.filter(row => row.id === params[0]).map(row => ({ id: row.id })) }); // NEW: emulate the real database's import deduplication query.
-            if (/SELECT \* FROM history_events/.test(sql) && /ORDER BY timestamp DESC/.test(sql)) {
-                return Promise.resolve({ ok: true, rows: state.events.slice(-1) });
-            }
-            if (/SELECT \* FROM history_events/.test(sql)) {
-                return Promise.resolve({ ok: true, rows: state.events.filter(row => row.diagram_id === params[0]) });
-            }
-            if (/SELECT \* FROM history_snapshots/.test(sql)) {
-                return Promise.resolve({ ok: true, rows: [state.snapshots.get(params[0])].filter(Boolean) });
-            }
-            return Promise.resolve({ ok: true, rows: [] });
-        }
-    };
+    const service = createHistoryService({ Database: DatabaseSync, dbPath: ':memory:' });
+    const state = { get events() { return service._test.database.prepare('SELECT * FROM history_v2_revisions ORDER BY timestamp,rowid').all().map(row => ({ ...JSON.parse(row.metadata), metadata_json: row.metadata, affected_cell_ids: JSON.stringify(JSON.parse(row.metadata).affectedCellIds || []), tags_json: JSON.stringify(JSON.parse(row.metadata).tags || []) })); } };
+    return { service, state, request(method, payload) { return service.request(1, method, payload); }, corrupt(id) { service._test.database.prepare('UPDATE history_v2_revisions SET payload=? WHERE id=?').run(Buffer.from('broken'), id); } };
 }
 
 function loadPlugin(options = {}) {
-    const dom = new JSDOM("<!doctype html><body><div id='host'><div id='format'><div id='native-format'>Format</div></div><div id='graph'></div></div></body>", { url: "https://app.test/" });
+    const dom = new JSDOM("<!doctype html><body><div id='toolbar'><button class='trellis-users-login-button'>User</button></div><div id='host'><div id='format'><div id='native-format'>Format</div></div><div id='graph'></div></div></body>", { url: "https://app.test/" });
     const document = dom.window.document;
     const root = new TestCell("root");
     const layer = appendChild(root, makeXmlCell(document, "layer", { label: "Layer" }));
@@ -151,6 +129,8 @@ function loadPlugin(options = {}) {
     };
     const ui = {
         editor,
+        toolbarContainer: document.getElementById("toolbar"), // NEW
+        getCurrentFile() { return options.file || null; }, // NEW
         actions: { addAction(id, fn) { actions[id] = { funct: fn }; } },
         menus: { get() { return null; }, addMenuItems() {} },
         formatContainer,
@@ -174,7 +154,7 @@ function loadPlugin(options = {}) {
         mxUtils: { createXmlDocument() { return document.implementation.createDocument("", "", null); }, parseXml(xml) { return new dom.window.DOMParser().parseFromString(xml, "text/xml"); }, getXml(node) { return new dom.window.XMLSerializer().serializeToString(node); } },
         requestAnimationFrame(fn) { fn(); }
     };
-    context.window.dbBridge = dbBridge;
+    context.window.trellisHistory = dbBridge; // CHANGE
     context.window.confirm = () => true;
     if (options.users) context.window.Trellis = { users: options.users };
     vm.runInNewContext(fs.readFileSync(pluginPath, "utf8"), context, { filename: pluginPath });
@@ -186,6 +166,33 @@ async function settle(ms = 0) {
     await new Promise(resolve => setTimeout(resolve, ms));
     await Promise.resolve();
 }
+
+test('storage button follows the user menu, opens history, and exposes accessible compact labels', async () => { // NEW
+    const harness = loadPlugin(); await settle();
+    const user = harness.document.querySelector('.trellis-users-login-button'), button = user.nextElementSibling;
+    assert.ok(button.classList.contains('trellis-history-storage-button')); assert.match(button.textContent, /Diagram unsaved.*History/);
+    assert.match(button.getAttribute('aria-label'), /Open document history/); button.click(); await settle();
+    assert.match(harness.document.body.textContent, /Storage details/);
+    harness.context.window.innerWidth = 700; harness.context.window.dispatchEvent(new harness.context.window.Event('resize'));
+    assert.match(button.textContent, /^D unsaved.*H /); assert.match(button.getAttribute('aria-label'), /Diagram unsaved/);
+}); // NEW
+
+test('recorded history events keep lightweight references instead of queued whole-document copies', async () => { // NEW
+    const harness = loadPlugin(); await settle(); let recorded;
+    harness.context.window.addEventListener('trellisHistoryRevisionRecorded', event => { recorded = event.detail; });
+    await harness.context.window.Trellis.history.createCheckpoint('Reference checkpoint');
+    assert.equal(recorded.snapshot.snapshotId, recorded.revision.id);
+    assert.equal(recorded.snapshot.compressedXml, undefined); assert.equal(recorded.snapshot.compressedKind, undefined);
+    assert.ok(recorded.snapshot.byteSize > 0); assert.equal(recorded.snapshot.storageKind, 'full');
+}); // NEW
+
+test('whole-document comparison distinguishes identical object IDs on different pages and wrapper attributes', async () => { // NEW
+    const harness = loadPlugin(); await settle();
+    const page = (id, label) => `<diagram id="${id}"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="bed" label="${label}"><mxCell parent="1" vertex="1"/></object></root></mxGraphModel></diagram>`;
+    const before = '<mxfile>' + page('a', 'One') + page('b', 'Two') + '</mxfile>', after = '<mxfile>' + page('a', 'One') + page('b', 'Changed') + '</mxfile>';
+    const diff = harness.context.window.Trellis.history._test.diffSnapshotWithCurrent(before, after);
+    assert.deepEqual(Array.from(diff.changed), [JSON.stringify(['b', 'bed'])]);
+}); // NEW
 
 test("history API records a baseline and exposes a side-panel action", async () => {
     const harness = loadPlugin();
@@ -207,10 +214,12 @@ test('shared history imports are idempotent and retain original attribution with
     await settle(20);
     const history = harness.context.window.Trellis.history;
     const compressedXml = '<mxGraphModel><root><mxCell id="0"/></root></mxGraphModel>';
-    const entry = {
-        revision: { id: 'remote-revision', snapshotId: 'remote-snapshot', diagramHistoryId: history.getDiagramId(), actorUserId: 'remote-user', actorName: 'Remote', actorRole: 'regular', timestamp: Date.now(), category: 'Diagram', action: 'change', origin: 'remote', title: 'Remote saved work', diagramHash: history._test.hashString(compressedXml), parentRevisionId: 'not-yet-arrived' },
-        snapshot: { snapshotId: 'remote-snapshot', compressedXml, compressedKind: 'plain', checksum: history._test.hashString(compressedXml) }
+    const encoded = encodeRevision(compressedXml); // NEW
+    const entry = { version: 2, generation: 'local-v2', // CHANGE
+        revision: { id: 'remote-revision', diagramHistoryId: history.getDiagramId(), actorUserId: 'remote-user', actorName: 'Remote', actorRole: 'regular', timestamp: Date.now(), category: 'Diagram', action: 'change', origin: 'remote', title: 'Remote saved work', parentRevisionId: 'not-yet-arrived' },
+        record: { ...encoded, payload: encoded.payload.toString('base64'), hash: encoded.contentHash }
     };
+    await harness.dbBridge.service.run('import', { entry }); // NEW: the transport verifies and stores before notifying the renderer.
     let exported = 0;
     harness.context.window.addEventListener('trellisHistoryRevisionRecorded', () => exported++);
     await history.importShared(entry);
@@ -442,8 +451,7 @@ test("history compare handles corrupt compressed snapshots without throwing", as
     await harness.context.window.Trellis.history.createCheckpoint("Corrupt checkpoint");
     await settle();
     const revision = harness.context.window.Trellis.history.list().find(entry => entry.title === "Corrupt checkpoint");
-    const snapshot = harness.dbBridge.state.snapshots.get(revision.snapshotId);
-    snapshot.compressed_kind = "graph-compress";
+    harness.dbBridge.corrupt(revision.id); // CHANGE: corrupt the actual stored payload.
     harness.context.window.Trellis.history._test.components.HistoryRail.select(revision.id);
     await harness.context.window.Trellis.history._test.components.ChangeMapRenderer.compare();
     assert.match(harness.graph.__ccHistoryWarning, /unreadable/);
@@ -455,8 +463,7 @@ test("history restore rejects corrupt snapshots without replacing graph or recor
     await harness.context.window.Trellis.history.createCheckpoint("Corrupt restore checkpoint");
     await settle();
     const revision = harness.context.window.Trellis.history.list().find(entry => entry.title === "Corrupt restore checkpoint");
-    const snapshot = harness.dbBridge.state.snapshots.get(revision.snapshotId);
-    snapshot.compressed_kind = "graph-compress";
+    harness.dbBridge.corrupt(revision.id); // CHANGE: corrupt the actual stored payload.
     const node = harness.document.createElement("div");
     harness.document.body.appendChild(node);
     harness.graph.__ccHistoryCompareOverlays = [node];

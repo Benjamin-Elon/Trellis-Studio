@@ -70,6 +70,37 @@ test('task comments reuse task-detail grants while retaining their own author gu
     assert.equal(h.users.canEditTaskDetails(h.card), true); assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, JSON.stringify({ version: 1, comments: [commentRecord(bob, Date.now())] }))), true); // CHANGE
 }); // CHANGE
 
+test('native alert flags use comment moderation and reject disguised rewrites, combined actions and schema downgrade', t => { // CHANGE
+    const h = commentPolicyHarness(t); h.users.enableUsers('Alice', '1234'); h.users.stampCreatedOwner(h.module); // CHANGE
+    const bob = h.users.createUser('Bob', '5678', false).user, item = commentRecord(bob, Date.now() - 2000, { isAlert: false }), encode = records => JSON.stringify({ version: 2, comments: records }); // CHANGE
+    for (const attribute of [false, true]) { // CHANGE
+        const before = encode([item]); h.card.setAttribute('trellis_comments_json', before); // CHANGE
+        assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode([{ ...item, isAlert: true }]), attribute)), true, 'admins may flag another author without changing text'); // CHANGE
+        for (const extra of [{ html: '<p>Rewritten by admin</p>', updatedAt: Date.now() }, { updatedAt: Date.now() }, { resolvedAt: Date.now(), resolvedByUserId: h.users.getCurrentUser().id, resolvedByName: 'Alice' }, { isAlert: 'true' }]) { // CHANGE
+            h.card.setAttribute('trellis_comments_json', before); assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode([{ ...item, isAlert: true, ...extra }]), attribute)), false); // CHANGE
+        } // CHANGE
+        const second = { ...item, id: 'comment-2' }; h.card.setAttribute('trellis_comments_json', encode([item, second])); // CHANGE
+        assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode([{ ...item, isAlert: true }, { ...second, isAlert: true }]), attribute)), false); // CHANGE
+        const { isAlert, ...legacy } = item; h.card.setAttribute('trellis_comments_json', before); // CHANGE
+        assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, JSON.stringify({ version: 1, comments: [legacy] }), attribute)), false); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('task-detail grants permit authored alerts but object access and other authors remain protected', t => { // CHANGE
+    const h = commentPolicyHarness(t); h.users.enableUsers('Alice', '1234'); h.module.style = 'module=1'; h.users.stampCreatedOwner(h.module); // CHANGE
+    const alice = h.users.getCurrentUser(), bob = h.users.createUser('Bob', '5678', false).user; h.card.setAttribute('kanban_card', '1'); // CHANGE
+    const board = appendChild(h.module, makeXmlCell(h.document, 'alerts-board', { board_key: 'KANBAN_BOARD' })), lane = appendChild(board, makeXmlCell(h.document, 'alerts-lane', { lane_key: 'TODO' })); // CHANGE
+    h.module.children.splice(h.module.children.indexOf(h.card), 1); appendChild(lane, h.card); // CHANGE
+    const planting = appendChild(h.module, makeXmlCell(h.document, 'alerts-planting', { tiler_group: '1', [h.users.attrs.owner]: bob.id })); linkCells(planting, h.card); // CHANGE
+    assert.equal(h.users.setScopeGrant(h.module, { userId: bob.id, preset: 'gardener' }).ok, true); h.users.logout(); h.users.login('Bob', '5678'); // CHANGE
+    const encode = item => JSON.stringify({ version: 2, comments: [item] }), own = commentRecord(bob, Date.now(), { isAlert: true }); // CHANGE
+    assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode(own))), true); // CHANGE
+    h.card.setAttribute('trellis_comments_json', encode(own)); assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode({ ...own, isAlert: false }), true)), true); // CHANGE
+    const other = commentRecord(alice, Date.now() - 1000, { isAlert: false }); h.card.setAttribute('trellis_comments_json', encode(other)); // CHANGE
+    assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode({ ...other, isAlert: true }))), false, 'a task editor cannot flag another author without ownership or admin rights'); // CHANGE
+    h.card.setAttribute('trellis_comments_json', encode(own)); h.users.logout(); assert.equal(h.users._test.changeAllowed(nativeCommentEdit(h, encode({ ...own, isAlert: false }))), false); // CHANGE
+}); // CHANGE
+
 class TestCell {
     constructor(id, value = null, style = "") {
         this.id = id;

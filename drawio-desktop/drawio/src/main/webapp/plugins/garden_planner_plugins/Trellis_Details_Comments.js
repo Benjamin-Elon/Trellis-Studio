@@ -21,6 +21,8 @@
         const list = document.createElement('div'), composer = document.createElement('div'), heading = document.createElement('div'); // CHANGE
         composer.style.cssText = 'border-top:1px solid #e2e8f0;margin-top:6px;padding-top:6px;'; // CHANGE
         const editor = document.createElement('div'); editor.className = 'trellis-object-details-editor trellis-comment-editor'; editor.tabIndex = 0; // CHANGE
+        const alertLabel = document.createElement('label'), alertToggle = document.createElement('input'); alertToggle.type = 'checkbox'; alertToggle.dataset.commentAlert = 'true'; alertLabel.append(alertToggle, document.createTextNode('Mark as alert')); // CHANGE
+        alertLabel.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:11px;margin-top:4px;'; // CHANGE
         editor.setAttribute('role', 'textbox'); editor.setAttribute('aria-multiline', 'true'); editor.setAttribute('aria-label', 'Comment for ' + options.title); // CHANGE
         editor.style.cssText = 'min-height:44px;max-height:160px;overflow:auto;overflow-wrap:anywhere;outline:none;padding:5px;border:1px solid #cbd5e1;'; // CHANGE
         const message = document.createElement('div'); message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite'); message.style.cssText = 'font-size:11px;color:#64748b;padding:3px 0;'; // CHANGE
@@ -38,10 +40,10 @@
                 const item = core.parseComments(options.read()).find(value => value.id === draft().id); // CHANGE
                 if (!item) throw new Error('The original comment is no longer available. Copy or discard your draft.'); // CHANGE
                 if (!root.confirm('Replace your private edit draft with the saved comment? Copy your draft first if you want to keep it.')) return; // CHANGE
-                saved.drafts[saved.active] = { id: item.id, html: item.html, baseline: JSON.stringify(item) }; commandError = ''; loadDraft(); persist(); refresh(); // CHANGE
+                saved.drafts[saved.active] = { id: item.id, html: item.html, isAlert: item.isAlert, baseline: JSON.stringify(item) }; commandError = ''; loadDraft(); persist(); refresh(); // CHANGE
             } catch (error) { commandError = error.message; updateMessage(); } // CHANGE
         }); // CHANGE
-        reload.dataset.commentAction = 'reload'; actions.append(newComment, copy, reload); composer.append(heading, editor, actions); container.append(list, composer, message); // CHANGE
+        reload.dataset.commentAction = 'reload'; actions.append(newComment, copy, reload); composer.append(heading, editor, alertLabel, actions); container.append(list, composer, message); // CHANGE
 
         function actor() { // CHANGE
             const policy = options.users(), user = policy && policy.getCurrentUser && policy.getCurrentUser(); // CHANGE
@@ -50,11 +52,12 @@
         function editable() { const value = actor(); return !destroyed && !pending && value.enabled && value.editable && value.user && value.user.id === userId; } // CHANGE
         function draft() { // CHANGE
             let value = saved.drafts[saved.active]; // CHANGE
-            if (!value || typeof value.html !== 'string' || typeof value.id !== 'string') value = saved.drafts[saved.active] = { id: root.crypto.randomUUID(), html: '', baseline: null }; // CHANGE
+            if (!value || typeof value.html !== 'string' || typeof value.id !== 'string') value = saved.drafts[saved.active] = { id: root.crypto.randomUUID(), html: '', isAlert: entry.activeTab === 'alerts', baseline: null }; // CHANGE
+            if (typeof value.isAlert !== 'boolean') value.isAlert = false; // CHANGE: legacy private drafts are ordinary comments.
             return value; // CHANGE
         } // CHANGE
-        function loadDraft() { editor.innerHTML = core.normalizeHtml(draft().html); } // CHANGE
-        function capture() { if (!composing) draft().html = core.normalizeHtml(editor.innerHTML); } // CHANGE
+        function loadDraft() { const value = draft(); editor.innerHTML = core.normalizeHtml(value.html); alertToggle.checked = value.isAlert; } // CHANGE
+        function capture() { const value = draft(); if (!composing) value.html = core.normalizeHtml(editor.innerHTML); value.isAlert = alertToggle.checked; } // CHANGE
         function persist() { // CHANGE
             privateDrafts.set(storageKey, saved); // CHANGE
             if (!options.identity.persistent) { storageError = 'This diagram has no stable identity; private drafts remain in this session.'; return; } // CHANGE
@@ -69,6 +72,7 @@
         function rememberInput() { // CHANGE
             if (!editable()) return; capture(); persist(); submit.disabled = composing || !core.normalizeHtml(editor.innerHTML); // CHANGE
         } // CHANGE
+        alertToggle.addEventListener('change', () => { if (!editable()) { alertToggle.checked = draft().isAlert; return; } draft().alertChosen = true; capture(); persist(); }); // CHANGE: checkbox choices stay device-local until explicit submission.
         const target = toolbar.createTarget({ cell: entry.cell, element: editor, canEdit: editable, changed: rememberInput }); // CHANGE
         editor.addEventListener('focus', () => { if (editable()) toolbar.activate(target); else toolbar.deactivate(); }); // CHANGE
         editor.addEventListener('input', rememberInput); // CHANGE
@@ -101,7 +105,7 @@
                 const sharing = options.graph.__trellisSharing; // CHANGE
                 if (sharing && sharing.settleObjectEdits) await sharing.settleObjectEdits(); // CHANGE
                 if (options.read() !== next) throw new Error('The comment change was rejected or replaced. Your draft is retained.'); // CHANGE
-                if (submittedDraft && saved.drafts[active] === submittedDraft && submittedDraft.html === action.html) { delete saved.drafts[active]; if (saved.active === active) saved.active = 'new'; } // CHANGE
+                if (submittedDraft && saved.drafts[active] === submittedDraft && submittedDraft.html === action.html && submittedDraft.isAlert === action.isAlert) { delete saved.drafts[active]; if (saved.active === active) saved.active = 'new'; } // CHANGE
                 persist(); // CHANGE
                 if (!destroyed && options.isCurrent()) loadDraft(); // CHANGE
             } catch (error) { commandError = error.message + ' Your text is retained; copy it or retry after reloading the comment.'; } // CHANGE
@@ -110,11 +114,11 @@
         function submitDraft() { // CHANGE
             if (!editable() || composing) return; capture(); persist(); const value = draft(); // CHANGE
             if (!value.html) return; // CHANGE
-            execute({ type: saved.active === 'new' ? 'post' : 'edit', id: value.id, html: value.html, baseline: value.baseline }, value); // CHANGE
+            execute({ type: saved.active === 'new' ? 'post' : 'edit', id: value.id, html: value.html, isAlert: value.isAlert, baseline: value.baseline }, value); // CHANGE
         } // CHANGE
         function startEdit(item) { // CHANGE
             if (!editable()) return; capture(); saved.active = 'edit:' + item.id; // CHANGE
-            if (!saved.drafts[saved.active]) saved.drafts[saved.active] = { id: item.id, html: item.html, baseline: JSON.stringify(item) }; // CHANGE
+            if (!saved.drafts[saved.active]) saved.drafts[saved.active] = { id: item.id, html: item.html, isAlert: item.isAlert, baseline: JSON.stringify(item) }; // CHANGE
             loadDraft(); persist(); refresh(); editor.focus(); // CHANGE
         } // CHANGE
         function actionButton(parent, label, type, item, disabled = false, tooltip = label) { // CHANGE
@@ -128,6 +132,7 @@
             const article = document.createElement('article'); article.dataset.commentId = item.id; article.style.cssText = 'padding:6px 0;border-bottom:1px solid #e2e8f0;'; // CHANGE
             const meta = document.createElement('div'); meta.style.cssText = 'font-size:10px;color:#64748b;'; // CHANGE
             meta.textContent = item.authorName + ' · ' + new Date(item.createdAt).toLocaleString() + (item.updatedAt !== item.createdAt ? ' · edited' : ''); // CHANGE
+            if (item.isAlert) { const flag = document.createElement('strong'); flag.textContent = ' · Alert'; flag.style.color = '#b91c1c'; meta.appendChild(flag); } // CHANGE
             const body = document.createElement('div'); body.className = 'trellis-comment-body trellis-object-details-editor'; body.style.overflowWrap = 'anywhere'; body.innerHTML = core.normalizeHtml(item.html); // CHANGE
             body.tabIndex = 0; body.addEventListener('focus', () => toolbar.deactivate()); body.addEventListener('pointerdown', () => toolbar.deactivate()); // CHANGE: selecting posted text must not format the private composer through a stale toolbar target.
             article.append(meta, body); // CHANGE
@@ -139,6 +144,7 @@
             const user = currentActor.user, author = user && user.id === item.authorUserId, moderator = user && (author || user.admin || user.id === currentActor.ownerUserId); // CHANGE
             if (author) actionButton(controls, 'Edit', 'edit', item); // CHANGE
             if (moderator) { // CHANGE
+                actionButton(controls, item.isAlert ? 'Remove alert' : 'Mark as alert', item.isAlert ? 'removeAlert' : 'markAlert', item); // CHANGE
                 actionButton(controls, item.resolvedAt === null ? 'Resolve' : 'Reopen', item.resolvedAt === null ? 'resolve' : 'reopen', item); // CHANGE
                 if (item.resolvedAt !== null) actionButton(controls, 'Delete', 'delete', item, Date.now() - item.resolvedAt < core.COMMENT_RETENTION_MS, 'Delete after 30 continuous days resolved'); // CHANGE
             } // CHANGE
@@ -149,13 +155,14 @@
             summary.textContent = label + ' (' + records.length + ')'; summary.style.cursor = 'pointer'; section.appendChild(summary); // CHANGE
             section.addEventListener('toggle', () => { if (section.isConnected) { if (label === 'Resolved') resolvedExpanded = section.open; else unresolvedExpanded = section.open; } }); // CHANGE
             for (const item of records) section.appendChild(renderComment(item, currentActor)); // CHANGE
-            if (!records.length) { const empty = document.createElement('div'); empty.textContent = 'No ' + label.toLowerCase() + ' comments.'; empty.style.cssText = 'font-size:11px;color:#64748b;padding:4px 0;'; section.appendChild(empty); } // CHANGE
+            if (!records.length) { const empty = document.createElement('div'); empty.textContent = 'No ' + label.toLowerCase() + (entry.activeTab === 'alerts' ? ' alerts.' : ' comments.'); empty.style.cssText = 'font-size:11px;color:#64748b;padding:4px 0;'; section.appendChild(empty); } // CHANGE
             return section; // CHANGE
         } // CHANGE
         function refresh() { // CHANGE
             if (destroyed) return; const currentActor = actor(); let records = [], error = ''; // CHANGE
             try { records = core.parseComments(options.read()); } catch (failure) { error = failure.message; } // CHANGE
-            const signature = JSON.stringify([options.read(), currentActor, pending, records.map(item => item.resolvedAt !== null && Date.now() - item.resolvedAt >= core.COMMENT_RETENTION_MS)]); // CHANGE
+            if (entry.activeTab === 'alerts') records = records.filter(item => item.isAlert); // CHANGE: both tabs read the same canonical records and share one composer.
+            const signature = JSON.stringify([options.read(), entry.activeTab, currentActor, pending, records.map(item => item.resolvedAt !== null && Date.now() - item.resolvedAt >= core.COMMENT_RETENTION_MS)]); // CHANGE
             if (signature !== fingerprint) { // CHANGE
                 fingerprint = signature; list.replaceChildren(); // CHANGE
                 records.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)); // CHANGE
@@ -166,12 +173,14 @@
             const futureEligibility = records.filter(item => item.resolvedAt !== null).map(item => item.resolvedAt + core.COMMENT_RETENTION_MS).filter(time => time > Date.now()); // CHANGE
             if (futureEligibility.length) retentionTimer = root.setTimeout(refresh, Math.min(2147483647, Math.max(1, Math.min(...futureEligibility) - Date.now()))); // CHANGE: enable Delete at the boundary even if no graph event occurs; long waits respect the browser timer limit.
             editor.contentEditable = String(!!editable() && !error); submit.disabled = !editable() || !!error || composing || !core.normalizeHtml(editor.innerHTML); // CHANGE
+            const value = draft(); if (saved.active === 'new' && !value.html && !value.alertChosen && !composing && !pending) alertToggle.checked = value.isAlert = entry.activeTab === 'alerts'; // CHANGE: only untouched empty composers adopt a tab's default.
+            alertToggle.disabled = !editable() || !!error; // CHANGE
             discard.disabled = pending; newComment.disabled = pending; newComment.hidden = saved.active === 'new'; reload.hidden = saved.active === 'new'; reload.disabled = !editable(); // CHANGE
             submit.textContent = saved.active === 'new' ? 'Post' : 'Save changes'; heading.textContent = saved.active === 'new' ? 'New comment' : 'Edit comment'; // CHANGE
             updateMessage(); // CHANGE
         } // CHANGE
         loadDraft(); refresh(); // CHANGE
-        const hasDraft = () => !!core.normalizeHtml(editor.innerHTML) || Object.values(saved.drafts).some(value => value && value.html); // CHANGE
+        const hasDraft = () => !!core.normalizeHtml(editor.innerHTML) || Object.values(saved.drafts).some(value => value && (value.html || value.alertChosen)); // CHANGE
         return { element: container, refresh, focus: () => editor.focus(), hasDraft, needsUnloadWarning: () => hasDraft() && (!!storageError || composing), // CHANGE
             persist() { capture(); persist(); }, // CHANGE
             destroy() { capture(); persist(); destroyed = true; if (retentionTimer !== null) root.clearTimeout(retentionTimer); if (options.ui.getActiveRichTextTarget() === target) toolbar.deactivate(); target.dispose(); } }; // CHANGE
@@ -180,7 +189,7 @@
     function hasDraft(identity) { // CHANGE
         const key = 'trellis.comments.draft.v1:' + identity.key; let value = privateDrafts.get(key); // CHANGE
         if (!value && identity.persistent) try { value = JSON.parse(root.localStorage.getItem(key)); } catch (_) { /* Session drafts are still discoverable. */ } // CHANGE
-        return !!(value && value.drafts && Object.values(value.drafts).some(item => item && typeof item.html === 'string' && item.html)); // CHANGE
+        return !!(value && value.drafts && Object.values(value.drafts).some(item => item && typeof item.html === 'string' && (item.html || item.alertChosen))); // CHANGE
     } // CHANGE
     root.TrellisDetailsComments = Object.freeze({ mount, hasDraft }); // CHANGE
 })(globalThis); // CHANGE

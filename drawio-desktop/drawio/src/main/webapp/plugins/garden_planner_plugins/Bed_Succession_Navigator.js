@@ -732,7 +732,7 @@ Draw.loadPlugin(function (ui) {
 
     // 2) Secondary: safety net after moves (undo/redo/programmatic moves/outline drag)            
     function enforceBedsNotInTilerGroups(cells) {
-        const moved = (cells || []).filter(Boolean);
+        const moved = (cells || []).filter(cell => cell && model.isVertex(cell) && isGardenBed(cell) && model.getParent(cell) && isInTilerGroup(model.getParent(cell))); // CHANGE: ordinary movement needs neither a repair transaction nor a whole-graph refresh.
         if (!moved.length) return;
     
         const safeParent = graph.getDefaultParent();

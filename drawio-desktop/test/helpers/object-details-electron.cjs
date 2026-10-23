@@ -358,13 +358,34 @@ app.whenReady().then(async () => { // NEW
         await evaluate('const commentsValue=mxUtils.createXmlDocument().createElement("object");commentsValue.setAttribute("label","Comments only");commentsValue.setAttribute("trellis_comments_json",a.getAttribute("trellis_comments_json"));window.commentOnly=graph.insertVertex(null,"comments-only",commentsValue,1000,110,140,90);graph.addSelectionCell(commentOnly);graph.__trellisObjectDetails.refresh();void 0;'); // CHANGE
         assert.equal(await evaluate('document.querySelector("[data-collaboration-object-id=comments-only] [data-details-tab=comments]").getAttribute("aria-pressed")'), 'true'); // CHANGE
         assert.equal(await evaluate('graph.__trellisObjectDetails.exportProjection()["page-a"].some(record=>record.ownerId==="comments-only")'), false, 'comment-only badges stay out of rendered exports'); // CHANGE
-        await evaluate('graph.setSelectionCell(a);graph.__trellisObjectDetails.refresh();void 0;'); // CHANGE
+        stage = 'native pipe alert interaction'; // CHANGE
+        await evaluate(` // CHANGE
+            graph.clearSelection();const value=mxUtils.createXmlDocument().createElement('object');value.setAttribute('label','Annotated pipe');value.setAttribute('irrigation_pipe_edge','1');value.setAttribute('trellis_details_html','<p>EDGE ANNOTATION EXPORTED</p>'); // CHANGE
+            const now=Date.now();value.setAttribute('trellis_comments_json',JSON.stringify({version:2,comments:[{id:'pipe-alert',authorUserId:'alice',authorName:'alice',html:'<p>ALERT EXCLUDED FROM EXPORT</p>',createdAt:now,updatedAt:now,resolvedAt:null,resolvedByUserId:null,resolvedByName:null,isAlert:true}]})); // CHANGE
+            window.alertEdge=graph.insertEdge(null,'alert-edge',value,a,b,'edgeStyle=orthogonalEdgeStyle;html=1;');graph.__trellisObjectDetails.refresh();void 0; // CHANGE
+        `); // CHANGE
+        assert.deepEqual(await evaluate(`(()=>{const badge=document.querySelector('[data-cell-id="alert-edge"]'),center=badge.firstElementChild;return [getComputedStyle(badge).backgroundColor,getComputedStyle(center).backgroundColor,getComputedStyle(badge).outlineColor,badge.title.includes('1 active alert')];})()`), ['rgb(30, 64, 175)', 'rgb(250, 204, 21)', 'rgb(220, 38, 38)', true]); // CHANGE
+        await clickElement('[data-cell-id="alert-edge"]'); // CHANGE
+        await until('graph.isCellSelected(alertEdge)&&document.querySelector("[data-collaboration-object-id=alert-edge] [data-details-tab=alerts]")?.getAttribute("aria-pressed")==="true"', 'native edge badge to select the pipe and open Alerts'); // CHANGE
+        await evaluate('window.alertPanel=document.querySelector("[data-collaboration-object-id=alert-edge]");alertPanel.querySelector("[data-comment-action=resolve]").scrollIntoView({block:"nearest"});void 0;'); // CHANGE
+        await clickElement('[data-collaboration-object-id="alert-edge"] [data-comment-action="resolve"]'); // CHANGE
+        await until('TrellisDetailsCore.parseComments(alertEdge.getAttribute("trellis_comments_json"))[0].resolvedAt!==null&&!document.querySelector("[data-cell-id=alert-edge]").style.outline', 'resolution to clear the red signal'); // CHANGE
+        await clickElement('[data-collaboration-object-id="alert-edge"] [data-comment-section="resolved"] summary'); // CHANGE
+        await until('alertPanel.querySelector("[data-comment-section=resolved]").open', 'resolved alert history to expand'); // CHANGE
+        await evaluate('alertPanel.querySelector("[data-comment-action=reopen]").scrollIntoView({block:"nearest"});void 0;'); // CHANGE
+        await clickElement('[data-collaboration-object-id="alert-edge"] [data-comment-action="reopen"]'); // CHANGE
+        await until('TrellisDetailsCore.parseComments(alertEdge.getAttribute("trellis_comments_json"))[0].resolvedAt===null&&!!document.querySelector("[data-cell-id=alert-edge]").style.outline', 'reopening to restore the alert outline'); // CHANGE
+        assert.equal(await evaluate('alertPanel.querySelector("[data-details-tab=alerts]").getAttribute("aria-pressed")'), 'true'); // CHANGE
+        win.webContents.invalidate(); await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));'); await screenshot('edge-alerts'); // CHANGE
+        await evaluate('const value=commentOnly.value.cloneNode(true);value.setAttribute("trellis_comments_json",alertEdge.getAttribute("trellis_comments_json"));graph.model.setValue(commentOnly,value);graph.setSelectionCells([a,alertEdge,commentOnly]);graph.__trellisObjectDetails.refresh();void 0;'); // CHANGE
+        assert.equal(await evaluate('graph.__trellisObjectDetails.exportProjection()["page-a"].some(record=>record.ownerId==="comments-only")'), false, 'alert-only badges also stay out of rendered exports'); // CHANGE
         const snapshot = await evaluate('graph.getExportVariables().__trellisDetailsProjection'); // NEW
-        assert.ok(snapshot['page-a'].find(record => !record.badge).geometry.height > 500); // NEW
+        assert.ok(snapshot['page-a'].find(record => record.ownerId === 'details-a' && !record.badge).geometry.height > 500); // CHANGE: interaction order may place a short pipe annotation before the long description.
         const canonical = await evaluate('ui.getFileData()'); // NEW
         const selectedSvg = await evaluate('mxUtils.getXml(graph.getSvg(null,1,0,false,null,false))'); // NEW
         assert.match(selectedSvg, /FINAL EXPORT PARAGRAPH/); assert.doesNotMatch(selectedSvg, /Second object|Independent details/); // NEW
         const svg = await evaluate('mxUtils.getXml(graph.getSvg(null,1,0))'); // NEW
+        assert.match(svg, /EDGE ANNOTATION EXPORTED/); assert.doesNotMatch(svg, /ALERT EXCLUDED FROM EXPORT|#dc2626/); // CHANGE
         assert.match(svg, /FINAL EXPORT PARAGRAPH/); assert.doesNotMatch(svg, /COMMENT EXCLUDED FROM EXPORT|Place details|Saved to diagram|trellis-object-details-editor|contenteditable/); // CHANGE
         assert.equal(await evaluate('ui.getFileData()'), canonical); // NEW
         fs.writeFileSync(path.join(output, 'details.svg'), svg); // NEW
@@ -381,7 +402,8 @@ app.whenReady().then(async () => { // NEW
         await until('!!document.getElementById("LoadingComplete")', 'PNG rendering', exportWindow); // NEW
         assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("FINAL EXPORT PARAGRAPH")'), true); // NEW
         assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("COMMENT EXCLUDED FROM EXPORT")'), false, 'PNG projection excludes comments'); // CHANGE
-        assert.equal(await exportWindow.webContents.executeJavaScript('(()=>{const panel=Object.values(exportGraph.model.cells).find(cell=>cell.__trellisDetailsOwner&&!String(cell.value).includes("&#9432;")),state=exportGraph.view.getState(panel),paragraph=[...state.text.node.querySelectorAll("p")].at(-1),bottom=paragraph.getBoundingClientRect().bottom;return bottom<=state.shape.node.getBoundingClientRect().bottom+2;})()'), true, 'expanded export bounds contain the final paragraph'); // NEW
+        assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("ALERT EXCLUDED FROM EXPORT")'), false, 'PNG projection excludes alerts'); assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("EDGE ANNOTATION EXPORTED")'), true); // CHANGE
+        assert.equal(await exportWindow.webContents.executeJavaScript('(()=>{const panel=Object.values(exportGraph.model.cells).find(cell=>cell.__trellisDetailsOwner?.id==="details-a"&&!String(cell.value).includes("&#9432;")),state=exportGraph.view.getState(panel),paragraph=[...state.text.node.querySelectorAll("p")].at(-1),bottom=paragraph.getBoundingClientRect().bottom;return bottom<=state.shape.node.getBoundingClientRect().bottom+2;})()'), true, 'expanded export bounds contain the final paragraph'); // CHANGE
         const png = await capture(exportWindow); fs.writeFileSync(path.join(output, 'export.png'), png.toPNG()); // NEW
         const pixels = png.toBitmap(); assert.ok(pixels.some((value, index) => index % 4 !== 3 && value < 200), 'the PNG must paint visible diagram content'); // NEW
         options.format = 'pdf'; options.allPages = '1'; options.pageWidth = 827; options.pageHeight = 1169; options.pageScale = 1; // NEW: mirror the dimensions supplied by the real desktop print request.
@@ -389,6 +411,7 @@ app.whenReady().then(async () => { // NEW
         await until('!!document.getElementById("LoadingComplete")', 'PDF and print rendering', exportWindow); // NEW
         assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("FINAL EXPORT PARAGRAPH")'), true); // NEW
         assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("COMMENT EXCLUDED FROM EXPORT")'), false, 'PDF and print projections exclude comments'); // CHANGE
+        assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("ALERT EXCLUDED FROM EXPORT")'), false, 'PDF and print projections exclude alerts'); assert.equal(await exportWindow.webContents.executeJavaScript('document.body.textContent.includes("EDGE ANNOTATION EXPORTED")'), true); // CHANGE
         assert.equal(await evaluate('ui.getFileData()'), canonical, 'image and PDF export must never modify the live model'); // NEW
         stage = 'badge states and native keyboard activation'; // CHANGE
         await evaluate(` // CHANGE
@@ -396,7 +419,7 @@ app.whenReady().then(async () => { // NEW
             const posted=TrellisDetailsCore.parseComments(a.getAttribute('trellis_comments_json'))[0]; // CHANGE
             const resolved={...posted,resolvedAt:Date.now(),resolvedByUserId:'alice',resolvedByName:'alice'}; // CHANGE
             const cases=[['details','Details only',true,[]],['unresolved','Unresolved comments',false,[posted]],['both','Details + unresolved',true,[posted]],['resolved','Resolved comments',false,[resolved]],['empty','No extra content',false,[]]]; // CHANGE
-            cases.forEach(([id,label,hasDetails,comments],index)=>{const value=mxUtils.createXmlDocument().createElement('object');value.setAttribute('label',label);if(hasDetails)value.setAttribute('trellis_details_html','<p>Saved details</p>');if(comments.length)value.setAttribute('trellis_comments_json',JSON.stringify({version:1,comments}));graph.insertVertex(null,'badge-'+id,value,30+index*205,300,180,70,'html=1;whiteSpace=wrap;rounded=1;');}); // CHANGE
+            cases.forEach(([id,label,hasDetails,comments],index)=>{const value=mxUtils.createXmlDocument().createElement('object');value.setAttribute('label',label);if(hasDetails)value.setAttribute('trellis_details_html','<p>Saved details</p>');if(comments.length)value.setAttribute('trellis_comments_json',JSON.stringify({version:2,comments}));graph.insertVertex(null,'badge-'+id,value,30+index*205,300,180,70,'html=1;whiteSpace=wrap;rounded=1;');}); // CHANGE
             graph.__trellisObjectDetails.refresh();graph.container.scrollLeft=0;graph.container.scrollTop=0;window.scrollTo(0,0);void 0; // CHANGE
         `); // CHANGE
         const badgeStates = await evaluate(`['details','unresolved','both','resolved'].map(id=>{const badge=document.querySelector('[data-cell-id="badge-'+id+'"]'),center=badge.firstElementChild,bounds=badge.getBoundingClientRect(),inner=center.getBoundingClientRect();return {id,width:bounds.width,height:bounds.height,centerWidth:inner.width,outer:getComputedStyle(badge).backgroundColor,center:getComputedStyle(center).backgroundColor,inset:inner.left-bounds.left,label:badge.getAttribute('aria-label')};})`); // CHANGE
@@ -413,8 +436,11 @@ app.whenReady().then(async () => { // NEW
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' }); win.webContents.sendInputEvent({ type: 'char', keyCode: ' ' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' }); // CHANGE
         await until('!document.querySelector("[data-collaboration-object-id=badge-both]")&&document.querySelector("[data-cell-id=badge-both]").getAttribute("aria-expanded")==="false"', 'Space to close the badge panel'); // CHANGE
         await verifyManipulationSizing(win, evaluate, until); // NEW: validate observer behavior before invoking the independent native printing service.
-        stage = 'native PDF printing'; const pdf = await exportWindow.webContents.printToPDF({ printBackground: true }); fs.writeFileSync(path.join(output, 'details.pdf'), pdf); // CHANGE: exercise canvas badge states before the native printing service, which can stall independently.
-        const parsed = await PDFDocument.load(pdf); assert.ok(parsed.getPageCount() >= 2); // CHANGE
+        let pdfPages = null; // CHANGE
+        if (!process.argv.includes('--projection-only')) { // CHANGE: independently verify render projections when the host printing service is unavailable.
+            stage = 'native PDF printing'; const pdf = await exportWindow.webContents.printToPDF({ printBackground: true }); fs.writeFileSync(path.join(output, 'details.pdf'), pdf); // CHANGE
+            const parsed = await PDFDocument.load(pdf); pdfPages = parsed.getPageCount(); assert.ok(pdfPages >= 2); // CHANGE
+        } // CHANGE
         stage = 'controller teardown and normal label editing'; // NEW
         await evaluate('graph.__trellisObjectDetails.destroy();void 0;'); // NEW
         assert.equal(await evaluate('ui.isSelectionAllowed===originalSelectionAllowed'), true, 'teardown restores the original host selection hook'); // NEW
@@ -428,7 +454,7 @@ app.whenReady().then(async () => { // NEW
         await until('!!graph.cellEditor.textarea.querySelector("ul > li")', 'the shared bullet button to format a native shape label'); // NEW
         await evaluate('graph.stopEditing(false);void 0;'); // NEW
         assert.match(await evaluate('a.getAttribute("label")'), /<ul><li>Label input restored<\/li><\/ul>/); // CHANGE: the ordinary label persists native bullet HTML.
-        console.log('OBJECT_DETAILS_RESULT:' + JSON.stringify({ ok: true, supported, position, pdfPages: parsed.getPageCount(), screenshots: output })); // NEW
+        console.log('OBJECT_DETAILS_RESULT:' + JSON.stringify({ ok: true, supported, position, pdfPages, screenshots: output })); // CHANGE
         exportWindow.destroy(); win.destroy(); app.exit(0); // NEW
     } catch (error) { // NEW
         console.error(error.stack || error); // NEW

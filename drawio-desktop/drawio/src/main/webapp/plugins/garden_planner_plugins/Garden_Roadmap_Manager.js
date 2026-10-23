@@ -450,11 +450,14 @@ Draw.loadPlugin(function (ui) {
 
     /** Build one immutable display arrangement per root; no personal offset is stored in a cell. */ // NEW
     function personalProjection(root) { // NEW
-        materializeInsertedCellIds([root]); // NEW
-        const roadmapBoards = collectDescendants([root]).filter(cell => kind(cell) === 'board'); // NEW
-        const key = roadmapBoards.map(viewCacheKey).join('|'), cached = projections.get(root); if (cached && cached.key === key) return cached.geometry; // CHANGE
+        const cached = projections.get(root); // CHANGE
+        if (cached && (!cached.boards.length || cached.scope === preferenceKey(cached.boards[0]))) return cached.geometry; // NEW: model, view and user events already invalidate projections; geometry reads must not traverse the document before checking the cache.
+        const clusters = root === model.getRoot() && graph.__trellisModules?.clusters; // NEW
+        const sources = clusters ? clusters.listModules().filter(cell => clusters.isRendered(cell)) : collectDescendants([root]); // NEW
+        const roadmapBoards = clusters ? sources.filter(cell => isRoadmapModuleCell(cell) && !graph.isCellCollapsed(cell)).flatMap(cell => typedChildren(cell, 'board')) : sources.filter(cell => kind(cell) === 'board'); // CHANGE: excluded and folded roadmaps do not need personal display layouts.
+        materializeInsertedCellIds(clusters ? roadmapBoards : [root]); // CHANGE
         const geometry = new Map(), previous = new Map(), modules = new Set(roadmapBoards.map(parent)); // NEW
-        collectDescendants([root]).filter(cell => kind(cell) === 'board' || isModuleCell(cell)).forEach(cell => { const g = model.getGeometry(cell); if (g) { geometry.set(cell, g.clone()); previous.set(cell, g.clone()); } }); // NEW
+        Array.from(new Set(sources.concat(roadmapBoards))).filter(cell => kind(cell) === 'board' || isModuleCell(cell)).forEach(cell => { const g = model.getGeometry(cell); if (g) { geometry.set(cell, g.clone()); previous.set(cell, g.clone()); } }); // CHANGE
         roadmapBoards.forEach(board => geometry.set(board, getLayout(board).geometry.get(id(board)).clone())); // NEW
         modules.forEach(module => { // NEW
             const boards = typedChildren(module, 'board'), changed = boards.filter(board => differentBounds(previous.get(board), geometry.get(board))); // NEW
@@ -465,7 +468,7 @@ Draw.loadPlugin(function (ui) {
             const peers = children(layer).filter(cell => isModuleCell(cell) && geometry.has(cell)), changed = peers.filter(cell => modules.has(cell) && differentBounds(previous.get(cell), geometry.get(cell))); // NEW
             if (changed.length) applyPeerPlan(peers, peerPlan(peers, geometry, changed, previous), geometry); // NEW
         }); // NEW
-        projections.set(root, { key, geometry }); return geometry; // NEW
+        projections.set(root, { boards: roadmapBoards, scope: roadmapBoards.length ? preferenceKey(roadmapBoards[0]) : '', geometry }); return geometry; // CHANGE
     } // NEW
     function cellRoot(cell) { let root = cell; while (parent(root)) root = parent(root); return root; } // NEW
 
@@ -1806,7 +1809,22 @@ Draw.loadPlugin(function (ui) {
         listenDom(window, 'focus', checkToday); listenDom(document, 'visibilitychange', checkToday); // NEW
         const timer = window.setInterval(checkToday, 60000); disposers.push(() => window.clearInterval(timer)); // NEW
     } // NEW
-    listenModel(model, mxEvent.CHANGE, () => { boardRegistry = null; invalidateLayouts(); if (gesture && !committingCanonical && !commandDepth) { if (graph.escape) graph.escape(); clearGesture(); } if (!commandDepth) refresh(); }); // NEW
+    /** Structural, policy, and roadmap edits invalidate projections; unrelated ordinary cell edits do not. */ // CHANGE
+    function affectsRoadmapProjection(change) { // CHANGE
+        if (change.__trellisUsersActorStamp) return false; // CHANGE
+        if ('root' in change || 'child' in change || !change.cell) return true; // CHANGE: unknown/native hierarchy changes retain the conservative path.
+        const cell = change.cell, previous = change.previous; // CHANGE
+        if (id(cell) === '0' || id(cell) === '1' || attr(cell, 'linkedTo') || previous?.getAttribute?.('linkedTo') || TYPES.has(previous?.getAttribute?.('roadmap_type'))) return true; // CHANGE
+        for (let cursor = cell; cursor; cursor = parent(cursor)) if (TYPES.has(kind(cursor)) || attr(cursor, 'roadmap_module') === '1') return true; // CHANGE
+        return false; // CHANGE
+    } // CHANGE
+    listenModel(model, mxEvent.CHANGE, (_sender, event) => { // CHANGE
+        if (gesture && !committingCanonical && !commandDepth) { if (graph.escape) graph.escape(); clearGesture(); } // CHANGE
+        const changes = event?.getProperty?.('edit')?.changes; // CHANGE
+        if (changes?.length && !changes.some(affectsRoadmapProjection)) { scheduleControlsRefresh(); return; } // CHANGE
+        boardRegistry = null; invalidateLayouts(); if (!commandDepth) refresh(); // CHANGE
+    }); // CHANGE
+    listenModel(graph, 'trellisClustersChanged', invalidateLayouts); // NEW: neighborhood changes invalidate only personal display projections, without model writes.
     listenModel(graph.getSelectionModel && graph.getSelectionModel(), mxEvent.CHANGE, () => { closeAssignmentPicker(); closeCostPicker(); scheduleControlsRefresh(); }); // CHANGE: selection changes only overlays; a full refresh exposes saved labels beneath active editors.
     [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE].filter(Boolean).forEach(event => listenModel(graph.view, event, renderControls)); // NEW
     const destroyGraph = graph.destroy; // NEW

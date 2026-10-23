@@ -16,3 +16,10 @@ test('extra-info dimensions survive manipulation with the real browser ResizeObs
     assert.equal(result.error, undefined, result.stderr || result.stdout); assert.equal(result.status, 0, result.stderr || result.stdout); // NEW
     assert.match(result.stdout, /EXTRA_INFO_SIZE_PRESERVED:/); assert.match(result.stdout, /OBJECT_DETAILS_SIZE_RESULT:passed/); // NEW
 }); // NEW
+
+test('object alerts use native pipe controls and SVG PNG PDF projections independently of native printing', { timeout: 125000 }, () => { // CHANGE
+    const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; // CHANGE
+    const result = spawnSync(require('electron'), [path.join(__dirname, 'helpers/object-details-electron.cjs'), '--projection-only'], { env, windowsHide: true, encoding: 'utf8', timeout: 120000 }); // CHANGE
+    assert.equal(result.error, undefined, result.stderr || result.stdout); assert.equal(result.status, 0, result.stderr || result.stdout); // CHANGE
+    assert.match(result.stdout, /OBJECT_DETAILS_RESULT:/); assert.match(result.stdout, /"pdfPages":null/); // CHANGE
+}); // CHANGE

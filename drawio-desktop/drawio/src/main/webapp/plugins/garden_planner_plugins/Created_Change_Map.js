@@ -93,10 +93,8 @@ Draw.loadPlugin(function (ui) {
   // List size for click-to-navigate
   const NAV_LIST_MAX = 200;
 
-  const HISTORY_DB_NAME = 'Trellis_history.sqlite';
   const HISTORY_SETTLE_MS = 2500;
-  const HISTORY_RETENTION_BYTES = 500 * 1024 * 1024;
-  const HISTORY_SCHEMA_VERSION = 1;
+  const HISTORY_SCHEMA_VERSION = 2; // CHANGE: persistence and retention are owned by the versioned main-process service.
   const HISTORY_EVENT_BEFORE_RESTORE = 'trellisHistoryBeforeRestore';
   const HISTORY_EVENT_AFTER_RESTORE = 'trellisHistoryAfterRestore';
   const HISTORY_EVENT_COMPARE_CLEARED = 'trellisHistoryCompareCleared';
@@ -559,16 +557,28 @@ Draw.loadPlugin(function (ui) {
   }
 
   function getHistoryIdentityCell() {
-    const defaultParent = graph.getDefaultParent && graph.getDefaultParent();
-    return defaultParent || model.getRoot();
+    const firstPage = ui.pages && ui.pages[0]; // NEW
+    const pageRoot = firstPage && firstPage.root; // NEW
+    const firstLayer = pageRoot && model.getChildCount(pageRoot) ? model.getChildAt(pageRoot, 0) : null; // NEW
+    return firstLayer || (graph.getDefaultParent && graph.getDefaultParent()) || model.getRoot(); // CHANGE
   }
 
   function getDiagramHistoryId() {
+    if (graph.__ccDiagramHistoryId) return graph.__ccDiagramHistoryId; // NEW
     const cell = getHistoryIdentityCell();
-    let id = cell && cell !== model.getRoot() ? getAttrStr(cell, ATTR_HISTORY_ID) : null;
-    if (!id && graph.__ccDiagramHistoryId) id = graph.__ccDiagramHistoryId;
+    let id = ui.fileNode && ui.fileNode.getAttribute(ATTR_HISTORY_ID); // NEW: identity survives selecting/deleting the first page.
+    const firstPage = ui.pages && ui.pages[0]; // NEW
+    if (!id && firstPage && firstPage.node) try { // NEW: the first page can be compressed and unloaded when another page is selected.
+      let page = firstPage.node;
+      if (!page.getElementsByTagName('mxGraphModel').length && typeof Graph !== 'undefined' && Graph.decompress) page = mxUtils.parseXml(Graph.decompress(page.textContent));
+      const entries = Array.from(page.getElementsByTagName('*'));
+      const identity = entries.find(node => node.getAttribute(ATTR_HISTORY_ID)) || entries.find(node => node.getAttribute('trellis_users_diagram_id'));
+      if (identity) id = identity.getAttribute(ATTR_HISTORY_ID) || identity.getAttribute('trellis_users_diagram_id');
+    } catch (_) { /* The active model still provides a usable identity on an unsaved document. */ }
+    if (!id) id = cell && (getAttrStr(cell, ATTR_HISTORY_ID) || getAttrStr(cell, 'trellis_users_diagram_id')); // CHANGE: preserve established sharing identity.
     if (!id) id = makeHistoryId('diagram');
     graph.__ccDiagramHistoryId = id;
+    if (ui.fileNode && !ui.fileNode.getAttribute(ATTR_HISTORY_ID)) ui.fileNode.setAttribute(ATTR_HISTORY_ID, id); // NEW: persisted on the next ordinary save.
     if (cell && cell !== model.getRoot() && getAttrStr(cell, ATTR_HISTORY_ID) == null) {
       try { ensureXmlValue(cell); cell.setAttribute(ATTR_HISTORY_ID, id); } catch (e) { }
     }
@@ -579,18 +589,12 @@ Draw.loadPlugin(function (ui) {
     if (typeof graph.__trellisHistoryTestSerialize === 'function') {
       return String(graph.__trellisHistoryTestSerialize());
     }
+    if (ui.getXmlFileData && typeof mxUtils !== 'undefined') return mxUtils.getXml(ui.getXmlFileData(true, false, true)); // NEW: all pages, uncompressed.
     if (typeof mxCodec !== 'undefined' && typeof mxUtils !== 'undefined' && mxUtils.getXml) {
       const enc = new mxCodec();
       return mxUtils.getXml(enc.encode(model));
     }
     throw new Error('Diagram XML serialization is unavailable.');
-  }
-
-  function compressSnapshotXml(xml) {
-    if (typeof Graph !== 'undefined' && Graph && typeof Graph.compress === 'function') {
-      try { return { compressed: Graph.compress(xml), compressedKind: 'graph-compress' }; } catch (e) { }
-    }
-    return { compressed: xml, compressedKind: 'plain' };
   }
 
   function decompressSnapshotXml(snapshot) {
@@ -608,6 +612,7 @@ Draw.loadPlugin(function (ui) {
     }
     const doc = mxUtils.parseXml(xml);
     const node = doc.documentElement;
+    if (node.nodeName === 'mxfile' && ui.setFileData) { ui.setFileData(xml); return; } // NEW: restore complete page structure.
     if (ui.editor && typeof ui.editor.setGraphXml === 'function') {
       ui.editor.setGraphXml(node);
       return;
@@ -687,119 +692,58 @@ Draw.loadPlugin(function (ui) {
 
   // -------------------- HistoryStore --------------------
 
+  /** Document-scoped adapter; verification, SQLite and pruning belong to the main process. */ // NEW
   function createHistoryStore() {
-    const bridge = (typeof window !== 'undefined') ? window.dbBridge : null;
-    const store = { ready: false, disabled: false, warning: '', dbId: null };
-
-    async function exec(sql, params) {
-      return bridge.exec(store.dbId, sql, params || []);
+    const bridge = window.trellisHistory;
+    const store = { ready: false, warning: '', token: 0, generation: null };
+    function request(method, payload) {
+      const current = ui.getCurrentFile ? ui.getCurrentFile() : null;
+      return bridge.request(method, Object.assign({ diagramId: getDiagramHistoryId(), token: store.token, filePath: current && current.fileObject && current.fileObject.path || null }, payload || {}));
     }
-
-    async function query(sql, params) {
-      const res = await bridge.query(store.dbId, sql, params || []);
-      return (res && res.rows) || [];
-    }
-
     async function init() {
-      if (!bridge || typeof bridge.resolvePath !== 'function' || typeof bridge.open !== 'function') {
-        store.disabled = true;
-        store.warning = 'History storage is unavailable in this environment.';
-        return store;
-      }
+      store.token += 1; store.ready = false;
+      if (!bridge || typeof bridge.request !== 'function') { store.warning = 'History storage is unavailable in this environment.'; return store; }
+      const token = store.token;
       try {
-        const resolved = await bridge.resolvePath({ dbName: HISTORY_DB_NAME, seedRelPath: null, createIfMissing: true });
-        const opened = await bridge.open(resolved.dbPath, { readOnly: false, fileMustExist: false, pragma: { journal_mode: 'WAL', synchronous: 'NORMAL' } });
-        store.dbId = opened.dbId;
-        await exec('CREATE TABLE IF NOT EXISTS history_snapshots (snapshot_id TEXT PRIMARY KEY, diagram_id TEXT NOT NULL, hash TEXT NOT NULL, compressed_kind TEXT NOT NULL, compressed_xml TEXT NOT NULL, byte_size INTEGER NOT NULL, checksum TEXT NOT NULL, created_at INTEGER NOT NULL, snapshot_kind TEXT NOT NULL DEFAULT "full")');
-        await exec('CREATE TABLE IF NOT EXISTS history_events (id TEXT PRIMARY KEY, diagram_id TEXT NOT NULL, timestamp INTEGER NOT NULL, category TEXT NOT NULL, action TEXT NOT NULL, origin TEXT NOT NULL, title TEXT NOT NULL, affected_cell_ids TEXT NOT NULL, change_types TEXT NOT NULL, counts_json TEXT NOT NULL, snapshot_id TEXT NOT NULL, parent_revision_id TEXT, restored_from_revision_id TEXT, tags_json TEXT NOT NULL, metadata_json TEXT NOT NULL, checkpoint INTEGER NOT NULL DEFAULT 0, diagram_hash TEXT NOT NULL, schema_version INTEGER NOT NULL)');
-        await exec('CREATE INDEX IF NOT EXISTS idx_history_events_diagram_time ON history_events(diagram_id, timestamp)');
-        await exec('CREATE INDEX IF NOT EXISTS idx_history_snapshots_diagram_hash ON history_snapshots(diagram_id, hash)');
-        store.ready = true;
-      } catch (e) {
-        store.disabled = true;
-        store.warning = 'History storage failed: ' + (e && e.message ? e.message : String(e));
-      }
+        const result = await request('initialize', { xml: serializeActivePageXml(), metadata: actorMetadata({}) }); // CHANGE
+        if (token !== store.token) return store;
+        store.generation = result.generation; store.ready = true; store.warning = '';
+        graph.__ccHistoryStorage = result.statistics; await refreshStatistics(); refreshStorageDisplay(); // CHANGE
+      } catch (error) { store.warning = 'History storage failed: ' + error.message; }
       return store;
     }
-
-    async function getLatestRevision(diagramId) {
-      if (!store.ready) return null;
-      const rows = await query('SELECT * FROM history_events WHERE diagram_id = ? ORDER BY timestamp DESC LIMIT 1', [diagramId]);
-      return rows[0] || null;
+    async function listRevisions() { return store.ready ? request('list') : []; }
+    async function getLatestRevision() {
+      const latest = store.ready ? await request('latest') : null; // CHANGE: causal head is independent of peer clock order.
+      return latest ? Object.assign({}, latest, { diagram_hash: latest.diagramHash, snapshot_id: latest.id }) : null;
     }
-
-    async function listRevisions(diagramId) {
-      if (!store.ready) return [];
-      const rows = await query('SELECT * FROM history_events WHERE diagram_id = ? ORDER BY timestamp ASC', [diagramId]);
-      return rows.map(rowToRevision);
+    async function loadSnapshot(id) {
+      const token = store.token; // NEW
+      const result = await request('read', { revisionId: id });
+      if (token !== store.token) throw new Error('History document context changed.'); // NEW
+      return { compressed_xml: result.xml, compressed_kind: 'plain' };
     }
-
-    async function loadSnapshot(snapshotId) {
-      if (!store.ready || !snapshotId) return null;
-      const rows = await query('SELECT * FROM history_snapshots WHERE snapshot_id = ? LIMIT 1', [snapshotId]);
-      return rows[0] || null;
-    }
-
-    async function recordRevision(revision, snapshot, imported) { // CHANGE
+    async function recordRevision(revision, snapshot) {
       if (!store.ready) return false;
-      if ((await query('SELECT id FROM history_events WHERE id = ? LIMIT 1', [revision.id])).length) return false; // NEW: shared history imports are idempotent.
-      await exec('INSERT OR IGNORE INTO history_snapshots (snapshot_id, diagram_id, hash, compressed_kind, compressed_xml, byte_size, checksum, created_at, snapshot_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [snapshot.snapshotId, revision.diagramHistoryId, revision.diagramHash, snapshot.compressedKind, snapshot.compressedXml, snapshot.byteSize, snapshot.checksum, revision.timestamp, 'full']);
-      await exec('INSERT INTO history_events (id, diagram_id, timestamp, category, action, origin, title, affected_cell_ids, change_types, counts_json, snapshot_id, parent_revision_id, restored_from_revision_id, tags_json, metadata_json, checkpoint, diagram_hash, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [revision.id, revision.diagramHistoryId, revision.timestamp, revision.category, revision.action, revision.origin, revision.title, JSON.stringify(revision.affectedCellIds || []), JSON.stringify(revision.changeTypes || []), JSON.stringify(revision.counts || {}), revision.snapshotId, revision.parentRevisionId || null, revision.restoredFromRevisionId || null, JSON.stringify(revision.tags || []), JSON.stringify(revision), revision.checkpoint ? 1 : 0, revision.diagramHash, HISTORY_SCHEMA_VERSION]);
-      const sharing = graph.__trellisSharing; // NEW: shared history is retained for this release, not thinned by the local quota.
-      if (!imported && !(sharing && sharing.getInfo && sharing.getInfo() && sharing.getInfo().managed)) await thinHistoryIfNeeded(revision.diagramHistoryId); // CHANGE
-      return true;
+      const token = store.token;
+      const xml = snapshot.compressedKind === 'graph-compress' ? Graph.decompress(snapshot.compressedXml) : snapshot.compressedXml;
+      const saved = await request('record', { xml, metadata: revision, generation: store.generation, forceFull: revision.checkpoint || revision.action === 'restore' || revision.action === 'baseline' });
+      if (token !== store.token) return false;
+      Object.assign(revision, saved); snapshot.snapshotId = saved.id;
+      delete snapshot.compressedXml; delete snapshot.compressedKind; delete snapshot.checksum; snapshot.byteSize = saved.payloadBytes; snapshot.storageKind = saved.storageKind; // NEW: sharing queues retain references, never duplicate whole diagrams in memory.
+      await refreshStatistics(); return true;
     }
-
-    async function thinHistoryIfNeeded(diagramId) {
-      const rows = await query('SELECT e.id, e.snapshot_id, e.checkpoint, e.category, e.action, s.byte_size FROM history_events e JOIN history_snapshots s ON e.snapshot_id = s.snapshot_id WHERE e.diagram_id = ? ORDER BY e.timestamp ASC', [diagramId]);
-      let total = rows.reduce(function (sum, row) { return sum + Number(row.byte_size || 0); }, 0);
-      if (total <= HISTORY_RETENTION_BYTES) return;
-      const protectedIds = new Set();
-      for (let i = Math.max(0, rows.length - 100); i < rows.length; i++) protectedIds.add(rows[i].id);
-      if (rows[0]) protectedIds.add(rows[0].id);
-      if (rows[rows.length - 1]) protectedIds.add(rows[rows.length - 1].id);
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        if (row.checkpoint || row.category !== 'Diagram' || row.action === 'restore') protectedIds.add(row.id);
-      }
-      for (let i = 0; i < rows.length && total > HISTORY_RETENTION_BYTES; i++) {
-        const row = rows[i];
-        if (protectedIds.has(row.id)) continue;
-        await exec('DELETE FROM history_events WHERE id = ?', [row.id]);
-        await exec('DELETE FROM history_snapshots WHERE snapshot_id = ? AND NOT EXISTS (SELECT 1 FROM history_events WHERE snapshot_id = ?)', [row.snapshot_id, row.snapshot_id]);
-        total -= Number(row.byte_size || 0);
-      }
+    async function refreshStatistics() {
+      if (!store.ready) return;
+      const token = store.token;
+      try {
+        const result = await request('statistics');
+        if (token === store.token) { graph.__ccHistoryStorage = result; store.generation = result.generation; refreshStorageDisplay(); }
+      } catch (_) { if (token === store.token) { graph.__ccHistoryStorage = null; refreshStorageDisplay(); } }
     }
-
-    function rowToRevision(row) {
-      const metadata = safeParseJson(row.metadata_json, {});
-      metadata.id = row.id;
-      metadata.timestamp = Number(row.timestamp);
-      metadata.category = row.category;
-      metadata.action = row.action;
-      metadata.origin = row.origin;
-      metadata.title = row.title;
-      metadata.snapshotId = row.snapshot_id;
-      metadata.parentRevisionId = row.parent_revision_id || null;
-      metadata.restoredFromRevisionId = row.restored_from_revision_id || null;
-      metadata.affectedCellIds = safeParseJson(row.affected_cell_ids, []);
-      metadata.changeTypes = safeParseJson(row.change_types, []);
-      metadata.tags = safeParseJson(row.tags_json, []);
-      metadata.checkpoint = Number(row.checkpoint) === 1;
-      metadata.diagramHash = row.diagram_hash;
-      return metadata;
-    }
-
-    return {
-      init,
-      getLatestRevision,
-      listRevisions,
-      loadSnapshot,
-      recordRevision,
-      get ready() { return store.ready; },
-      get disabled() { return store.disabled; },
-      get warning() { return store.warning; }
-    };
+    function invalidate() { store.token += 1; store.ready = false; graph.__ccHistoryStorage = null; }
+    async function adoptBaseline(xml) { return store.ready ? request('baseline', { xml }) : null; } // NEW
+    return { init, getLatestRevision, listRevisions, loadSnapshot, recordRevision, refreshStatistics, invalidate, adoptBaseline, get contextToken() { return store.token; }, get ready() { return store.ready; }, get disabled() { return !bridge; }, get warning() { return store.warning; } }; // CHANGE
   }
 
   function safeParseJson(text, fallback) {
@@ -917,7 +861,6 @@ Draw.loadPlugin(function (ui) {
         const xml = serializeActivePageXml();
         const hash = hashString(xml);
         if (!force && latestHash === hash && !meta.checkpoint) return latestEntry; // CHANGE
-        const compressed = compressSnapshotXml(xml);
         const diagramId = getDiagramHistoryId();
         const snapshotId = makeHistoryId('snap');
         const viewTarget = computeHistoryViewTarget(meta, xml, latestXml);
@@ -945,11 +888,11 @@ Draw.loadPlugin(function (ui) {
           diagramHistoryId: diagramId,
           diagramHash: hash,
           trellisVersion: '2.3.1',
-          pluginVersion: 'history-mvp',
+          pluginVersion: 'history-v2', // CHANGE
           schemaVersion: HISTORY_SCHEMA_VERSION,
           checkpoint: !!meta.checkpoint
         };
-        const snapshot = { snapshotId, compressedXml: compressed.compressed, compressedKind: compressed.compressedKind, byteSize: String(compressed.compressed).length, checksum: hashString(compressed.compressed) };
+        const snapshot = { snapshotId, compressedXml: xml, compressedKind: 'plain' }; // CHANGE: compression and byte accounting happen once, in the history service.
         const saved = await store.recordRevision(revision, snapshot);
         if (saved && recordGeneration === generation) { // CHANGE
           latestHash = hash;
@@ -965,6 +908,7 @@ Draw.loadPlugin(function (ui) {
         updateHistoryUI();
       } finally {
         recording = false;
+        if (pending) scheduleStableRecord(); // NEW: retry a settled edit whose timer fired during a slow write or vacuum.
       }
     }
 
@@ -991,11 +935,12 @@ Draw.loadPlugin(function (ui) {
       const diagramId = getDiagramHistoryId();
       const latest = await store.getLatestRevision(diagramId);
       if (latest) {
-        latestHash = latest.diagram_hash;
+        latestHash = null; // CHANGE: canonical storage hashes differ from renderer serialization.
         latestRevisionId = latest.id;
         try {
           const snapshot = await store.loadSnapshot(latest.snapshot_id);
           latestXml = decompressSnapshotXml(snapshot);
+          latestHash = hashString(serializeActivePageXml()); // NEW
         } catch (e) { latestXml = null; }
         await refreshHistoryRevisions();
         return;
@@ -1021,6 +966,19 @@ Draw.loadPlugin(function (ui) {
       await recordStableRevision(false);
       return latestHash === hashString(serializeActivePageXml()) ? latestEntry : null;
     }
+    async function captureBeforeRestore() { // NEW
+      const currentGeneration = generation;
+      if (settleTimer) clearTimeout(settleTimer); settleTimer = null;
+      while (recording) await new Promise(resolve => setTimeout(resolve, 10));
+      if (generation !== currentGeneration) return null;
+      return recordStableRevision(true);
+    }
+
+    function resetForDocument() { // NEW
+      generation++; pending = null; latestHash = null; latestXml = null; latestRevisionId = null; latestEntry = null; // NEW
+      if (settleTimer) clearTimeout(settleTimer); settleTimer = null; historyStore.invalidate(); // NEW
+      graph.__ccSharedHistoryStorage = null; graph.__ccAdoptedHistoryId = null; graph.__ccAdoptedHistoryXml = null; refreshStorageDisplay(); // NEW
+    } // NEW
 
     function applyRemoteBaseline() { // NEW: receiving content must not be attributed to the local actor.
       generation++;
@@ -1029,13 +987,15 @@ Draw.loadPlugin(function (ui) {
       pending = null;
       latestXml = serializeActivePageXml();
       latestHash = hashString(latestXml);
-      const matching = (graph.__ccHistoryRevisions || []).find(revision => revision.diagramHash === latestHash); // CHANGE
+      const capturedXml = latestXml, currentGeneration = generation; // NEW
+      const matching = capturedXml === graph.__ccAdoptedHistoryXml ? (graph.__ccHistoryRevisions || []).find(revision => revision.id === graph.__ccAdoptedHistoryId) : null; // CHANGE
       latestRevisionId = matching ? matching.id : null;
       latestEntry = null;
+      historyStore.adoptBaseline(capturedXml).then(revision => { if (revision && generation === currentGeneration) { latestRevisionId = revision.id; graph.__ccAdoptedHistoryId = revision.id; graph.__ccAdoptedHistoryXml = capturedXml; } }).catch(error => { if (generation === currentGeneration) { graph.__ccHistoryWarning = error.message; updateHistoryUI(); } }); // NEW: storage uses SHA-256 over normalized content rather than the renderer's lightweight hash.
       return !!matching; // NEW: sharing can retry parent attribution when history arrives after XML.
     }
 
-    return { initializeBaseline, recordModelChange, captureActiveTransactionMetadata, run, createCheckpoint, recordRestore, recordStableRevision, flushForSharing, applyRemoteBaseline }; // CHANGE
+    return { initializeBaseline, recordModelChange, captureActiveTransactionMetadata, run, createCheckpoint, recordRestore, recordStableRevision, flushForSharing, captureBeforeRestore, applyRemoteBaseline, resetForDocument }; // CHANGE
   }
 
   const historyStore = createHistoryStore();
@@ -1580,6 +1540,62 @@ Draw.loadPlugin(function (ui) {
 
   let panel = null;
   let historyToolbarButton = null; // CHANGE: retain the toolbar button so its active state can track the panel
+  let storageButton = null, historyStorageSummary = null, historyStorageDetails = null; // NEW
+
+  function formatStorageBytes(value) { // NEW
+    if (!Number.isFinite(value)) return 'unavailable';
+    if (value < 1024) return value + ' B';
+    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KiB';
+    return (value / (1024 * 1024)).toFixed(1) + ' MiB';
+  }
+
+  /** Small toolbar readout; expensive filesystem accounting stays in expanded details. */ // NEW
+  function refreshStorageDisplay() {
+    const stats = graph.__ccHistoryStorage, current = ui.getCurrentFile && ui.getCurrentFile();
+    const saved = current && current.fileObject && current.fileObject.path;
+    const diagram = saved ? formatStorageBytes(stats && stats.diagramBytes) : 'unsaved';
+    const history = formatStorageBytes(stats && stats.historyBytes);
+    const label = 'Diagram ' + diagram + ' · History ' + history;
+    if (storageButton) {
+      storageButton.textContent = window.innerWidth && window.innerWidth < 900 ? 'D ' + diagram + ' · H ' + history : label;
+      storageButton.setAttribute('aria-label', label + '. Open document history.');
+      storageButton.title = label + (current && current.isModified && current.isModified() ? '\nDiagram size is the last saved file; there are unsaved changes.' : '\nDiagram size is the last saved file.') + '\nHistory includes stored records and reconstruction anchors.';
+    }
+    if (historyStorageSummary) historyStorageSummary.textContent = stats ? stats.revisionCount + ' revisions · ' + history + ' / ' + formatStorageBytes(stats.budgetBytes) + (stats.overBudget ? ' · Protected revisions exceed the soft budget.' : '') + (stats.reclamationPending ? ' · Disk reclamation pending.' : '') : 'Storage figures unavailable.';
+    if (historyStorageDetails) {
+      const shared = graph.__ccSharedHistoryStorage || {};
+      historyStorageDetails.textContent = 'Application history database: ' + formatStorageBytes(stats && stats.databaseBytes) + '; WAL: ' + formatStorageBytes(stats && stats.walBytes) + '.\nShared history files: ' + formatStorageBytes(shared.historyBytes) + '.\nCollaboration journal: ' + formatStorageBytes(shared.collaborationBytes) + '; recovery copies: ' + formatStorageBytes(shared.recoveryBytes) + '.\nThese are separate storage figures, not an exact per-diagram disk total.';
+    }
+  }
+
+  function installStorageFileHooks() { // NEW
+    const current = ui.getCurrentFile && ui.getCurrentFile();
+    if (!current || current.__trellisHistoryStorageHooks) return;
+    current.__trellisHistoryStorageHooks = true;
+    if (current.addListener) current.addListener('modifiedChanged', refreshStorageDisplay);
+    if (current.addListener) current.addListener('change', refreshStorageDisplay); // NEW: native DrawioFile modification events.
+    if (current.fileSaved) {
+      const original = current.fileSaved;
+      current.fileSaved = function () {
+        const result = original.apply(this, arguments);
+        if (!ui.getCurrentFile || ui.getCurrentFile() === current) Promise.resolve().then(() => historyStore.refreshStatistics()); // CHANGE
+        return result;
+      };
+    }
+  }
+
+  function installStorageButton() { // NEW
+    const host = ui.toolbarContainer || ui.menubarContainer || ui.container;
+    if (!host || storageButton) return;
+    storageButton = document.createElement('button'); storageButton.type = 'button';
+    storageButton.className = 'geButton trellis-history-storage-button';
+    storageButton.style.cssText = 'margin:2px 4px;padding:3px 8px;cursor:pointer;white-space:nowrap;max-width:36vw;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;'; // CHANGE
+    storageButton.addEventListener('click', () => { showPanel(); historyStore.refreshStatistics(); });
+    const user = host.querySelector('.trellis-users-login-button');
+    host.insertBefore(storageButton, user ? user.nextSibling : historyToolbarButton);
+    window.addEventListener('resize', refreshStorageDisplay);
+    installStorageFileHooks(); refreshStorageDisplay();
+  }
   let modeSelect = null;
   let scopeSelect = null;
   let windowValueInput = null;
@@ -1849,6 +1865,11 @@ Draw.loadPlugin(function (ui) {
 
     historyStatus = makeEl('div', { color: '#666', fontSize: '11px', minHeight: '16px' });
     panel.appendChild(historyStatus);
+    historyStorageSummary = makeEl('div', { color: '#555', fontSize: '11px', margin: '4px 0' }); panel.appendChild(historyStorageSummary); // NEW
+    const storageDetails = document.createElement('details'), storageHeading = document.createElement('summary'); storageDetails.className = 'trellis-history-storage-details'; // NEW
+    storageHeading.textContent = 'Storage details'; storageDetails.appendChild(storageHeading); // NEW
+    historyStorageDetails = makeEl('div', { whiteSpace: 'pre-line', fontSize: '11px', padding: '4px 0' }); storageDetails.appendChild(historyStorageDetails); panel.appendChild(storageDetails); // NEW
+    storageDetails.addEventListener('toggle', () => { if (storageDetails.open) { if (graph.__trellisSharing && graph.__trellisSharing.refreshHistoryStorage) graph.__trellisSharing.refreshHistoryStorage(); historyStore.refreshStatistics(); } }); refreshStorageDisplay(); // NEW
 
     panel.appendChild(makeRow('Filter', (historyFilterSelect = makeSelect([{ value: 'all', label: 'All categories' }].concat(HISTORY_CATEGORIES.map(function (category) { return { value: category, label: category }; }))))));
 
@@ -2085,11 +2106,14 @@ Draw.loadPlugin(function (ui) {
   }
 
   async function refreshHistoryRevisions() {
+    const token = historyStore.contextToken; // NEW
     try {
       if (!historyStore.ready) return;
-      graph.__ccHistoryRevisions = await historyStore.listRevisions(getDiagramHistoryId());
+      const revisions = await historyStore.listRevisions(getDiagramHistoryId()); // CHANGE
+      if (token !== historyStore.contextToken) return; graph.__ccHistoryRevisions = revisions; // NEW
       updateHistoryUI();
     } catch (e) {
+      if (token !== historyStore.contextToken) return; // NEW
       graph.__ccHistoryWarning = 'History refresh failed: ' + (e && e.message ? e.message : String(e));
       updateHistoryUI();
     }
@@ -2113,6 +2137,7 @@ Draw.loadPlugin(function (ui) {
     refreshSelectOptions(userFilterSelect, userFilterOptions(), graph.__ccUserFilter || 'all');
     graph.__ccUserFilter = userFilterSelect ? userFilterSelect.value : (graph.__ccUserFilter || 'all');
     const warning = graph.__ccHistoryWarning || historyStore.warning || '';
+    refreshStorageDisplay(); // NEW
     historyStatus.textContent = warning || graph.__ccHistoryRestoreStatus || (historyStore.ready ? 'History is recording stable revisions.' : 'History storage is starting.');
     historyRailWrap.innerHTML = '';
     const filter = graph.__ccHistoryFilter || 'all';
@@ -2180,6 +2205,8 @@ Draw.loadPlugin(function (ui) {
     historyPreview.appendChild(title);
     historyPreview.appendChild(meta);
     historyPreview.appendChild(counts);
+    const stored = makeEl('div', { color: '#555', fontSize: '11px', marginTop: '4px' }); stored.textContent = 'Stored size: ' + formatStorageBytes(rev.storedBytes) + ' · ' + (rev.storageKind === 'delta' ? 'Delta' : 'Full snapshot') + (rev.pending ? ' · Waiting for dependencies' : ''); historyPreview.appendChild(stored); // NEW
+    if (rev.pending) { compareBtn.disabled = true; restoreBtn.disabled = true; } // NEW
     const compareSummary = graph.__ccHistoryCompareSummary;
     if (compareSummary && compareSummary.revisionId === rev.id) {
       const diff = makeEl('div', { color: '#333', marginTop: '4px' });
@@ -2267,18 +2294,19 @@ Draw.loadPlugin(function (ui) {
     const rev = selectedHistoryRevision();
     if (!rev) return;
     clearHistoryCompareOverlays();
-    const snapshot = await historyStore.loadSnapshot(rev.snapshotId);
+    let snapshot; // CHANGE
+    try { snapshot = await historyStore.loadSnapshot(rev.snapshotId); } catch (error) { graph.__ccHistoryWarning = 'History snapshot is unreadable: ' + error.message; updateHistoryUI(); return false; } // NEW
     if (!snapshot) return;
     const historicalXml = decompressSnapshotXml(snapshot);
     if (!historicalXml) { graph.__ccHistoryWarning = 'History snapshot is unreadable.'; updateHistoryUI(); return; }
     const diff = diffSnapshotWithCurrent(historicalXml, serializeActivePageXml());
     graph.__ccHistoryCompareSummary = { revisionId: rev.id, added: diff.added.length, changed: diff.changed.length, deleted: diff.deleted.length };
     for (let i = 0; i < diff.added.length; i++) {
-      const cell = model.getCell && model.getCell(diff.added[i]);
+      const cell = activeCellForHistoryKey(diff.added[i]); // CHANGE
       if (cell) addCompareOverlay(cellBoundsForOverlay(cell), 'Added: ' + diff.added[i], '#188038', false);
     }
     for (let i = 0; i < diff.changed.length; i++) {
-      const cell = model.getCell && model.getCell(diff.changed[i]);
+      const cell = activeCellForHistoryKey(diff.changed[i]); // CHANGE
       if (cell) addCompareOverlay(cellBoundsForOverlay(cell), 'Changed: ' + diff.changed[i], '#1a73e8', false);
     }
     for (let i = 0; i < diff.deleted.length; i++) {
@@ -2307,38 +2335,48 @@ Draw.loadPlugin(function (ui) {
     return { added, changed, deleted };
   }
 
+  /** Compare persisted wrappers with page-qualified keys, independent of XML attribute order. */ // NEW
   function parseXmlCellMap(xml) {
     const out = new Map();
+    function signature(node) {
+      if (node.nodeType !== 1) return node.nodeValue;
+      return [node.nodeName, Array.from(node.attributes).map(item => [item.name, item.value]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0), Array.from(node.childNodes).filter(item => item.nodeType === 1 || item.nodeType === 3 && item.nodeValue.trim()).map(signature)];
+    }
     try {
-      const doc = mxUtils.parseXml(xml);
-      const cells = doc.getElementsByTagName('mxCell');
-      for (let i = 0; i < cells.length; i++) {
-        const cell = cells[i];
-        const id = cell.getAttribute('id');
-        if (!id) continue;
-        const geo = cell.getElementsByTagName('mxGeometry')[0];
-        const localBounds = geo ? normalizeBounds({ x: geo.getAttribute('x') || 0, y: geo.getAttribute('y') || 0, width: geo.getAttribute('width') || 40, height: geo.getAttribute('height') || 24 }) : null;
-        out.set(id, { id, parentId: cell.getAttribute('parent') || null, signature: cell.outerHTML || mxUtils.getXml(cell), localBounds, bounds: localBounds });
+      const doc = mxUtils.parseXml(xml), pages = doc.documentElement.nodeName === 'mxfile' ? Array.from(doc.getElementsByTagName('diagram')) : [doc.documentElement];
+      for (const page of pages) {
+        const pageId = page.nodeName === 'diagram' ? page.getAttribute('id') : null;
+        const key = id => pageId === null ? id : JSON.stringify([pageId, id]);
+        for (const cell of Array.from(page.getElementsByTagName('mxCell'))) {
+          const wrapper = cell.parentNode && cell.parentNode.nodeName !== 'root' ? cell.parentNode : cell;
+          const id = wrapper.getAttribute('id') || cell.getAttribute('id'); if (!id) continue;
+          const geo = cell.getElementsByTagName('mxGeometry')[0];
+          const localBounds = geo ? normalizeBounds({ x: geo.getAttribute('x') || 0, y: geo.getAttribute('y') || 0, width: geo.getAttribute('width') || 40, height: geo.getAttribute('height') || 24 }) : null;
+          out.set(key(id), { id: key(id), cellId: id, pageId, parentId: cell.getAttribute('parent') ? key(cell.getAttribute('parent')) : null, signature: JSON.stringify(signature(wrapper)), localBounds, bounds: localBounds });
+        }
       }
-      const offsets = new Map();
+      const offsets = new Map(), visiting = new Set();
       function offsetFor(id) {
-        if (!id || offsets.has(id)) return offsets.get(id) || { x: 0, y: 0 };
-        const entry = out.get(id);
-        if (!entry) return { x: 0, y: 0 };
-        const parentOffset = offsetFor(entry.parentId);
-        const local = normalizeBounds(entry.localBounds);
-        const offset = { x: parentOffset.x + (local ? local.x : 0), y: parentOffset.y + (local ? local.y : 0) };
-        offsets.set(id, offset);
-        return offset;
+        if (!id || offsets.has(id) || visiting.has(id)) return offsets.get(id) || { x: 0, y: 0 };
+        const entry = out.get(id); if (!entry) return { x: 0, y: 0 };
+        visiting.add(id); const parentOffset = offsetFor(entry.parentId), local = normalizeBounds(entry.localBounds); visiting.delete(id);
+        const offset = { x: parentOffset.x + (local ? local.x : 0), y: parentOffset.y + (local ? local.y : 0) }; offsets.set(id, offset); return offset;
       }
       out.forEach(function (entry) {
-        const local = normalizeBounds(entry.localBounds);
-        if (!local) { entry.bounds = null; return; }
-        const parentOffset = offsetFor(entry.parentId);
-        entry.bounds = normalizeBounds({ x: parentOffset.x + local.x, y: parentOffset.y + local.y, width: local.width, height: local.height });
+        const local = normalizeBounds(entry.localBounds); if (!local) { entry.bounds = null; return; }
+        const parentOffset = offsetFor(entry.parentId); entry.bounds = normalizeBounds({ x: parentOffset.x + local.x, y: parentOffset.y + local.y, width: local.width, height: local.height });
       });
-    } catch (e) { }
+    } catch (_) { /* Invalid historical XML is rejected by the storage reconstruction boundary. */ }
     return out;
+  }
+
+  function activeCellForHistoryKey(key) { // NEW
+    let id = key;
+    if (String(key).startsWith('[')) {
+      const pair = JSON.parse(key), currentId = ui.currentPage && (ui.currentPage.getId ? ui.currentPage.getId() : ui.currentPage.node.getAttribute('id'));
+      if (pair[0] !== currentId) return null; id = pair[1];
+    }
+    return model.getCell && model.getCell(id);
   }
 
   function confirmRestoreSelectedRevision() {
@@ -2350,13 +2388,18 @@ Draw.loadPlugin(function (ui) {
   }
 
   async function restoreSelectedRevision(rev) {
-    const snapshot = await historyStore.loadSnapshot(rev.snapshotId);
+    const documentId = getDiagramHistoryId(), originalFile = ui.getCurrentFile && ui.getCurrentFile(); // NEW
+    const sameDocument = () => getDiagramHistoryId() === documentId && (!ui.getCurrentFile || ui.getCurrentFile() === originalFile); // NEW
+    let snapshot, snapshotError = null; // CHANGE
+    try { snapshot = await historyStore.loadSnapshot(rev.snapshotId); } catch (error) { snapshotError = error; } // NEW
+    if (!sameDocument()) return false; // NEW
     clearHistoryCompareOverlays();
     graph.__ccHistoryWarning = '';
     graph.__ccHistoryRestoreStatus = '';
     const beforeXml = serializeActivePageXml();
     const audit = createRestoreAudit(rev, hashString(beforeXml));
     graph.__ccHistoryLastRestoreAudit = audit;
+    if (snapshotError) { addRestoreAuditWarning(audit, 'unreadableSnapshot', 'History snapshot is unreadable: ' + snapshotError.message); audit.completedAt = nowMs(); graph.__ccHistoryWarning = audit.warnings[0].message; updateHistoryUI(); return false; } // NEW
     if (!snapshot) {
       addRestoreAuditWarning(audit, 'missingSnapshot', 'History snapshot is missing.');
       audit.completedAt = nowMs();
@@ -2372,11 +2415,15 @@ Draw.loadPlugin(function (ui) {
       updateHistoryUI();
       return false;
     }
-    await historyRecorder.recordStableRevision(true);
+    const captured = await historyRecorder.captureBeforeRestore(); // CHANGE
+    if (!sameDocument()) return false; // NEW
+    if (!captured) { addRestoreAuditWarning(audit, 'preRestoreFailed', 'The current state could not be saved; restore was cancelled.'); audit.completedAt = nowMs(); graph.__ccHistoryWarning = audit.warnings[0].message; updateHistoryUI(); return false; } // NEW
     graph.__ccHistoryRestoring = true;
     fireHistoryLifecycleEvent(HISTORY_EVENT_BEFORE_RESTORE, { revision: rev, audit });
     try {
-      restoreActivePageXml(xml);
+      if (graph.__trellisSharing && graph.__trellisSharing.restoreHistory) await graph.__trellisSharing.restoreHistory(xml); // NEW: use authorized collaborative save.
+      else restoreActivePageXml(xml); // CHANGE
+      const currentFile = ui.getCurrentFile && ui.getCurrentFile(); if (currentFile && currentFile.setModified) currentFile.setModified(true); // NEW
       audit.loadedHash = hashString(serializeActivePageXml());
       audit.loadedAt = nowMs();
       const undoManager = ui && ui.editor && ui.editor.undoManager;
@@ -2561,13 +2608,12 @@ Draw.loadPlugin(function (ui) {
     window.Trellis.history.getDiagramId = getDiagramHistoryId; // NEW
     window.Trellis.history.flushForSharing = historyRecorder.flushForSharing; // CHANGE
     window.Trellis.history.applyRemoteBaseline = historyRecorder.applyRemoteBaseline; // NEW
-    window.Trellis.history.importShared = async function (entry) { // NEW: import through the existing local database.
-      const revision = entry && entry.revision;
-      const snapshot = entry && entry.snapshot;
-      if (!revision || revision.diagramHistoryId !== getDiagramHistoryId() || !snapshot || revision.snapshotId !== snapshot.snapshotId || snapshot.checksum !== hashString(snapshot.compressedXml) || ['plain', 'graph-compress'].indexOf(snapshot.compressedKind) < 0) throw new Error('Invalid shared ChangeMap revision.');
-      await historyStore.recordRevision(revision, snapshot, true); // CHANGE: imported immutable revisions are retained locally too.
-      await refreshHistoryRevisions();
+    window.Trellis.history.importShared = async function (entry) { // CHANGE
+      if (!entry || entry.version !== 2 || entry.revision.diagramHistoryId !== getDiagramHistoryId()) throw new Error('Invalid shared document history.'); // NEW
+      await refreshHistoryRevisions(); await historyStore.refreshStatistics(); // NEW: transport has verified and imported this record.
     };
+    window.Trellis.history.refreshStorage = historyStore.refreshStatistics; // NEW
+    window.Trellis.history.refresh = async function () { await refreshHistoryRevisions(); await historyStore.refreshStatistics(); }; // NEW
     window.Trellis.history.createCheckpoint = historyRecorder.createCheckpoint;
     window.Trellis.history.list = function () { return (graph.__ccHistoryRevisions || []).slice(); };
     window.Trellis.history.isRestoring = function () { return !!graph.__ccHistoryRestoring; };
@@ -2770,7 +2816,12 @@ Draw.loadPlugin(function (ui) {
     ui.__trellisChangeMapFileBoundaryResetInstalled = true;
     editor.addListener('fileLoaded', function () {
       turnOffChangeMapForFileBoundary();
+      if (graph.__ccHistoryRestoring) return; // NEW
+      historyRecorder.resetForDocument(); graph.__ccDiagramHistoryId = null; graph.__ccHistoryRevisions = []; // NEW
+      historyRecorder.initializeBaseline().catch(error => { graph.__ccHistoryWarning = error.message; updateHistoryUI(); }); // NEW
+      installStorageFileHooks(); // NEW
     });
+    ['pageRenamed', 'pageMoved', 'pagesPatched'].forEach(name => editor.addListener(name, () => { if (!graph.__ccHistoryRestoring && !graph.__trellisSharingApplying) historyRecorder.recordModelChange(null); })); // NEW
   }
 
 
@@ -2808,6 +2859,7 @@ Draw.loadPlugin(function (ui) {
   installHistoryPublicApi();
   installHistoryAction();
   installHistoryToolbarButton();
+  installStorageButton(); // NEW
   installDiagramBoundaryReset();
   historyRecorder.initializeBaseline();
 

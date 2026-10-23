@@ -30,6 +30,7 @@ const TASK_INCOMPLETE_DAY_ATTR = 'incomplete_day';
 const TASK_SCHEDULER_MISSING_ATTR = 'scheduler_missing';
 const TASK_SCHEDULER_DATES_LOCKED_ATTR = 'scheduler_dates_locked';
 const TASK_MANUAL_STAGED_ATTR = 'manual_staged';
+const TASK_BACKLOG_SOURCE_LANE_ATTR = 'task_backlog_source_lane'; // NEW: derived placement provenance, never user backlog membership.
 const TASK_SCHEDULE_START_MINUTE_ATTR = 'schedule_start_minute'; // NEW: derived from stacked day-lane order
 const TASK_SCHEDULE_DURATION_MINUTES_ATTR = 'schedule_duration_minutes'; // NEW: derived from card height
 const TASK_FULL_CARD_HEIGHT_ATTR = 'task_full_card_height'; // NEW: full-view visual card height, separate from week schedule duration
@@ -1580,6 +1581,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     const LANES = KANBAN_LANE_DEFS; // CHANGE: template and policy use the same canonical lane list
     const lanePagingStates = new Map(); // NEW: current plans drive DOM rendering without a public API
     const stagedSearchQueries = new Map(); // NEW: runtime-only week staged search state keyed by lane id
+    const selectedBacklogsByPage = new Map(); // NEW: document-session memory; each page, user, and board owns its own working set.
     let requestLanePagerOverlayRefresh = function () {}; // NEW: installed after the shared overlay host exists
     let requestStagedSearchOverlayRefresh = function () {}; // NEW: installed with retained staged search controls
     let taskPagingSelectionGuard = false; // NEW: prevents selection repair and reveal loops
@@ -2799,6 +2801,161 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     }
 
+    // Backlog membership is personal view state. Scheduling remains authored task state. // NEW
+    function selectedBacklogUserKey() { // NEW
+        const users = window.Trellis && window.Trellis.users; // NEW
+        if (!users || typeof users.isEnabled !== 'function' || !users.isEnabled()) return 'anonymous'; // NEW
+        const current = typeof users.getCurrentUser === 'function' ? users.getCurrentUser() : null; // NEW
+        return current && current.id ? 'user:' + current.id : null; // NEW
+    } // NEW
+
+    function selectedBacklogBoardStates(create) { // NEW
+        const userKey = selectedBacklogUserKey(); // NEW
+        if (!userKey) return null; // NEW
+        const page = ui.currentPage; // NEW
+        const pageKey = page && (typeof page.getId === 'function' ? page.getId() : page.id) || 'default-page'; // NEW
+        let users = selectedBacklogsByPage.get(pageKey); // NEW
+        if (!users && create) { users = new Map(); selectedBacklogsByPage.set(pageKey, users); } // NEW
+        let boards = users && users.get(userKey); // NEW
+        if (!boards && create) { boards = new Map(); users.set(userKey, boards); } // NEW
+        return boards || null; // NEW
+    } // NEW
+
+    function getSelectedBacklog(board, create) { // NEW
+        const boards = selectedBacklogBoardStates(create); // NEW
+        if (!boards || !board) return null; // NEW
+        const id = taskCellId(board); // NEW
+        let backlog = boards.get(id); // NEW
+        if (!backlog && create) { backlog = new Map(); boards.set(id, backlog); } // NEW
+        return backlog || null; // NEW: an empty Map intentionally keeps custom mode active.
+    } // NEW
+
+    // Compare scheduling fields rather than parent lanes, which change during view projection. // NEW
+    function backlogScheduleSignature(card) { // NEW
+        const state = getEffectiveWorkflowState(card.value, laneKeyOfCard(card)); // NEW
+        return JSON.stringify([state === 'STAGED' || state === 'DONE' ? state : 'OPEN', getAttr(card, TASK_ASSIGNED_DAY_ATTR) || '']); // NEW
+    } // NEW
+
+    function isPendingSelectedBacklogCard(card, board) { // NEW
+        const backlog = getSelectedBacklog(board); // NEW
+        const signature = backlog && backlog.get(taskCellId(card)); // NEW
+        if (signature == null || !isWorkflowActionCard(card) || findBoardAncestor(card) !== board) return false; // NEW
+        const state = getEffectiveWorkflowState(card.value, laneKeyOfCard(card)); // NEW
+        if (state === 'DONE') return false; // NEW
+        return signature === backlogScheduleSignature(card) || (state === 'STAGED' && !getAttr(card, TASK_ASSIGNED_DAY_ATTR)); // NEW
+    } // NEW
+
+    // Retain consumed signatures for ordinary scheduling undo/redo; explicit removal deletes them. // NEW
+    function reconcileSelectedBacklog(board) { // NEW
+        const backlog = getSelectedBacklog(board); // NEW
+        if (!backlog) return; // NEW
+        backlog.forEach((_signature, id) => { // NEW
+            const card = model.getCell(id); // NEW
+            if (!card || !isWorkflowActionCard(card) || findBoardAncestor(card) !== board) backlog.delete(id); // NEW
+        }); // NEW
+    } // NEW
+
+    function isSelectedBacklogLane(board, laneKey) { // NEW
+        return !!(board && laneKey === 'TODO_STAGED' && getBoardViewMode(board) === 'WEEK' && getSelectedBacklog(board)); // NEW
+    } // NEW
+
+    function selectedBacklogCards(board) { // NEW
+        const backlog = getSelectedBacklog(board); // NEW
+        if (!backlog) return []; // NEW
+        const weekStart = getSelectedWeekStart(board); // NEW
+        return Array.from(backlog.keys()).map(id => model.getCell(id)).filter(card => card && // NEW
+            !isYearHiddenCard(card) && isPendingSelectedBacklogCard(card, board) && // NEW
+            !isTaskDateInWeek(getAttr(card, TASK_ASSIGNED_DAY_ATTR), weekStart)); // NEW
+    } // NEW
+
+    function selectedBacklogLabel(board) { // NEW
+        return 'Selected backlog (' + selectedBacklogCards(board).length + ')'; // NEW
+    } // NEW
+
+    function canManageSelectedBacklog(board, cards) { // NEW
+        if (!board || !selectedBacklogUserKey() || isTeamPermissionModeActiveForTaskOverlay()) return false; // NEW
+        if (graph.isEnabled && !graph.isEnabled()) return false; // NEW
+        const users = window.Trellis && window.Trellis.users; // NEW
+        return [board].concat(cards || []).every(cell => // NEW
+            (!graph.isCellLocked || !graph.isCellLocked(cell)) && // NEW
+            (!users || typeof users.canEditCell !== 'function' || users.canEditCell(cell))); // NEW
+    } // NEW
+
+    function getBacklogSelectionContext(cells) { // NEW
+        const cards = Array.from(new Set(cells || [])); // NEW
+        if (!cards.length || cards.some(card => !card || !model.isVertex(card) || !isWorkflowActionCard(card) || // NEW
+            getEffectiveWorkflowState(card.value, laneKeyOfCard(card)) === 'DONE')) return null; // NEW
+        const board = findBoardAncestor(cards[0]); // NEW
+        if (!board || cards.some(card => findBoardAncestor(card) !== board) || !canManageSelectedBacklog(board, cards)) return null; // NEW
+        return { board, cards }; // NEW
+    } // NEW
+
+    // Include ancestor visibility: off-week task lanes retain cached visible child cells. // NEW
+    function selectionCellStillVisibleInBoard(board, cell) { // NEW
+        if (!board || !cell) return false; // NEW
+        let current = cell; // NEW
+        while (current && current !== board) { // NEW
+            if (model.isVisible && model.isVisible(current) === false) return false; // NEW
+            current = model.getParent(current); // NEW
+        } // NEW
+        return current === board; // NEW
+    } // NEW
+
+    function refreshSelectedBacklogBoard(board, resetSearch) { // NEW
+        const lane = boardLanes(board).TODO_STAGED; // NEW
+        if (lane && resetSearch) setStagedSearchQuery(lane, ''); // NEW
+        runKanbanViewNoUndo(function () { // NEW
+            scanAndReflowBoard(board, { scope: getBoardViewMode(board) === 'WEEK' ? 'classification' : 'badges', resetSelectedPeriodStagedPage: true }); // NEW
+            const selected = getSelectionCellsList(); // NEW
+            if (selected.length && selected.every(cell => cell === board || findBoardAncestor(cell) === board) && // NEW
+                !selected.some(cell => selectionCellStillVisibleInBoard(board, cell))) setPagingSelectionCell(board); // NEW
+        }); // NEW
+        requestLanePagerOverlayRefresh(); // NEW
+        requestStagedSearchOverlayRefresh(); // NEW
+        scheduleTaskOverlayGestureRefresh(); // NEW
+    } // NEW
+
+    function addSelectedBacklogCards(cells) { // NEW
+        const context = getBacklogSelectionContext(cells); // NEW
+        if (!context) return 0; // NEW
+        const wasCustom = !!getSelectedBacklog(context.board); // NEW
+        const backlog = getSelectedBacklog(context.board, true); // NEW
+        let added = 0; // NEW
+        context.cards.forEach(card => { // NEW
+            if (!isPendingSelectedBacklogCard(card, context.board)) { // NEW
+                backlog.set(taskCellId(card), backlogScheduleSignature(card)); // NEW
+                added += 1; // NEW
+            } // NEW
+        }); // NEW
+        refreshSelectedBacklogBoard(context.board, !wasCustom); // NEW
+        return added; // NEW
+    } // NEW
+
+    function removeSelectedBacklogCards(cells) { // NEW
+        const context = getBacklogSelectionContext(cells); // NEW
+        const backlog = context && getSelectedBacklog(context.board); // NEW
+        if (!backlog || !isSelectedBacklogLane(context.board, 'TODO_STAGED') || // NEW
+            context.cards.some(card => laneKeyOfCard(card) !== 'TODO_STAGED' || !isPendingSelectedBacklogCard(card, context.board))) return 0; // NEW
+        context.cards.forEach(card => backlog.delete(taskCellId(card))); // NEW
+        refreshSelectedBacklogBoard(context.board, false); // NEW
+        return context.cards.length; // NEW
+    } // NEW
+
+    function clearSelectedBacklog(board) { // NEW
+        const backlog = getSelectedBacklog(board); // NEW
+        if (!backlog || !canManageSelectedBacklog(board)) return false; // NEW
+        backlog.clear(); // NEW
+        refreshSelectedBacklogBoard(board, true); // NEW
+        return true; // NEW
+    } // NEW
+
+    function useStagedBacklog(board) { // NEW
+        if (!getSelectedBacklog(board) || !canManageSelectedBacklog(board)) return false; // NEW
+        selectedBacklogBoardStates(false).delete(taskCellId(board)); // NEW
+        refreshSelectedBacklogBoard(board, true); // NEW
+        return true; // NEW
+    } // NEW
+
     function getStagedSearchQuery(lane) {
         return normalizeStagedSearchQuery(stagedSearchQueries.get(taskCellId(lane)) || '');
     }
@@ -2869,7 +3026,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     function setLanePageLabelNoUndo(lane, pageIndex, pageCount) {
         const value = ensureXmlValue(lane);
-        const baseLabel = String(getAttr(lane, 'status') || '');
+        const board = findBoardAncestor(lane); // NEW
+        const baseLabel = isSelectedBacklogLane(board, getAttr(lane, 'lane_key')) ? selectedBacklogLabel(board) : String(getAttr(lane, 'status') || ''); // CHANGE
         const nextLabel = pageCount > 1 ? `${baseLabel}\nPage ${pageIndex + 1} of ${pageCount}` : baseLabel;
         if ((value.getAttribute('label') || '') === nextLabel) return false;
         value.setAttribute('label', nextLabel);
@@ -2926,7 +3084,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     function applyLanePaging(lane, laneKey, sortedCards, opts) { // CHANGE: task manager owns height planning, visibility, anchor, and selection repair
         if (!lane) return null;
         const options = opts || {};
-        const renderableCards = applyStagedSearchFilter(lane, laneKey, (sortedCards || []).filter(isRenderableKanbanCard), options);
+        const board = options.board || findBoardAncestor(lane); // NEW
+        const candidates = isSelectedBacklogLane(board, laneKey) ? (sortedCards || []).filter(card => isPendingSelectedBacklogCard(card, board)) : sortedCards || []; // NEW
+        const renderableCards = applyStagedSearchFilter(lane, laneKey, candidates.filter(isRenderableKanbanCard), options); // CHANGE
         const allLaneCards = []; // NEW: rebuild the complete persisted visibility cache, including excluded occurrences
         for (let childIndex = 0; childIndex < model.getChildCount(lane); childIndex++) {
             const child = model.getChildAt(lane, childIndex);
@@ -3768,6 +3928,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         if (!lane) return false;
         const sourceParent = model.getParent(card);
         const sourceLaneKey = sourceParent ? getAttr(sourceParent, 'lane_key') : null;
+        const board = findBoardAncestor(lane); // NEW
+        if (isSelectedBacklogLane(board, laneKey) && isUpcomingLane(sourceLaneKey)) { // NEW
+            setDerivedCardAttribute(card, TASK_BACKLOG_SOURCE_LANE_ATTR, sourceLaneKey); // NEW: restore Full placement even after saving/reloading a projected board.
+        } // NEW
         if (sourceParent === lane) {
             const heightChanged = applyCardHeightForLaneTransition(card, sourceLaneKey, laneKey);
             const styleChanged = applyStagedCardVisualStyle(card, laneKey);
@@ -3842,6 +4006,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             }
             return classifyDoneLane(daysSince(comp));
         }
+        const sourceLane = getAttr(card, TASK_BACKLOG_SOURCE_LANE_ATTR); // NEW
+        if (sourceLane) { // NEW
+            setDerivedCardAttribute(card, TASK_BACKLOG_SOURCE_LANE_ATTR, null); // NEW
+            if (isUpcomingLane(sourceLane) && !isManualStagedSource(card.value)) return decideUpcomingLaneKey(getAttr(card, 'start')); // NEW
+        } // NEW
         if (isPhysicallyOrManuallyStaged(card.value, laneKey)) return 'TODO_STAGED';
         return decideUpcomingLaneKey(getAttr(card, 'start'));
     }
@@ -3862,6 +4031,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const mode = getBoardViewMode(board);
         if (state !== 'DONE') clearCompletedForOpenState(card, state);
         if (mode === 'FULL') return classifyFullViewLane(card, state, laneKey);
+        if (state !== 'DONE' && isPendingSelectedBacklogCard(card, board) && // NEW
+            !isTaskDateInWeek(getAttr(card, TASK_ASSIGNED_DAY_ATTR), getSelectedWeekStart(board))) return 'TODO_STAGED'; // NEW
         return classifyPlanningViewLane(card, state, mode, getSelectedDay(board), getSelectedWeekStart(board), laneKey);
     }
 
@@ -3976,6 +4147,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         if (!board) return;
 
         ensureBoardPlanningDefaults(board);
+        reconcileSelectedBacklog(board); // NEW: removed and transferred cells never become accidental new members.
         const lanes = boardLanes(board);
         const sortContext = getBoardSortContext(board);
         const insideUpdate = opts && opts.insideUpdate;
@@ -4037,6 +4209,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (!cell) return;
             if (isBoardCell(cell)) {
                 const lanes = boardLanes(cell);
+                if (Object.values(lanes).some(lane => /^Selected backlog \(/.test(getAttr(lane, 'label') || '') || // NEW
+                    snapshotLaneCards(lane).some(card => getAttr(card, TASK_BACKLOG_SOURCE_LANE_ATTR)))) { // NEW
+                    runKanbanViewNoUndo(function () { scanAndReflowBoard(cell, { scope: 'classification' }); }); // NEW: serialized layout caches never restore a previous session's backlog.
+                    return; // NEW
+                } // NEW
                 Object.keys(lanes).forEach(laneKey => applyLanePaging(lanes[laneKey], laneKey, getLaneCardsInOrder(lanes[laneKey]), { skipSelectionRepair: true }));
                 return;
             }
@@ -4122,7 +4299,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     }
 
     function isRenderableKanbanCard(card) {
-        return isKanbanCard(card) && isCardVisibilityEligible(card.value);
+        if (!isKanbanCard(card) || isYearHiddenCard(card)) return false; // CHANGE
+        if (isCardVisibilityEligible(card.value)) return true; // NEW
+        const board = findBoardAncestor(card); // NEW
+        return isSelectedBacklogLane(board, laneKeyOfCard(card)) && isPendingSelectedBacklogCard(card, board); // NEW: exact chosen repeat occurrences bypass only the view's repeat folding.
     }
 
     function getKanbanChildSiblings(parent) { // NEW: duplicate lane checks need the target board's current children
@@ -4158,6 +4338,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     function applyCardPatchInsideUpdate(card, attributes) {
         if (!card || !attributes) return false;
+        if (attributes[TASK_WORKFLOW_STATE_ATTR] && getAttr(card, TASK_BACKLOG_SOURCE_LANE_ATTR)) { // NEW
+            attributes = Object.assign({}, attributes, { [TASK_BACKLOG_SOURCE_LANE_ATTR]: null }); // NEW: a real workflow edit supersedes temporary placement provenance within the existing undo transaction.
+        } // NEW
         model.setValue(card, cloneCardValueWithAttributes(card, attributes));
         refreshCardLabel(card, true);
         return true;
@@ -4359,6 +4542,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                     movedCards.forEach((card, index) => {
                         const patch = buildLaneDropWorkflowPatch(card, targetBoard, targetLaneKey);
                         if (patch && patch.attributes) applyCardPatchInsideUpdate(card, patch.attributes);
+                        const backlog = targetLaneKey === 'TODO_STAGED' && getSelectedBacklog(targetBoard); // NEW
+                        if (backlog && canManageSelectedBacklog(targetBoard, [card]) && // NEW
+                            getEffectiveWorkflowState(card.value, targetLaneKey) === 'STAGED' && !backlog.has(taskCellId(card))) { // NEW
+                            backlog.set(taskCellId(card), backlogScheduleSignature(card)); // NEW: dropping back uses normal unscheduling and enrolls the returned card.
+                        } // NEW
                         applyCardHeightForLaneTransition(card, sourceLaneKeys.get(moveCardKey(card, index)), targetLaneKey);
                     });
                 }
@@ -5949,6 +6137,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             applyCardWorkflowAction,
             applyCardWorkflowActions,
             applyStagedStartDateAllocation,
+            addSelectedBacklogCards, // NEW
+            removeSelectedBacklogCards, // NEW
+            clearSelectedBacklog, // NEW
+            useStagedBacklog, // NEW
             applyBulkCardEdit,
             scanAndReflowBoard,
             scanAllBoards,
@@ -5970,6 +6162,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST__) {
         globalThis.__TRELLIS_TASK_MANAGER_RUNTIME_TEST_HOOKS__ = Object.freeze({
+            addSelectedBacklogCards: taskCommands.addSelectedBacklogCards, // NEW
+            removeSelectedBacklogCards: taskCommands.removeSelectedBacklogCards, // NEW
+            clearSelectedBacklog: taskCommands.clearSelectedBacklog, // NEW
+            useStagedBacklog: taskCommands.useStagedBacklog, // NEW
             createTasks: taskCommands.createTasks,
             replaceTasks: taskCommands.replaceTasks,
             applyDifferentialTaskSync: taskCommands.applyDifferentialTaskSync,
@@ -6638,6 +6834,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const laneId = taskCellId(lane);
             let node = nodes.get(laneId);
             if (!node) { node = createStagedSearchNode(host, lane); nodes.set(laneId, node); }
+            const searchLabel = getSelectedBacklog(board) ? 'Search selected backlog' : 'Search staged tasks'; // NEW
+            node.input.placeholder = searchLabel; // NEW
+            node.input.setAttribute('aria-label', searchLabel); // NEW
             if (document.activeElement !== node.input) node.input.value = getStagedSearchQuery(lane);
             node.element.style.display = positionStagedSearch(node, lane, host) ? 'block' : 'none';
         }
@@ -6949,17 +7148,6 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             return null;
         }
 
-        function selectionCellStillVisibleInBoard(board, cell) {
-            if (!board || !cell) return false;
-            if (cell === board) return true;
-            let cur = cell;
-            while (cur && cur !== board) {
-                if (model.isVisible && model.isVisible(cur) === false) return false;
-                cur = model.getParent(cur);
-            }
-            return cur === board;
-        }
-
         function restoreBoardSelectionIfNeeded(board) {
             if (!board || !graph.setSelectionCell) return;
             const stillVisible = getSelectionCellsList().some(cell => selectionCellStillVisibleInBoard(board, cell));
@@ -7010,6 +7198,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         const modeToggle = button('Switch to Week view', toggleBoardPlanningView);
         const columnsToggle = button('Hide/Show columns', () => { columnsExpanded = !columnsExpanded; });
+        const clearBacklogBtn = button('Clear all', () => { const b = selectedBoard(); if (b) taskCommands.clearSelectedBacklog(b); }, 'danger'); // NEW
+        clearBacklogBtn.title = 'Remove all cards from your selected backlog without changing any tasks.'; // NEW
+        const stagedBacklogBtn = button('Use staged backlog', () => { const b = selectedBoard(); if (b) taskCommands.useStagedBacklog(b); }); // NEW
+        stagedBacklogBtn.title = 'Return to the default staged task backlog.'; // NEW
         const prev = button('<', () => { const b = selectedBoard(); if (!b) return; const mode = getBoardViewMode(b); if (mode === 'WEEK') taskCommands.setBoardPlanningView(b, null, { [TASK_SELECTED_WEEK_START_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), -7), [TASK_SELECTED_DAY_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), -7) }); });
         prev.title = 'Show the previous week on this task board.'; // CHANGE: explicit action tooltip.
         prev.setAttribute('aria-label', 'Previous week'); // CHANGE: explicit action tooltip.
@@ -7061,7 +7253,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             }
             bar.style.display = 'flex';
             dateInput.value = mode === 'FULL' ? '' : getSelectedDay(board);
+            const hasSelectedBacklog = !!getSelectedBacklog(board); // NEW
             modeLabel.textContent = mode === 'WEEK' ? 'Mode: Week' : 'Mode: Full';
+            if (hasSelectedBacklog) modeLabel.textContent += ' | ' + selectedBacklogLabel(board); // NEW
+            const showBacklogControls = hasSelectedBacklog && canManageSelectedBacklog(board); // NEW
+            clearBacklogBtn.style.display = showBacklogControls ? '' : 'none'; // NEW
+            stagedBacklogBtn.style.display = showBacklogControls ? '' : 'none'; // NEW
             modeToggle.textContent = mode === 'WEEK' ? 'Switch to Full view' : 'Switch to Week view';
             modeToggle.title = mode === 'WEEK' ? 'Show the full task board.' : 'Show the weekly task schedule.'; // CHANGE
             modeToggle.setAttribute('aria-pressed', mode === 'WEEK' ? 'true' : 'false');
@@ -7901,6 +8098,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         doneBtn.title = "Mark the selected task cards as DONE."; // CHANGE: explicit action tooltip.
         const allocateBtn = add('Allocate to Start Dates', cards => taskCommands.applyStagedStartDateAllocation(cards), 'add');
         allocateBtn.title = "Schedule the selected staged tasks on their start dates."; // CHANGE: explicit action tooltip.
+        const addBacklogBtn = add('Add to backlog', () => taskCommands.addSelectedBacklogCards(getSelectionCellsList()), 'add'); // NEW
+        addBacklogBtn.title = 'Add the selected unfinished tasks to your planning backlog without changing their dates.'; // NEW
+        const removeBacklogBtn = add('Remove from backlog', () => taskCommands.removeSelectedBacklogCards(getSelectionCellsList()), 'danger'); // NEW
+        removeBacklogBtn.title = 'Remove the selected backlog cards from your working set without changing the tasks.'; // NEW
         const resetBtn = add('Reset Dates', cards => cards.length === 1 ? taskCommands.resetCardDates(cards[0]) : taskCommands.resetCardDatesForCards(cards), 'danger');
         resetBtn.title = "Remove date overrides from the selected task cards."; // CHANGE: explicit action tooltip.
         const clearBtn = add('Clear Note', cards => cards.length === 1 ? taskCommands.clearCardNote(cards[0]) : taskCommands.applyBulkCardEdit(cards, { replaceNote: true, note: '' }), 'danger');
@@ -7923,6 +8124,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const card = cards[0];
             const state = single ? getEffectiveWorkflowState(card.value, laneKeyOfCard(card)) : null;
             const showWorkflowButtons = selectionIsOnlyWeekDayLaneCards(cards);
+            const backlogContext = getBacklogSelectionContext(getSelectionCellsList()); // NEW
+            const showRemoveBacklog = backlogContext && isSelectedBacklogLane(backlogContext.board, 'TODO_STAGED') && // NEW
+                backlogContext.cards.every(cell => laneKeyOfCard(cell) === 'TODO_STAGED' && isPendingSelectedBacklogCard(cell, backlogContext.board)); // NEW
+            addBacklogBtn.style.display = backlogContext ? '' : 'none'; // NEW
+            addBacklogBtn.disabled = !!(backlogContext && backlogContext.cards.every(cell => isPendingSelectedBacklogCard(cell, backlogContext.board))); // NEW
+            removeBacklogBtn.style.display = showRemoveBacklog ? '' : 'none'; // NEW
             overlay.style.display = 'flex';
             editBtn.style.display = '';
             guideBtn.style.display = single ? '' : 'none'; // CHANGE: guidance always targets exactly one task.
@@ -8046,6 +8253,25 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     }
 
     window.addEventListener('tasksCreated', handleTasksCreatedEvent);
+
+    // Rebuild projection from the current user's session set; ordinary scheduling owns history. // NEW
+    function refreshSelectedBacklogSession() { // NEW
+        stagedSearchQueries.clear(); // NEW
+        runKanbanViewNoUndo(function () { taskCommands.scanAllBoards({ insideUpdate: false }); }); // NEW
+        requestLanePagerOverlayRefresh(); // NEW
+        requestStagedSearchOverlayRefresh(); // NEW
+        scheduleTaskOverlayGestureRefresh(); // NEW
+    } // NEW
+
+    window.addEventListener('trellisUsersSessionChanged', refreshSelectedBacklogSession); // NEW
+    window.addEventListener('trellisUsersStoreChanged', refreshSelectedBacklogSession); // NEW
+    if (ui.editor && typeof ui.editor.addListener === 'function') { // NEW
+        ui.editor.addListener('fileLoaded', function () { // NEW
+            selectedBacklogsByPage.clear(); // NEW: opening or reloading a document discards every user's working set.
+            refreshSelectedBacklogSession(); // NEW
+        }); // NEW
+        ui.editor.addListener('pageSelected', refreshSelectedBacklogSession); // NEW
+    } // NEW
 
     window.addEventListener('trellisHistoryBeforeRestore', function () {
         cancelPendingKanbanRepairs();

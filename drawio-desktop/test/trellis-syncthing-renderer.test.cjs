@@ -28,18 +28,17 @@ function harness(t, options = {}) {
         fileSaved(saved, descriptor, success) { success(); },
         save(revision, success, error) { originalSaves++; this.data = xml; this.modified = false; this.fileSaved(xml, null, success, error); }
     };
-    const info = { protocolVersion: options.collaboration ? 2 : 1, ok: true, managed: true, shareId: 'share', diagramId: 'diagram', diagramPath: 'C:/shared/Canvas.drawio', filename: 'Canvas.drawio', folderPath: 'C:/shared', assetBaseUrl: 'file:///C:/shared/' };
-    const state = { ...info, state: 'upToDate', connectedCollaborators: 2, conflicts: [] };
+    const info = { protocolVersion: options.localOnly ? 1 : 2, ok: true, managed: !options.localOnly, localOnly: !!options.localOnly, reason: options.localOnly ? 'Sharing is disabled for this old project.' : '', shareId: 'share', diagramId: 'diagram', diagramPath: 'C:/shared/Canvas.drawio', filename: 'Canvas.drawio', folderPath: 'C:/shared', assetBaseUrl: 'file:///C:/shared/' }; // CHANGE
+    const state = { ...info, state: options.localOnly ? 'localOnly' : 'upToDate', connectedCollaborators: options.localOnly ? 0 : 2 }; // CHANGE
     const users = { getCurrentUser: () => ({ id: 'alice' }), isAdmin: () => false, revalidateCurrentSession: () => calls.push({ revalidate: true }), listUsers: () => [] };
     const history = { getDiagramId: () => 'diagram', applyRemoteBaseline: () => calls.push({ baseline: true }), flushForSharing: async () => ({ revision: { id: 'saved-head', diagramHistoryId: 'diagram', actorUserId: 'alice' }, snapshot: { snapshotId: 'saved-snapshot' } }), importShared: async entry => calls.push({ imported: entry }) };
     const bridge = {
         async setContext(context) { calls.push({ context }); },
-        async getStatus() { return { canvases: options.unsaved ? [] : [state] }; },
+        async getStatus() { return { canvases: options.unsaved || options.unmanaged ? [] : [state] }; }, // CHANGE
         async getSyncthingShareInfo() { return options.unsaved ? { ok: true, managed: false } : info; },
         async setupCanvas(input) { calls.push({ setup: input }); return { ...info, xml: input.xml }; },
         async importHistory() { return { entries: [], errors: [] }; },
         async exportHistory(input) { calls.push({ export: input }); },
-        async setConflictState(input) { calls.push({ conflict: input }); },
         async saveRecoveryCopy(input) { calls.push({ recovery: input }); return { filename: 'local-123.drawio', recoveryPath: 'C:/local/recovery.drawio' }; },
         async collaborationAction(input) { calls.push({ collaboration: input }); return { ok: true, xml: input.xml || xml, collaboration: { sessionId: 'local', holds: [], presence: [], reservations: [], recoveries: [], errors: [] } }; }, // NEW
         async listRequests() { return { members: [], requests: [] }; }, // NEW
@@ -47,6 +46,7 @@ function harness(t, options = {}) {
         async joinCanvas() { return { reply: 'approval reply', diagramPath: 'C:/shared/Pending.drawio', startup: { ok: true } }; }
     };
     const graph = { container: window.document.getElementById('graph'), getDefaultParent: () => ({ getAttribute: () => 'diagram' }), getImage: state => state.image, getLabel: cell => cell.label, refresh() {} };
+    if (options.model) graph.getModel = () => options.model; // NEW: exercise the production change listener when testing snapshot capture timing.
     const ui = {
         editor: { graph, setStatus(message) { calls.push({ status: message }); }, addListener(name, callback) { editorListeners.set(name, callback); } },
         getCurrentFile: () => current, getFileData: () => xml, watchFile: async () => {}, handleFileChange() { calls.push({ nativeReload: true }); },
@@ -60,9 +60,36 @@ function harness(t, options = {}) {
     window.confirm = () => true;
     window.electron = { request(args, resolve) { resolve({ mtimeMs: 2 }); } };
     window.fsBridge = { readText: filename => read(filename) };
+    if (options.timers) window.setInterval = (callback, interval) => { options.timers.push({ callback, interval }); return options.timers.length; }; // CHANGE: exercise real timer callbacks with controlled ticks.
     vm.runInNewContext(fs.readFileSync(plugin, 'utf8'), { window, document: window.document, Draw: { loadPlugin: callback => callback(ui) }, URL, TextEncoder, setTimeout, clearTimeout, console, Promise, Set, Map }, { filename: plugin });
     return { window, calls, current, graph, ui, bridge, history, actions, state, editorListeners, sharing: window.Trellis.sharing, setXml(value) { xml = value; }, setRead(callback) { read = callback; }, originalSaves: () => originalSaves, fireStatus: () => statusListener([state]) }; // CHANGE: expose injected history for asynchronous arrival tests.
 }
+
+test('old diagrams retain native local editing, watching and assets while sharing commands stay disabled', async t => { // CHANGE
+    const timers = [], h = harness(t, { localOnly: true, timers }); await settle(); // CHANGE
+    assert.equal(h.sharing.getInfo().managed, false); assert.equal(h.sharing.describeStatus(), 'Local only · Sharing off'); // CHANGE
+    h.setXml('edited local diagram'); h.current.modified = true; await new Promise((resolve, reject) => h.current.save(false, resolve, reject)); // CHANGE
+    assert.equal(h.originalSaves(), 1); assert.equal(h.current.data, 'edited local diagram'); // CHANGE
+    h.ui.handleFileChange({ mtimeMs: 2 }, { mtimeMs: 1 }, h.current); await timers[0].callback(); await settle(); // CHANGE
+    assert.ok(h.calls.some(call => call.nativeReload)); assert.equal(h.calls.some(call => call.collaboration || call.export || call.imported || call.setup), false); // CHANGE
+    assert.equal(h.graph.getImage({ image: 'assets/0123456789abcdef.png' }), 'file:///C:/shared/assets/0123456789abcdef.png'); // CHANGE
+    await assert.rejects(h.sharing.ensureManaged(), /Sharing is disabled/); await assert.rejects(h.sharing.prepareInvite({}), /Sharing is disabled/); // CHANGE
+    await h.sharing.showSharingDialog(); assert.match(h.window.document.body.textContent, /Sharing is disabled/); // CHANGE
+    assert.equal([...h.window.document.querySelectorAll('button')].some(button => /Pause syncing|Resume syncing|Add another computer|Approve a computer/.test(button.textContent)), false); // CHANGE
+}); // CHANGE
+
+test('an initial collaboration claim defers its XML snapshot until the queued capture', async t => { // NEW
+    const listeners = new Map(), model = { addListener: (name, callback) => listeners.set(name, callback), getParent: () => null }; // NEW
+    const h = harness(t, { collaboration: true, model }); await settle(); // NEW
+    const original = h.ui.getFileData; let snapshots = 0; // NEW
+    h.ui.getFileData = () => { snapshots++; return original(); }; // NEW
+    h.setXml('changed object'); // NEW
+    listeners.get('change')(model, { getProperty: () => ({ changes: [{ cell: { id: 'bed', style: '' } }] }) }); // NEW
+    assert.equal(snapshots, 0, 'routine model notification must not encode the document synchronously'); // NEW
+    await settle(); // NEW
+    const claim = h.calls.find(call => call.collaboration?.kind === 'claim').collaboration; // NEW
+    assert.equal(claim.xml, 'changed object'); assert.ok(snapshots > 0); // NEW
+}); // NEW
 
 test('v2 first save uses the signed snapshot rather than an editor-normalized initial document', async t => { // NEW
     const h = harness(t, { collaboration: true }); // NEW
@@ -91,6 +118,7 @@ test('a delayed previous-project refresh cannot initialize the newly opened proj
 test('clean remote replacement is trusted synchronization and revalidates the current session', async t => {
     const h = harness(t);
     await settle();
+    h.bridge.collaborationAction = async input => ({ ok: true, xml: 'remote XML', collaboration: { sessionId: 'local', holds: [], presence: [], reservations: [] } }); // CHANGE
     h.ui.handleFileChange({ mtimeMs: 2 }, { mtimeMs: 1 }, h.current);
     await settle();
     const applied = h.calls.find(call => call.apply);
@@ -101,25 +129,6 @@ test('clean remote replacement is trusted synchronization and revalidates the cu
     assert.ok(h.calls.some(call => call.baseline));
     assert.equal(h.current.isModified(), false);
     assert.equal(h.calls.some(call => call.export), false);
-});
-
-test('remote reads block overlapping saves, and edits during a read retain recovery XML', async t => {
-    const h = harness(t);
-    await settle();
-    let finish;
-    h.setRead(() => new Promise(resolve => { finish = resolve; }));
-    h.ui.handleFileChange({ mtimeMs: 2 }, { mtimeMs: 1 }, h.current);
-    let rejected;
-    h.current.save(false, () => assert.fail('Save should be blocked'), error => { rejected = error; });
-    assert.match(rejected.message, /conflict/);
-    assert.equal(h.originalSaves(), 0);
-    h.current.modified = true;
-    h.setXml('my unsaved XML');
-    finish({ data: 'incoming XML' });
-    await settle();
-    assert.equal(h.calls.some(call => call.apply), false);
-    assert.equal(h.calls.find(call => call.recovery).recovery.xml, 'my unsaved XML');
-    assert.equal(h.calls.find(call => call.conflict).conflict.conflicted, true);
 });
 
 test('history remains local until save and exports only the saved checkpoint', async t => {
@@ -224,9 +233,10 @@ test('moving an existing canvas updates recent files without removing other prov
     assert.equal(h.calls.find(call => call.recentAdded).recentAdded, 'C:/new/Canvas.drawio');
 });
 
-test('history arriving after remote XML refreshes the clean baseline but not newer local work', async t => { // NEW
+test('history arriving after remote XML refreshes the clean baseline but not newer local work', async t => { // CHANGE
     const h = harness(t);
     await settle();
+    h.bridge.collaborationAction = async input => ({ ok: true, xml: 'remote XML', collaboration: { sessionId: 'local', holds: [], presence: [], reservations: [] } }); // CHANGE
     h.ui.handleFileChange({ mtimeMs: 2 }, { mtimeMs: 1 }, h.current);
     await settle();
     const baselines = () => h.calls.filter(call => call.baseline).length;
@@ -330,3 +340,73 @@ test('zero peers cannot conceal pause or revocation, and unsaved drafts are not 
     h.state.pending = false; h.state.state = 'upToDate'; h.current.modified = true; await h.sharing.showSharingDialog(); // NEW
     const text = h.window.document.body.textContent; assert.match(text, /waiting to be saved locally/); assert.doesNotMatch(text, /Local changes are saved/); // NEW
 }); // NEW
+
+test('plain local saves retain native saving without sharing checkpoints, exports, or collaboration ticks', async t => { // CHANGE
+    const timers = [], h = harness(t, { unmanaged: true, timers }); await settle(); // CHANGE
+    h.history.flushForSharing = () => assert.fail('Local history must not be flushed for sharing'); // CHANGE
+    await new Promise((resolve, reject) => h.current.save(false, resolve, reject)); await settle(); // CHANGE
+    assert.equal(h.originalSaves(), 1); assert.equal(timers[0].interval, 5000); // CHANGE
+    await timers[0].callback(); await timers[0].callback(); // CHANGE
+    assert.equal(h.calls.some(call => call.export || call.collaboration), false); // CHANGE
+}); // CHANGE
+
+test('unchanged managed context and presence ticks never refresh or patch the graph', async t => { // CHANGE
+    const timers = [], h = harness(t, { collaboration: true, timers }); await settle(); let refreshes = 0; // CHANGE
+    h.graph.refresh = () => refreshes++; h.current.patch = () => assert.fail('Unchanged content must not patch'); // CHANGE
+    await h.sharing.refresh(); h.fireStatus(); await timers[0].callback(); // CHANGE
+    assert.equal(refreshes, 0); assert.equal(timers[0].interval, 5000); // CHANGE
+    assert.ok(h.calls.some(call => call.collaboration?.kind === 'view')); // CHANGE
+}); // CHANGE
+
+test('clean incoming content decodes once, diffs native pages, and keeps shadow pages independent', async t => { // CHANGE
+    const timers = [], h = harness(t, { collaboration: true, timers }); await settle(); const decoded = []; let patches = 0; // CHANGE
+    h.ui.pages = [{ content: 'live' }]; // CHANGE
+    h.ui.getPagesForXml = xml => { const pages = [{ content: xml }]; decoded.push(pages); return pages; }; // CHANGE
+    h.ui.diffPages = (before, after) => { assert.equal(before, h.ui.pages); return { u: { content: after[0].content } }; }; // CHANGE
+    h.current.patch = () => { patches++; h.ui.pages[0].content = 'incoming'; }; // CHANGE
+    h.current.setShadowPages = pages => { assert.equal(pages, decoded[0]); assert.notEqual(pages[0], h.ui.pages[0]); }; // CHANGE
+    h.ui.getFileData = () => assert.fail('Clean incoming patches must not encode live XML'); // CHANGE
+    h.bridge.collaborationAction = async () => ({ ok: true, xml: 'incoming', collaboration: { sessionId: 'local', holds: [], presence: [], reservations: [] } }); // CHANGE
+    await timers[0].callback(); assert.equal(patches, 1); assert.equal(decoded.length, 1); // CHANGE
+}); // CHANGE
+
+test('semantically empty native patches update the baseline without model, session, or history work', async t => { // CHANGE
+    const timers = [], h = harness(t, { collaboration: true, timers }); await settle(); let parsed = 0; // CHANGE
+    h.ui.pages = [{}]; h.ui.getPagesForXml = () => { parsed++; return [{}]; }; h.ui.diffPages = () => ({}); // CHANGE
+    h.current.ignorePatches = patches => Object.keys(patches[0]).length === 0; // CHANGE
+    h.current.patch = () => assert.fail('An empty diff must never reach native patch'); // CHANGE
+    h.current.setShadowPages = () => {}; h.history.applyRemoteBaseline = () => assert.fail('Empty diff must not recapture history'); // CHANGE
+    h.window.Trellis.users.revalidateCurrentSession = () => assert.fail('Empty diff must not revalidate Users'); // CHANGE
+    h.bridge.collaborationAction = async () => ({ ok: true, xml: 'equivalent serialization', collaboration: { sessionId: 'local', holds: [], presence: [], reservations: [] } }); // CHANGE
+    await timers[0].callback(); await timers[0].callback(); assert.equal(parsed, 1); assert.equal(h.current.data, 'equivalent serialization'); // CHANGE
+}); // CHANGE
+
+test('overlapping file notifications and timer ticks serialize reads and reject old-document replies', async t => { // CHANGE
+    const timers = [], h = harness(t, { collaboration: true, timers }); await settle(); let complete, gets = 0; // CHANGE
+    h.bridge.collaborationAction = async () => { gets++; return new Promise(resolve => { complete = resolve; }); }; // CHANGE
+    const tick = timers[0].callback(); await settle(); // CHANGE
+    h.ui.handleFileChange({ mtimeMs: 3 }, { mtimeMs: 2 }, h.current); await settle(); assert.equal(gets, 1); // CHANGE
+    h.ui.getCurrentFile = () => null; h.editorListeners.get('fileLoaded')(); // CHANGE
+    complete({ ok: true, xml: 'old document', collaboration: { sessionId: 'stale', holds: [], presence: [], reservations: [] } }); // CHANGE
+    await tick; await settle(); assert.equal(h.calls.some(call => call.apply === 'old document'), false); assert.equal(h.sharing.getInfo(), null); // CHANGE
+}); // CHANGE
+
+test('a synchronous batch captures XML once and save completion reuses the native model revision', async t => { // CHANGE
+    const listeners = new Map(), model = { addListener: (name, callback) => listeners.set(name, callback), getParent: () => null }; // CHANGE
+    const h = harness(t, { collaboration: true, model }); await settle(); let captures = 0; const original = h.ui.getFileData; // CHANGE
+    h.ui.getFileData = () => { captures++; return original(); }; h.setXml('batch draft'); // CHANGE
+    const event = { getProperty: () => ({ changes: [{ cell: { id: 'bed', style: '' } }] }) }; // CHANGE
+    listeners.get('change')(model, event); listeners.get('change')(model, event); assert.equal(captures, 0); // CHANGE
+    await settle(); assert.equal(captures, 1); // CHANGE
+    captures = 0; await new Promise((resolve, reject) => h.current.save(false, resolve, reject)); assert.equal(captures, 1); // CHANGE
+}); // CHANGE
+
+test('asset availability invalidates rendered images without a whole-graph refresh', async t => { // CHANGE
+    const h = harness(t); await settle(); const image = { id: 'image' }, ordinary = { id: 'ordinary' }, invalidated = []; let validates = 0; // CHANGE
+    h.graph.view = { states: { getValues: () => [{ cell: image, style: { image: 'assets/0123456789abcdef.png' } }, { cell: ordinary, style: {} }] }, invalidate: cell => invalidated.push(cell), validate: () => validates++ }; // CHANGE
+    h.graph.refresh = () => assert.fail('Image availability must not refresh the graph'); // CHANGE
+    h.state.state = 'syncing'; h.fireStatus(); h.state.state = 'upToDate'; h.fireStatus(); h.fireStatus(); // CHANGE
+    assert.deepEqual(invalidated, [image]); assert.equal(validates, 1); // CHANGE
+    h.state.folderSequence = 1; h.fireStatus(); h.state.folderSequence = 2; h.fireStatus(); h.fireStatus(); // CHANGE
+    assert.deepEqual(invalidated, [image, image]); assert.equal(validates, 2, 'A transfer between idle ticks still refreshes rendered assets exactly once'); // CHANGE
+}); // CHANGE

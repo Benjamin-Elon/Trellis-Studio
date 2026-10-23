@@ -40,6 +40,10 @@ Draw.loadPlugin(function (ui) {
         return window.Trellis.interactionModes;
     }
 
+    function schedulerForCrop(state, crop) { // NEW: allocation reads the selected crop's saved reference version.
+        const scheduler = window.USL?.scheduler, references = graph.__trellisReferences; // NEW
+        return scheduler?.forGarden && state?.moduleCell ? scheduler.forGarden(references ? references.consumerCell(state.moduleCell, crop?.referenceManifestId) : state.moduleCell) : scheduler; // CHANGE
+    } // NEW
     function cellId(cell) {
         return String(cell && (cell.getId ? cell.getId() : cell.id) || "");
     }
@@ -807,12 +811,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     async function resolveAllocationContext(state, crop, bed) {
-        const scheduler = window.USL && window.USL.scheduler;
+        const scheduler = schedulerForCrop(state, crop);
         const tiler = window.USL && window.USL.tiler;
         const planning = window.USL && window.USL.planningCore;
         if (!scheduler || !tiler || !planning) return { ok: false, status: "structural_failure", reason: "Allocate contracts are unavailable." };
         if (crop.__growthStageUnavailable) return { ok: false, status: "structural_failure", reason: crop.__growthStageUnavailable }; // CHANGE
-        const plantResolution = crop.allocationPlantResolution || await scheduler.resolvePlantForPlanCrop({ plantId: crop.plantId, varietyId: crop.varietyId, growthStageKey: crop.growthStageKey || "mature" }); // CHANGE: reviewed growth-stage dimensions survive edited-draft validation.
+        const plantResolution = crop.allocationPlantResolution || await schedulerForCrop(state, crop).resolvePlantForPlanCrop({ plantId: crop.plantId, varietyId: crop.varietyId, growthStageKey: crop.growthStageKey || "mature" }); // CHANGE: reviewed growth-stage dimensions survive edited-draft validation.
         if (!plantResolution || !plantResolution.ok) return { ok: false, status: "structural_failure", reason: plantResolution && plantResolution.reason || "Plant not found." };
         const demandWeek = targetDemandWeekForCrop(state, crop);
         const targetStartISO = demandWeek && demandWeek.start || "";
@@ -1481,7 +1485,7 @@ Draw.loadPlugin(function (ui) {
         async function loadState(state) {
             const loadRevision = state.refreshJobId; // CHANGE: a history reset invalidates pending climate resolution.
             const planning = window.USL && window.USL.planningCore;
-            const scheduler = window.USL && window.USL.scheduler;
+            const scheduler = schedulerForCrop(state, state.plan?.crops?.find(crop => String(crop.id) === String(state.selectedCropId))); // CHANGE
             const tiler = window.USL && window.USL.tiler;
             if (!planning || !scheduler || !tiler) {
                 state.message = "Allocate contracts are unavailable.";
@@ -1506,7 +1510,7 @@ Draw.loadPlugin(function (ui) {
             if (typeof scheduler.listGrowthStagesForPlanCrop === "function") { // CHANGE: allocations opened without a Year Plan dialog still use current reusable defaults.
                 const revision = state.refreshJobId; // CHANGE
                 for (const crop of state.plan.crops || []) { // CHANGE
-                    const resolved = await scheduler.resolvePlantForPlanCrop({ plantId: crop.plantId, varietyId: crop.varietyId, growthStageKey: crop.growthStageKey || "mature" }); // CHANGE
+                    const resolved = await schedulerForCrop(state, crop).resolvePlantForPlanCrop({ plantId: crop.plantId, varietyId: crop.varietyId, growthStageKey: crop.growthStageKey || "mature" }); // CHANGE
                     if (state.closed || state.refreshJobId !== revision) return; // CHANGE
                     crop.__growthStageUnavailable = resolved.ok ? "" : resolved.reason; // CHANGE
                     if (!resolved.ok) continue; // CHANGE
@@ -1752,6 +1756,8 @@ Draw.loadPlugin(function (ui) {
             actions.appendChild(create);
             panel.appendChild(actions);
 
+            panel.dataset.quickstartSurface = 'allocation'; panel.dataset.quickstartGarden = cellId(state.moduleCell); panel.dataset.quickstartYear = String(state.year); // NEW
+            for (const [key, node] of Object.entries({ 'allocation-week': weekSelect, 'allocation-crop': cropSelect, 'allocation-bed': findBest, 'allocation-defaults': defaultsBox, 'allocation-preview': draftBox, 'allocation-create': create, 'mode-close': closeBtn })) node.setAttribute('data-trellis-quickstart', key); // NEW
             state.hudRefs = { title, status, progress, weekRow, prev, weekSelect, next, unresolvedBox, cropSelect, draftBox, defaultsBox, actions, findBest, rotate, create, companion }; // CHANGE
             return state.hudRefs;
         }
@@ -1829,7 +1835,7 @@ Draw.loadPlugin(function (ui) {
             const isCurrent = () => !state.closed && state.defaultsLookup === lookup && allocationDefaultsKey(state) === key; // CHANGE
             lookup.promise = Promise.resolve().then(async () => { // CHANGE
                 try { // CHANGE
-                    const scheduler = window.USL?.scheduler; // CHANGE
+                    const scheduler = schedulerForCrop(state, draft.crop); // CHANGE
                     if (!scheduler?.resolveAllocationDefaultStatus) throw new Error('Required-default lookup is unavailable.'); // CHANGE
                     const status = await scheduler.resolveAllocationDefaultStatus(draft); // CHANGE
                     if (!status || typeof status.complete !== 'boolean') throw new Error('Unable to determine saved crop defaults.'); // CHANGE
@@ -2333,7 +2339,7 @@ Draw.loadPlugin(function (ui) {
             state.reviewing = true; renderHud(state); // CHANGE
             try { // CHANGE
                 let base = result.ok ? Object.assign({}, result) : buildBedResult(state, result.crop, result.bed, result.allocationContext, { ok: true }, 0, 0); // CHANGE
-                const scheduler = window.USL.scheduler, defaults = await scheduler.resolveAllocationDefaultStatus(base); // CHANGE
+                const scheduler = schedulerForCrop(state, base.crop), defaults = await scheduler.resolveAllocationDefaultStatus(base); // CHANGE
                 if (!isCurrent()) return; // CHANGE
                 if (!defaults.complete) { // CHANGE
                     state.requiredDefaultsSetup = true; // CHANGE: stage-default notifications from this setup must not discard its accepted draft.
@@ -2381,7 +2387,7 @@ Draw.loadPlugin(function (ui) {
 
         async function openAllocationSchedulerAndPreview(state, draft, options = {}) { // CHANGE
             const version = state.draftVersion; // CHANGE: background badge updates do not cancel an accepted schedule edit. // CHANGE
-            const scheduler = window.USL && window.USL.scheduler;
+            const scheduler = schedulerForCrop(state, state.plan?.crops?.find(crop => String(crop.id) === String(state.selectedCropId))); // CHANGE
             if (!scheduler || typeof scheduler.openAllocationScheduleDialog !== "function") {
                 throw new Error('Allocation schedule setup is unavailable.'); // CHANGE: a setup action cannot silently become a creation action.
             }
@@ -2537,7 +2543,7 @@ Draw.loadPlugin(function (ui) {
             if (!tiler || !tasks || typeof tasks.applySchedulerTaskReplacement !== "function") return;
             const history = window.Trellis && window.Trellis.history;
             if (!draft.companionLayout && !state.spacingOverrides?.overhangEdited && draft.geometry.allowedOverhangPct != null && window.USL.scheduler.resolvePlantForPlanCrop) { // CHANGE
-                const fresh = await window.USL.scheduler.resolvePlantForPlanCrop({ plantId: draft.crop.plantId, varietyId: draft.crop.varietyId, growthStageKey: draft.crop.growthStageKey || 'mature' }); // CHANGE
+                const fresh = await schedulerForCrop(state, draft.crop).resolvePlantForPlanCrop({ plantId: draft.crop.plantId, varietyId: draft.crop.varietyId, growthStageKey: draft.crop.growthStageKey || 'mature' }); // CHANGE
                 if (state.closed || state.draft !== draft) return; // CHANGE
                 if (!fresh?.ok) throw new Error('Could not recheck the crop overhang default. Try creating again.'); // CHANGE
                 const percentage = tiler.resolveAllowedOverhangPct ? tiler.resolveAllowedOverhangPct(fresh.plant.allowed_overhang_pct) : fresh.plant.allowed_overhang_pct ?? 30; // CHANGE
@@ -2570,6 +2576,7 @@ Draw.loadPlugin(function (ui) {
                 try {
                     if (draft.companionLayout) window.USL.scheduler.layoutTools.applyLayoutRowsToGraph(graph, draft.companionLayout.rows.filter(row => !row.proposed)); // CHANGE
                     const attrs = Object.assign({}, draft.lifecycle.attributePatch || {}, {
+                        ...(draft.crop.referenceManifestId ? { trellis_reference_pin: draft.crop.referenceManifestId } : {}), // NEW
                         plant_id: String(draft.crop.plantId || ""),
                         plant_name: String(draft.plantResolution.plant.plant_name || draft.crop.plant || ""),
                         variety_id: String(draft.crop.varietyId || ""),

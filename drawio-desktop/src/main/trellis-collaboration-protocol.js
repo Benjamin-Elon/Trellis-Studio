@@ -3,6 +3,7 @@
  * reject it. All replicas replay the same signed causal records from genesis. // NEW */
 import { XMLSerializer } from '@xmldom/xmldom'; // NEW
 import { validateProjectNameChange } from './trellis-project-naming.js'; // NEW
+import { validateReferenceChanges } from './trellis-reference-policy.js'; // NEW
 import { diagramDocument, inspectDiagram, parseXml, digest, canonical, activeAccessTeams } from './trellis-share-protocol.js'; // NEW
 export const COLLABORATION_VERSION = 2; // NEW
 export const HOLD_MS = 300000; // NEW
@@ -88,11 +89,12 @@ export function diffObjects(beforeXml, afterXml) { // NEW
     return { changes, targets: [...targets].sort() }; // NEW
 } // NEW
 /** Authority is derived from saved Users policy, never a caller-supplied rank. */ // NEW
-export function authorityFor(xml, key, userId) { // NEW
-    const state = inspectDiagram(xml), user = (state.store.users || []).find(u => u.id === userId && !u.disabled); // NEW
+export function authorityFor(xml, key, userId, context = {}) { // CHANGE
+    if (context.xml !== xml) { const state = inspectDiagram(xml); context.xml = xml; context.state = state; context.index = null; } // CHANGE: publish cached policy only after successful parsing; invalid XML cannot reuse previously authorized state.
+    const state = context.state, user = (state.store.users || []).find(u => u.id === userId && !u.disabled); // CHANGE
     const pending = (state.store.invites || []).find(i => i.pendingUserId === userId && i.status === 'pending'); // NEW
     if (!user && !pending) return 0; if (user?.admin) return 4; if (key === '*') return 0; // NEW
-    const index = objects(xml); let cell = index.get(key), ownerSeen = false, manager = false, editor = false, unowned = false; const visited = new Set(); // NEW
+    const index = context.index || (context.index = objects(xml)); let cell = index.get(key), ownerSeen = false, manager = false, editor = false, unowned = false; const visited = new Set(); // CHANGE
     const teamIds = activeAccessTeams(state, userId); // NEW
     while (cell && !visited.has(cell.key)) { // NEW
         visited.add(cell.key); const node = cell.node; // NEW
@@ -146,8 +148,8 @@ export function invitationAcceptance(beforeXml, afterXml, actor, at) { // NEW
     const before = inspectDiagram(beforeXml).store, after = inspectDiagram(afterXml).store; // NEW
     return !!before.invites?.some(i => i.pendingUserId === actor && i.status === 'pending' && i.expiresAt > at) && !before.users?.some(u => u.id === actor) && !!after.users?.some(u => u.id === actor && !u.admin && !u.disabled) && rosterChangeAllowed(before, after, actor, beforeXml, at); // NEW
 } // NEW
-function claimAuthority(xml, claim, key) { // NEW
-    const rank = authorityFor(xml, key, claim.userId); if (rank || !claim.usersPolicyAction || !claim.policyChanges) return rank; // NEW
+function claimAuthorityFor(xml, claim, key, resolveAuthority) { // CHANGE
+    const rank = resolveAuthority(xml, key, claim.userId); if (rank || !claim.usersPolicyAction || !claim.policyChanges) return rank; // CHANGE
     try { return invitationAcceptance(xml, applyChanges(xml, claim.policyChanges), claim.userId, claim.at) ? 1 : 0; } catch (_) { return 0; } // NEW: an accepted/revoked invite cannot keep granting bootstrap authority.
 } // NEW
 /** Apply one all-or-nothing proposal; base mismatches never overwrite a newer object. */ // NEW
@@ -210,6 +212,14 @@ export function replay(genesisXml, records, time = Date.now()) { // NEW
 } // NEW
 /** Exclude rejected policy changes from claim ranks, then repeat until acceptance settles. */ // NEW
 function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
+    let authorityXml = null; const authorityRanks = new Map(), authorityContext = {}; // CHANGE: cache only within this replay and only while policy/content is identical.
+    const resolveAuthority = (xml, key, userId) => { // CHANGE
+        if (authorityXml !== xml) { authorityXml = xml; authorityRanks.clear(); } // CHANGE: accepted policy changes must invalidate every cached rank.
+        const query = JSON.stringify([key, userId]); // CHANGE
+        if (!authorityRanks.has(query)) authorityRanks.set(query, authorityFor(xml, key, userId, authorityContext)); // CHANGE
+        return authorityRanks.get(query); // CHANGE
+    }; // CHANGE
+    const claimAuthority = (xml, claim, key) => claimAuthorityFor(xml, claim, key, resolveAuthority); // CHANGE: repeated hold expiry checks need no repeated XML parsing.
     const { ordered, pending } = causalRecords(records), ancestors = new Map(), claims = new Map(), rejected = []; // NEW
     for (const r of ordered) { // NEW
         if (r.parents.length === 1 && !claims.has(r.parents[0])) ancestors.set(r.id, ancestors.get(r.parents[0]) || new Set()); // NEW: read-only ancestry can be shared across ordinary edits and heartbeats.
@@ -219,8 +229,8 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
     const lost = new Set(), claimRanks = new Map(), allowedRequests = new Set(); let contextXml = genesisXml; // NEW
     for (const r of ordered) { // NEW
         if (r.kind === 'claim') claimRanks.set(r.id, new Map((r.targets || []).map(key => [key, claimAuthority(contextXml, r, key)]))); // NEW
-        if (r.kind === 'request' && r.claimIds?.some(id => claims.get(id)?.targets.some(key => authorityFor(contextXml, key, r.userId) > 0))) allowedRequests.add(r.id); // NEW: authority is checked when the request was made, preserving its deadline after later revocation.
-        if (r.kind === 'edit' && eligibleEdits.has(r.id)) try { const next = applyChanges(contextXml, r.changes), setup = r.claimIds?.some(id => claims.get(id)?.usersPolicyAction) && invitationAcceptance(contextXml, next, r.userId, r.at); if ((setup || r.targets?.every(key => authorityFor(contextXml, key, r.userId) > 0)) && rosterChangeAllowed(inspectDiagram(contextXml).store, inspectDiagram(next).store, r.userId, contextXml, r.at)) contextXml = next; } catch (_) {} // NEW: derive authority only from accepted policy, never from rejected proposals or claimed ranks.
+        if (r.kind === 'request' && r.claimIds?.some(id => claims.get(id)?.targets.some(key => resolveAuthority(contextXml, key, r.userId) > 0))) allowedRequests.add(r.id); // CHANGE: authority is checked when the request was made, preserving its deadline after later revocation.
+        if (r.kind === 'edit' && eligibleEdits.has(r.id)) try { const next = applyChanges(contextXml, r.changes); validateReferenceChanges(contextXml, next, r.userId, r.at); const setup = r.claimIds?.some(id => claims.get(id)?.usersPolicyAction) && invitationAcceptance(contextXml, next, r.userId, r.at); if ((setup || r.targets?.every(key => resolveAuthority(contextXml, key, r.userId) > 0)) && rosterChangeAllowed(inspectDiagram(contextXml).store, inspectDiagram(next).store, r.userId, contextXml, r.at)) contextXml = next; } catch (_) {} // CHANGE: derive authority only from accepted policy, never from rejected proposals or claimed ranks.
     } // NEW
     const rank = (claim, key) => claimRanks.get(claim.id)?.get(key) || 0; // NEW
     const activeUntil = new Map([...claims.values()].map(c => [c.id, c.at + HOLD_MS])), stoppedAt = new Map([...claims.values()].filter(c => c.retiredAt).map(c => [c.id, c.retiredAt])); // NEW
@@ -243,14 +253,14 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
         if (!Number.isFinite(r.at) || !r.sessionId || !r.userId) { rejected.push({ id: r.id, reason: 'Invalid session record.' }); continue; } // NEW
         const expire = t => { for (const [key, hold] of holds) { const deadline = Math.min(hold.activeAt + HOLD_MS, deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity); if (t >= deadline || claimAuthority(xml, claims.get(hold.claimId), key) < 1) release(key, hold, deadline); } }; // NEW: a late record cannot restart the handoff cooldown.
         const release = (key, hold, at) => { // NEW
-            holds.delete(key); const candidates = (waiters.get(hold.claimId) || []).filter(w => !w.cancelled && authorityFor(xml, key, w.userId) > 0).sort((a, b) => authorityFor(xml, key, b.userId) - authorityFor(xml, key, a.userId) || recordOrder(a, b)); // NEW
+            holds.delete(key); const candidates = (waiters.get(hold.claimId) || []).filter(w => !w.cancelled && resolveAuthority(xml, key, w.userId) > 0).sort((a, b) => resolveAuthority(xml, key, b.userId) - resolveAuthority(xml, key, a.userId) || recordOrder(a, b)); // CHANGE
             if (candidates.length) reservations.set(key, { deviceId: candidates[0].deviceId, sessionId: candidates[0].sessionId, userId: candidates[0].userId, previousSession: hold.sessionId, until: at + HANDOFF_MS }); // NEW
         }; // NEW
         expire(r.at); // NEW
         if (r.kind === 'view') { presence.set(r.deviceId + ':' + r.sessionId, r); continue; } // NEW
         if (r.kind === 'request') { // NEW
             for (const claimId of r.claimIds || []) { // NEW
-                const hold = [...holds.values()].find(h => h.claimId === claimId); if (!hold || sameActor(hold, r) || authorityFor(xml, hold.key, r.userId) < 1) continue; // NEW: imported release requests must respect the same existing access policy as local requests.
+                const hold = [...holds.values()].find(h => h.claimId === claimId); if (!hold || sameActor(hold, r) || resolveAuthority(xml, hold.key, r.userId) < 1) continue; // CHANGE: imported release requests must respect the same existing access policy as local requests.
                 if (!deadlines.has(claimId)) deadlines.set(claimId, r.at + HOLD_MS); // NEW
                 const queue = waiters.get(claimId) || []; if (!queue.some(q => sameActor(q, r))) queue.push({ ...r }); waiters.set(claimId, queue); // NEW
             } // NEW
@@ -275,10 +285,11 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
             try { // NEW
                 const proposed = applyChanges(xml, r.changes); // NEW
                 const accountSetup = r.claimIds?.some(id => claims.get(id)?.usersPolicyAction) && invitationAcceptance(xml, proposed, r.userId, r.at); // NEW
-                if (!Array.isArray(r.targets) || !r.targets.length || r.targets.some(key => !holds.has(key) || !sameActor(holds.get(key), r) || !r.claimIds?.includes(holds.get(key)?.claimId) || !accountSetup && authorityFor(xml, key, r.userId) < 1)) throw new Error('The editing hold expired or another editor has priority.'); // NEW
+                if (!Array.isArray(r.targets) || !r.targets.length || r.targets.some(key => !holds.has(key) || !sameActor(holds.get(key), r) || !r.claimIds?.includes(holds.get(key)?.claimId) || !accountSetup && resolveAuthority(xml, key, r.userId) < 1)) throw new Error('The editing hold expired or another editor has priority.'); // CHANGE
                 const required = diffObjects(xml, proposed).targets; // NEW
                 if (required.some(key => !r.targets.includes(key))) throw new Error('The group edit did not acquire every dependent object.'); // NEW
                 validateProjectNameChange(xml, proposed, r.userId); // NEW: applies even to invitation acceptance and metadata removal.
+                validateReferenceChanges(xml, proposed, r.userId, r.at); // CHANGE: evaluate planting dates at the signed transaction time, including during replay.
                 const before = inspectDiagram(xml), after = inspectDiagram(proposed); // NEW
                 if (canonical(before.store) !== canonical(after.store) && !rosterChangeAllowed(before.store, after.store, r.userId, xml, r.at)) throw new Error('The roster change is not an authorized invitation or account action.'); // NEW
                 if (!accountSetup) validateProtectedChanges(xml, proposed, r.userId); // NEW: keep the existing validated Users bootstrap for generated role bindings.
@@ -288,19 +299,19 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
     } // NEW
     for (const [key, hold] of [...holds]) if (time >= Math.min(hold.activeAt + HOLD_MS, deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity) || claimAuthority(xml, claims.get(hold.claimId), key) < 1) { // NEW
         holds.delete(key); const deadline = Math.min(hold.activeAt + HOLD_MS, deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity); // NEW
-        const queue = (waiters.get(hold.claimId) || []).filter(w => !w.cancelled && authorityFor(xml, key, w.userId) > 0).sort((a, b) => authorityFor(xml, key, b.userId) - authorityFor(xml, key, a.userId) || recordOrder(a, b)); // NEW
+        const queue = (waiters.get(hold.claimId) || []).filter(w => !w.cancelled && resolveAuthority(xml, key, w.userId) > 0).sort((a, b) => resolveAuthority(xml, key, b.userId) - resolveAuthority(xml, key, a.userId) || recordOrder(a, b)); // CHANGE
         if (queue.length && time < deadline + HANDOFF_MS) reservations.set(key, { deviceId: queue[0].deviceId, sessionId: queue[0].sessionId, userId: queue[0].userId, previousSession: hold.sessionId, until: deadline + HANDOFF_MS }); // NEW
     } // NEW
     return { xml, accepted, rejected, pending, holds: [...holds.values()].map(h => ({ ...h, requested: deadlines.has(h.claimId), expiresAt: Math.min(h.activeAt + HOLD_MS, deadlines.get(h.claimId) || Infinity) })), reservations: [...reservations].filter(([, r]) => time < r.until).map(([key, r]) => ({ key, ...r })), presence: [...presence.values()].filter(p => time < p.at + HOLD_MS) }; // NEW
 } // NEW
 /** Preserve Users' grant-management and self-claim exceptions at the replay boundary. */ // NEW
 function validateProtectedChanges(beforeXml, afterXml, userId) { // NEW
-    const before = objects(beforeXml), after = objects(afterXml); // NEW
+    const before = objects(beforeXml), after = objects(afterXml), authorityContext = {}; // CHANGE
     for (const [key, old] of before) { // NEW
-        const next = after.get(key); if (!next || authorityFor(beforeXml, key, userId) >= 3) continue; // NEW
+        const next = after.get(key); if (!next) continue; // CHANGE
         const original = attrs(old.node), updated = attrs(next.node); // NEW
         const changed = [...new Set([...Object.keys(original), ...Object.keys(updated)])].filter(name => /^trellis_(owner|access|role|team|garden_team)/.test(name) && original[name] !== updated[name]); // NEW
-        if (!changed.length) continue; // NEW
+        if (!changed.length || authorityFor(beforeXml, key, userId, authorityContext) >= 3) continue; // CHANGE: unrelated cell values require no protected-field authorization or repeated whole-document parsing.
         if (changed.every(name => ['trellis_access_user_ids_json', 'trellis_access_grants_json', 'trellis_access_open'].includes(name)) && canManageAccess(beforeXml, key, userId)) continue; // NEW
         const module = ['garden_module', 'team_module', 'task_module'].some(name => old.node.getAttribute(name) === '1') || /(?:^|;)module=1(?:;|$)/.test(old.model.getAttribute('style')); // NEW
         if (changed.length === 1 && changed[0] === 'trellis_owner_user_id' && module && !original.trellis_owner_user_id && updated.trellis_owner_user_id === userId) continue; // NEW

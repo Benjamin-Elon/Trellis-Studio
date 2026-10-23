@@ -736,8 +736,10 @@ Draw.loadPlugin(function (ui) {
         return Math.max(0, wM * hM);
     }
 
-    function readCatalog(moduleCell) {
-        const parsed = GraphStore.readJsonAttr(moduleCell, ATTRS.CATALOG_JSON, null);
+    function readCatalog(moduleCell, consumer = null, options = {}) { // CHANGE
+        if (getCellAttr(moduleCell, 'trellis_references_json', '') && !graph.__trellisReferences) throw new Error('Load Garden references before reading this garden catalog.'); // NEW
+        const scope = consumer && graph.__trellisReferences ? graph.__trellisReferences.scopeForConsumer(moduleCell, consumer) : moduleCell; // NEW
+        const parsed = graph.__trellisReferences?.catalog(scope, ATTRS.CATALOG_JSON, options) || GraphStore.readJsonAttr(moduleCell, ATTRS.CATALOG_JSON, null); // CHANGE
         const items = parsed && Array.isArray(parsed.items) ? parsed.items : [];
         const version = parsed && Number.isFinite(Number(parsed.version)) ? Number(parsed.version) : (items.length ? 1 : 0);
         return {
@@ -751,6 +753,7 @@ Draw.loadPlugin(function (ui) {
         const items = (catalog && Array.isArray(catalog.items) ? catalog.items : catalog || [])
             .map(normalizeCatalogPart)
             .filter(Boolean);
+        if (graph.__trellisReferences?.saveCatalog(moduleCell, ATTRS.CATALOG_JSON, { version: PLUGIN_VERSION, items })) return readCatalog(moduleCell, null, { draft: true }); // CHANGE
         GraphStore.writeJsonAttr(moduleCell, ATTRS.CATALOG_JSON, { version: PLUGIN_VERSION, items });
         return { version: PLUGIN_VERSION, items };
     }
@@ -844,6 +847,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function seedStarterCatalogIfEmpty(moduleCell) {
+        if (getCellAttr(moduleCell, 'trellis_references_json', '')) return readCatalog(moduleCell); // NEW: creation initializes defaults once; opening a catalog never upgrades accepted definitions.
         const current = readCatalog(moduleCell);
         if (!moduleCell) return current;
         if (current.items.length > 0 && current.version < PLUGIN_VERSION) return mergeCatalogUpgradeParts(moduleCell, current);
@@ -854,7 +858,7 @@ Draw.loadPlugin(function (ui) {
     function upsertCatalogPart(moduleCell, part) {
         const normalized = normalizeCatalogPart(part);
         if (!normalized || !normalized.id) return readCatalog(moduleCell);
-        const catalog = readCatalog(moduleCell);
+        const catalog = readCatalog(moduleCell, null, { draft: true }); // CHANGE
         const items = catalog.items.filter(function (item) { return item.id !== normalized.id; });
         items.push(normalized);
         items.sort(function (a, b) { return String(a.name || a.id).localeCompare(String(b.name || b.id)); });
@@ -862,7 +866,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function deleteCatalogPart(moduleCell, partId) {
-        const catalog = readCatalog(moduleCell);
+        const catalog = readCatalog(moduleCell, null, { draft: true }); // CHANGE
         return writeCatalog(moduleCell, {
             items: catalog.items.filter(function (item) { return item.id !== partId; })
         });
@@ -1387,6 +1391,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function createVertex(parent, label, x, y, w, h, style, attrs, index) { // CHANGE
+        const garden = isGardenModule(parent) ? parent : findGardenModuleAncestor(parent); // NEW
+        if (garden?.getAttribute?.('trellis_references_json')) attrs = Object.assign({ trellis_reference_pin: graph.__trellisReferences.read(garden).current }, attrs || {}); // NEW
         let cell = null;
         const insertIndex = index == null ? null : Math.max(0, Math.min(getChildCells(parent).length, Math.floor(finiteNumber(index, getChildCells(parent).length)))); // NEW
         if (graph.insertVertex) {
@@ -1402,6 +1408,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function createEdge(parent, source, target, label, style, attrs) {
+        const garden = isGardenModule(parent) ? parent : findGardenModuleAncestor(parent); // NEW
+        if (garden?.getAttribute?.('trellis_references_json')) attrs = Object.assign({ trellis_reference_pin: graph.__trellisReferences.read(garden).current }, attrs || {}); // NEW
         let edge = null;
         if (graph.insertEdge) {
             edge = graph.insertEdge(parent, null, label || "", source, target, style || "");
@@ -3692,7 +3700,7 @@ Draw.loadPlugin(function (ui) {
     function pipeEdgeLabel(moduleCell, edge, port) {
         if (!edge) return portDisplayRole(moduleCell, port) === "output" ? "Available: " + portDisplayLabel(moduleCell, port) + " downstream connection" : "Available: " + portDisplayLabel(moduleCell, port) + " upstream connection"; // CHANGE
         if (getCellAttr(edge, ATTRS.DIRECT_LINK_EDGE, "") === "1") return "Direct: " + edgeConnectionDisplayLabel(moduleCell, edge) + " to " + irrigationCellLabel(normalizePort(port).role === "output" ? edge.target : edge.source);
-        const pipe = partById(readCatalog(moduleCell), getCellAttr(edge, ATTRS.PIPE_PART_ID, ""));
+        const pipe = partById(readCatalog(moduleCell, edge), getCellAttr(edge, ATTRS.PIPE_PART_ID, "")); // CHANGE
         const other = normalizePort(port).role === "output" ? edge.target : edge.source;
         return "Pipe: " + edgeConnectionDisplayLabel(moduleCell, edge) + " " + (pipe ? shortCatalogPartName(pipe) : "auto pipe") + " -> " + irrigationCellLabel(other);
     }
@@ -3916,7 +3924,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function calculatePathHydraulics(moduleCell, path) {
-        const catalog = IrrigationCatalog.read(moduleCell);
+        const catalog = catalogForPathPart(moduleCell, IrrigationCatalog.read(moduleCell), path, ''); // CHANGE: bed demand uses the assembly's saved reference version.
         const source = findCellById(moduleCell, path.sourceEndpointId);
         if (!source) {
             const bedDemand = Hydraulics.demandFromPath(catalog, path);
@@ -3935,6 +3943,7 @@ Draw.loadPlugin(function (ui) {
         }
         const sourceProfile = endpointProfile(source);
         return Hydraulics.estimatePath({
+            moduleCell, path, // NEW: retain per-component and pipe reference versions during calculation.
             catalog,
             sourceProfile,
             bedDemand: Hydraulics.demandFromPath(catalog, path),
@@ -3963,7 +3972,7 @@ Draw.loadPlugin(function (ui) {
         const existing = ReportModel.deriveAssemblyPaths(moduleCell).filter(function (other) { return other.id !== path.id; });
         (path.branchpointIds || []).forEach(function (branchId) {
             const branch = findCellById(moduleCell, branchId);
-            const part = partById(catalog, getCellAttr(branch, ATTRS.CATALOG_PART_ID, ""));
+            const part = partById(catalogForConsumer(moduleCell, catalog, branch), getCellAttr(branch, ATTRS.CATALOG_PART_ID, "")); // CHANGE
             if (!part) return;
             const used = existing.filter(function (other) { return (other.branchpointIds || []).indexOf(branchId) >= 0; }).length + 1;
             if (part.connectors.outputs > 0 && used > part.connectors.outputs) {
@@ -3988,13 +3997,13 @@ Draw.loadPlugin(function (ui) {
         const source = findCellById(moduleCell, path.sourceEndpointId);
         const target = findCellById(moduleCell, path.targetEndpointId);
         const partIds = path.partIds || [];
-        const parts = partIds.map(function (partId) { return partById(catalog, partId); });
+        const parts = partIds.map(function (partId) { return partById(catalogForPathPart(moduleCell, catalog, path, partId), partId); }); // CHANGE
         parts.forEach(function (part, index) {
             const validation = validateCatalogPart(part);
             if (!validation.ok) errors.push("Invalid catalog part on path " + path.id + ": " + (partIds[index] || "missing") + ".");
         });
         if (path.pipePartId) {
-            const pipe = partById(catalog, path.pipePartId);
+            const pipe = partById(catalogForPathPart(moduleCell, catalog, path, path.pipePartId), path.pipePartId); // CHANGE
             const pipeValidation = validateCatalogPart(pipe);
             if (!pipe || pipe.category !== "pipe_tubing" || !pipeValidation.ok) errors.push("Selected pipe is missing required specs for path " + path.id + ".");
         }
@@ -4518,11 +4527,11 @@ Draw.loadPlugin(function (ui) {
         return 4.52 * lengthFt * Math.pow(flowGpm, 1.852) / (Math.pow(c, 1.852) * Math.pow(diameterIn, 4.871)); // CHANGE
     }
 
-    function maxOperatingPressureForDemand(catalog, partIds, bedDemand) {
+    function maxOperatingPressureForDemand(catalog, partIds, bedDemand, resolvePart) { // CHANGE
         const explicit = finiteNumber(bedDemand && bedDemand.maxOperatingPressurePsi, null);
         if (explicit != null) return explicit;
         return (partIds || []).reduce(function (current, partId) {
-            const part = partById(catalog, partId);
+            const part = resolvePart ? resolvePart(partId) : partById(catalog, partId); // CHANGE
             const maxPsi = finiteNumber(part && part.specs && part.specs.maxOperatingPressurePsi, null);
             if (maxPsi == null) return current;
             return current == null ? maxPsi : Math.min(current, maxPsi);
@@ -4534,8 +4543,8 @@ Draw.loadPlugin(function (ui) {
         const source = normalizeEndpointProfile(args && args.sourceProfile);
         const bedDemand = args && args.bedDemand || {};
         const partIds = args && args.partIds || [];
-        const pipePart = partById(catalog, args && args.pipePartId);
-        const pipeSegments = normalizeHydraulicPipeSegments(args && args.pipeSegments, catalog);
+        const pipePart = partById(catalogForPathPart(args?.moduleCell, catalog, args?.path, args?.pipePartId), args && args.pipePartId); // CHANGE
+        const pipeSegments = normalizeHydraulicPipeSegments(args && args.pipeSegments, catalog, args?.moduleCell); // CHANGE
         const flowGpm = finiteNumber(bedDemand.flowGpm, source.usableFlowGpm || 0);
         const operatingPressurePsi = finiteNumber(bedDemand.operatingPressurePsi, 0);
         const lengthFt = finiteNumber(args && args.lengthFt, 0);
@@ -4566,14 +4575,14 @@ Draw.loadPlugin(function (ui) {
         }
 
         partIds.forEach(function (partId) {
-            const part = partById(catalog, partId);
+            const part = partById(catalogForPathPart(args?.moduleCell, catalog, args?.path, partId), partId); // CHANGE
             pressureLossPsi += finiteNumber(part && part.specs && part.specs.pressureLossPsi, 0);
         });
 
         const availablePressurePsi = finiteNumber(source.staticPressurePsi, 0);
         const requiredPressurePsi = operatingPressurePsi + pressureLossPsi;
         const marginPsi = availablePressurePsi - requiredPressurePsi;
-        const maxOperatingPressurePsi = maxOperatingPressureForDemand(catalog, partIds, bedDemand);
+        const maxOperatingPressurePsi = maxOperatingPressureForDemand(catalog, partIds, bedDemand, partId => partById(catalogForPathPart(args?.moduleCell, catalog, args?.path, partId), partId)); // CHANGE
         const deliveredPressurePsi = availablePressurePsi - pressureLossPsi;
         if (source.usableFlowGpm != null && flowGpm > source.usableFlowGpm) warnings.push("Flow demand exceeds source usable flow.");
         if (marginPsi < 0) warnings.push("Required pressure exceeds available source pressure.");
@@ -4593,7 +4602,7 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function normalizeHydraulicPipeSegments(segments, catalog) {
+    function normalizeHydraulicPipeSegments(segments, catalog, moduleCell) { // CHANGE
         return (segments || []).map(function (segment) {
             const pipePartId = String(segment && segment.pipePartId || "").trim();
             return {
@@ -4601,7 +4610,7 @@ Draw.loadPlugin(function (ui) {
                 pipePartId,
                 lengthFt: finiteNumber(segment && segment.lengthFt, null),
                 hydraulicLengthFt: finiteNumber(segment && segment.hydraulicLengthFt, null), // CHANGE
-                part: partById(catalog, pipePartId)
+                part: partById(catalogForConsumer(moduleCell, catalog, moduleCell && findCellById(moduleCell, segment.edgeId)), pipePartId) // CHANGE
             };
         }).filter(function (segment) { return !!segment.pipePartId; });
     }
@@ -4676,8 +4685,22 @@ Draw.loadPlugin(function (ui) {
         return edgeLengths > 0 ? edgeLengths : plannedPathLengthFeet(moduleCell, path);
     }
 
+    /** Resolve a physical consumer's immutable catalog; synthetic previews retain their supplied catalog. */ // NEW
+    function catalogForConsumer(moduleCell, catalog, cell) { // NEW
+        return cell && getCellAttr(moduleCell, 'trellis_references_json', '') && graph.__trellisReferences ? readCatalog(moduleCell, cell) : catalog; // NEW
+    } // NEW
+
+    /** A path may contain parts from several accepted revisions, identified by its actual cells and edges. */ // NEW
+    function catalogForPathPart(moduleCell, catalog, path, partId) { // NEW
+        if (!moduleCell || !path) return catalog; // NEW
+        const index = (path.partIds || []).indexOf(partId), segment = (path.pipeSegments || []).find(value => value.pipePartId === partId); // NEW
+        const ids = [index < 0 ? null : path.componentCellIds?.[index], segment?.edgeId, ...(path.branchpointIds || []), ...(path.pipeEdgeIds || [])]; // NEW
+        const cell = ids.map(id => id && findCellById(moduleCell, id)).find(cell => cell && (getCellAttr(cell, ATTRS.CATALOG_PART_ID, '') || getCellAttr(cell, ATTRS.PIPE_PART_ID, '')) === partId) || findCellById(moduleCell, path.targetEndpointId); // CHANGE
+        return catalogForConsumer(moduleCell, catalog, cell); // NEW
+    } // NEW
+
     function partCostForReport(moduleCell, catalog, path, partId) {
-        const part = partById(catalog, partId);
+        const part = partById(catalogForPathPart(moduleCell, catalog, path, partId), partId); // CHANGE
         if (!part) return 0;
         if (unitCostAppliesToCategory(part.category)) {
             const lengthFt = pipeSegmentLengthForPart(moduleCell, path, partId);
@@ -5018,17 +5041,17 @@ Draw.loadPlugin(function (ui) {
     function collectPathReportUsage(moduleCell, catalog, path, usage) {
         (path.partIds || []).forEach(function (partId, index) {
             addReportPartUsage(usage, partId, Hydraulics.partCostForReport(moduleCell, catalog, path, partId));
-            const part = partById(catalog, partId);
+            const part = partById(catalogForPathPart(moduleCell, catalog, path, partId), partId); // CHANGE
             if (part && BRANCH_CATEGORIES.has(part.category)) usage.controlledZones.add((path.componentCellIds && path.componentCellIds[index]) || part.id);
         });
         (path.branchpointIds || []).forEach(function (branchId) {
             const branch = GraphStore.findById(moduleCell, branchId);
-            const part = partById(catalog, GraphStore.getAttr(branch, ATTRS.CATALOG_PART_ID, ""));
+            const part = partById(catalogForConsumer(moduleCell, catalog, branch), GraphStore.getAttr(branch, ATTRS.CATALOG_PART_ID, "")); // CHANGE
             if (part && BRANCH_CATEGORIES.has(part.category)) usage.controlledZones.add(branchId);
         });
         if (path.pipeSegments && path.pipeSegments.length) {
             (path.pipeSegments || []).forEach(function (segment) {
-                const pipePart = partById(catalog, segment.pipePartId);
+                const pipePart = partById(catalogForConsumer(moduleCell, catalog, findCellById(moduleCell, segment.edgeId)), segment.pipePartId); // CHANGE
                 addReportPartUsage(usage, segment.pipePartId, finiteNumber(pipePart && pipePart.unitCost, pipePart && pipePart.cost || 0) * finiteNumber(segment.lengthFt, 0));
             });
         } else if (path.pipePartIds && path.pipePartIds.length) {
@@ -5037,17 +5060,18 @@ Draw.loadPlugin(function (ui) {
             addReportPartUsage(usage, path.pipePartId, Hydraulics.partCostForReport(moduleCell, catalog, path, path.pipePartId));
         }
         if (path.bedTemplate && Array.isArray(path.bedTemplate.resolvedBomParts) && path.bedTemplate.resolvedBomParts.length) {
-            path.bedTemplate.resolvedBomParts.forEach(function (entry) { addReportPartUsage(usage, entry.partId, resolvedBomPartCost(catalog, entry), entry.unit === "m" ? entry.quantity : null); });
+            path.bedTemplate.resolvedBomParts.forEach(function (entry) { addReportPartUsage(usage, entry.partId, resolvedBomPartCost(catalogForPathPart(moduleCell, catalog, path, entry.partId), entry), entry.unit === "m" ? entry.quantity : null); }); // CHANGE
         } else if (path.bedTemplate && path.bedTemplate.templateModel === BED_TEMPLATE_MODEL_BOM && Array.isArray(path.bedTemplate.requiredParts)) {
-            path.bedTemplate.requiredParts.forEach(function (entry) { addReportPartUsage(usage, entry.partId, partCostForRequiredMeters(catalog, entry.partId, entry.quantityMeters), entry.quantityMeters); });
+            path.bedTemplate.requiredParts.forEach(function (entry) { addReportPartUsage(usage, entry.partId, partCostForRequiredMeters(catalogForPathPart(moduleCell, catalog, path, entry.partId), entry.partId, entry.quantityMeters), entry.quantityMeters); }); // CHANGE
         }
         if (path.bedTemplate && !(Array.isArray(path.bedTemplate.resolvedBomParts) && path.bedTemplate.resolvedBomParts.length) && Array.isArray(path.bedTemplate.partIds)) {
             path.bedTemplate.partIds.forEach(function (partId) { addReportPartUsage(usage, partId, Hydraulics.partCostForReport(moduleCell, catalog, path, partId)); });
         }
     }
 
-    function collectComponentReportUsage(moduleCell, catalog, component, usage) {
+    function collectComponentReportUsage(moduleCell, argumentsCatalog, component, usage) { // CHANGE
         (component && component.cells || []).forEach(function (cell) {
+            const catalog = catalogForConsumer(moduleCell, argumentsCatalog, cell); // NEW
             const partId = getCellAttr(cell, ATTRS.CATALOG_PART_ID, "");
             const part = partById(catalog, partId);
             if (partId) addReportPartUsage(usage, partId, finiteNumber(part && part.cost || part && part.unitCost, 0));
@@ -5058,6 +5082,7 @@ Draw.loadPlugin(function (ui) {
             else { if (template && template.templateModel === BED_TEMPLATE_MODEL_BOM && Array.isArray(template.requiredParts)) template.requiredParts.forEach(function (entry) { addReportPartUsage(usage, entry.partId, partCostForRequiredMeters(catalog, entry.partId, entry.quantityMeters), entry.quantityMeters); }); if (template && Array.isArray(template.partIds)) template.partIds.forEach(function (templatePartId) { addReportPartUsage(usage, templatePartId, Hydraulics.partCostForReport(moduleCell, catalog, { pipePartId: templatePartId }, templatePartId)); }); }
         });
         (component && component.pipeSegments || []).forEach(function (segment) {
+            const catalog = catalogForConsumer(moduleCell, argumentsCatalog, findCellById(moduleCell, segment.edgeId)); // NEW
             const pipePart = partById(catalog, segment.pipePartId);
             addReportPartUsage(usage, segment.pipePartId, finiteNumber(pipePart && pipePart.unitCost, pipePart && pipePart.cost || 0) * finiteNumber(segment.lengthFt, 0));
         });
@@ -6099,8 +6124,10 @@ Draw.loadPlugin(function (ui) {
     }
 
     function openCatalogManager(moduleCell) {
+        const references = graph.__trellisReferences; // NEW
+        if (getCellAttr(moduleCell, 'trellis_references_json', '') && references && !references.isDraftReady(moduleCell)) { references.restoreDraft(moduleCell).then(() => openCatalogManager(moduleCell)).catch(error => ui.handleError ? ui.handleError(error) : alert(error.message)); return; } // NEW
         seedStarterCatalogIfEmpty(moduleCell);
-        const catalog = readCatalog(moduleCell);
+        const catalog = readCatalog(moduleCell, null, { draft: true }); // CHANGE
         const selectedPartIds = selectedCatalogPartIdsFromGraphSelection(moduleCell, catalog);
         const state = { selectedId: selectedPartIds[0] || "", selectedScopeActive: selectedPartIds.length > 0, selectedPartIds, compactView: catalogManagerCompactView(moduleCell) }; // CHANGE
         ensureCatalogManagerResponsiveStyles(); // NEW
@@ -6254,7 +6281,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function renderCatalogManager(container, moduleCell, state) {
-        const catalog = readCatalog(moduleCell);
+        const catalog = readCatalog(moduleCell, null, { draft: true }); // CHANGE
         if (!state.partDrafts) state.partDrafts = {};
         if (!state.categoryFilter) state.categoryFilter = "";
         if (!state.broadCategoryFilter) state.broadCategoryFilter = "";
@@ -7957,6 +7984,7 @@ Draw.loadPlugin(function (ui) {
         appendHudStatus(hud, session);
         const actions = hudActions();
         const createSource = button("Create Source", function () { activateCreationMode(session, "source"); }, null, "Choose a canvas location, then configure and commit a new water source."); // CHANGE
+        createSource.setAttribute('data-trellis-quickstart', 'irrigation-source'); // NEW
         styleCreationModeButton(createSource, session.creationMode === "source"); // NEW
         actions.appendChild(createSource); // CHANGE
         const addPart = button("Add Part", function () { activateCreationMode(session, "part"); }, null, "Choose a canvas location or connection, then add a catalog part."); // CHANGE
@@ -8171,6 +8199,7 @@ Draw.loadPlugin(function (ui) {
             selectCell(created.assembly, false);
             renderIrrigationMode(session);
         }, null, "Create the irrigation assembly for the selected garden bed.")); // CHANGE: explicit action tooltip.
+        actions.firstElementChild?.setAttribute('data-trellis-quickstart', 'irrigation-bed'); // NEW
         appendHudActionSection(hud, "Connections", actions);
     }
 
@@ -8509,6 +8538,7 @@ Draw.loadPlugin(function (ui) {
             selectCell(created.assembly, false);
             renderIrrigationMode(session);
         }, null, "Create the configured water source at the chosen canvas location."); // CHANGE: explicit action tooltip.
+        commit.setAttribute('data-trellis-quickstart', 'irrigation-source'); // NEW
         commit.className = "trellis-irrigation-commit-source";
         form.appendChild(commit);
         hud.appendChild(form);
@@ -11152,6 +11182,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function appendIrrigationHudHeader(hud, session, titleContent, options) {
+        hud.dataset.quickstartSurface = 'irrigation'; hud.dataset.quickstartGarden = getCellId(session.moduleCell); // NEW
         const opts = options || {};
         const header = document.createElement("div");
         header.className = "trellis-irrigation-hud-header";
@@ -11180,6 +11211,7 @@ Draw.loadPlugin(function (ui) {
         styleHudOutlineButton(catalog, HUD_OUTLINE_BLUE);
         actions.appendChild(catalog);
         const exit = exitIrrigationButton();
+        exit.setAttribute('data-trellis-quickstart', 'mode-close'); // NEW
         styleCompactHudButton(exit);
         exit.className = (exit.className || "") + " trellis-irrigation-hud-exit-button";
         exit.style.borderColor = "#b91c1c";
@@ -11203,6 +11235,7 @@ Draw.loadPlugin(function (ui) {
                 renderIrrigationMode(session); // NEW
             }); // NEW
             btn.title = mode === ANALYSIS_MODE_BUILD ? "Build and connect irrigation assemblies." : "Inspect flow, pressure, coverage, and issues for an irrigation zone."; // CHANGE: explicit action tooltip.
+            if (mode === ANALYSIS_MODE_ANALYSIS) btn.setAttribute('data-trellis-quickstart', 'irrigation-analysis'); // NEW
             styleAnalysisModeSegment(btn, session.analysisMode === mode); // NEW
             btn.setAttribute("aria-pressed", session.analysisMode === mode ? "true" : "false"); // NEW
             group.appendChild(btn); // NEW
@@ -11414,7 +11447,7 @@ Draw.loadPlugin(function (ui) {
 
     function partForCell(moduleCell, cell) {
         const partId = getCellAttr(cell, ATTRS.CATALOG_PART_ID, "");
-        return partById(readCatalog(moduleCell), partId);
+        return partById(readCatalog(moduleCell, cell), partId); // CHANGE
     }
 
     function isLegacyGenerated(cell) {
@@ -11967,6 +12000,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function analysisPipeEdgeRecord(moduleCell, catalog, edge, demandFlowGpm) { // NEW
+        if (getCellAttr(moduleCell, 'trellis_references_json', '')) catalog = readCatalog(moduleCell, edge); // NEW
         const pipePartId = getCellAttr(edge, ATTRS.PIPE_PART_ID, ""); // NEW
         const part = partById(catalog, pipePartId); // NEW
         const lengthFt = measuredEdgeLengthFeet(edge); // NEW
@@ -12142,6 +12176,7 @@ Draw.loadPlugin(function (ui) {
 
     function analysisBedEmitterDetail(moduleCell, catalog, endpoint) { // NEW
         const cell = endpoint && endpoint.cell; // NEW
+        catalog = catalogForConsumer(moduleCell, catalog, cell); // NEW
         const totalFlow = finiteNumber(endpoint && endpoint.flowGpm, null); // NEW
         if (!cell) return { unknown: true }; // NEW
         if (!isBedAssembly(cell)) return totalFlow != null ? { emitterCount: 1, perEmitterGpm: totalFlow, totalEmitterGpm: totalFlow } : { unknown: true }; // NEW
@@ -13195,6 +13230,8 @@ Draw.loadPlugin(function (ui) {
         resolveEffectiveZoneMembership: ZoneModel.resolveMembership,
         zoneSummary: ZoneModel.summary,
         buildAnalysisView: AnalysisModel.buildView, // NEW
+        /** Check committed connectivity without changing graph or report state. */ // NEW
+        hasConnectedBed: moduleCell => analysisZoneOptions(moduleCell).some(option => { const view = analysisBuildActiveZone(moduleCell, option.zone); return !!view.source && view.edgeIds.length > 0 && view.bedBadges.length > 0; }), // NEW
         buildBomRows: ReportModel.buildBomRows,
         assignBedsToZone: ZoneModel.assignBeds,
         resetBedZoneOverrides: ZoneModel.resetBedOverrides,

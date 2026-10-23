@@ -47,7 +47,7 @@ async function run() { // NEW
         await until("loginTestUi.__trellisGardenHome.panel?.textContent.includes('Log in')", 'logged-out Home'); // NEW
         await until("(()=>{const panel=loginTestUi.__trellisGardenHome.panel;if(!panel?.isConnected)return false;if(!panel.querySelector('input[aria-label=Username]'))[...panel.querySelectorAll('button')].find(b=>b.textContent==='Create identity')?.click();const name=panel.querySelector('input[aria-label=Username]'),password=panel.querySelector('input[type=password]'),keep=panel.querySelector('input[type=checkbox]');if(!name||!password||!keep)return false;if(!keep.checked)throw new Error('Remembered login must default to checked.');name.value='Restart Test';password.value='isolated-login-test-password';panel.querySelector('form').requestSubmit();return true;})()", 'creation form submission'); // NEW: initial splash replacement must not occur between fixture input operations.
         const session = await until("trellisIdentity.getSession().then(session=>session?.username==='Restart Test'&&session)", 'created identity'); // NEW
-        await until("loginTestUi.__trellisGardenHome.panel?.textContent.includes('Logged in as Restart Test')", 'completed creation'); // NEW: wait for persistence and the form submission result, not an intermediate service session.
+        await until("loginTestUi.__trellisGardenHome.accountHost?.textContent.includes('Restart Test')", 'completed creation'); // NEW: wait for persistence and the form submission result, not an intermediate service session.
         assert.equal(fs.existsSync(remembered), true); assert.equal(fs.readFileSync(remembered, 'utf8').includes('isolated-login-test-password'), false); // NEW
         fs.writeFileSync(path.join(profile, 'expected-session.json'), JSON.stringify(session)); // NEW
         await window.webContents.executeJavaScript("(async()=>{window.loginTestGarden=await trellisGardenLibrary.create({name:'Logout test garden'}); await TrellisGardenHome.openPath(loginTestUi,loginTestGarden.path); loginTestUi.getCurrentFile().setModified(true);})()"); // NEW
@@ -61,7 +61,7 @@ async function run() { // NEW
     } else if (phase === 'restore') { // NEW
         const expected = JSON.parse(fs.readFileSync(path.join(profile, 'expected-session.json'))); // NEW
         assert.deepEqual(await window.webContents.executeJavaScript('trellisIdentity.getSession()'), expected); // NEW
-        await until("loginTestUi.__trellisGardenHome.panel?.textContent.includes('Logged in as Restart Test')", 'restored Home identity'); // NEW
+        await until("loginTestUi.__trellisGardenHome.accountHost?.textContent.includes('Restart Test')", 'restored Home identity'); // NEW
         stage = 'restored identity logout'; const original = dialog.showMessageBox; dialog.showMessageBox = async () => ({ response: 1 }); // NEW: restored sample diagrams may normalize after opening; this phase explicitly approves their discard.
         try { assert.deepEqual(await window.webContents.executeJavaScript('trellisIdentity.lock()'), { ok: true }); } finally { dialog.showMessageBox = original; } // NEW
         assert.equal(fs.existsSync(remembered), false); assert.equal(await window.webContents.executeJavaScript('trellisIdentity.getSession()'), null); // NEW

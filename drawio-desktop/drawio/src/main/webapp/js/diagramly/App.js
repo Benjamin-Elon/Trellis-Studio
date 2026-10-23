@@ -287,6 +287,7 @@ App.startTime = new Date();
 App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins/Trellis_Updates_Links.js',            // NEW
     'trellisDatabaseTools': 'plugins/garden_planner_plugins/Trellis_Database_Tools.js',          // NEW
     'trellisUiCleanup': 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js',                  // NEW
+    'gardenReferences': 'plugins/garden_planner_plugins/Garden_References.js', // NEW
     'trellisUsers': 'plugins/garden_planner_plugins/Trellis_Users.js',                            // NEW
     'trellisSyncthing': 'plugins/garden_planner_plugins/Trellis_Syncthing.js',                     // NEW
     'trellisContextMenu': 'plugins/garden_planner_plugins/Trellis_Context_Menu.js',              // NEW
@@ -296,6 +297,7 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'plantTiler': 'plugins/garden_planner_plugins/Planting_Group.js',                               // CHANGE
     'gardenTasks': 'plugins/garden_planner_plugins/Garden_Task_Manager.js',                     // CHANGE
     'gardenGuide': 'plugins/garden_planner_plugins/Garden_Guide.js', // CHANGE: selected-task instructions.
+    'gardenQuickstart': 'plugins/garden_planner_plugins/Garden_Quickstart.js', // NEW: first garden and invitee orientation.
     'gardenRoadmapCore': 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', // NEW
     'gardenRoadmaps': 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', // NEW
     'gardenModules': 'plugins/garden_planner_plugins/Modules_Standalone.js',                    // CHANGE
@@ -317,6 +319,7 @@ App.publicPlugin = [
     'trellisUpdatesLinks',                                  // NEW
     'trellisDatabaseTools',                                  // NEW
     'trellisUiCleanup',                                      // NEW
+    'gardenReferences', // NEW
     'trellisUsers',                                          // NEW
     'trellisSyncthing',                                      // NEW
     'trellisContextMenu',                                    // NEW
@@ -325,6 +328,7 @@ App.publicPlugin = [
     'plantingGroup',                                             // CHANGE
     'gardenTasks',                                            // CHANGE
     'gardenGuide', // CHANGE
+    'gardenQuickstart', // NEW
     'gardenRoadmapCore', // NEW
     'gardenRoadmaps', // NEW
     'gardenModules',                                          // CHANGE
@@ -4015,18 +4019,14 @@ App.prototype.showSplash = function(force)
 	{
 		var dlg = new SplashDialog(this);
 		
-		this.showDialog(dlg.container, 700, 630, true, true, // CHANGE
+		this.showDialog(dlg.container, 700, 630, true, true, // CHANGE: the splash enhancement removes the exit control while licensing is complete.
 			mxUtils.bind(this, function(cancel, isEsc)
 			{
 				if ((cancel || isEsc) && !mxClient.IS_CHROMEAPP)
 				{
 					if (dlg.isTrellisLicenseWizardComplete == null || dlg.isTrellisLicenseWizardComplete()) // NEW
 					{ // NEW
-						// Creates a blank diagram if the completed splash is closed // CHANGE
-						var prev = Editor.useLocalStorage; // CHANGE
-						this.createFile(this.defaultFilename + (EditorUi.isElectronApp? '.drawio' : ''), // CHANGE
-							null, null, null, null, null, null, urlParams['local'] != '1'); // CHANGE
-						Editor.useLocalStorage = prev; // CHANGE
+						return false; // CHANGE: completed Home stays open until Create or Open is selected.
 					} // NEW
 					else // NEW
 					{ // NEW

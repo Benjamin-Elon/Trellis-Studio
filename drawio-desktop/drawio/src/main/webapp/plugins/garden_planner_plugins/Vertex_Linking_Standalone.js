@@ -707,6 +707,8 @@ Draw.loadPlugin(function (ui) {
      * status and start dates.                                                      
      */
     function shouldShowEdgeInternal(source, target, repeatLinkVisibility) { // CHANGE: one precomputed selection per linked board/series
+        const clusters = graph.__trellisModules?.clusters; // NEW
+        if (clusters && (!clusters.isRendered(source) || !clusters.isRendered(target) || !graph.view.getState(source) || !graph.view.getState(target))) return false; // NEW: overlay endpoints must both have rendered states in the current city/neighborhood.
 
         const sid = source ? source.id : null;
         const tid = target ? target.id : null;
@@ -881,6 +883,8 @@ Draw.loadPlugin(function (ui) {
             const a = m.getCell(entry.srcId);
             const b = m.getCell(entry.trgId);
             if (!a || !b) return null;
+            const clusters = graph.__trellisModules?.clusters; // NEW
+            if (clusters && (!clusters.isRendered(a) || !clusters.isRendered(b) || !graph.view.getState(a) || !graph.view.getState(b))) return null; // NEW
 
             const srcC = getCellCenter(a);
             const dstC = getCellCenter(b);
@@ -1189,6 +1193,7 @@ Draw.loadPlugin(function (ui) {
     // Works for arbitrarily nested children
     function selectAndReveal(cell) {
         if (!cell) return;
+        graph.__trellisModules?.clusters?.revealCell(cell); // NEW: resolve city and rendering membership before expanding or scrolling.
         const m = graph.getModel();
 
         revealKanbanCardForNavigation(cell);
@@ -2373,6 +2378,7 @@ Draw.loadPlugin(function (ui) {
         for (const id of ids) {
             const other = m.getCell(id);
             if (!other || !m.isVertex(other)) continue;
+            if (graph.__trellisModules?.clusters && /(?:^|;)module=1(?:;|$)/.test(cell.style || '') && /(?:^|;)module=1(?:;|$)/.test(other.style || '')) continue; // NEW: module connectivity is undirected; selecting a module must not prune a valid one-sided link.
             const back = getLinkSet(other);
             if (!back.has(cell.id)) { removeOneWayLink(cell, id); removed++; }
         }
@@ -2382,6 +2388,7 @@ Draw.loadPlugin(function (ui) {
 
     // Keep link overlays attached on zoom/pan and geometry changes                 
     const view = graph.getView();
+    graph.addListener('trellisClustersChanged', requestCurrentHighlightRefresh); // NEW: release connector overlays when either endpoint leaves the rendered set.
     if (view && view.addListener) {
         function refreshViewOnlyLinkVisuals() {
             linkOverlays.refreshAll();

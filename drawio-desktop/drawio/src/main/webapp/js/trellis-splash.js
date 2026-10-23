@@ -87,14 +87,17 @@
 	}
 
 	function updateCloseLabel(splashDialog, outerDialog) {
-		var closeButton = getDirectCloseButton(outerDialog != null ? outerDialog.container : null);
+		var closeButton = getDirectCloseButton(outerDialog != null ? outerDialog.container : null) || // CHANGE
+			(outerDialog != null ? outerDialog.trellisSplashExitButton : null); // NEW: retain the original control for Change license.
 
 		if (closeButton != null) {
 			var isComplete = splashDialog.isTrellisLicenseWizardComplete == null ||
 				splashDialog.isTrellisLicenseWizardComplete();
-			var label = isComplete ? 'Continue with a blank diagram' : 'Exit Trellis OS'; // CHANGE: Trellis OS branding.
-			closeButton.setAttribute('title', label);
-			closeButton.setAttribute('aria-label', label);
+			outerDialog.trellisSplashExitButton = closeButton; // NEW
+			if (isComplete) { closeButton.remove(); return; } // CHANGE: wizard completion also removes an already-rendered exit control.
+			if (closeButton.parentNode == null) outerDialog.container.appendChild(closeButton); // NEW: incomplete licensing retains its existing exit action.
+			closeButton.setAttribute('title', 'Exit Trellis OS'); // CHANGE
+			closeButton.setAttribute('aria-label', 'Exit Trellis OS'); // CHANGE
 		}
 	}
 

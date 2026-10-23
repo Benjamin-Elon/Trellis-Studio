@@ -16,6 +16,7 @@ const trellisDefaultPluginIds = [
     "trellisUpdatesLinks",
     "trellisDatabaseTools",
     "trellisUiCleanup",
+    "gardenReferences", // NEW: portable catalogs load before user policy and garden editors.
     "trellisUsers",
     "trellisSyncthing", // NEW
     "trellisContextMenu",
@@ -24,6 +25,7 @@ const trellisDefaultPluginIds = [
     "plantingGroup",
     "gardenTasks",
     "gardenGuide", // CHANGE: Task Guide is available on fresh and migrated installs.
+    "gardenQuickstart", // NEW
     "gardenRoadmapCore", // NEW
     "gardenRoadmaps", // NEW
     "gardenModules",
@@ -46,6 +48,7 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Trellis_Updates_Links.js",
     "plugins/garden_planner_plugins/Trellis_Database_Tools.js",
     "plugins/garden_planner_plugins/Trellis_UI_Cleanup.js",
+    "plugins/garden_planner_plugins/Garden_References.js", // NEW
     "plugins/garden_planner_plugins/Trellis_Users.js",
     "plugins/garden_planner_plugins/Trellis_Syncthing.js", // NEW
     "plugins/garden_planner_plugins/Trellis_Context_Menu.js",
@@ -54,6 +57,7 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Planting_Group.js",
     "plugins/garden_planner_plugins/Garden_Task_Manager.js",
     "plugins/garden_planner_plugins/Garden_Guide.js", // CHANGE
+    "plugins/garden_planner_plugins/Garden_Quickstart.js", // NEW
     "plugins/garden_planner_plugins/Garden_Roadmap_Core.js", // NEW
     "plugins/garden_planner_plugins/Garden_Roadmap_Manager.js", // NEW
     "plugins/garden_planner_plugins/Modules_Standalone.js",
@@ -285,7 +289,7 @@ test('desktop startup migrates saved profiles to object details once and loads i
     vm.runInNewContext(runtimeAssignment(source, 'main'), context); // NEW
     const details = 'plugins/garden_planner_plugins/Trellis_Object_Details.js'; // NEW
     await context.App.main(); // NEW
-    assert.deepEqual(hostArray(mxSettings.getPlugins()), ['./plugins/custom.js', './' + details, './plugins/garden_planner_plugins/Trellis_API_Keys.js']); // CHANGE: desktop API credentials also migrate into saved plugin lists.
+    assert.deepEqual(hostArray(mxSettings.getPlugins()), ['./plugins/custom.js', './' + details, './plugins/garden_planner_plugins/Trellis_API_Keys.js', './plugins/garden_planner_plugins/Garden_Quickstart.js']); // CHANGE: desktop API credentials also migrate into saved plugin lists.
     assert.ok(requests.includes('./' + details), 'the actual desktop loader requests the migrated plugin'); // NEW
     assert.equal(JSON.parse(localStorage.getItem('.drawio-config')).plugins.filter(plugin => plugin.endsWith('Trellis_Object_Details.js')).length, 1); // NEW
     await context.App.main(); // NEW

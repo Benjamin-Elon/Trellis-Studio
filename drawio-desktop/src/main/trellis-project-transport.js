@@ -19,7 +19,7 @@ export function createProjectTransport(context) { // NEW
         return user; // NEW
     } // NEW
     async function readState(canvas, filename = canvas.diagramPath) { // NEW
-        if (canvas.protocolVersion === 2 && filename === canvas.diagramPath && !canvas.localRemoved) await collaborationStore(canvas).refresh(); // NEW
+        if (filename === canvas.diagramPath && !canvas.localRemoved) await collaborationStore(canvas).refresh(); // CHANGE
         const xml = await fs.readFile(filename, 'utf8'); return { ...inspectDiagram(xml), baseXml: xml }; // CHANGE
     } // NEW
     async function saveRoster(canvas, state, actorId) { // NEW
@@ -27,11 +27,9 @@ export function createProjectTransport(context) { // NEW
         if (state.baseXml !== baseXml) throw new Error('The project changed while its access update was being prepared. Its files were preserved; retry after synchronization.'); // NEW
         for (const cell of state.cells) if (cell.node.hasAttribute('trellis_users_json')) cell.node.setAttribute('trellis_users_json', JSON.stringify(state.store)); // NEW
         const xml = state.document.serialize(); // NEW
-        if (canvas.protocolVersion === 2) { // NEW
-            const result = await collaborationStore(canvas).action('project-lifecycle', actorId, { kind: 'save', baseXml, xml, usersPolicyAction: true }); // NEW
-            if (!result.ok) throw new Error(result.reason || 'Project access changes are waiting for another edit.'); // NEW
-            await collaborationStore(canvas).action('project-lifecycle', actorId, { kind: 'release' }); // CHANGE: release the actual metadata holds, including object-specific targets.
-        } else await writeAtomic(canvas.diagramPath, xml); // NEW
+        const result = await collaborationStore(canvas).action('project-lifecycle', actorId, { kind: 'save', baseXml, xml, usersPolicyAction: true }); // CHANGE
+        if (!result.ok) throw new Error(result.reason || 'Project access changes are waiting for another edit.'); // CHANGE
+        await collaborationStore(canvas).action('project-lifecycle', actorId, { kind: 'release' }); // CHANGE: release the actual metadata holds, including object-specific targets.
     } // NEW
     async function capability(canvas, member, fresh = true) { // CHANGE
         const record = await readOptional(path.join(area(canvas), 'capabilities', safeId(member.deviceId) + '.json')); // NEW
@@ -105,7 +103,8 @@ export function createProjectTransport(context) { // NEW
             canvas.retirementComplete = input.operation; canvas.retirementReason = !present && input.operation === 'trashed' ? 'Files unavailable on this device. Waiting for a paired device with a retained copy.' : ''; await persist(); // NEW
             emit(); return { ok: true, reason: canvas.retirementReason }; // NEW
         }; // NEW
-        return canvas.protocolVersion === 2 ? collaborationStore(canvas).runExclusive(retire) : retire(); // NEW
+        if (['trashed', 'purged'].includes(input.operation)) await context.beforeRetire?.(canvas, input); // NEW: snapshot outside the journal mutex, before the folder moves.
+        return collaborationStore(canvas).runExclusive(retire); // CHANGE
     } // NEW
     function signedFor(record, canvas, type) { // NEW
         const p = record?.payload, member = canvas.members.find(m => m.deviceId === p?.deviceId); // NEW
@@ -193,14 +192,13 @@ export function createProjectTransport(context) { // NEW
         if (transfer && (await Promise.all(canvas.members.filter(m => m.userId !== r.userId).map(m => capability(canvas, m, false)))).some(supported => !supported)) return false; // NEW
         if (localId() === witness.deviceId) { // NEW
             const db = await api('db/status?folder=' + encodeURIComponent(canvas.folderId)); // NEW
-            if (db.needTotalItems !== 0 || (await context.conflictFiles(canvas)).length) return false; // NEW
+            if (db.needTotalItems !== 0) return false; // CHANGE: readiness depends on journal delivery, not local file conflicts.
             const filename = path.join(area(canvas), 'ready', name), previous = await readOptional(filename), snapshotHash = digest(state.document.serialize()); // NEW
             if (!previous || previous.payload.snapshotHash !== snapshotHash || now() - previous.payload.at >= 10000) await atomicJson(filename, signRecord({ type: 'departure-ready', requestId: r.id, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId: localId(), membershipVersion: canvas.membershipVersion, snapshotHash, at: now() }, keys().privateKey)); // CHANGE
         } // NEW
         if (canvas.coordinatorDeviceId !== localId()) return false; // NEW
         const ready = await readOptional(path.join(area(canvas), 'ready', name)), connections = (await api('system/connections')).connections || {}; // NEW
         if (!signedFor(ready, canvas, 'departure-ready') || ready.payload.deviceId !== witness.deviceId || ready.payload.requestId !== r.id || ready.payload.membershipVersion !== canvas.membershipVersion || !resuming && ready.payload.snapshotHash !== digest(state.document.serialize()) || Math.abs(now() - ready.payload.at) >= 30000 || witness.deviceId !== localId() && !connections[witness.deviceId]?.connected || !await capability(canvas, witness)) return false; // CHANGE
-        if ((await context.conflictFiles(canvas)).length) return false; // NEW
         const coordinatorUser = canvas.members.find(m => m.deviceId === localId())?.userId; // NEW
         if (!activeAdmin(state, coordinatorUser) && !resuming) return false; // NEW
         canvas.pendingDeparture = r.id; await persist(); // NEW

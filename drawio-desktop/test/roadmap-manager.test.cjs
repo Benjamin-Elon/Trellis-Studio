@@ -84,6 +84,23 @@ function assertTimelineProjectionAligned(h) { // NEW
 function pointerEvent(x, y) { return { button: 0, clientX: x, clientY: y, preventDefault() {} }; } // NEW
 function handlerMouseMove(h, handler, x, y, cell) { const rect = h.graph.container.getBoundingClientRect(); const event = new h.w.MouseEvent('mousemove', { bubbles: true, button: 0, clientX: x - h.graph.container.scrollLeft + rect.left, clientY: y - h.graph.container.scrollTop + rect.top }); Object.defineProperty(event, 'target', { value: h.graph.container }); const me = new h.w.mxMouseEvent(event, cell && h.graph.view.getState(cell)); me.graphX = x; me.graphY = y; handler.mouseMove(h.graph, me); } // NEW
 
+test('repeated roadmap geometry reads reuse the display projection without walking the root', t => { // NEW
+    const h = harness(t); // NEW
+    h.graph.getCellGeometry(h.module); // NEW: prime the projection after initial layout and model events.
+    const original = h.model.getChildren, root = h.model.getRoot(); let rootReads = 0; // NEW
+    h.model.getChildren = function (cell) { if (cell === root) rootReads++; return original.apply(this, arguments); }; // NEW
+    for (let index = 0; index < 100; index++) { h.graph.getCellGeometry(h.module); h.graph.getCellGeometry(h.board); } // NEW
+    assert.equal(rootReads, 0, 'cached geometry reads must not scan unrelated gardens'); // NEW
+}); // NEW
+
+test('ordinary unrelated cell edits do not schedule a whole-graph roadmap refresh', async t => { // CHANGE
+    const h = harness(t), cell = h.graph.insertVertex(h.graph.getDefaultParent(), 'ordinary', 'Ordinary', 800, 600, 40, 30); // CHANGE
+    await new Promise(resolve => h.w.requestAnimationFrame(() => h.w.requestAnimationFrame(resolve))); let refreshes = 0; const refresh = h.graph.refresh; // CHANGE
+    h.graph.refresh = function (...args) { refreshes++; return refresh.apply(this, args); }; // CHANGE
+    h.model.setValue(cell, 'Updated ordinary label'); // CHANGE
+    await new Promise(resolve => h.w.requestAnimationFrame(() => h.w.requestAnimationFrame(resolve))); assert.equal(refreshes, 0); // CHANGE
+}); // CHANGE
+
 test('Main creation is usable, idempotent, inclusive, and gives secondary projects unused names', t => {
     const h = harness(t); assert.ok(h.board, h.alerts.join('\n'));
     assert.equal(h.api.ensureMainRoadmapInRoadmapModule(h.module), h.board);

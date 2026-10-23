@@ -3117,6 +3117,10 @@
 		{
 			this.setGraphEnabled(false);
 			this.setCurrentFile(null);
+			this.currentPage = null; // NEW: release all pages and their XML when the document is closed.
+			this.pages = null; // NEW
+			this.fileNode = null; // NEW
+			if (this.tabContainer != null) this.tabContainer.textContent = ''; // NEW: remove the retired document's page tabs.
 			
 			// Keeps initial title if no file existed before
 			if (oldFile != null)

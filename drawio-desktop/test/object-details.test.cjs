@@ -165,8 +165,57 @@ test('context menus target the clicked object and generated planting visuals res
     h.graph.popupMenuHandler.factoryMethod(menu, circle, null); // NEW
     const item = items.find(item => item.label.includes('details')); assert.match(item.label, /planting group/); item.action(); // NEW
     assert.ok(h.graph.isCellSelected(other)); assert.ok(h.input(group)); assert.equal(h.input(circle), undefined); // NEW
-    const edge = h.graph.insertEdge(null, 'edge', '', group, other); assert.equal(h.core.detailsOwner(edge, h.graph.model), null); // NEW
+    const edge = h.graph.insertEdge(null, 'edge', '', group, other); assert.equal(h.core.detailsOwner(edge, h.graph.model), edge); // CHANGE
 }); // NEW
+
+test('specialized vertices and pipe edges share one details command and retain independent metadata through history', async t => { // CHANGE
+    const h = harness(t), garden = h.vertex('garden', null, { garden_module: '1' }), bed = h.vertex('bed', null, { garden_bed: '1' }), task = h.vertex('task', null, { kanban_card: '1' }); // CHANGE
+    h.graph.addCell(bed, garden); const board = h.vertex('board', null, { board_key: 'KANBAN_BOARD' }), group = h.vertex('group', null, { tiler_group: '1' }), module = h.vertex('module'); // CHANGE
+    h.graph.model.setStyle(module, 'module=1;'); h.graph.model.setStyle(group, 'group;'); // CHANGE
+    const value = h.w.mxUtils.createXmlDocument().createElement('object'); value.setAttribute('irrigation_pipe_edge', '1'); value.setAttribute('irrigation_generated', '1'); value.setAttribute('irrigation_path_id', 'path-1'); // CHANGE
+    const pipe = h.graph.insertEdge(null, 'pipe', value, bed, task), connector = h.graph.insertEdge(null, 'connector', '', task, board); // CHANGE
+    h.w.TrellisContextMenu.install(h.ui); h.w.TrellisContextMenu.install(h.ui); // CHANGE
+    for (const cell of [garden, bed, task, board, group, module, pipe, connector]) { // CHANGE
+        h.graph.clearSelection(); const items = [], menu = { addSeparator() {}, addItem(label, icon, action) { items.push({ label, action }); } }; // CHANGE
+        h.graph.popupMenuHandler.factoryMethod(menu, cell, null); const commands = items.filter(item => /details…/.test(item.label)); assert.equal(commands.length, 1, cell.id); commands[0].action(); // CHANGE
+        assert.ok(h.input(cell), cell.id); h.type(cell, '<p>Info for ' + cell.id + '</p>'); assert.equal(h.controller.flush(), true); // CHANGE
+        assert.equal(cell.getAttribute('trellis_details_html'), '<p>Info for ' + cell.id + '</p>'); // CHANGE
+    } // CHANGE
+    assert.equal(pipe.getAttribute('irrigation_path_id'), 'path-1'); h.undo.undo(); await h.tick(); assert.ok(!connector.getAttribute('trellis_details_html')); // CHANGE
+    h.undo.redo(); await h.tick(); assert.equal(connector.getAttribute('trellis_details_html'), '<p>Info for connector</p>'); // CHANGE
+    h.graph.moveCells([task], 50, 30); assert.equal(task.getAttribute('trellis_details_html'), '<p>Info for task</p>'); // CHANGE
+    const replacement = h.graph.insertEdge(null, 'replacement', '', bed, task); assert.ok(!replacement.getAttribute('trellis_details_html')); // CHANGE
+    for (const cell of [h.graph.model.getRoot(), h.graph.getDefaultParent()]) { // CHANGE
+        assert.equal(h.core.detailsOwner(cell, h.graph.model), null); const labels = []; h.graph.popupMenuHandler.factoryMethod({ addSeparator() {}, addItem(label) { labels.push(label); } }, cell, null); assert.equal(labels.some(label => /details…/.test(label)), false); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('edge details follow route distance and view transforms, retain unanchored drafts and export at their own anchor', async t => { // CHANGE
+    const h = harness(t), a = h.vertex('a'), b = h.vertex('b'), edge = h.graph.insertEdge(null, 'edge', '', a, b); // CHANGE
+    const route = [new h.w.mxPoint(100, 100), new h.w.mxPoint(300, 100), new h.w.mxPoint(300, 200)]; // CHANGE
+    h.controller.open(edge); h.type(edge, '<p>Pipe annotation</p>'); h.controller.flush(); const state = h.graph.view.getState(edge); state.absolutePoints = route; h.controller.refresh(); // CHANGE
+    const field = h.input(edge), node = field.closest('section'), badge = h.w.document.querySelector('[data-cell-id="edge"]'); // CHANGE
+    assert.equal(badge.style.left, '240px'); assert.equal(badge.style.top, '76px'); assert.equal(node.style.left, '90px'); assert.equal(node.style.top, '108px'); // CHANGE
+    h.graph.panDx = 30; h.graph.panDy = 20; h.controller.refresh(); assert.equal(badge.style.left, '270px'); assert.equal(badge.style.top, '96px'); // CHANGE
+    h.graph.useCssTransforms = true; h.graph.view.scale = 2; h.graph.view.translate = new h.w.mxPoint(10, 15); h.controller.refresh(); // CHANGE
+    assert.equal(badge.style.left, '540px'); assert.equal(badge.style.top, '226px'); assert.equal(node.style.left, '390px'); assert.equal(node.style.top, '258px'); // CHANGE
+    state.absolutePoints = [new h.w.mxPoint(50, 60), new h.w.mxPoint(50, 60)]; h.controller.refresh(); assert.equal(badge.style.left, '140px'); // CHANGE
+    const projection = h.controller.exportProjection()['page-a'].filter(item => item.ownerId === edge.id); // CHANGE
+    assert.equal(projection.length, 2); assert.equal(projection.find(item => item.badge).geometry.x, 45.5); // CHANGE
+    h.type(edge, '<p>Retained while invisible</p>'); state.absolutePoints = [null, { x: NaN, y: 1 }]; h.controller.refresh(); // CHANGE
+    assert.equal(node.hidden, true); assert.equal(h.w.document.querySelector('[data-cell-id="edge"]'), null); assert.match(field.innerHTML, /Retained while invisible/); // CHANGE
+    state.absolutePoints = route; h.controller.refresh(); assert.equal(node.hidden, false); assert.equal(h.input(edge), field); assert.equal(h.controller.flush(), true); // CHANGE
+    assert.match(edge.getAttribute('trellis_details_html'), /Retained while invisible/); // CHANGE
+    const xml = h.w.mxUtils.parseXml(h.ui.getFileData()), restored = new h.w.mxGraphModel(); new h.w.mxCodec(xml).decode(xml.documentElement, restored); // CHANGE
+    assert.equal(restored.getCell(edge.id).getAttribute('trellis_details_html'), edge.getAttribute('trellis_details_html')); // CHANGE
+}); // CHANGE
+
+test('route anchors support loops, dangling routes and zero-length edges without creating invalid positions', t => { // CHANGE
+    const h = harness(t), anchor = points => { const bounds = h.core.edgeBounds(points); return bounds && [bounds.x, bounds.y, bounds.width, bounds.height]; }; // CHANGE
+    assert.deepEqual(anchor([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }, { x: 0, y: 0 }]), [100, 100, 0, 0]); // CHANGE
+    assert.deepEqual(anchor([null, { x: 12, y: 34 }]), [12, 34, 0, 0]); assert.deepEqual(anchor([{ x: 12, y: 34 }, { x: 12, y: 34 }]), [12, 34, 0, 0]); // CHANGE
+    for (const route of [null, [], [null], [{ x: Infinity, y: 10 }]]) assert.equal(anchor(route), null); // CHANGE
+}); // CHANGE
 
 test('text-only HTML sanitization rejects executable markup and media while preserving rich formatting', t => { // NEW
     const { core } = harness(t); // NEW

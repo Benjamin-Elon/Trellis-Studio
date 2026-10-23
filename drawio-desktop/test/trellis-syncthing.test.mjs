@@ -1,5 +1,7 @@
 // NEW: Behavioral coverage for the sharing service with isolated local profiles and a fake REST peer.
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite'; // NEW
+import { createHistoryService } from '../src/main/trellis-history-service.js'; // NEW
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -10,7 +12,7 @@ import { EventEmitter } from 'node:events';
 import { pathToFileURL } from 'node:url'; // NEW
 import { assertSharingFileAccess } from '../src/main/trellis-sharing-files.js'; // NEW
 import { createSyncthingService } from '../src/main/trellis-syncthing-service.js';
-import { inspectDiagram, preserveAccess, hasCanvasAccess, encodeBlock, decodeBlock, digest, canonical, signRecord, inviteFingerprint } from '../src/main/trellis-share-protocol.js';
+import { inspectDiagram, hasCanvasAccess, encodeBlock, decodeBlock, digest, canonical, signRecord, inviteFingerprint } from '../src/main/trellis-share-protocol.js'; // CHANGE
 
 const device = letter => Array(8).fill(letter.repeat(7)).join('-');
 const fixtureInviteExpiry = Date.now() + 86400000; // NEW: pages in a fixture share the same user-store timestamp even under CPU load.
@@ -19,7 +21,7 @@ function xml(options = {}) {
     const store = { usersEnabled: true, users: [{ id: 'admin', name: 'Admin', admin: true }, { id: 'alice', name: 'Alice', email: 'alice@example.org', admin: false }, { id: 'bob', name: 'Bob', email: 'bob@example.org', admin: true }], pendingUsers: [{ id: 'invite-user', email: 'invite@example.org' }], invites: [{ id: 'invite-1', email: 'invite@example.org', pendingUserId: 'invite-user', scopeCellIds: ['board'], createdBy: 'admin', status: 'pending', expiresAt: fixtureInviteExpiry }], ...options.store };
     return '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="diagram-1" trellis_users_json="' + escape(JSON.stringify(store)) + '"><mxCell parent="0"/></object><object id="board" label="' + (options.label || 'Board') + '" trellis_owner_user_id="' + (options.owner || 'admin') + '" trellis_access_user_ids_json="' + escape(JSON.stringify(options.grants || ['alice', 'invite-user', 'bob'])) + '"' + (options.open ? ' trellis_access_open="1"' : '') + '><mxCell parent="1" vertex="1" style="' + (options.style || '') + '"/></object></root></mxGraphModel>';
 }
-async function fixture(t, letter = 'A') {
+async function fixture(t, letter = 'A', options = {}) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-sharing-test-'));
     const binaryRoot = path.join(root, 'binaries');
     const binaryDir = path.join(binaryRoot, 'win32-x64');
@@ -35,10 +37,12 @@ async function fixture(t, letter = 'A') {
     let config = { folders: [{ id: 'default' }], devices: [], defaults: { folder: {}, device: {} }, options: {} };
     let process;
     let spawnCount = 0;
+    let configurationFail = false; // CHANGE
     let statusGate = null; // NEW: simulate a REST response crossing explicit shutdown.
     let shutdownGate = null, shutdownExits = true, killExits = true, shutdownError = false; const processes = []; // NEW
-    const connections = {};
-    const service = createSyncthingService({ userDataPath, documentsPath: path.join(root, 'documents'), binaryRoot, platform: 'win32', arch: 'x64', setStartup: async enabled => calls.push({ startup: enabled }), spawn(executable, args, opts) {
+    const connections = {}; let connectionsFail = false; // CHANGE
+    const histories = createHistoryService({ Database: DatabaseSync, dbPath: ':memory:' }); // NEW
+    const service = createSyncthingService({ ...options, historyService: () => histories, userDataPath, documentsPath: path.join(root, 'documents'), binaryRoot, platform: 'win32', arch: 'x64', setStartup: async enabled => calls.push({ startup: enabled }), spawn(executable, args, opts) {
         spawnCount++;
         calls.push({ executable, args, opts });
         process = new EventEmitter();
@@ -49,14 +53,14 @@ async function fixture(t, letter = 'A') {
         calls.push({ endpoint, method: opts.method, data: opts.body && JSON.parse(opts.body) });
         let result = {};
         if (endpoint === 'system/status') { if (statusGate) await statusGate; result = { myID: device(letter) }; } // CHANGE
-        else if (endpoint === 'config') { if (opts.method === 'PUT') config = JSON.parse(opts.body); else result = structuredClone(config); }
-        else if (endpoint === 'system/connections') result = { connections };
+        else if (endpoint === 'config') { if (opts.method === 'PUT' && configurationFail) throw new Error('Configuration cleanup failed'); if (opts.method === 'PUT') config = JSON.parse(opts.body); else result = structuredClone(config); }
+        else if (endpoint === 'system/connections') { if (connectionsFail) throw new Error('Connections unavailable'); result = { connections }; } // CHANGE
         else if (endpoint === 'db/status') result = { state: 'idle', needTotalItems: 0 };
         else if (endpoint === 'system/shutdown') { const target = process; if (shutdownGate) await shutdownGate; if (shutdownExits) target.emit('exit', 0); if (shutdownError) throw new Error('Shutdown response disconnected'); } // CHANGE
         return { ok: true, text: async () => JSON.stringify(result) };
     } });
-    t.after(async () => { await service.stop(); await fs.rm(root, { recursive: true, force: true }); });
-    return { service, root, calls, connections, config: () => config, spawnCount: () => spawnCount, userDataPath, crash: () => process.emit('exit', 1), setStatusGate: gate => { statusGate = gate; }, processes, setShutdown: (gate, exits = true, error = false) => { shutdownGate = gate; shutdownExits = exits; shutdownError = error; }, setKillExits: value => { killExits = value; } }; // CHANGE
+    t.after(async () => { await service.stop(); histories.close(); await fs.rm(root, { recursive: true, force: true }); });
+    return { service, histories, root, calls, connections, setConfigurationFail: value => { configurationFail = value; }, setConnectionsFail: value => { connectionsFail = value; }, config: () => config, spawnCount: () => spawnCount, userDataPath, crash: () => process.emit('exit', 1), setStatusGate: gate => { statusGate = gate; }, processes, setShutdown: (gate, exits = true, error = false) => { shutdownGate = gate; shutdownExits = exits; shutdownError = error; }, setKillExits: value => { killExits = value; } }; // CHANGE
 }
 async function setup(f, content = xml()) {
     const source = path.join(f.root, 'original.drawio');
@@ -66,24 +70,175 @@ async function setup(f, content = xml()) {
     return { source, result };
 }
 
-test('admin migration isolates v2 records, keeps a backup, and permits local saving after transport stops', async t => { // NEW
-    const f = await fixture(t), { result: legacy } = await setup(f); // NEW
-    const upgraded = await f.service.upgradeCollaboration(1, { shareId: legacy.shareId }); // NEW
-    assert.equal(upgraded.protocolVersion, 2); assert.notEqual(upgraded.shareId, legacy.shareId); assert.match(upgraded.folderId, /^trellis-v2-/); // NEW
-    assert.equal(await fs.readFile(legacy.diagramPath, 'utf8'), upgraded.xml); // NEW
-    const ignores = f.calls.filter(c => c.endpoint === 'db/ignores').at(-1).data.ignore; assert.equal(ignores.includes('!/' + path.basename(upgraded.diagramPath)), false); // NEW
-    await f.service.stop(); // NEW
-    const local = await f.service.collaborationAction(1, { shareId: upgraded.shareId, kind: 'save', baseXml: upgraded.xml, xml: upgraded.xml.replace('label="Board"', 'label="Local edit"') }); // NEW
-    assert.equal(local.ok, true); assert.match(await fs.readFile(upgraded.diagramPath, 'utf8'), /Local edit/); // NEW
-    const backup = local.collaboration.recoveries.find(copy => copy.reason.includes('Verified full backup')); assert.ok(backup); assert.equal(await fs.readFile(backup.recoveryPath, 'utf8'), upgraded.xml); // NEW: the full migration backup is accessible through the collaboration overview.
-    const known = await f.service.shareInfo({ diagramPath: upgraded.diagramPath }); assert.equal(known.managed, true); // NEW
+/** Publish fixture mutations through the same journal as the editor. */ // CHANGE
+async function save(f, canvas, content) { // CHANGE
+    const baseXml = await fs.readFile(canvas.diagramPath, 'utf8'); // CHANGE
+    const result = await f.service.collaborationAction(1, { shareId: canvas.shareId, kind: 'save', baseXml, xml: content }); // CHANGE
+    assert.equal(result.ok, true, result.reason); // CHANGE
+    await f.service.collaborationAction(1, { shareId: canvas.shareId, kind: 'release' }); // CHANGE
+    return result; // CHANGE
+} // CHANGE
+
+/** Seed the saved format produced before object collaboration, without running an old client. */ // CHANGE
+async function oldCanvas(f, options = {}) { // CHANGE
+    const shareId = options.id || 'old-garden', folderPath = path.join(f.root, 'documents', 'Trellis', 'Shared Canvases', shareId); // CHANGE
+    const canvas = { shareId, diagramId: 'diagram-1', folderId: 'trellis-' + shareId, folderPath, diagramPath: path.join(folderPath, 'Old.drawio'), filename: 'Old.drawio', label: 'Old garden', ...options.fields }; // CHANGE
+    if (options.version !== undefined) canvas.protocolVersion = options.version; // CHANGE
+    await fs.mkdir(folderPath, { recursive: true }); // CHANGE
+    if (!options.missing) await fs.writeFile(canvas.diagramPath, xml()); // CHANGE
+    const filename = path.join(f.userDataPath, 'trellis-sharing', 'canvases.json'); // CHANGE
+    const saved = await fs.readFile(filename, 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return []; throw error; }); // CHANGE
+    saved.push(canvas); await fs.writeFile(filename, JSON.stringify(saved)); // CHANGE
+    return canvas; // CHANGE
+} // CHANGE
+
+for (const version of [undefined, 1]) test('old protocol ' + version + ' opens locally without starting sharing and survives new v2 creation', async t => { // CHANGE
+    const f = await fixture(t), old = await oldCanvas(f, { version }); // CHANGE
+    f.config().folders.push({ id: old.folderId, path: old.folderPath, paused: false }); // CHANGE
+    await f.service.initialize(); const info = await f.service.shareInfo({ diagramPath: old.diagramPath }); // CHANGE
+    assert.equal(info.managed, false); assert.equal(info.localOnly, true); assert.equal(info.state, 'localOnly'); assert.equal(info.available, true); // CHANGE
+    assert.equal(f.service.hasCanvases(), false); assert.equal(f.service.hasBackgroundWork(), false); assert.equal(f.spawnCount(), 0); // CHANGE
+    f.service.setContext(1, { diagramPath: old.diagramPath, diagramId: old.diagramId, userId: 'admin' }); // CHANGE
+    await assert.rejects(f.service.collaborationAction(1, { shareId: old.shareId, kind: 'get' }), /Sharing is disabled/); // CHANGE
+    await assert.rejects(f.service.setupCanvas(1, { diagramPath: old.diagramPath, diagramId: old.diagramId, xml: xml() }), /Sharing is disabled/); // CHANGE
+    await assert.rejects(f.service.registerLibraryDownload({ shareId: old.shareId, protocolVersion: 2 }), /Sharing is disabled/); // CHANGE
+    await assert.rejects(f.service.requestMembership(1, { shareId: old.shareId, operation: 'approve' }), /Sharing is disabled/); // CHANGE
+    await assert.rejects(f.service.setPaused({ shareId: old.shareId, paused: false }), /Sharing is disabled/); // CHANGE
+    assert.equal(f.spawnCount(), 0); // CHANGE
+    const { result } = await setup(f); assert.equal(result.protocolVersion, 2); // CHANGE
+    assert.equal(f.config().folders.some(folder => folder.id === old.folderId), false); // CHANGE
+    await f.service.setPaused({ paused: true }); await f.service.setPaused({ paused: false }); // CHANGE
+    assert.equal(f.config().folders.some(folder => folder.id === old.folderId), false); // CHANGE
+    const saved = JSON.parse(await fs.readFile(path.join(f.userDataPath, 'trellis-sharing', 'canvases.json'), 'utf8')); // CHANGE
+    assert.deepEqual(saved.find(canvas => canvas.shareId === old.shareId), old); assert.equal(saved.length, 2); // CHANGE
+    await f.service.stop(); await f.service.start(); assert.equal(f.config().folders.some(folder => folder.id === old.folderId), false); // CHANGE
+    assert.equal(await fs.readFile(old.diagramPath, 'utf8'), xml()); // CHANGE
+}); // CHANGE
+
+test('mixed invalid registrations are reported and retained without blocking a valid project', async t => { // CHANGE
+    const f = await fixture(t), old = await oldCanvas(f), invalid = [null, { ...old, shareId: 'future', protocolVersion: 3 }, { ...old, diagramPath: path.join(f.root, 'outside.drawio') }]; // CHANGE
+    const filename = path.join(f.userDataPath, 'trellis-sharing', 'canvases.json'); await fs.writeFile(filename, JSON.stringify([old, ...invalid])); // CHANGE
+    const { result } = await setup(f); assert.equal(result.protocolVersion, 2); assert.equal(f.service.getRegistrationIssues().length, 3); // CHANGE
+    const saved = JSON.parse(await fs.readFile(filename, 'utf8')); assert.deepEqual(saved.slice(0, 4), [old, ...invalid]); // CHANGE
+    assert.equal((await f.service.listCanvases()).filter(canvas => canvas.localOnly).length, 1); // CHANGE
+}); // CHANGE
+
+test('structurally corrupt registry files remain errors and are never overwritten', async t => { // CHANGE
+    for (const bytes of ['{broken', '{}']) { // CHANGE
+        const f = await fixture(t), filename = path.join(f.userDataPath, 'trellis-sharing', 'canvases.json'); // CHANGE
+        await fs.writeFile(filename, bytes); await assert.rejects(f.service.start()); // CHANGE
+        assert.equal(f.spawnCount(), 0); assert.equal(await fs.readFile(filename, 'utf8'), bytes); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('local-only assets are scoped to the watched document and directory aliases cannot escape its folder', async t => { // CHANGE
+    const f = await fixture(t), old = await oldCanvas(f), assets = path.join(old.folderPath, 'assets'), relativePath = 'assets/0123456789abcdef.png'; // CHANGE
+    await fs.mkdir(assets); await fs.writeFile(path.join(old.folderPath, relativePath), 'image bytes'); // CHANGE
+    await f.service.initialize(); f.service.setContext(1, { diagramPath: old.diagramPath, diagramId: old.diagramId, userId: 'admin' }); // CHANGE
+    const asset = await f.service.assetPath(1, { shareId: old.shareId, relativePath }); assert.equal(await fs.readFile(asset, 'utf8'), 'image bytes'); // CHANGE
+    assert.equal(await f.service.isManagedAssetRequest(1, pathToFileURL(asset).href), true); assert.equal(await f.service.isManagedAssetRequest(999, pathToFileURL(asset).href), false); // CHANGE
+    await assert.rejects(f.service.assetPath(1, { shareId: old.shareId, relativePath: '../api-key' }), /Invalid/); // CHANGE
+    const outside = path.join(f.root, 'outside'); await fs.mkdir(outside); await fs.writeFile(path.join(outside, '0123456789abcdef.png'), 'private bytes'); // CHANGE
+    await fs.rename(assets, assets + '-retained'); await fs.symlink(outside, assets, 'junction'); // CHANGE
+    await assert.rejects(f.service.assetPath(1, { shareId: old.shareId, relativePath }), /outside/); assert.equal(f.spawnCount(), 0); // CHANGE
+}); // CHANGE
+
+test('missing local-only files are unavailable and their registrations remain intact', async t => { // CHANGE
+    const f = await fixture(t), old = await oldCanvas(f, { missing: true, fields: { localRemoved: true } }); // CHANGE
+    const [listed] = await f.service.listCanvases(); assert.equal(listed.localOnly, true); assert.equal(listed.available, false); assert.equal(listed.path, null); // CHANGE
+    const info = await f.service.shareInfo({ diagramPath: old.diagramPath }); assert.equal(info.managed, false); assert.equal(info.assetBaseUrl, undefined); assert.equal(f.spawnCount(), 0); // CHANGE
+}); // CHANGE
+
+test('failed configuration cleanup stops the paused daemon while local diagrams remain openable', async t => { // CHANGE
+    const f = await fixture(t), old = await oldCanvas(f); f.config().folders.push({ id: old.folderId, path: old.folderPath, paused: false }); // CHANGE
+    f.setConfigurationFail(true); await assert.rejects(f.service.start(), /Configuration cleanup failed/); // CHANGE
+    assert.ok(f.calls.find(call => call.args?.[0] === 'serve').args.includes('--paused')); assert.ok(f.calls.some(call => call.endpoint === 'system/shutdown')); assert.equal(f.service.memberConnections().available, false); // CHANGE
+    const local = await f.service.shareInfo({ diagramPath: old.diagramPath }); assert.equal(local.localOnly, true); assert.equal(local.available, true); // CHANGE
+    assert.equal(await fs.readFile(old.diagramPath, 'utf8'), xml()); // CHANGE
+}); // CHANGE
+
+test('a retained file restored on disk is local-only even when its old registration was marked removed', async t => { // CHANGE
+    const f = await fixture(t); await oldCanvas(f, { fields: { localRemoved: true } }); // CHANGE
+    const [local] = await f.service.listCanvases(); assert.equal(local.available, true); assert.equal(local.localOnly, true); assert.equal(f.service.hasBackgroundWork(), false); // CHANGE
+}); // CHANGE
+
+test('a new service instance reopens a valid v2 registration and replays its saved journal offline', async t => { // CHANGE
+    const f = await fixture(t), { result } = await setup(f); // CHANGE
+    const saved = await save(f, result, result.xml.replace('label="Board"', 'label="Saved before restart"')); // CHANGE
+    await f.service.stop(); // CHANGE
+    const reopened = createSyncthingService({ userDataPath: f.userDataPath, documentsPath: path.join(f.root, 'documents'), binaryRoot: path.join(f.root, 'binaries'), platform: 'win32', arch: 'x64' }); // CHANGE
+    t.after(() => reopened.stop()); // CHANGE
+    const [canvas] = await reopened.listCanvases(); assert.equal(canvas.protocolVersion, 2); assert.equal(canvas.available, true); // CHANGE
+    reopened.setContext(1, { diagramPath: canvas.path, diagramId: 'diagram-1', userId: 'admin' }); // CHANGE
+    const restored = await reopened.collaborationAction(1, { shareId: canvas.shareId, kind: 'get' }); // CHANGE
+    assert.equal(restored.xml, saved.xml); assert.match(restored.xml, /Saved before restart/); // CHANGE
+}); // CHANGE
+
+test('new setup rejects explicit old versions and descriptors require v2 before launch', async t => { // CHANGE
+    const f = await fixture(t), source = path.join(f.root, 'original.drawio'), content = xml(); // CHANGE
+    await fs.writeFile(source, content); // CHANGE
+    for (const version of [1, 3]) await assert.rejects(f.service.setupCanvas(1, { diagramPath: source, diagramId: 'diagram-1', xml: content, protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
+    for (const version of [undefined, 1, 3]) await assert.rejects(f.service.registerLibraryDownload({ shareId: 'unsupported', protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
+    assert.equal(f.spawnCount(), 0); assert.equal(f.service.hasCanvases(), false); assert.equal(await fs.readFile(source, 'utf8'), content); // CHANGE
+}); // CHANGE
+
+test('handoffs reject unsupported schemas or protocols without starting the recipient or approving devices', async t => { // CHANGE
+    const a = await fixture(t, 'A'), b = await fixture(t, 'B'), { result } = await setup(a); // CHANGE
+    const invitation = decodeBlock('INVITE', (await a.service.createInviteBlock(1, { shareId: result.shareId, inviteId: 'invite-1', code: 'ABCDE' })).block); // CHANGE
+    for (const fields of [{ schema: 1 }, { schema: 3 }, { protocolVersion: undefined }, { protocolVersion: 1 }, { protocolVersion: 3 }]) { // CHANGE
+        const block = encodeBlock('INVITE', { ...invitation, ...fields }); // CHANGE
+        await assert.rejects(b.service.joinCanvas({ block }), /Unsupported.*protocol/); // CHANGE
+    } // CHANGE
+    assert.equal(b.spawnCount(), 0); assert.equal(b.service.hasCanvases(), false); // CHANGE
+    const joined = await b.service.joinCanvas({ block: encodeBlock('INVITE', invitation) }), reply = decodeBlock('REPLY', joined.reply); // CHANGE
+    for (const fields of [{ schema: 1 }, { schema: 3 }, { protocolVersion: undefined }, { protocolVersion: 1 }, { protocolVersion: 3 }]) { // CHANGE
+        const request = await a.service.requestMembership(1, { shareId: result.shareId, operation: 'approve', reply: encodeBlock('REPLY', { ...reply, ...fields }) }); // CHANGE
+        const item = (await a.service.listRequests(1, { shareId: result.shareId })).requests.find(item => item.id === request.requestId); // CHANGE
+        assert.equal(item.status, 'rejected'); assert.match(item.reason, /Unsupported.*protocol/); // CHANGE
+    } // CHANGE
+    assert.equal((await a.service.listRequests(1, { shareId: result.shareId })).members.length, 1); // CHANGE
+}); // CHANGE
+
+test('v2 sharing synchronizes only assets and protocol files, and local conflict copies do not block processing', async t => { // CHANGE
+    const f = await fixture(t), { result } = await setup(f); // CHANGE
+    const ignore = f.calls.filter(call => call.endpoint === 'db/ignores').at(-1).data.ignore; // CHANGE
+    assert.deepEqual(ignore, ['/.trellis/**/*.tmp', '!/assets', '!/assets/**', '!/.trellis', '!/.trellis/**', '**']); // CHANGE
+    assert.equal(f.config().folders.find(folder => folder.id === result.folderId).fsWatcherDelayS, 0.5); // CHANGE
+    const filename = path.join(result.folderPath, 'original.sync-conflict-retained.drawio'); await fs.writeFile(filename, 'retained conflict'); // CHANGE
+    await f.service.poll(); assert.equal(f.service.listStatus()[0].state, 'upToDate'); assert.equal(await fs.readFile(filename, 'utf8'), 'retained conflict'); // CHANGE
+    const genesis = JSON.parse(await fs.readFile(path.join(result.folderPath, '.trellis', 'collaboration-v2', 'genesis.json'), 'utf8')); assert.equal(genesis.payload.schema, 2); // CHANGE
+    const membership = JSON.parse(await fs.readFile(path.join(result.folderPath, '.trellis', 'membership', '000000000001.json'), 'utf8')); assert.equal(membership.payload.schema, 1); // CHANGE
+}); // CHANGE
+
+test('member connection observations expire and are invalidated by polling failure and shutdown', async t => { // NEW
+    let clock = Date.now(); const f = await fixture(t, 'A', { now: () => clock }); await setup(f); f.connections[device('B')] = { connected: true }; // NEW
+    await f.service.poll(); assert.equal(f.service.memberConnections().available, true); assert.equal(f.service.memberConnections().connections[device('B')].connected, true); // NEW
+    clock += 15000; assert.equal(f.service.memberConnections().available, false); await f.service.poll(); assert.equal(f.service.memberConnections().available, true); // NEW
+    f.setConnectionsFail(true); await assert.rejects(f.service.poll(), /Connections unavailable/); assert.equal(f.service.memberConnections().available, false); // NEW
+    f.setConnectionsFail(false); await f.service.poll(); assert.equal(f.service.memberConnections().available, true); await f.service.stop(); assert.equal(f.service.memberConnections().available, false); // NEW
 }); // NEW
-test('migration rejects unresolved native conflicts and unprivileged callers', async t => { // NEW
-    const f = await fixture(t), { result } = await setup(f); // NEW
-    f.service.setContext(2, { diagramPath: result.diagramPath, diagramId: 'diagram-1', userId: 'alice' }); // NEW
-    await assert.rejects(f.service.upgradeCollaboration(2, { shareId: result.shareId }), /admin/); // NEW
-    await fs.writeFile(path.join(result.folderPath, 'original.sync-conflict-20261011-120000-DEVICE.drawio'), xml()); // NEW
-    await assert.rejects(f.service.upgradeCollaboration(1, { shareId: result.shareId }), /conflict/); // NEW
+
+test('presence sampling continues while garden processing is blocked', async t => { // NEW
+    t.mock.timers.enable({ apis: ['setInterval'] }); let clock = Date.now(); const f = await fixture(t, 'A', { now: () => clock }); const { result } = await setup(f); // NEW
+    const read = fs.readFile; let release, entered; const gate = new Promise(resolve => { release = resolve; }), waiting = new Promise(resolve => { entered = resolve; }); let blocked = false; // NEW
+    t.mock.method(fs, 'readFile', async (...args) => { if (!blocked && String(args[0]) === result.diagramPath) { blocked = true; entered(); await gate; } return read(...args); }); // NEW
+    const processing = f.service.poll(); await waiting; // NEW
+    try { // NEW
+        clock += 5000; f.connections[device('B')] = { connected: true }; t.mock.timers.tick(5000); // NEW
+        for (let i = 0; i < 10 && !f.service.memberConnections().connections[device('B')]?.connected; i++) await new Promise(resolve => setImmediate(resolve)); // NEW
+        assert.equal(f.service.memberConnections().connections[device('B')].connected, true); // NEW
+    } finally { release(); await processing; t.mock.restoreAll(); } // NEW
+}); // NEW
+
+test('v2 setup isolates records, keeps a backup, and permits local saving after transport stops', async t => { // CHANGE
+    const f = await fixture(t), { result: shared } = await setup(f); // CHANGE
+    assert.equal(shared.protocolVersion, 2); assert.match(shared.folderId, /^trellis-v2-/); // CHANGE
+    const ignores = f.calls.filter(c => c.endpoint === 'db/ignores').at(-1).data.ignore; assert.equal(ignores.includes('!/' + path.basename(shared.diagramPath)), false); // NEW
+    await f.service.stop(); // NEW
+    const local = await f.service.collaborationAction(1, { shareId: shared.shareId, kind: 'save', baseXml: shared.xml, xml: shared.xml.replace('label="Board"', 'label="Local edit"') }); // NEW
+    assert.equal(local.ok, true); assert.match(await fs.readFile(shared.diagramPath, 'utf8'), /Local edit/); // NEW
+    const backup = local.collaboration.recoveries.find(copy => copy.reason.includes('Verified full backup')); assert.ok(backup); assert.equal(await fs.readFile(backup.recoveryPath, 'utf8'), shared.xml); // CHANGE: the full setup backup is accessible through the collaboration overview.
+    const known = await f.service.shareInfo({ diagramPath: shared.diagramPath }); assert.equal(known.managed, true); // NEW
 }); // NEW
 test('approval completion requires the signed acknowledgement for that exact request', async t => { // NEW
     const a = await fixture(t, 'A'), b = await fixture(t, 'B'), { result } = await setup(a); // NEW
@@ -96,17 +251,13 @@ test('approval completion requires the signed acknowledgement for that exact req
     const item = (await a.service.listRequests(1, { shareId: result.shareId })).requests.find(request => request.id === repeated.requestId); // NEW
     assert.equal(item.status, 'pending'); // NEW
 }); // NEW
-test('diagram parser supports compressed pages and preserves protected access on resolution', () => {
+test('diagram parser supports compressed pages and rejects unsafe or duplicate page identities', () => { // CHANGE
     const current = xml({ owner: 'admin' });
     const compressed = zlib.deflateRawSync(Buffer.from(encodeURIComponent(current))).toString('base64');
     const state = inspectDiagram('<mxfile><diagram id="page">' + compressed + '</diagram></mxfile>');
     assert.equal(state.store.users[0].id, 'admin');
     assert.equal(hasCanvasAccess(state, 'alice'), true);
-    const chosen = xml({ owner: 'alice', label: 'Changed' });
-    const resolved = inspectDiagram(preserveAccess(chosen, current));
-    const board = resolved.cells.find(cell => cell.id === 'board');
-    assert.equal(board.node.getAttribute('trellis_owner_user_id'), 'admin');
-    assert.equal(board.node.getAttribute('label'), 'Changed');
+    assert.throws(() => inspectDiagram('<mxfile><diagram id="a">' + xml() + '</diagram><diagram id="a">' + xml() + '</diagram></mxfile>'), /unique page/); // CHANGE
     assert.throws(() => inspectDiagram('<!DOCTYPE foo [<!ENTITY x SYSTEM "file:///secret">]><mxGraphModel/>'), /Invalid/);
 });
 test('startup is single-flight, private, pinned, and removes unrelated defaults', async t => {
@@ -123,6 +274,12 @@ test('startup is single-flight, private, pinned, and removes unrelated defaults'
     assert.equal(JSON.stringify(publicInfo).includes('privateKey'), false);
     assert.equal(JSON.stringify(publicInfo).includes('apiKey'), false);
 });
+
+test('unmanaged share lookup does not launch Syncthing or register a folder', async t => { // CHANGE
+    const f = await fixture(t), result = await f.service.shareInfo({ diagramPath: path.join(f.root, 'local.drawio') }); // CHANGE
+    assert.equal(result.ok, true); assert.equal(result.managed, false); assert.equal(f.spawnCount(), 0); // CHANGE
+    assert.equal(f.calls.some(call => call.endpoint || call.startup), false); // CHANGE
+}); // CHANGE
 test('managed setup moves a verified original and copies only explicitly referenced assets', async t => {
     const f = await fixture(t);
     await fs.writeFile(path.join(f.root, 'photo.png'), 'image bytes');
@@ -223,18 +380,20 @@ test('disabled collaborators are removed but open access preserves effective mem
     state.store.invites[0].status = 'accepted';
     state.store.users.push({ id: 'invite-user', name: 'Invited', disabled: false });
     const content = xml({ store: state.store, grants: [], open: true });
-    await fs.writeFile(result.diagramPath, content);
+    await save(a, result, content); // CHANGE
     await a.service.poll();
     assert.equal((await a.service.listRequests(1, { shareId: result.shareId })).members.length, 2);
     state.store.users.find(user => user.id === 'invite-user').disabled = true;
-    await fs.writeFile(result.diagramPath, xml({ store: state.store, grants: [], open: true }));
+    await save(a, result, xml({ store: state.store, grants: [], open: true })); // CHANGE
     await a.service.poll();
     assert.equal((await a.service.listRequests(1, { shareId: result.shareId })).members.length, 1);
 });
 test('history export requires the saved file hash and validates immutable imports', async t => {
     const f = await fixture(t);
     const { result } = await setup(f);
-    const entry = { revision: { id: 'revision-1', diagramHistoryId: 'diagram-1', timestamp: Date.now() + 1000, snapshotId: 'snapshot-1', actorUserId: 'alice', parentRevisionId: 'older' }, snapshot: { snapshotId: 'snapshot-1', compressedXml: '<mxGraphModel/>', compressedKind: 'plain' } };
+    const reset = await f.service.importHistory(1, { shareId: result.shareId }); // NEW
+    const revision = await f.histories.run('record', { diagramId: 'diagram-1', xml: result.xml, forceFull: true, metadata: { id: 'revision-1', actorUserId: 'alice', timestamp: Date.now() + 1000 } }); // NEW
+    const entry = { revision, snapshot: { snapshotId: revision.id } }; // CHANGE
     await assert.rejects(f.service.exportHistory(1, { shareId: result.shareId, savedHash: 'bad', entries: [entry] }), /saved canvas/);
     await assert.rejects(f.service.exportHistory(1, { shareId: result.shareId, savedHash: digest(result.xml), entries: [{ ...entry, revision: { ...entry.revision, timestamp: undefined } }] }), /Invalid shared/); // NEW
     await f.service.exportHistory(1, { shareId: result.shareId, savedHash: digest(result.xml), entries: [entry] });
@@ -242,32 +401,11 @@ test('history export requires the saved file hash and validates immutable import
     const imported = await f.service.importHistory(1, { shareId: result.shareId });
     assert.equal(imported.entries[0].revision.actorUserId, 'alice');
     assert.equal((await f.service.importHistory(1, { shareId: result.shareId, knownIds: ['revision-1'] })).entries.length, 0);
-    const filename = path.join(result.folderPath, '.trellis', 'history', 'revision-1.json');
+    const filename = path.join(result.folderPath, '.trellis', 'history-v2', reset.generation, 'records', 'revision-1.json');
     const record = JSON.parse(await fs.readFile(filename, 'utf8'));
-    record.payload.revision.actorUserId = 'forged';
+    record.payload.entry.revision.actorUserId = 'forged'; // CHANGE
     await fs.writeFile(filename, JSON.stringify(record));
     assert.equal((await f.service.importHistory(1, { shareId: result.shareId })).errors.length, 1);
-});
-test('only admins resolve conflicts, retaining inputs and current ownership', async t => {
-    const f = await fixture(t);
-    const { result } = await setup(f);
-    const filename = 'original.sync-conflict-20261011-120000-DEVICE.drawio';
-    await fs.writeFile(path.join(result.folderPath, filename), xml({ owner: 'alice', label: 'Conflict changes' }));
-    await f.service.poll();
-    assert.equal(f.service.listStatus()[0].state, 'conflict');
-    f.service.setContext(2, { diagramPath: result.diagramPath, diagramId: 'diagram-1', userId: 'alice' });
-    await assert.rejects(f.service.resolveConflict(2, { shareId: result.shareId, filename, expectedHash: digest(result.xml) }), /admin/);
-    await assert.rejects(f.service.inspectConflict(1, { shareId: result.shareId, filename: '../secret' }), /Unknown/);
-    await assert.rejects(f.service.resolveConflict(1, { shareId: result.shareId, filename, expectedHash: 'stale' }), /changed/);
-    const inspected = await f.service.inspectConflict(2, { shareId: result.shareId, filename }); // NEW: regular collaborators may inspect, but cannot publish.
-    assert.equal(inspected.currentHash, digest(result.xml));
-    assert.equal(inspected.differences.changed, 1);
-    assert.equal(inspected.differences.cells[0].cellId, 'board');
-    const resolved = await f.service.resolveConflict(1, { shareId: result.shareId, filename, expectedHash: digest(result.xml) });
-    assert.match(resolved.xml, /Conflict changes/);
-    assert.equal(inspectDiagram(resolved.xml).cells.find(cell => cell.id === 'board').node.getAttribute('trellis_owner_user_id'), 'admin');
-    assert.equal((await fs.readdir(resolved.recoveryPath)).length, 2);
-    await assert.rejects(fs.access(path.join(result.folderPath, filename)));
 });
 test('forged membership is rejected and stopped services show unknown connection counts', async t => {
     const f = await fixture(t);
@@ -316,7 +454,7 @@ test('resending a Users invitation invalidates device replies prepared with the 
     const block = await a.service.createInviteBlock(1, { shareId: result.shareId, inviteId: 'invite-1', code: 'ABCDE' });
     const joined = await b.service.joinCanvas({ block: block.block });
     store.invites[0].codeHash = inviteFingerprint('NEWCODE', 'salt');
-    await fs.writeFile(result.diagramPath, xml({ store }));
+    await save(a, result, xml({ store })); // CHANGE
     await assert.rejects(a.service.createInviteBlock(1, { shareId: result.shareId, inviteId: 'invite-1', code: 'ABCDE' }), /rotated/);
     const approval = await a.service.requestMembership(1, { shareId: result.shareId, operation: 'approve', reply: joined.reply });
     assert.equal((await a.service.listRequests(1, { shareId: result.shareId })).requests.find(request => request.id === approval.requestId).status, 'rejected');
@@ -341,23 +479,20 @@ test('receiving a pre-approval manifest does not revoke or pause a pending join'
     assert.equal(b.config().folders[0].paused, false);
 });
 
-test('unsaved conflicts defer membership and preserve a reviewable recovery copy outside sync', async t => {
-    const a = await fixture(t, 'A');
-    const b = await fixture(t, 'B');
-    const { result } = await setup(a);
-    const block = await a.service.createInviteBlock(1, { shareId: result.shareId, inviteId: 'invite-1', code: 'ABCDE' });
-    const joined = await b.service.joinCanvas({ block: block.block });
-    await a.service.setConflictState(1, { shareId: result.shareId, conflicted: true });
-    const request = await a.service.requestMembership(1, { shareId: result.shareId, operation: 'approve', reply: joined.reply });
-    assert.equal((await a.service.listRequests(1, { shareId: result.shareId })).requests.find(item => item.id === request.requestId).status, 'pending');
-    const copy = await a.service.saveRecoveryCopy(1, { shareId: result.shareId, xml: xml({ label: 'Local recovery' }) });
-    assert.equal(copy.recoveryPath.startsWith(result.folderPath), false);
-    assert.match((await a.service.inspectConflict(1, { shareId: result.shareId, filename: copy.filename })).xml, /Local recovery/);
-    await a.service.setConflictState(1, { shareId: result.shareId, conflicted: false });
-    assert.equal((await a.service.listRequests(1, { shareId: result.shareId })).requests.find(item => item.id === request.requestId).status, 'applied');
-});
+test('manual recovery copies stay private and indexed without blocking membership', async t => { // CHANGE
+    const a = await fixture(t, 'A'), b = await fixture(t, 'B'), { result } = await setup(a); // CHANGE
+    const block = await a.service.createInviteBlock(1, { shareId: result.shareId, inviteId: 'invite-1', code: 'ABCDE' }); // CHANGE
+    const joined = await b.service.joinCanvas({ block: block.block }); // CHANGE
+    const copy = await a.service.saveRecoveryCopy(1, { shareId: result.shareId, xml: xml({ label: 'Local recovery' }) }); // CHANGE
+    assert.equal(copy.recoveryPath.startsWith(result.folderPath), false); // CHANGE
+    assert.match(await fs.readFile(copy.recoveryPath, 'utf8'), /Local recovery/); // CHANGE
+    const state = await a.service.collaborationAction(1, { shareId: result.shareId, kind: 'get' }); // CHANGE
+    assert.ok(state.collaboration.recoveries.some(item => item.recoveryPath === copy.recoveryPath)); // CHANGE
+    const request = await a.service.requestMembership(1, { shareId: result.shareId, operation: 'approve', reply: joined.reply }); // CHANGE
+    assert.equal((await a.service.listRequests(1, { shareId: result.shareId })).requests.find(item => item.id === request.requestId).status, 'applied'); // CHANGE
+}); // CHANGE
 
-test('managed rename retains sharing identity and updates the native ignore allowlist', async t => {
+test('managed rename retains sharing identity while excluding the local projection', async t => { // CHANGE
     const f = await fixture(t);
     const { result } = await setup(f);
     const renamed = path.join(result.folderPath, 'Renamed.drawio');
@@ -365,7 +500,7 @@ test('managed rename retains sharing identity and updates the native ignore allo
     const info = await f.service.shareInfo({ diagramPath: renamed });
     assert.equal(info.shareId, result.shareId);
     assert.equal(info.diagramPath, renamed);
-    assert.ok(f.calls.some(call => call.endpoint === 'db/ignores' && call.data.ignore.includes('!/Renamed.drawio')));
+    assert.ok(f.calls.filter(call => call.endpoint === 'db/ignores').every(call => !call.data.ignore.includes('!/Renamed.drawio'))); // CHANGE
 });
 
 test('tampered binaries and unsupported architectures never launch', async t => {
@@ -387,16 +522,6 @@ test('failed coordinator recovery restores the original registration and editabl
     assert.equal((await f.service.listRequests(1, { shareId: result.shareId })).members.length, 1);
     assert.equal(f.service.listStatus().length, 1);
     assert.equal((await fs.readdir(result.folderPath)).includes('recovery-source.drawio'), false);
-});
-
-test('conflict resolution preserves access by page identity when pages are reordered', () => { // NEW
-    const current = '<mxfile><diagram id="a">' + xml({ owner: 'admin' }) + '</diagram><diagram id="b">' + xml({ owner: 'alice' }) + '</diagram></mxfile>';
-    const chosen = '<mxfile><diagram id="b">' + xml({ owner: 'bob', label: 'Edited B' }) + '</diagram><diagram id="a">' + xml({ owner: 'bob', label: 'Edited A' }) + '</diagram></mxfile>';
-    const resolved = inspectDiagram(preserveAccess(chosen, current));
-    const boards = resolved.cells.filter(cell => cell.id === 'board');
-    assert.equal(boards[0].node.getAttribute('trellis_owner_user_id'), 'alice');
-    assert.equal(boards[1].node.getAttribute('trellis_owner_user_id'), 'admin');
-    assert.throws(() => inspectDiagram('<mxfile><diagram id="a">' + xml() + '</diagram><diagram id="a">' + xml() + '</diagram></mxfile>'), /unique page/);
 });
 
 test('managed setup relocates relative HTML file links and retains web links', async t => { // NEW
@@ -526,11 +651,10 @@ test('automatic sign-in registration is one-time and does not override later opt
 });
 
 /** A two-device shared folder exercises real signatures, membership replay, and both projections. */ // NEW
-async function departurePair(t, version = 1) { // NEW
+async function departurePair(t) { // CHANGE
     const a = await fixture(t, 'A'), b = await fixture(t, 'B'); // NEW
     const store = { usersEnabled: true, users: [{ id: 'admin', name: 'Owner', email: 'owner@example.org', admin: true, portableIdentityId: 'owner-identity' }, { id: 'invite-user', name: 'Guest', email: 'guest@example.org', admin: false, portableIdentityId: 'guest-identity' }], pendingUsers: [], invites: [] }; // NEW
     let { result } = await setup(a, xml({ store })); // NEW
-    if (version === 2) result = await a.service.upgradeCollaboration(1, { shareId: result.shareId }); // NEW
     const invitation = await a.service.createDeviceInvite(1, { shareId: result.shareId, userId: 'invite-user' }); // NEW
     const joined = await b.service.joinCanvas({ block: invitation.block }); // NEW
     await a.service.requestMembership(1, { shareId: result.shareId, operation: 'approve', reply: joined.reply }); // NEW
@@ -539,15 +663,14 @@ async function departurePair(t, version = 1) { // NEW
     async function copy(from, to) { await fs.cp(path.join(folders[from], '.trellis'), path.join(folders[to], '.trellis'), { recursive: true }); } // NEW
     async function pump() { // NEW
         await a.service.poll(); await copy(0, 1); // NEW
-        if (version === 1) await fs.copyFile(result.diagramPath, joined.diagramPath); // NEW
         await b.service.poll(); await copy(1, 0); await a.service.poll(); // NEW
     } // NEW
     await pump(); await pump(); // NEW
     return { a, b, result, joined, invitation, folders, pump, copy }; // NEW
 } // NEW
 
-for (const version of [1, 2]) test('v' + version + ' coordinator departure promotes a connected successor and preserves the project and genesis', async t => { // NEW
-    const f = await departurePair(t, version), input = { shareId: f.result.shareId, userId: 'admin', identityId: 'owner-identity', successorUserId: 'invite-user' }; // NEW
+test('v2 coordinator departure promotes a connected successor and preserves the project and genesis', async t => { // CHANGE
+    const f = await departurePair(t), input = { shareId: f.result.shareId, userId: 'admin', identityId: 'owner-identity', successorUserId: 'invite-user' }; // CHANGE
     const eligibility = await f.a.service.projectActions(input); assert.equal(eligibility.requiresSuccessor, true); assert.equal(eligibility.canLeave, true); assert.deepEqual(eligibility.successors.map(u => u.id), ['invite-user']); // NEW
     assert.equal((await f.a.service.leaveProject(input)).complete, false); // NEW
     for (let step = 0; step < 5; step++) await f.pump(); // NEW
@@ -560,8 +683,8 @@ for (const version of [1, 2]) test('v' + version + ' coordinator departure promo
     await assert.rejects(f.a.service.joinCanvas({ block: f.invitation.block }), /predates departure/); // NEW
 }); // NEW
 
-for (const version of [1, 2]) test('v' + version + ' ordinary member departure waits for an applied acknowledgement and retains the administrator', async t => { // NEW
-    const f = await departurePair(t, version), input = { shareId: f.result.shareId, userId: 'invite-user', identityId: 'guest-identity' }; // NEW
+test('v2 ordinary member departure waits for an applied acknowledgement and retains the administrator', async t => { // CHANGE
+    const f = await departurePair(t), input = { shareId: f.result.shareId, userId: 'invite-user', identityId: 'guest-identity' }; // CHANGE
     assert.equal((await f.b.service.projectActions(input)).canLeave, true); // NEW
     assert.equal((await f.b.service.leaveProject(input)).complete, false); // NEW
     for (let step = 0; step < 6; step++) await f.pump(); // NEW
@@ -587,19 +710,19 @@ test('a forged handover manifest cannot replace the previously trusted coordinat
     assert.match(f.b.service.listStatus()[0].reason, /signature/); assert.equal((await f.b.service.shareInfo({ diagramPath: f.joined.diagramPath })).coordinatorDeviceId, device('A')); // NEW
 }); // NEW
 
-for (const version of [1, 2]) test('v' + version + ' a fresh invitation reapproves a departed device without reviving its old setup', async t => { // NEW
-    const f = await departurePair(t, version), input = { shareId: f.result.shareId, userId: 'admin', identityId: 'owner-identity', successorUserId: 'invite-user' }; // NEW
+test('v2 a fresh invitation reapproves a departed device without reviving its old setup', async t => { // CHANGE
+    const f = await departurePair(t), input = { shareId: f.result.shareId, userId: 'admin', identityId: 'owner-identity', successorUserId: 'invite-user' }; // CHANGE
     await f.a.service.leaveProject(input); for (let step = 0; step < 5; step++) await f.pump(); assert.equal((await f.a.service.leaveProject(input)).complete, true); // NEW
     await f.a.service.applyProjectLifecycle({ ...input, operation: 'left', recordId: crypto.randomUUID() }); // NEW
     await assert.rejects(f.a.service.joinCanvas({ block: f.invitation.block }), /predates departure/); // NEW
     f.b.service.setContext(1, { diagramPath: f.joined.diagramPath, diagramId: 'diagram-1', userId: 'invite-user' }); // NEW
     const baseXml = await fs.readFile(f.joined.diagramPath, 'utf8'), state = inspectDiagram(baseXml), original = state.store.users.find(u => u.id === 'admin'); original.disabled = false; original.admin = false; // NEW
     for (const cell of state.cells) if (cell.node.hasAttribute('trellis_users_json')) cell.node.setAttribute('trellis_users_json', JSON.stringify(state.store)); // NEW
-    if (version === 2) assert.equal((await f.b.service.collaborationAction(1, { shareId: f.result.shareId, kind: 'save', baseXml, xml: state.document.serialize() })).ok, true); else await fs.writeFile(f.joined.diagramPath, state.document.serialize()); // NEW
+    assert.equal((await f.b.service.collaborationAction(1, { shareId: f.result.shareId, kind: 'save', baseXml, xml: state.document.serialize() })).ok, true); // CHANGE
     const invitation = await f.b.service.createDeviceInvite(1, { shareId: f.result.shareId, userId: 'admin' }), rejoined = await f.a.service.joinCanvas({ block: invitation.block }); // NEW
     await f.b.service.requestMembership(1, { shareId: f.result.shareId, operation: 'approve', reply: rejoined.reply }); // NEW
     await fs.cp(path.join(f.folders[1], '.trellis'), path.join(path.dirname(rejoined.diagramPath), '.trellis'), { recursive: true }); // NEW
-    if (version === 1) await fs.copyFile(f.joined.diagramPath, rejoined.diagramPath); await f.a.service.poll(); // NEW
+    await f.a.service.poll(); // CHANGE: materialize the newly approved journal before inspecting its registration.
     const local = (await f.a.service.listCanvases()).find(canvas => canvas.shareId === f.result.shareId); assert.equal(local.pending, false); assert.equal(local.revoked, false); assert.equal(local.rejoined, true); assert.equal(local.available, true, JSON.stringify(f.a.service.listStatus())); // CHANGE
 }); // NEW
 

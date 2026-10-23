@@ -596,6 +596,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function readJsonAttr(cell, attrName, fallback) {
+        if (getCellAttr(cell, 'trellis_references_json') && !graph.__trellisReferences) throw new Error('Load Garden references before reading this garden catalog.'); // NEW
+        if (window.TrellisReferenceCore?.CATALOGS.includes(attrName) && getCellAttr(cell, 'trellis_references_json')) return graph.__trellisReferences.catalog(cell, attrName); // NEW
         const raw = getCellAttr(cell, attrName);
         if (!raw) return clone(fallback);
 
@@ -609,6 +611,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function writeJsonAttr(cell, attrName, value) {
+        if (window.TrellisReferenceCore?.CATALOGS.includes(attrName) && graph.__trellisReferences?.saveCatalog(cell, attrName, value)) return; // NEW
         setCellAttrs(cell, {
             [attrName]: JSON.stringify(value)
         });
@@ -1020,7 +1023,7 @@ Draw.loadPlugin(function (ui) {
     function readTaskTypeRegistry(moduleCell) {
         const raw = readJsonAttr(moduleCell, ATTRS.TASK_TYPE_REGISTRY_JSON, null);
         const items = Array.isArray(raw && raw.items) ? raw.items : Array.isArray(raw) ? raw : [];
-        return mergeDefaults(items, DEFAULT_TASK_TYPES, normalizeTaskType);
+        return getCellAttr(moduleCell, 'trellis_references_json') ? uniqueById(items.map(normalizeTaskType)).sort(byName) : mergeDefaults(items, DEFAULT_TASK_TYPES, normalizeTaskType); // CHANGE: upgrades do not inject defaults into accepted catalogs.
     }
 
     function writeTaskTypeRegistry(moduleCell, taskTypes) {
@@ -1037,7 +1040,7 @@ Draw.loadPlugin(function (ui) {
     function readCapabilityRegistry(moduleCell) {
         const raw = readJsonAttr(moduleCell, ATTRS.CAPABILITY_REGISTRY_JSON, null);
         const items = Array.isArray(raw && raw.items) ? raw.items : Array.isArray(raw) ? raw : [];
-        return mergeDefaults(items, DEFAULT_CAPABILITIES, normalizeCapability);
+        return getCellAttr(moduleCell, 'trellis_references_json') ? uniqueById(items.map(normalizeCapability)).sort(byName) : mergeDefaults(items, DEFAULT_CAPABILITIES, normalizeCapability); // CHANGE
     }
 
     function writeCapabilityRegistry(moduleCell, capabilities) {
@@ -1157,6 +1160,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function buildTaskEquipmentWarnings(taskCell, moduleCell) {
+        if (graph.__trellisReferences && getCellAttr(moduleCell, 'trellis_references_json')) moduleCell = graph.__trellisReferences.scopeForConsumer(moduleCell, taskCell); // NEW
         const inventory = readEquipmentInventory(moduleCell);
         const taskTypes = readTaskTypeRegistry(moduleCell);
         const capabilityNames = registryNameMap(readCapabilityRegistry(moduleCell));
@@ -1326,7 +1330,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function estimateTaskHours(taskInput, context) {
-        const moduleCell = context && context.moduleCell ? context.moduleCell : getActiveGardenModule();
+        let moduleCell = context && context.moduleCell ? context.moduleCell : getActiveGardenModule(); // CHANGE
+        if (taskInput.cell && graph.__trellisReferences && getCellAttr(moduleCell, 'trellis_references_json')) moduleCell = graph.__trellisReferences.scopeForConsumer(moduleCell, taskInput.cell); // NEW
         if (!moduleCell) return { estimatedHours: null, warnings: [{ type: "missing_module", message: "No garden module found." }] };
 
         const inventory = context && context.inventory ? context.inventory : readEquipmentInventory(moduleCell);
@@ -1414,7 +1419,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function requestCropOptions(state, render) {
-        const scheduler = typeof window !== "undefined" && window.USL && window.USL.scheduler;
+        const rootScheduler = typeof window !== 'undefined' && window.USL && window.USL.scheduler; // CHANGE
+        const scheduler = rootScheduler?.forGarden ? rootScheduler.forGarden(state.moduleCell) : rootScheduler; // NEW
         if (!scheduler || typeof scheduler.listPlantOptions !== "function") {
             state.cropOptionsStatus = "failed";
             state.cropOptionsError = "Plant catalog is not available.";
@@ -1570,13 +1576,15 @@ Draw.loadPlugin(function (ui) {
             return;
         }
 
+        const references = graph.__trellisReferences; // NEW
+        if (getCellAttr(moduleCell, 'trellis_references_json', '') && references && !references.isDraftReady(moduleCell)) { references.restoreDraft(moduleCell).then(() => openEquipmentDialog(moduleCell)).catch(error => ui.handleError ? ui.handleError(error) : alert(error.message)); return; } // NEW
         ensureStyles();
 
         const state = {
             moduleCell,
-            inventory: readEquipmentInventory(moduleCell),
-            taskTypes: readTaskTypeRegistry(moduleCell),
-            capabilities: readCapabilityRegistry(moduleCell),
+            inventory: graph.__trellisReferences?.catalog(moduleCell, ATTRS.EQUIPMENT_INVENTORY_JSON, { draft: true })?.items || readEquipmentInventory(moduleCell), // CHANGE: reopen the editor's unsent definitions without exposing them to calculations.
+            taskTypes: graph.__trellisReferences?.catalog(moduleCell, ATTRS.TASK_TYPE_REGISTRY_JSON, { draft: true })?.items || readTaskTypeRegistry(moduleCell), // CHANGE
+            capabilities: graph.__trellisReferences?.catalog(moduleCell, ATTRS.CAPABILITY_REGISTRY_JSON, { draft: true })?.items || readCapabilityRegistry(moduleCell), // CHANGE
             activeTab: "inventory",
             activeEquipmentEditorTab: "general",
             activeTaskTypeEditorTab: "general",
@@ -1614,9 +1622,13 @@ Draw.loadPlugin(function (ui) {
                 alert("Fix equipment validation errors before saving.");
                 return false;
             }
-            writeEquipmentInventory(state.moduleCell, state.inventory);
-            writeTaskTypeRegistry(state.moduleCell, state.taskTypes);
-            writeCapabilityRegistry(state.moduleCell, state.capabilities);
+            const proposed = graph.__trellisReferences?.saveCatalogBatch(state.moduleCell, { // NEW
+                [ATTRS.EQUIPMENT_INVENTORY_JSON]: { version: PLUGIN_VERSION, items: state.inventory.map(normalizeEquipment) }, // NEW
+                [ATTRS.TASK_TYPE_REGISTRY_JSON]: { version: PLUGIN_VERSION, items: state.taskTypes.map(normalizeTaskType) }, // NEW
+                [ATTRS.CAPABILITY_REGISTRY_JSON]: { version: PLUGIN_VERSION, items: state.capabilities.map(normalizeCapability) } // NEW
+            }); // NEW
+            if (!proposed) { writeEquipmentInventory(state.moduleCell, state.inventory); writeTaskTypeRegistry(state.moduleCell, state.taskTypes); writeCapabilityRegistry(state.moduleCell, state.capabilities); } // CHANGE
+            else fireTrellisEvent(EVENTS.WORKLOAD_ASSUMPTIONS_CHANGED, { moduleCell: state.moduleCell }); // NEW
             state.validationReport = null;
             return true;
         }

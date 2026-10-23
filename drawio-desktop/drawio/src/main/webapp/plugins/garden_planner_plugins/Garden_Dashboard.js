@@ -864,6 +864,7 @@ Draw.loadPlugin(function (ui) {
     let toolbarRefreshTimer = null;
     let gardenPickerOpen = false;
     let gardenPickerSearchText = "";
+    let gardenPickerPage = 0; // NEW: render at most 100 matching picker rows at a time.
     let lastToolbarContext = null;
     let startupGardenFocusDone = false;
     const pendingPlanButtonFlashByModuleId = new Map(); // CHANGE
@@ -959,11 +960,15 @@ Draw.loadPlugin(function (ui) {
     }
 
     function gardenLabel(moduleCell) {
+        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW
+        if (clusters) return clusters.gardenLabel(moduleCell) || "Garden Module"; // NEW: use indexed labels rather than repeatedly parsing HTML during sorting.
         const raw = getCellAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : "");
         return plainTextLabel(raw, "Garden Module") || cellId(moduleCell) || "Garden Module";
     }
 
     function gardenCity(moduleCell) {
+        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW
+        if (clusters) return clusters.gardenCity(moduleCell); // NEW: city grouping and sorting reuse indexed display labels.
         return plainTextLabel(getCellAttr(moduleCell, "city_name", "") || getCellAttr(moduleCell, "city_id", ""), "");
     }
 
@@ -975,6 +980,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function collectGardenModules() {
+        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW
+        if (clusters) return clusters.listGardens(); // NEW: the controller maintains the current page's garden index.
         const seen = new Set();
         const gardens = [];
         for (const cell of allModelCells()) {
@@ -1065,6 +1072,7 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
+    graph.__trellisGardenDashboard = Object.assign(graph.__trellisGardenDashboard || {}, { resolveContext: resolveDashboardToolbarContext }); // NEW: one authoritative garden resolver for reference tools.
     function resolveDashboardToolbarContext() {
         const allGardens = sortGardensForPicker(collectGardenModules());
         if (allGardens.length === 1) return { moduleCell: allGardens[0], candidates: allGardens, allGardens, reason: "sole" }; // NEW: the current page's only garden needs no selection.
@@ -1285,6 +1293,7 @@ Draw.loadPlugin(function (ui) {
 
     function selectAndZoomToGarden(moduleCell) {
         if (!moduleCell || !isGardenModule(moduleCell)) return;
+        graph.__trellisModules?.clusters?.revealCell(moduleCell); // NEW: materialize the destination before selection or fitting.
         if (graph.setSelectionCell) graph.setSelectionCell(moduleCell);
         zoomGardenToViewport(moduleCell);
     }
@@ -1304,6 +1313,7 @@ Draw.loadPlugin(function (ui) {
 
     function selectAndFitWorkspaceCell(cell) {
         if (!cell) return;
+        graph.__trellisModules?.clusters?.revealCell(cell); // NEW
         if (graph.setSelectionCell) graph.setSelectionCell(cell); // NEW
         fitCellToViewport(cell);
     }
@@ -1357,6 +1367,13 @@ Draw.loadPlugin(function (ui) {
         if (!dashboardDiagramIsOpen()) return;
         if (startupGardenFocusDone) return;
         startupGardenFocusDone = true;
+        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW
+        if (clusters) { // NEW: restored city preferences constrain the normal startup garden fallback.
+            const selected = resolveDashboardToolbarContext().moduleCell; // NEW
+            const focus = clusters.focusForCity(selected || rememberedGardenModuleForStartup()); // NEW
+            if (focus) { if (isGardenModule(focus)) selectAndZoomToGarden(focus); else selectAndFitWorkspaceCell(focus); } // NEW
+            return; // NEW
+        } // NEW
         const context = resolveDashboardToolbarContext();
         if (context.moduleCell) {
             saveResolvedGardenSelection(context); // NEW: restored garden-related selection becomes the latest garden.
@@ -1417,6 +1434,23 @@ Draw.loadPlugin(function (ui) {
         popover.className = "trellis-garden-dashboard-picker-popover";
         popover.style.cssText = "position:absolute;left:0;top:calc(100% + 4px);width:280px;max-height:320px;overflow:auto;background:#fff;border:1px solid #9ca3af;border-radius:6px;box-shadow:0 8px 20px rgba(0,0,0,.18);padding:8px;box-sizing:border-box;z-index:" + GRAPH_OVERLAY_Z.CONTROL_TOP + ";";
 
+        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW
+        if (clusters) { // NEW
+            const citySelect = document.createElement("select"); // NEW
+            citySelect.className = "trellis-garden-dashboard-city-select"; // NEW
+            citySelect.setAttribute("aria-label", "Filter gardens by city"); // NEW
+            citySelect.style.cssText = "box-sizing:border-box;width:100%;height:28px;margin-bottom:6px;"; // NEW
+            clusters.getCities().forEach(city => { const option = document.createElement("option"); option.value = city.key; option.textContent = city.label; citySelect.appendChild(option); }); // NEW
+            citySelect.value = clusters.getCity(); // NEW
+            citySelect.addEventListener("change", function () { // NEW
+                gardenPickerSearchText = ""; gardenPickerPage = 0; // NEW
+                const destination = clusters.setCity(citySelect.value); // NEW
+                if (destination) { if (isGardenModule(destination)) selectAndZoomToGarden(destination); else selectAndFitWorkspaceCell(destination); } // NEW
+                renderGardenPickerPopover(entry, lastToolbarContext || context || {}); // NEW
+            }); // NEW
+            popover.appendChild(citySelect); // NEW
+        } // NEW
+
         const search = document.createElement("input");
         search.type = "search";
         search.className = "trellis-garden-dashboard-garden-search";
@@ -1426,12 +1460,16 @@ Draw.loadPlugin(function (ui) {
         search.style.cssText = "box-sizing:border-box;width:100%;height:26px;margin-bottom:6px;padding:4px 6px;border:1px solid #9ca3af;border-radius:4px;font:12px Arial,sans-serif;";
         search.addEventListener("input", function () {
             gardenPickerSearchText = search.value || "";
+            gardenPickerPage = 0; // NEW
             renderGardenPickerPopover(entry, lastToolbarContext || context || {});
         });
         popover.appendChild(search);
 
-        const candidates = (context && context.candidates) || [];
+        const candidates = clusters ? clusters.listGardens().filter(garden => clusters.getCity() === "all" || clusters.cityForGarden(garden) === clusters.getCity()) : (context && context.candidates) || []; // CHANGE: search includes unrendered gardens in the selected city.
         const groups = groupedGardensForPicker(candidates, gardenPickerSearchText);
+        const matches = groups.flatMap(group => group.gardens); // NEW
+        gardenPickerPage = Math.min(gardenPickerPage, Math.max(0, Math.ceil(matches.length / 100) - 1)); // NEW
+        const visibleIds = new Set(matches.slice(gardenPickerPage * 100, (gardenPickerPage + 1) * 100).map(cellId)); // NEW
         if (!groups.length) {
             const empty = document.createElement("div");
             empty.className = "trellis-garden-dashboard-picker-empty";
@@ -1441,12 +1479,14 @@ Draw.loadPlugin(function (ui) {
         }
 
         groups.forEach(function (group) {
+            const visible = group.gardens.filter(garden => visibleIds.has(cellId(garden))); // NEW
+            if (!visible.length) return; // NEW
             const heading = document.createElement("div");
             heading.className = "trellis-garden-dashboard-picker-city";
             heading.textContent = group.city;
             heading.style.cssText = "padding:7px 4px 3px;color:#4b5563;font:700 11px Arial,sans-serif;text-transform:uppercase;";
             popover.appendChild(heading);
-            group.gardens.forEach(function (garden) {
+            visible.forEach(function (garden) { // CHANGE: keep picker DOM bounded even for thousands of matches.
                 const row = document.createElement("button");
                 row.type = "button";
                 row.className = "trellis-garden-dashboard-picker-row";
@@ -1466,6 +1506,18 @@ Draw.loadPlugin(function (ui) {
                 popover.appendChild(row);
             });
         });
+
+        if (matches.length > 100) { // NEW
+            const paging = document.createElement("div"); // NEW
+            paging.textContent = (gardenPickerPage * 100 + 1) + "–" + Math.min((gardenPickerPage + 1) * 100, matches.length) + " of " + matches.length + " gardens "; // NEW
+            function pageButton(label, delta, disabled) { // NEW
+                const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.disabled = disabled; // NEW
+                button.addEventListener("click", () => { gardenPickerPage += delta; renderGardenPickerPopover(entry, context); }); paging.appendChild(button); // NEW
+            } // NEW
+            pageButton("Previous", -1, gardenPickerPage === 0); // NEW
+            pageButton("Next", 1, (gardenPickerPage + 1) * 100 >= matches.length); // NEW
+            popover.appendChild(paging); // NEW
+        } // NEW
 
         entry.gardenPickerWrap.appendChild(popover);
         entry.gardenPickerPopover = popover;
@@ -1855,10 +1907,11 @@ Draw.loadPlugin(function (ui) {
         send.addEventListener("click", function () { // CHANGE: hand the saved invite to the shared, retained delivery view.
             if (send.disabled) return; // NEW
             send.disabled = true; // NEW: prevent duplicate invitation creation.
+            const quickstartToken = graph.__trellisQuickstart?.capture(); // NEW
             const result = users.createPendingInvite({ email: email.value, scopeCellIds: scopes.map(function (scope) { return scope.id; }), preset: preset.value, capabilities: selectedInviteCapabilities(), shareInfo });
             if (!result.ok) { status.textContent = result.reason; send.disabled = false; return; } // CHANGE
             const delivery = users.openInviteDelivery(result); // NEW: preparation and retries keep this invite's original code.
-            if (delivery.ok) closeShareDialog(overlay); // NEW: the delivery view remains open until explicitly dismissed.
+            if (delivery.ok) { graph.__trellisQuickstart?.record('people', quickstartToken); closeShareDialog(overlay); } // NEW: a prepared invitation completes the sender's action.
             else status.textContent = delivery.reason; // NEW: the saved invite remains pending if delivery UI is unavailable.
         });
         buttons.appendChild(cancel);
@@ -2103,6 +2156,7 @@ Draw.loadPlugin(function (ui) {
         wrap.appendChild(panel);
         host.appendChild(wrap);
 
+        for (const [key, node] of Object.entries({ 'create-garden': createGardenBtn, plan: planBtn, irrigation: irrigationBtn, allocation: allocateBtn, share: shareBtn, sync: syncBtn })) if (node) node.setAttribute('data-trellis-quickstart', key); // NEW
         viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, prev, next, yearLabel, harvestSizeInput, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, syncBtn, tableBtn, table }; // CHANGE: retain the view-only harvest-size checkbox.
         refreshSharingCount(); // NEW
         [prev, next, planBtn, equipmentBtn, irrigationBtn, allocateBtn, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, messagesBtn, exportBtn, shareBtn, tableBtn, gardenPickerBtn, createGardenBtn].forEach(function (button) { // CHANGE
@@ -2149,7 +2203,7 @@ Draw.loadPlugin(function (ui) {
             ev.preventDefault();
             ev.stopPropagation();
             gardenPickerOpen = !gardenPickerOpen;
-            if (gardenPickerOpen) gardenPickerSearchText = "";
+            if (gardenPickerOpen) { gardenPickerSearchText = ""; gardenPickerPage = 0; } // CHANGE
             renderGardenPickerPopover(viewportToolbar, lastToolbarContext || resolveDashboardToolbarContext());
         });
         createGardenBtn.addEventListener("click", function () { createGardenFromDashboard(); });
@@ -2222,11 +2276,12 @@ Draw.loadPlugin(function (ui) {
         setYearActionControlsDisabled(entry, true);
 
         const candidates = sortGardensForPicker(context && context.candidates || []);
-        entry.gardenPickerWrap.style.display = candidates.length ? "block" : "none";
+        const hasClusters = graph.__trellisModules?.clusters?.hasModules() || false; // NEW
+        entry.gardenPickerWrap.style.display = candidates.length || hasClusters ? "block" : "none"; // CHANGE
         entry.createGardenBtn.style.display = candidates.length ? "none" : "inline-block";
         entry.gardenPickerBtn.textContent = "Select garden...";
         entry.gardenPickerBtn.title = candidates.length ? "Select a garden module" : "No garden modules found.";
-        setButtonDisabled(entry.gardenPickerBtn, !candidates.length, candidates.length ? "Select a garden module" : "No garden modules found.");
+        setButtonDisabled(entry.gardenPickerBtn, !candidates.length && !hasClusters, candidates.length || hasClusters ? "Select a garden or city" : "No garden modules found."); // CHANGE
         setButtonDisabled(entry.createGardenBtn, false, "Create a garden module");
         if (!gardenPickerOpen) closeGardenPicker(entry);
         else renderGardenPickerPopover(entry, context || {});
@@ -2237,10 +2292,12 @@ Draw.loadPlugin(function (ui) {
     function renderViewportToolbar(moduleCell) {
         const entry = ensureViewportToolbar();
         if (!entry || !moduleCell) return;
-        closeGardenPicker(entry);
         entry.gardenName.textContent = gardenLabel(moduleCell);
         entry.gardenName.title = gardenLabel(moduleCell);
-        entry.gardenPickerWrap.style.display = "none";
+        entry.gardenPickerWrap.style.display = "block"; // CHANGE: switching gardens and cities remains available during selection.
+        entry.gardenPickerBtn.textContent = "Select garden..."; // NEW
+        setButtonDisabled(entry.gardenPickerBtn, false, "Select a garden or city"); // NEW: creating the first garden must re-enable the previously empty picker.
+        if (gardenPickerOpen) renderGardenPickerPopover(entry, lastToolbarContext || {}); // NEW
         entry.createGardenBtn.style.display = "none";
         const year = getToolbarYear(moduleCell);
         const activeWorkspace = getActiveWorkspaceForSelection(moduleCell) || "garden"; // CHANGE: only this garden's selected companions determine its workspace.
@@ -2376,6 +2433,7 @@ Draw.loadPlugin(function (ui) {
     };
 
     window.addEventListener("resize", scheduleOverlayReposition);
+    graph.addListener && graph.addListener("trellisClustersChanged", scheduleViewportToolbarRefresh); // NEW
     window.addEventListener("trellisSharingStatusChanged", refreshSharingCount); // NEW
     if (graph.getSelectionModel && graph.getSelectionModel().addListener) {
         graph.getSelectionModel().addListener(mxEvent.CHANGE, scheduleViewportToolbarRefresh);

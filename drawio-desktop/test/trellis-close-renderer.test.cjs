@@ -28,6 +28,70 @@ function fixture() { // NEW
     return { file, win, inputs, deletes, ui, replies, setXml: value => { xml = value; }, setFile: value => { current = value; }, fail: value => { failure = value; }, retainDraft: () => { retainDraft = true; }, // CHANGE
         async request(phase, snapshotId) { await listeners.get('isModified')({ phase, snapshotId, uniqueId: String(replies.length) }); return replies.at(-1); } }; // NEW
 } // NEW
+/** Run the desktop save methods themselves so native cancellation cannot leave navigation pending. */ // NEW
+function desktopSaveFixture(editable = true) { // NEW
+    const source = fs.readFileSync(path.join(root, 'drawio/src/main/webapp/js/diagramly/ElectronApp.js'), 'utf8'), methods = new Map(); // NEW
+    traverse(parser.parse(source), { noScope: true, AssignmentExpression(entry) { if (/^LocalFile\.prototype\.(save|saveFile|saveAs)$/.test(source.slice(entry.node.left.start, entry.node.left.end))) methods.set(entry.node.left.property.name, source.slice(entry.node.right.start, entry.node.right.end)); } }); // NEW
+    const events = [], writes = [], storage = new Map(), pendingWrites = []; let destination = null, failure = null, deferWrites = false; // CHANGE
+    function LocalFile() {} // NEW
+    const context = { LocalFile, LocalLibrary: function() {}, DrawioFile: { prototype: { save(_revision, success) { this.data = '<mxfile><diagram>one</diagram><diagram>two</diagram></mxfile>'; success(); } } }, autoSaveEnabled: false, EditorUi: { enableDrafts: true }, // NEW
+        mxUtils: { bind: (scope, callback) => callback.bind(scope) }, localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) }, // NEW
+        requestSync: async input => input === 'getDocumentsFolder' ? '/documents' : input.action === 'showSaveDialog' ? destination : '/documents', // NEW
+        electron: { request(input, success, error) { writes.push(input); const complete = () => failure ? error('permission', failure) : success({ mtimeMs: writes.length }); if (deferWrites) pendingWrites.push(complete); else complete(); } } }; // CHANGE
+    for (const [name, method] of methods) LocalFile.prototype[name] = vm.runInNewContext('(' + method + ')', context); // NEW
+    const file = new LocalFile(); Object.assign(file, { title: 'Untitled.drawio', modified: true, editable, draft: 'recovery', isEditable() { return this.editable; }, setEditable(value) { this.editable = value; }, getTitle() { return this.title; }, getData() { return this.data; }, // NEW
+        setShadowModified() {}, getShadowModified: () => false, setModified(value) { this.modified = value; }, fileSaved(_data, _stat, success) { success(); }, contentChanged() {}, addToRecent() {}, removeDraft() { this.draft = null; }, // NEW
+        ui: { normalizeFilename: value => value, createFileSystemFilters: () => [], spinner: { stop() { events.push('stop'); } }, editor: { setAutosave() {} }, watchFile() {} } }); // NEW
+    return { file, events, writes, deferWrites: () => { deferWrites = true; }, completeWrite: () => pendingWrites.shift()(), destination: value => { destination = value; }, fail: value => { failure = value; }, save: () => { file.save(false, () => events.push('saved'), error => events.push(error), null, null, () => events.push('canceled')); return new Promise(resolve => setImmediate(resolve)); } }; // CHANGE
+} // NEW
+test('native first-save and read-only Save As cancellation complete quietly and retain recovery', async () => { // NEW
+    for (const editable of [true, false]) { // NEW
+        const f = desktopSaveFixture(editable); await f.save(); // NEW
+        assert.equal(f.events.includes('canceled'), true); assert.equal(f.events.includes('saved'), false); assert.equal(f.writes.length, 0); assert.equal(f.file.modified, true); assert.equal(f.file.draft, 'recovery'); // NEW
+        f.destination('/documents/Garden.drawio'); await f.save(); // NEW
+        assert.equal(f.events.filter(event => event === 'saved').length, 1); assert.equal(f.writes.length, 1); assert.match(f.writes[0].data, /<diagram>one<\/diagram><diagram>two<\/diagram>/); assert.equal(f.file.modified, false); // NEW
+    } // NEW
+}); // NEW
+
+test('native autosave without an optional success callback completes without throwing', async () => { // CHANGE
+    const f = desktopSaveFixture(); f.file.fileObject = { path: '/documents/Autosave.drawio', name: 'Autosave.drawio' }; // CHANGE
+    f.file.save(false, null, error => assert.fail(error.stack)); await new Promise(resolve => setImmediate(resolve)); // CHANGE
+    assert.equal(f.writes.length, 1); assert.equal(f.file.modified, false); // CHANGE
+}); // CHANGE
+
+test('overlapping local saves both complete in order instead of dropping the second callback', async () => { // CHANGE
+    const f = desktopSaveFixture(), completed = []; f.file.fileObject = { path: '/documents/Autosave.drawio', name: 'Autosave.drawio' }; f.deferWrites(); // CHANGE
+    f.file.save(false, () => completed.push('autosave'), error => assert.fail(error.stack)); // CHANGE
+    f.file.save(false, () => completed.push('explicit'), error => assert.fail(error.stack)); assert.equal(f.writes.length, 1); // CHANGE
+    f.completeWrite(); await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(completed, ['autosave']); assert.equal(f.writes.length, 2); // CHANGE
+    f.completeWrite(); await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(completed, ['autosave', 'explicit']); assert.equal(f.file.__trellisLocalSavePending, null); // CHANGE
+}); // CHANGE
+
+test('a queued local save cannot capture a replacement diagram into the previous file', async () => { // CHANGE
+    const f = desktopSaveFixture(); f.file.fileObject = { path: '/documents/Autosave.drawio', name: 'Autosave.drawio' }; f.deferWrites(); let rejected; // CHANGE
+    f.file.save(false, () => {}, error => assert.fail(error.stack)); f.file.save(false, () => assert.fail('Replaced diagram was saved'), error => { rejected = error; }); // CHANGE
+    f.file.ui.getCurrentFile = () => ({}); f.completeWrite(); await new Promise(resolve => setImmediate(resolve)); // CHANGE
+    assert.match(rejected.message, /diagram changed/); assert.equal(f.writes.length, 1); // CHANGE
+}); // CHANGE
+test('desktop save failure retains the draft and existing callers need no cancellation callback', async () => { // NEW
+    const f = desktopSaveFixture(), denied = new Error('Permission denied'); f.destination('/documents/Garden.drawio'); f.fail(denied); await f.save(); // NEW
+    assert.equal(f.events.includes(denied), true); assert.equal(f.events.includes('saved'), false); assert.equal(f.file.draft, 'recovery'); assert.equal(f.file.modified, true); // NEW
+    const legacy = desktopSaveFixture(); legacy.file.save(false, () => assert.fail('Canceled save succeeded'), () => assert.fail('Canceled save failed')); // NEW
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(legacy.writes.length, 0); // NEW
+}); // NEW
+test('source and packaged file closure release every page, tab, graph, and undo reference', () => { // NEW
+    for (const filename of ['diagramly/EditorUi.js', 'app.min.js', 'integrate.min.js']) { // NEW
+        const source = fs.readFileSync(path.join(root, 'drawio/src/main/webapp/js', filename), 'utf8'), bundled = filename.endsWith('.min.js'); // NEW
+        const start = source.indexOf(bundled ? 'EditorUi.prototype.fileLoaded=function(' : 'EditorUi.prototype.fileLoaded = function('), end = source.indexOf('EditorUi.prototype.getHashValueForPages', start); // NEW
+        assert.ok(start >= 0 && end > start); const events = []; let current = { removeListener() {}, close() { events.push('close'); } }; // NEW
+        function EditorUi() {} EditorUi.debug = () => {}; // NEW
+        vm.runInNewContext(source.slice(start, end), { EditorUi, mxUtils: { bind: (scope, callback) => callback.bind(scope) } }); // NEW
+        const ui = new EditorUi(); Object.assign(ui, { currentPage: {}, pages: [{}, {}], fileNode: {}, tabContainer: { textContent: 'Old page tabs' }, // NEW
+            getCurrentFile: () => current, setCurrentFile: value => { current = value; }, hideDialog() {}, logIfModified() {}, setGraphEnabled() {}, updateDocumentTitle() {}, setBackgroundImage() {}, clearStatus() {}, updateUi() {}, // NEW
+            editor: { graph: { model: { clear() { events.push('graph'); } } }, undoManager: { clear() { events.push('undo'); } } } }); // NEW
+        ui.fileLoaded(null, true); assert.equal(current, null); assert.equal(ui.currentPage, null); assert.equal(ui.pages, null); assert.equal(ui.fileNode, null); assert.equal(ui.tabContainer.textContent, ''); assert.equal(events[0], 'close'); assert.ok(events.includes('graph')); assert.ok(events.includes('undo')); // NEW
+    } // NEW
+}); // NEW
 test('approved snapshot stays local, seals input, and defers draft removal until discard', async () => { // NEW
     const f = fixture(), originalWriter = f.file.saveDraft; // NEW
     const approval = await f.request('prepare'); assert.equal(approval.isModified, true); assert.ok(approval.snapshotId); // NEW
@@ -118,11 +182,12 @@ test('Resume All skips retired shares while resuming active shares and the ident
     const configured = [], registry = [{ shareId: 'live', paused: true }, { shareId: 'retired', revoked: true, paused: true }, { shareId: 'removed', localRemoved: true, paused: true }]; // NEW
     const identitySync = { paused: true }; // NEW
     const pause = productionFunction('src/main/trellis-syncthing-service.js', 'setPaused', { // NEW
-        registry, identitySync, start: async () => {}, configureCanvas: async canvas => configured.push(canvas.shareId), // NEW
+        registry, identitySync, initialize: async () => {}, start: async () => {}, configureCanvas: async canvas => configured.push(canvas.shareId), // CHANGE: production pause now initializes its registry before validating a target.
         persist: async () => {}, emit() {}, writeAtomic: async () => {}, configureMetadataFolder: async () => configured.push('metadata'), // NEW
+        metadataChannels: { pause: async paused => { assert.equal(paused, false); configured.push('community metadata'); } }, // NEW
         canvasById: id => registry.find(canvas => canvas.shareId === id), path, profile: '/isolated' // NEW
     }); // NEW
-    await pause({ paused: false }); assert.deepEqual(configured, ['live', 'metadata']); assert.equal(identitySync.paused, false); // NEW
+    await pause({ paused: false }); assert.deepEqual(configured, ['live', 'metadata', 'community metadata']); assert.equal(identitySync.paused, false); // CHANGE
     await assert.rejects(pause({ shareId: 'retired', paused: false }), /removed/); // NEW
 }); // NEW
 

@@ -155,17 +155,14 @@ contextBridge.exposeInMainWorld('trellisShare', {
 	joinCanvas: payload => sharingRequest('joinCanvas', payload), // NEW
 	requestMembership: payload => sharingRequest('requestMembership', payload), // NEW
 	collaborationAction: payload => sharingRequest('collaborationAction', payload), // NEW: file-bound object coordination.
-	upgradeCollaboration: payload => sharingRequest('upgradeCollaboration', payload), // NEW: admin migration with backup.
 	listRequests: payload => sharingRequest('listRequests', payload), // NEW
 	getStatus: () => sharingRequest('getStatus', {}), // NEW
 	setPaused: payload => sharingRequest('setPaused', payload), // NEW
-	inspectConflict: payload => sharingRequest('inspectConflict', payload), // NEW
-	setConflictState: payload => sharingRequest('setConflictState', payload), // NEW
 	saveRecoveryCopy: payload => sharingRequest('saveRecoveryCopy', payload), // NEW
 	openAsset: payload => sharingRequest('openAsset', payload), // NEW
-	resolveConflict: payload => sharingRequest('resolveConflict', payload), // NEW
 	exportHistory: payload => sharingRequest('exportHistory', payload), // NEW
 	importHistory: payload => sharingRequest('importHistory', payload), // NEW
+	historyStorage: payload => sharingRequest('historyStorage', payload), // NEW
 	recovery: payload => sharingRequest('recovery', payload), // NEW
 	onStatus(listener) { // NEW: return explicit subscription cleanup to each plugin.
 		if (typeof listener !== 'function') throw new Error('A sharing status listener is required.');
@@ -219,8 +216,23 @@ contextBridge.exposeInMainWorld('trellisIdentity', { // NEW
 	onStatus(listener) { const receive = (_event, data) => listener(data); ipcRenderer.on('trellisIdentityStatus', receive); return () => ipcRenderer.removeListener('trellisIdentityStatus', receive); },
 	onLocked(listener) { const receive = () => listener(); ipcRenderer.on('trellisIdentityLocked', receive); return () => ipcRenderer.removeListener('trellisIdentityLocked', receive); }
 });
+contextBridge.exposeInMainWorld('trellisGardenCommunities', { // NEW
+	list: payload => identityRequest('trellisGardenCommunities', 'list', payload), // CHANGE: narrow optional browsing scope.
+	create: payload => identityRequest('trellisGardenCommunities', 'create', payload), // NEW
+	update: payload => identityRequest('trellisGardenCommunities', 'update', payload), // NEW
+	addGarden: payload => identityRequest('trellisGardenCommunities', 'addGarden', payload), // NEW
+	decideAdmission: payload => identityRequest('trellisGardenCommunities', 'decideAdmission', payload), // NEW
+	detachGarden: payload => identityRequest('trellisGardenCommunities', 'detachGarden', payload), // NEW
+	describeGarden: payload => identityRequest('trellisGardenCommunities', 'describeGarden', payload), // NEW
+	setAdministrators: payload => identityRequest('trellisGardenCommunities', 'setAdministrators', payload), // NEW
+	requestAccess: payload => identityRequest('trellisGardenCommunities', 'requestAccess', payload), // NEW
+	decideAccess: payload => identityRequest('trellisGardenCommunities', 'decideAccess', payload), // NEW
+	listRequests: () => identityRequest('trellisGardenCommunities', 'listRequests'), // NEW
+	onStatus(listener) { const receive = () => listener(); ipcRenderer.on('trellisGardenCommunitiesStatus', receive); return () => ipcRenderer.removeListener('trellisGardenCommunitiesStatus', receive); } // NEW
+}); // NEW
 contextBridge.exposeInMainWorld('trellisGardenLibrary', { // NEW
-	list: () => identityRequest('trellisGardenLibrary', 'list'),
+    referenceTemplates: () => identityRequest('trellisGardenLibrary', 'referenceTemplates'), sendReferenceProposal: payload => identityRequest('trellisGardenLibrary', 'sendReferenceProposal', payload), // NEW
+	list: payload => identityRequest('trellisGardenLibrary', 'list', payload), // CHANGE: optional targeted read after an edit.
 	create: payload => identityRequest('trellisGardenLibrary', 'create', payload),
 	completeStarter: payload => identityRequest('trellisGardenLibrary', 'completeStarter', payload), // NEW
 	importCurrent: payload => identityRequest('trellisGardenLibrary', 'importCurrent', payload),
@@ -338,6 +350,8 @@ contextBridge.exposeInMainWorld('fsBridge', {
 
 
 
+contextBridge.exposeInMainWorld('trellisReferenceDatabase', { request(method, payload = {}) { return new Promise((resolve, reject) => requestViaIPC({ action: 'trellisReferences', method, payload }, resolve, message => reject(new Error(message)))); } }); // NEW: fixed in-memory reference API, separate from the local maintenance database.
+contextBridge.exposeInMainWorld('trellisHistory', { request(method, payload = {}) { return new Promise((resolve, reject) => requestViaIPC({ action: 'trellisHistory', method, payload }, resolve, message => reject(new Error(message)))); } }); // NEW: document-scoped operations; no renderer SQL or destructive migration commands.
 // (ADD): SQLite bridge
 contextBridge.exposeInMainWorld('dbBridge', {
 	/**

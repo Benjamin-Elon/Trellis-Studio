@@ -8,16 +8,17 @@
     function parseComments(raw) { // CHANGE
         if (!raw) return []; // CHANGE
         const value = JSON.parse(raw), ids = new Set(); // CHANGE
-        if (!value || Object.keys(value).length !== 2 || value.version !== 1 || !Array.isArray(value.comments)) throw new Error('Unsupported or damaged comments data.'); // CHANGE
+        if (!value || Object.keys(value).length !== 2 || ![1, 2].includes(value.version) || !Array.isArray(value.comments)) throw new Error('Unsupported or damaged comments data.'); // CHANGE
         return value.comments.map(record => { // CHANGE
             const timestamp = number => Number.isSafeInteger(number) && number >= 0; // CHANGE
             const keys = ['id', 'authorUserId', 'authorName', 'html', 'createdAt', 'updatedAt', 'resolvedAt', 'resolvedByUserId', 'resolvedByName']; // CHANGE
+            if (value.version === 2) keys.push('isAlert'); // CHANGE: version 1 remains readable without rewriting saved discussion.
             if (!record || Object.keys(record).length !== keys.length || !keys.every(key => Object.prototype.hasOwnProperty.call(record, key)) || // CHANGE
                 !['id', 'authorUserId', 'authorName', 'html'].every(key => typeof record[key] === 'string' && record[key].trim()) || ids.has(record.id) || // CHANGE
-                !timestamp(record.createdAt) || !timestamp(record.updatedAt) || record.updatedAt < record.createdAt || // CHANGE
+                !timestamp(record.createdAt) || !timestamp(record.updatedAt) || record.updatedAt < record.createdAt || value.version === 2 && typeof record.isAlert !== 'boolean' || // CHANGE
                 !(record.resolvedAt === null && record.resolvedByUserId === null && record.resolvedByName === null || // CHANGE
                     timestamp(record.resolvedAt) && record.resolvedAt >= record.updatedAt && typeof record.resolvedByUserId === 'string' && record.resolvedByUserId && typeof record.resolvedByName === 'string' && record.resolvedByName)) throw new Error('Unsupported or damaged comments data.'); // CHANGE
-            ids.add(record.id); return Object.fromEntries(keys.map(key => [key, record[key]])); // CHANGE
+            ids.add(record.id); return { ...Object.fromEntries(keys.map(key => [key, record[key]])), isAlert: value.version === 2 ? record.isAlert : false }; // CHANGE
         }); // CHANGE
     } // CHANGE
 
@@ -26,6 +27,7 @@
         try { // CHANGE
             if (!actor || !actor.enabled || !actor.editable || !actor.user || !actor.user.id) return false; // CHANGE
             const before = parseComments(beforeRaw), after = parseComments(afterRaw), previous = new Map(before.map(item => [item.id, item])); // CHANGE
+            if (beforeRaw && afterRaw && JSON.parse(beforeRaw).version === 2 && JSON.parse(afterRaw).version !== 2) return false; // CHANGE: old writers must not downgrade alert-aware discussion.
             const moderator = item => item.authorUserId === actor.user.id || actor.user.admin || actor.ownerUserId === actor.user.id; // CHANGE
             const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right); // CHANGE
             const recent = time => time <= now && now - time < 60000; // CHANGE: allow synchronous model listeners to run milliseconds after the command timestamp.
@@ -42,6 +44,8 @@
                 if (item.authorUserId !== old.authorUserId || item.authorName !== old.authorName || item.createdAt !== old.createdAt) return false; // CHANGE
                 if (item.html !== old.html) { // CHANGE
                     if (old.authorUserId !== actor.user.id || !recent(item.updatedAt) || item.updatedAt < old.updatedAt || item.resolvedAt !== null) return false; // CHANGE
+                } else if (item.isAlert !== old.isAlert) { // CHANGE
+                    if (!moderator(old) || !equal({ ...old, isAlert: item.isAlert }, item)) return false; // CHANGE: moderation cannot change text, timestamps or resolution alongside a flag.
                 } else { // CHANGE
                     if (!moderator(old) || item.updatedAt !== old.updatedAt) return false; // CHANGE
                     if (old.resolvedAt === null) { // CHANGE
@@ -58,19 +62,28 @@
     function changeComments(raw, action, actor, now = Date.now()) { // CHANGE
         if (!actor || !actor.enabled || !actor.editable || !actor.user || !actor.user.id) throw new Error('Log in with object-edit access before changing comments.'); // CHANGE
         const comments = parseComments(raw), index = comments.findIndex(item => item.id === action.id), old = comments[index]; // CHANGE
-        if (action.type !== 'post' && (!old || JSON.stringify(old) !== action.baseline)) throw new Error('This comment changed elsewhere. Copy your draft or reload the comment before retrying.'); // CHANGE
+        if (action.type !== 'post') { // CHANGE
+            let baseline = null; // CHANGE
+            try { const item = JSON.parse(action.baseline); baseline = parseComments(JSON.stringify({ version: Object.prototype.hasOwnProperty.call(item, 'isAlert') ? 2 : 1, comments: [item] }))[0]; } catch (_) { /* Invalid or stale baselines never authorize a mutation. */ } // CHANGE
+            if (!old || JSON.stringify(old) !== JSON.stringify(baseline)) throw new Error('This comment changed elsewhere. Copy your draft or reload the comment before retrying.'); // CHANGE: canonical comparison preserves legacy private edit drafts.
+        } // CHANGE
         const html = action.html == null ? '' : normalizeHtml(action.html); // CHANGE
         if (action.type === 'post') { // CHANGE
-            if (old) { if (old.authorUserId === actor.user.id && old.html === html) return raw; throw new Error('This comment ID is already in use.'); } // CHANGE: retries cannot duplicate an accepted submission.
-            comments.push({ id: action.id, authorUserId: actor.user.id, authorName: actor.user.name, html, createdAt: now, updatedAt: now, resolvedAt: null, resolvedByUserId: null, resolvedByName: null }); // CHANGE
+            if (old) { if (old.authorUserId === actor.user.id && old.html === html && old.isAlert === (action.isAlert === true)) return raw; throw new Error('This comment ID is already in use.'); } // CHANGE: retries cannot duplicate or silently change an accepted submission.
+            comments.push({ id: action.id, authorUserId: actor.user.id, authorName: actor.user.name, html, createdAt: now, updatedAt: now, resolvedAt: null, resolvedByUserId: null, resolvedByName: null, isAlert: action.isAlert === true }); // CHANGE
         } else if (action.type === 'edit') { // CHANGE
-            if (html === old.html) return raw; // CHANGE
-            comments[index] = { ...old, html, updatedAt: now, resolvedAt: null, resolvedByUserId: null, resolvedByName: null }; // CHANGE
+            if (old.authorUserId !== actor.user.id) throw new Error('This comment action is not permitted.'); // CHANGE: even flag-only composer submissions belong to the author.
+            const isAlert = action.isAlert == null ? old.isAlert : action.isAlert === true; // CHANGE
+            if (html === old.html && isAlert === old.isAlert) return raw; // CHANGE
+            comments[index] = html === old.html ? { ...old, isAlert } : { ...old, html, isAlert, updatedAt: now, resolvedAt: null, resolvedByUserId: null, resolvedByName: null }; // CHANGE
+        } else if (action.type === 'markAlert' || action.type === 'removeAlert') { // CHANGE
+            const isAlert = action.type === 'markAlert'; if (isAlert === old.isAlert) return raw; // CHANGE
+            comments[index] = { ...old, isAlert }; // CHANGE
         } else if (action.type === 'resolve') comments[index] = { ...old, resolvedAt: now, resolvedByUserId: actor.user.id, resolvedByName: actor.user.name }; // CHANGE
         else if (action.type === 'reopen') comments[index] = { ...old, resolvedAt: null, resolvedByUserId: null, resolvedByName: null }; // CHANGE
         else if (action.type === 'delete') comments.splice(index, 1); // CHANGE
         else throw new Error('Unknown comment action.'); // CHANGE
-        const next = comments.length ? JSON.stringify({ version: 1, comments }) : ''; // CHANGE
+        const next = comments.length ? JSON.stringify({ version: 2, comments }) : ''; // CHANGE
         if (!commentsChangeAllowed(raw, next, actor, now)) throw new Error('This comment action is not permitted.'); // CHANGE
         return next; // CHANGE
     } // CHANGE
@@ -123,10 +136,27 @@
         return { x, y, width, height }; // NEW
     } // NEW
 
-    /** Resolve generated planting visuals to their enduring planting group; connectors and layers are ineligible. */ // NEW
+    /** Use distance along the rendered route, including loops and repeated points, rather than its bounding box. */ // CHANGE
+    function edgeBounds(points) { // CHANGE
+        const route = Array.isArray(points) ? points.filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y)) : []; // CHANGE
+        if (!route.length) return null; // CHANGE
+        const lengths = route.slice(1).map((point, index) => Math.hypot(point.x - route[index].x, point.y - route[index].y)); // CHANGE
+        let remaining = lengths.reduce((sum, length) => sum + length, 0) / 2; // CHANGE
+        for (let index = 0; index < lengths.length; index++) { // CHANGE
+            const length = lengths[index]; // CHANGE
+            if (length > 0 && remaining <= length) { // CHANGE
+                const start = route[index], end = route[index + 1], fraction = remaining / length; // CHANGE
+                return { x: start.x + (end.x - start.x) * fraction, y: start.y + (end.y - start.y) * fraction, width: 0, height: 0 }; // CHANGE
+            } // CHANGE
+            remaining -= length; // CHANGE
+        } // CHANGE
+        return { x: route[0].x, y: route[0].y, width: 0, height: 0 }; // CHANGE: a rendered point is still a valid anchor for a zero-length route.
+    } // CHANGE
+
+    /** Resolve generated planting visuals to their enduring group; vertices and edges own details, layers do not. */ // CHANGE
     function detailsOwner(cell, model) { // NEW
         const attr = (target, name) => target && target.value && target.value.getAttribute ? target.value.getAttribute(name) : null; // NEW
-        if (!cell || !model.isVertex(cell)) return null; // NEW
+        if (!cell || !model.isVertex(cell) && !model.isEdge(cell)) return null; // CHANGE
         if (attr(cell, 'plant_tiler') === '1' && attr(cell, 'auto') === '1' || attr(cell, 'lod_summary') === '1') { // NEW
             for (let parent = model.getParent(cell); parent; parent = model.getParent(parent)) if (attr(parent, 'tiler_group') === '1') return parent; // NEW
             return null; // NEW
@@ -183,5 +213,5 @@
         } finally { model.endUpdate(); } // NEW
     } // NEW
 
-    root.TrellisDetailsCore = Object.freeze({ ATTRIBUTE, COMMENTS_ATTRIBUTE, COMMENT_RETENTION_MS, parseComments, commentsChangeAllowed, changeComments, DEFAULTS, SIDES, normalizeHtml, normalizePreferences, panelBounds, detailsOwner, createDraft, applyProjection }); // CHANGE
+    root.TrellisDetailsCore = Object.freeze({ ATTRIBUTE, COMMENTS_ATTRIBUTE, COMMENT_RETENTION_MS, parseComments, commentsChangeAllowed, changeComments, DEFAULTS, SIDES, normalizeHtml, normalizePreferences, panelBounds, edgeBounds, detailsOwner, createDraft, applyProjection }); // CHANGE
 })(globalThis); // NEW

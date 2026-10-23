@@ -340,7 +340,8 @@ Draw.loadPlugin(function (ui) {
 
 
     // -------------------- DbClient --------------------
-    const DbClient = (() => {
+    function createReferenceDbClient(referenceCell = null) { // CHANGE: one captured garden view per modal or pinned consumer.
+        const referenceContext = referenceCell && graph.__trellisReferences?.sqlContext(referenceCell), pinnedClients = new Map(); // CHANGE
         let __dbPathCached = null;
         let __plantsBasicCache = null;
 
@@ -360,6 +361,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         async function queryAll(sql, params) {
+            if (referenceContext) { const bridge = referenceContext.bridge, opened = await bridge.open('', { readOnly: true }); try { return (await bridge.query(opened.dbId, sql, params || [])).rows; } finally { await bridge.close(opened.dbId); } } // NEW
             if (!window.dbBridge || typeof window.dbBridge.open !== 'function') {
                 throw new Error('dbBridge not available; check preload/main wiring');
             }
@@ -381,7 +383,7 @@ Draw.loadPlugin(function (ui) {
           FROM Plants
           WHERE abbr IS NOT NULL
           ORDER BY plant_name;`;
-            return await queryAll(sql, []);
+            const rows = await queryAll(sql, []); return referenceContext ? referenceContext.filterRows('Plants', rows) : rows; // CHANGE
         }
 
         async function getPlantsBasicCached() {
@@ -402,20 +404,20 @@ Draw.loadPlugin(function (ui) {
         FROM PlantVarieties
         WHERE plant_id = ?
         ORDER BY variety_name COLLATE NOCASE;`;
-            return await queryAll(sql, [pid]);
+            const rows = await queryAll(sql, [pid]); return referenceContext ? referenceContext.filterRows('PlantVarieties', rows) : rows; // CHANGE
         }
 
         async function queryPlantingMethodsForPlantId(plantId) {
             const pid = Number(plantId);
             if (!Number.isFinite(pid)) return [];
             const sql = `
-        SELECT pm.method_id, pm.method_name, pm.method_category_id
+        SELECT pm.method_id, pm.method_name, pm.method_category_id, allowed.plant_id -- CHANGE: retain the allowed-category key for retirement filtering.
         FROM PlantingMethods pm
         INNER JOIN PlantAllowedMethodCategories allowed
           ON LOWER(TRIM(allowed.method_category_id)) = LOWER(TRIM(pm.method_category_id))
         WHERE allowed.plant_id = ?
         ORDER BY LOWER(TRIM(pm.method_category_id)), LOWER(TRIM(pm.method_name)), LOWER(TRIM(pm.method_id));`;
-            return await queryAll(sql, [pid]);
+            const rows = await queryAll(sql, [pid]); return referenceContext ? referenceContext.filterRows('PlantingMethods', referenceContext.filterRows('PlantingMethodCategories', referenceContext.filterRows('PlantAllowedMethodCategories', rows))) : rows; // CHANGE
         }
 
         async function queryNutritionByPlantIds(plantIds) {
@@ -451,7 +453,7 @@ Draw.loadPlugin(function (ui) {
             }
         } // NEW
 
-        return {
+        const api = { // CHANGE
             getDbPath,
             queryAll,
             listPlantsBasicRows,
@@ -460,9 +462,14 @@ Draw.loadPlugin(function (ui) {
             queryVarietiesByPlantId,
             queryPlantingMethodsForPlantId,
             queryNutritionByPlantIds,
-            queryNutritionRequirements
-        };
-    })();
+            queryNutritionRequirements,
+            referenceContext,
+            forPin(manifestId) { if (!referenceContext || !manifestId || manifestId === referenceContext.manifestId) return api; if (!pinnedClients.has(manifestId)) pinnedClients.set(manifestId, createReferenceDbClient(graph.__trellisReferences.consumerCell(referenceContext.garden, manifestId))); return pinnedClients.get(manifestId); }, // NEW
+            release: async () => { await referenceContext?.release(); for (const client of pinnedClients.values()) await client.release(); pinnedClients.clear(); } // CHANGE
+        }; return api; // CHANGE
+    } // CHANGE
+    const DbClient = createReferenceDbClient(); // CHANGE: legacy callers keep their existing local source.
+    const legacyDbClient = DbClient; // NEW: preserve the existing injected/local client for diagrams without portable references.
     window.addEventListener("trellis:database-restored", () => DbClient.invalidatePlantsBasicCache()); // CHANGE: restored DB should not leave stale crop options in memory.
 
 
@@ -1492,7 +1499,8 @@ Draw.loadPlugin(function (ui) {
             const requirements = Array.isArray(source.requirements) ? source.requirements : [];
             const valuesByPlantId = new Map();
             for (const row of values) {
-                const plantId = String(row && (row.plant_id ?? row.plantId) || "");
+                const rawPlantId = String(row && (row.plant_id ?? row.plantId) || ''); // CHANGE
+                const plantId = row?.reference_manifest_id ? row.reference_manifest_id + '::' + rawPlantId : rawPlantId; // NEW
                 const key = String(row && row.nutrient_key || "");
                 const amount = Number(row && row.amount_per_100g);
                 if (!plantId || !key || !Number.isFinite(amount)) continue;
@@ -1525,7 +1533,7 @@ Draw.loadPlugin(function (ui) {
                 perSelfLine.forEach(result => {
                     const crop = PlanMath.findCrop(plan, result && result.cropId);
                     const plantId = String(crop && crop.plantId || "");
-                    const nutrientValues = normalized.valuesByPlantId.get(plantId);
+                    const nutrientValues = normalized.valuesByPlantId.get(crop?.referenceManifestId ? crop.referenceManifestId + '::' + plantId : plantId); // CHANGE
                     const requestedKg = sumSeries(result && result.target);
                     const fulfilledKg = sumSeries(result && result.usableSupply);
                     if (requestedKg <= EPS && fulfilledKg <= EPS) return;
@@ -4331,6 +4339,9 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE
 
         function open(moduleCell, year) {
+            if ((moduleCell.getAttribute?.('trellis_references_json') || moduleCell.getAttribute?.('trellis_reference_pending') === '1') && !graph.__trellisReferences) throw new Error('Load Garden references before opening this garden planner.'); // NEW
+            const DbClient = graph.__trellisReferences && moduleCell.getAttribute?.('trellis_references_json') ? createReferenceDbClient(moduleCell) : legacyDbClient; // CHANGE
+            const referenceScheduler = window.USL?.scheduler?.forGarden ? window.USL.scheduler.forGarden(moduleCell) : null; // CHANGE
             function loadWorkingYear(targetYear) {
                 const committed = PlanRepository.loadPlanForYear(moduleCell, targetYear);
                 const draft = PlanRepository.loadDraftForYear(moduleCell, targetYear);
@@ -4348,6 +4359,7 @@ Draw.loadPlugin(function (ui) {
             let loadedExistingForCurrentYear = initialWorkingYear.loadedCommitted; // CHANGE
             let loadedDraftForCurrentYear = initialWorkingYear.loadedDraft; // CHANGE
             const plan = initialWorkingYear.plan; // CHANGE
+            if (DbClient.referenceContext && !plan.referenceManifestId) plan.referenceManifestId = DbClient.referenceContext.manifestId; // NEW
             const state = YearPlanDashboard.createState(plan, YearPlanCollapsePreferences.load(moduleCell, currentYear));
             const initialReturnContext = YEAR_PLAN_RETURN_CONTEXTS.get(yearPlanReturnContextKey(moduleCell, currentYear)); // CHANGE
             if (initialReturnContext && (plan.crops || []).some(crop => String(crop && crop.id || "") === String(initialReturnContext.cropId || ""))) { // CHANGE
@@ -4357,6 +4369,7 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
             state.lastDraftSavedAt = parseStoredDate(initialWorkingYear.draftUpdatedAt); // CHANGE
             const session = SessionController.start(moduleCell, currentYear, plan);
+            session.disposers.push(() => DbClient.release().catch(() => {})); // NEW: close captured SQL views on every modal close path.
             const varietyCache = new Map();
             const growthStageCache = new Map(); // CHANGE: one active-stage query per plant and refresh.
             let growthStageCacheVersion = 0; // CHANGE: a late query cannot repopulate defaults invalidated by a save or reload.
@@ -4401,6 +4414,7 @@ Draw.loadPlugin(function (ui) {
             wrap.style.cssText = "position:fixed;inset:0;z-index:" + TRELLIS_DIALOG_Z + ";background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;";
             const card = document.createElement("div");
             card.className = "yp-modal-card";
+            card.dataset.quickstartSurface = 'plan'; card.dataset.quickstartGarden = String(moduleCell.id); card.dataset.quickstartYear = String(currentYear); // NEW
             card.style.cssText = "position:relative;width:1180px;max-width:97vw;height:92vh;background:#fff;border:1px solid #777;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden;font:12px Arial,sans-serif;"; // CHANGE: card-local overlay positioning needs a containing block.
             const style = document.createElement("style");
             style.textContent = `
@@ -4720,6 +4734,8 @@ Draw.loadPlugin(function (ui) {
             chartTooltip.className = "yp-plan-chart-tooltip";
             chartTooltip.style.cssText = "display:none;position:absolute;z-index:2;pointer-events:none;min-width:170px;padding:7px 8px;border:1px solid #777;border-radius:5px;background:rgba(255,255,255,.97);box-shadow:0 3px 12px rgba(0,0,0,.18);line-height:1.45;";
             const totalsBox = document.createElement("div");
+            totalsBox.setAttribute('data-trellis-quickstart', 'plan-review'); // NEW
+            selfSufficiencyBox.setAttribute('data-trellis-quickstart', 'plan-demand-self'); demandBox.setAttribute('data-trellis-quickstart', 'plan-demand-sales'); // NEW
             const diagnosticsBox = document.createElement("div");
             diagnosticsBox.style.marginTop = "10px";
             const diagnosticsLayer = document.createElement("div"); // CHANGE
@@ -6557,6 +6573,7 @@ Draw.loadPlugin(function (ui) {
                 actions.className = "yp-row";
                 const cancel = mkBtn("Cancel", "close"); // CHANGE: picker cancellation uses the dismissal variant.
                 const apply = mkBtn("Apply changes", "add");
+                dialog.dataset.quickstartSurface = 'package-picker'; dialog.dataset.quickstartGarden = String(moduleCell.id); apply.setAttribute('data-trellis-quickstart', 'plan-package-apply'); // NEW
                 actions.appendChild(cancel);
                 actions.appendChild(apply);
                 foot.appendChild(status);
@@ -7108,13 +7125,13 @@ Draw.loadPlugin(function (ui) {
 
             function scheduleNutritionLoad() {
                 const plantIds = currentNutritionPlantIds();
-                const key = plantIds.join(",");
+                const key = plantIds.join(',') + ':' + (plan.crops || []).map(crop => crop.referenceManifestId || '').join(','); // CHANGE
                 if (!plantIds.length || key === nutritionLoadKey) return;
                 const version = ++nutritionLoadVersion;
                 nutritionLoadKey = key;
                 Promise.all([
-                    DbClient.queryNutritionByPlantIds(plantIds),
-                    DbClient.queryNutritionRequirements()
+                    DbClient.referenceContext ? Promise.all((plan.crops || []).filter(crop => plantIds.includes(Number(crop.plantId))).map(async crop => { const rows = await DbClient.forPin(crop.referenceManifestId).queryNutritionByPlantIds([Number(crop.plantId)]); return { ...rows, values: rows.values.map(row => ({ ...row, reference_manifest_id: crop.referenceManifestId || '' })) }; })).then(results => ({ available: results.every(row => row.available), mappings: results.flatMap(row => row.mappings), values: results.flatMap(row => row.values) })) : DbClient.queryNutritionByPlantIds(plantIds), // CHANGE: preserve the existing legacy query and render timing.
+                    DbClient.forPin(plan.referenceManifestId).queryNutritionRequirements() // CHANGE
                 ]).then(([nutritionRows, requirementRows]) => {
                     if (!SessionController.isActive(session) || version !== nutritionLoadVersion) return;
                     plan.__nutritionData = {
@@ -7834,11 +7851,11 @@ Draw.loadPlugin(function (ui) {
                 return runtime;
             }
 
-            async function getVarietyRows(plantId) {
-                const key = String(plantId || "");
+            async function getVarietyRows(plantId, manifestId = '') { // CHANGE
+                const key = String(plantId || '') + (manifestId ? ':' + manifestId : ''); // CHANGE
                 let rows = varietyCache.get(key);
                 if (!rows) {
-                    rows = await DbClient.queryVarietiesByPlantId(key);
+                    rows = await DbClient.forPin(manifestId).queryVarietiesByPlantId(plantId); // CHANGE
                     varietyCache.set(key, rows);
                 }
                 return rows;
@@ -7942,7 +7959,7 @@ Draw.loadPlugin(function (ui) {
                 const key = String(crop.plantId || "");
                 select.disabled = true;
                 try {
-                    const rows = await getVarietyRows(key);
+                    const rows = await getVarietyRows(key, crop.referenceManifestId); // CHANGE
                     if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.variety !== select) return;
                     const desired = crop.varietyId == null ? "" : String(crop.varietyId);
                     appendVarietyOptions(select, rows, desired, crop.variety); // CHANGE
@@ -7957,12 +7974,12 @@ Draw.loadPlugin(function (ui) {
             }
 
             async function loadMethods(crop, select, diagnostic) {
-                const key = String(crop.plantId || "");
+                const key = String(crop.plantId || '') + (crop.referenceManifestId ? ':' + crop.referenceManifestId : ''); // CHANGE
                 select.disabled = true;
                 try {
                     let rows = methodCache.get(key);
                     if (!rows) {
-                        rows = await DbClient.queryPlantingMethodsForPlantId(key);
+                        rows = await DbClient.forPin(crop.referenceManifestId).queryPlantingMethodsForPlantId(crop.plantId); // CHANGE
                         methodCache.set(key, rows);
                     }
                     if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.method !== select) return;
@@ -7998,13 +8015,13 @@ Draw.loadPlugin(function (ui) {
             }
 
             /** Loads current active defaults; only Mature is synthesized for legacy plans. */ // CHANGE
-            async function getGrowthStages(plantId) { // CHANGE
-                const key = String(plantId || ""); // CHANGE
+            async function getGrowthStages(plantId, manifestId = '') { // CHANGE
+                const key = String(plantId || '') + (manifestId ? ':' + manifestId : ''); // CHANGE
                 if (!growthStageCache.has(key)) { // CHANGE
                     const cacheVersion = growthStageCacheVersion; // CHANGE
-                    const scheduler = window.USL && window.USL.scheduler; // CHANGE
-                    const stages = scheduler && scheduler.listGrowthStagesForPlanCrop ? await scheduler.listGrowthStagesForPlanCrop(key) : [{ stageKey: "mature", stageLabel: "Mature", gddRatio: 1, spacingRatio: 1, plantDiameterRatio: 1, plantHeightRatio: 1, yieldRatio: 1 }]; // CHANGE
-                    if (cacheVersion !== growthStageCacheVersion) return getGrowthStages(key); // CHANGE: use the current generation rather than caching a stale response.
+                    const scheduler = manifestId && window.USL?.scheduler?.forGarden ? window.USL.scheduler.forGarden(graph.__trellisReferences.consumerCell(moduleCell, manifestId)) : referenceScheduler || window.USL?.scheduler; // CHANGE
+                    const stages = scheduler && scheduler.listGrowthStagesForPlanCrop ? await scheduler.listGrowthStagesForPlanCrop(plantId) : [{ stageKey: "mature", stageLabel: "Mature", gddRatio: 1, spacingRatio: 1, plantDiameterRatio: 1, plantHeightRatio: 1, yieldRatio: 1 }]; // CHANGE
+                    if (cacheVersion !== growthStageCacheVersion) return getGrowthStages(plantId, manifestId); // CHANGE: use the current generation rather than caching a stale response.
                     growthStageCache.set(key, stages); // CHANGE
                 } // CHANGE
                 return growthStageCache.get(key); // CHANGE
@@ -8022,7 +8039,7 @@ Draw.loadPlugin(function (ui) {
             async function loadGrowthStageControl(crop, select, note) { // CHANGE
                 select.disabled = true; // CHANGE
                 try { // CHANGE
-                    const stages = await getGrowthStages(crop.plantId); // CHANGE
+                    const stages = await getGrowthStages(crop.plantId, crop.referenceManifestId); // CHANGE
                     if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.growthStage !== select) return; // CHANGE
                     select.innerHTML = ""; // CHANGE
                     stages.forEach(stage => select.appendChild(new Option(stage.stageLabel, stage.stageKey))); // CHANGE
@@ -8487,6 +8504,7 @@ Draw.loadPlugin(function (ui) {
                 add.style.marginTop = "8px";
                 add.disabled = !(plan.crops || []).length; // CHANGE
                 add.title = (plan.crops || []).length ? "Add or remove crop packages for this channel." : "Add crops before managing packages."; // CHANGE
+                add.setAttribute('data-trellis-quickstart', 'plan-demand-add-sales'); // NEW
                 add.addEventListener("click", () => openDemandPackagePicker(channelId)); // CHANGE
                 details.appendChild(rows); details.appendChild(add);
                 box.appendChild(header); box.appendChild(details); host.appendChild(box);
@@ -8516,6 +8534,7 @@ Draw.loadPlugin(function (ui) {
                 toolbar.className = "yp-row";
                 toolbar.style.marginBottom = "9px";
                 const addChannel = mkBtn("Add channel", "add", "Add a demand channel to this year plan."); // CHANGE: explicit action tooltip.
+                addChannel.setAttribute('data-trellis-quickstart', 'plan-sales-channel'); // NEW
                 toolbar.appendChild(addChannel); // CHANGE: demand rows are added from each channel's own bulk picker.
                 const channelsHost = document.createElement("div");
                 channelsHost.style.cssText = "display:flex;flex-direction:column;gap:9px;";
@@ -8745,6 +8764,7 @@ Draw.loadPlugin(function (ui) {
                 const multiplier = mkInput("number", plan.selfSufficiency.nutritionMultiplier ?? 1, 90);
                 multiplier.min = "0.01"; multiplier.step = "0.01";
                 const addLine = mkBtn("Manage packages", "add"); // CHANGE
+                addLine.setAttribute('data-trellis-quickstart', 'plan-demand-add-self'); // NEW
                 addLine.disabled = !(plan.crops || []).length; // CHANGE
                 addLine.title = (plan.crops || []).length ? "Add or remove crop packages for self-use." : "Add crops before managing packages."; // CHANGE
                 setYearPlanField(adults, "adults");
@@ -8935,6 +8955,7 @@ Draw.loadPlugin(function (ui) {
                 content.style.padding = "12px";
                 for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }]) {
                     const button = mkBtn(tab.label, "neutral");
+                    if (tab.id === 'basics') button.setAttribute('data-trellis-quickstart', 'plan-basics'); // NEW
                     button.addEventListener("click", () => { state.activeTab = tab.id; renderSelectedEditor(); syncEditorDerived(); });
                     tabs.appendChild(button);
                 }
@@ -9158,7 +9179,7 @@ Draw.loadPlugin(function (ui) {
             function requestClose() {
                 refreshDerived();
                 saveDraftIfDirty(); // CHANGE: closing preserves unfinished work without prompting.
-                SessionController.close(); // CHANGE
+                SessionController.close(); DbClient.release()?.catch(() => {}); // CHANGE
             }
 
             const yearInput = mkInput("number", currentYear, 88);
@@ -9183,11 +9204,13 @@ Draw.loadPlugin(function (ui) {
             headerActions.appendChild(save); headerActions.appendChild(saveClose); headerActions.appendChild(close);
             header.appendChild(titleEl); header.appendChild(headerControls); header.appendChild(headerActions);
             secondaryToolbar.appendChild(document.createTextNode("Year")); secondaryToolbar.appendChild(yearInput); secondaryToolbar.appendChild(document.createTextNode("Template")); secondaryToolbar.appendChild(templateSel); secondaryToolbar.appendChild(templateNameInput); secondaryToolbar.appendChild(applyTemplate); secondaryToolbar.appendChild(saveTemplate); secondaryToolbar.appendChild(deleteTemplate);
+            yearInput.setAttribute('data-trellis-quickstart', 'plan-year'); save.setAttribute('data-trellis-quickstart', 'plan-save'); // NEW
             fillTemplateDropdown();
             saveTemplate.disabled = true;
             refreshTemplateButtonTooltips(); // CHANGE
 
             const addCropsButton = mkBtn("Add/Remove crops", "add", "Choose crops to add to or remove from this year plan."); // CHANGE
+            addCropsButton.setAttribute('data-trellis-quickstart', 'plan-add-crops'); // NEW
             const reloadPlants = mkBtn("Reload crops", "neutral", "Reload the crop catalog from the local database."); // CHANGE: explicit action tooltip.
             const plantMessage = document.createElement("span");
             plantMessage.style.color = "#666";
@@ -9420,7 +9443,8 @@ Draw.loadPlugin(function (ui) {
                     addCropPickerNodes = nodes; // CHANGE
                     const changedCrops = []; // CHANGE
                     for (const crop of plan.crops || []) { // CHANGE
-                        const stages = await getGrowthStages(crop.plantId); // CHANGE
+                        if (crop.referenceManifestId) continue; // NEW: refreshing choices cannot rewrite pinned consumers.
+                        const stages = await getGrowthStages(crop.plantId, crop.referenceManifestId); // CHANGE
                         if (!SessionController.isActive(session) || loadVersion !== addCropOptionsLoadVersion) return; // CHANGE
                         const previousBaseYield = crop.baseKgPerPlant; // CHANGE
                         const currentBaseYield = Number(plantRowsById.get(String(crop.plantId))?.yield_per_plant_kg); // CHANGE
@@ -9462,6 +9486,7 @@ Draw.loadPlugin(function (ui) {
                 const cropYield = Number.isFinite(overrideYield) ? overrideYield : baseYield;
                 const numericVarietyId = selectedOption.varietyId == null ? NaN : Number(selectedOption.varietyId);
                 const crop = {
+                    referenceManifestId: DbClient.referenceContext?.manifestId || '', // NEW: existing plan consumers retain their reference versions.
                     id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow.field",
                     methodCategoryId: String(item.default_planting_method_category || PlanSchema.inferMethodCategoryFromMethodId(item.default_planting_method) || "direct_sow").trim(),
                     varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", harvestWindowSource: "sowing_window_estimate", useActualHarvest: false, syncharvest: true, // CHANGE: new crops default to synced demand while sowing-window dates are requested.
@@ -9608,6 +9633,7 @@ Draw.loadPlugin(function (ui) {
                 head.className = "yp-picker-head"; // CHANGE
                 const title = document.createElement("div"); // CHANGE
                 title.className = "yp-picker-title"; // CHANGE
+                dialog.dataset.quickstartSurface = 'crop-picker'; dialog.dataset.quickstartGarden = String(moduleCell.id); // NEW
                 title.textContent = "Add/Remove crops"; // CHANGE
                 const close = mkBtn("Close", "close"); // CHANGE: picker dismissal uses the shared red outline.
                 head.appendChild(title); head.appendChild(close); // CHANGE
@@ -9636,6 +9662,7 @@ Draw.loadPlugin(function (ui) {
                 actions.className = "yp-row"; // CHANGE
                 const cancel = mkBtn("Cancel", "close"); // CHANGE: picker cancellation uses the dismissal variant.
                 const apply = mkBtn("Apply changes", "add"); // CHANGE
+                apply.setAttribute('data-trellis-quickstart', 'plan-crop-apply'); // NEW
                 actions.appendChild(cancel); actions.appendChild(apply); // CHANGE
                 foot.appendChild(status); foot.appendChild(warning); foot.appendChild(actions); // CHANGE
                 dialog.appendChild(head); dialog.appendChild(bodyEl); dialog.appendChild(foot); // CHANGE

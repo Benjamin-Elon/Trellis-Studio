@@ -408,7 +408,8 @@ Draw.loadPlugin(function (ui) {
 
 
     // -------------------- DB (open → query → close) --------------------
-    async function queryAll(sql, params) {
+    async function queryAll(sql, params, referenceContext = null) { // CHANGE
+        if (referenceContext) { const bridge = referenceContext.bridge, opened = await bridge.open('', { readOnly: true }); try { return (await bridge.query(opened.dbId, sql, params || [])).rows; } finally { await bridge.close(opened.dbId); } } // NEW
         if (!window.dbBridge || typeof window.dbBridge.open !== "function") {
             throw new Error("dbBridge not available; check preload/main wiring");
         }
@@ -430,7 +431,8 @@ Draw.loadPlugin(function (ui) {
         if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z);
     }
 
-    async function execAll(sql, params) {
+    async function execAll(sql, params, referenceContext = null) { // CHANGE
+        if (referenceContext) { const bridge = referenceContext.bridge, opened = await bridge.open('', { readOnly: false }); try { return await bridge.exec(opened.dbId, sql, params || []); } finally { await bridge.close(opened.dbId); } } // NEW
         if (!window.dbBridge || typeof window.dbBridge.open !== "function") {
             throw new Error("dbBridge not available; check preload/main wiring");
         }
@@ -507,7 +509,8 @@ Draw.loadPlugin(function (ui) {
     });
     let cityGeoSchemaEnsured = false;
 
-    async function ensureCityGeographySchema() {
+    async function ensureCityGeographySchema(referenceContext = null) {
+        if (referenceContext) return; // NEW: portable schemas are prepared at creation.
         if (cityGeoSchemaEnsured) return;
         const existing = new Set((await queryAll("PRAGMA table_info(Cities);", [])).map(row => String(row.name || "").toLowerCase()));
         for (const [column, type] of Object.entries(CITY_GEO_COLUMNS)) {
@@ -677,7 +680,8 @@ Draw.loadPlugin(function (ui) {
         return root;
     }
 
-    async function loadCities() {
+    async function loadCities(referenceContext = null) { // CHANGE
+        if (referenceContext) return referenceContext.filterRows('Cities', await queryAll('SELECT * FROM Cities ORDER BY city_name;', [], referenceContext)); // CHANGE
         await ensureCityGeographySchema();
         const sql = `
         SELECT *
@@ -688,20 +692,20 @@ Draw.loadPlugin(function (ui) {
         return rows;
     }
 
-    async function loadCityById(cityId) {
-        await ensureCityGeographySchema();
+    async function loadCityById(cityId, referenceContext = null) { // CHANGE
+        await ensureCityGeographySchema(referenceContext);
         const id = Number(cityId);
         if (!Number.isFinite(id)) return null;
-        const rows = await queryAll("SELECT * FROM Cities WHERE city_id = ? LIMIT 1;", [id]);
+        const rows = await queryAll("SELECT * FROM Cities WHERE city_id = ? LIMIT 1;", [id], referenceContext);
         return rows[0] || null;
     }
 
-    async function cityIdentityExists(row, excludeCityId) {
-        await ensureCityGeographySchema();
+    async function cityIdentityExists(row, excludeCityId, referenceContext = null) { // CHANGE
+        await ensureCityGeographySchema(referenceContext);
         const cityName = normalizeCityGeoText(row.city_name);
         const rows = await queryAll(
             "SELECT city_id, city_name, country_name, country_code, region_name, region_code FROM Cities WHERE LOWER(TRIM(city_name)) = LOWER(TRIM(?)) AND (? IS NULL OR city_id <> ?);",
-            [cityName, excludeCityId == null ? null : Number(excludeCityId), excludeCityId == null ? null : Number(excludeCityId)]
+            [cityName, excludeCityId == null ? null : Number(excludeCityId), excludeCityId == null ? null : Number(excludeCityId)], referenceContext
         );
         const countryName = normalizeCityIdentityText(row.country_name);
         const countryCode = normalizeCityIdentityText(row.country_code);
@@ -1905,8 +1909,8 @@ Draw.loadPlugin(function (ui) {
         if (graph.fireEvent && typeof mxEventObject === "function") graph.fireEvent(new mxEventObject("usl:requestSetModuleExternalMargin", "cell", moduleCell, "marginPx", marginPx)); // NEW
     }
 
-    async function saveCityRecord(row, existingCityId = null) {
-        await ensureCityGeographySchema();
+    async function saveCityRecord(row, existingCityId = null, referenceContext = null) {
+        await ensureCityGeographySchema(referenceContext);
         const cityId = Number(row.city_id);
         const cityName = String(row.city_name || "").trim();
         const countryName = normalizeCityGeoText(row.country_name);
@@ -1915,7 +1919,7 @@ Draw.loadPlugin(function (ui) {
         if (!cityName) throw new Error("City name is required.");
         if (!countryName) throw new Error("Country is required.");
         if (!regionName) throw new Error("Region/state is required. Use Unspecified when no region applies.");
-        if (await cityIdentityExists(row, existingCityId == null ? null : cityId)) throw new Error("A city with that city/country/region already exists.");
+        if (await cityIdentityExists(row, existingCityId == null ? null : cityId, referenceContext)) throw new Error("A city with that city/country/region already exists.");
         const lat = finiteNumberOrNull(row.latitude);
         const lon = finiteNumberOrNull(row.longitude);
         if (lat == null || lat < -66.5 || lat > 66.5) throw new Error("Latitude is required and must be between -66.5 and 66.5.");
@@ -1935,21 +1939,21 @@ Draw.loadPlugin(function (ui) {
         ];
         for (let m = 1; m <= 12; m += 1) columns.push(`avg_monthly_low_c${m}`, `avg_monthly_high_c${m}`);
         const values = columns.map(col => row[col] == null || row[col] === "" ? null : row[col]);
-        const exists = await loadCityById(cityId);
+        const exists = await loadCityById(cityId, referenceContext);
         if (exists && existingCityId == null) throw new Error("A city with that ID already exists.");
         if (exists) {
             const assignments = columns.filter(col => col !== "city_id").map(col => `${col} = ?`).join(", ");
             const updateValues = columns.filter(col => col !== "city_id").map(col => row[col] == null || row[col] === "" ? null : row[col]);
-            await execAll(`UPDATE Cities SET ${assignments} WHERE city_id = ?;`, updateValues.concat(cityId));
+            await execAll(`UPDATE Cities SET ${assignments} WHERE city_id = ?;`, updateValues.concat(cityId), referenceContext);
         } else {
-            await execAll(`INSERT INTO Cities (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")});`, values);
+            await execAll(`INSERT INTO Cities (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")});`, values, referenceContext);
         }
-        return await loadCityById(cityId);
+        return await loadCityById(cityId, referenceContext);
     }
 
-    async function showCityManagerDialog(ui, graph, selectedCityId, units, onSaved) {
+    async function showCityManagerDialog(ui, graph, selectedCityId, units, onSaved, referenceContext = null) {
         const model = graph.getModel();
-        let cities = await loadCities();
+        let cities = await loadCities(referenceContext);
         let current = cities.find(city => String(city.city_id) === String(selectedCityId)) || cities[0] || null;
         let editingExistingId = current ? Number(current.city_id) : null;
         const displayUnits = units === "imperial" ? "imperial" : "metric";
@@ -2154,15 +2158,14 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.gap = "8px";
         btnRow.style.marginTop = "12px";
         const closeBtn = tilerButton("Close", () => ui.hideDialog(), "close"); // CHANGE
-        const saveBtn = tilerButton("Save City", async () => {
+        const saveBtn = tilerButton(referenceContext ? "Save city draft" : "Save City", async () => { // CHANGE
             clearError();
             try {
-                const saved = await saveCityRecord(readForm(), editingExistingId);
-                cities = await loadCities();
+                const saved = await saveCityRecord(readForm(), editingExistingId, referenceContext);
+                cities = await loadCities(referenceContext);
                 refreshPicker(saved.city_id);
                 fillForm(saved, true);
-                model.beginUpdate();
-                try { refreshDiagramCityNameById(model, model.getRoot(), saved); } finally { model.endUpdate(); }
+                if (!referenceContext) { model.beginUpdate(); try { refreshDiagramCityNameById(model, model.getRoot(), saved); } finally { model.endUpdate(); } } // CHANGE: draft definitions cannot rename accepted consumers.
                 if (typeof onSaved === "function") onSaved(saved);
             } catch (e) {
                 showError(e && e.message ? e.message : String(e));
@@ -2175,7 +2178,7 @@ Draw.loadPlugin(function (ui) {
 
         refreshPicker(current?.city_id);
         fillForm(current || { city_id: 1, timezone: "America/Los_Angeles" }, !!current);
-        ui.showDialog(div, 800, 720, true, true);
+        ui.showDialog(div, 800, 720, true, true, () => referenceContext?.release().catch(() => {})); // CHANGE
         elevateTrellisDialog();
     }
 
@@ -2183,6 +2186,10 @@ Draw.loadPlugin(function (ui) {
     // garden settings dialog (city + units + garden dimensions + default bed dimensions) // CHANGE
     async function showGardenSettingsDialog(ui, graph, moduleCell, onClose) {
         const model = graph.getModel();
+        const references = graph.__trellisReferences, creating = getXmlAttr(moduleCell, 'trellis_reference_pending', '') === '1'; // NEW
+        if ((creating || getXmlAttr(moduleCell, 'trellis_references_json', '')) && !references) throw new Error('Garden references are still loading. Reopen Garden Settings.'); // CHANGE
+        let preparedReferences = creating ? await references.initialize(moduleCell) : null; // NEW
+        let settingsReferenceContext = references?.sqlContext(moduleCell, preparedReferences ? { store: preparedReferences.store } : {}), templateLoading = false, templateVersion = 0, templateError = ''; // CHANGE
         const curGardenName = String(getXmlAttr(moduleCell, "garden_name", "") || getXmlAttr(moduleCell, "label", "") || "Garden").trim() || "Garden";
         const curCityId = getXmlAttr(moduleCell, "city_id", "");
         const curCity = getXmlAttr(moduleCell, "city_name", "");
@@ -2203,12 +2210,13 @@ Draw.loadPlugin(function (ui) {
         function notifyClose() {
             if (closeNotified) return;
             closeNotified = true;
+            settingsReferenceContext?.release().catch(() => {}); // NEW
             if (typeof onClose === "function") onClose();
         }
 
         let cities = [];
         try {
-            cities = await loadCities();
+            cities = await loadCities(settingsReferenceContext); // CHANGE
         } catch (e) {
             mxUtils.alert("Error loading cities: " + e.message);
             notifyClose();
@@ -2253,6 +2261,8 @@ Draw.loadPlugin(function (ui) {
         gardenNameInput.value = curGardenName;
         gardenNameInput.style.flex = "1";
         row("Garden name:", gardenNameInput);
+        const templateSelect = creating ? document.createElement('select') : null; // NEW
+        if (templateSelect) { const local = document.createElement('option'); local.value = ''; local.textContent = 'Local defaults'; templateSelect.appendChild(local); row('Start from:', templateSelect); } // NEW
         const existingCircleLimits = readPlantCircleLimits(moduleCell); // NEW
         const circleInputs = [ // NEW
             { key: ATTR_CIRCLE_MAX_GROUP, label: 'Max circles per planting:', value: existingCircleLimits.active ? existingCircleLimits.perPlanting : DEFAULT_CIRCLE_MAX_GROUP, max: MAX_TILES }, // NEW
@@ -2284,6 +2294,12 @@ Draw.loadPlugin(function (ui) {
         cityControl.style.flex = "1";
         cityControl.appendChild(citySel);
         const manageCityBtn = tilerButton("Manage...", async () => {
+            if (settingsReferenceContext) { // CHANGE: reuse the existing city form against a captured scratch view.
+                if (creating) { showError('Save the new garden before proposing city definition changes.'); return; } // NEW
+                await references.restoreDraft(moduleCell); // NEW
+                const context = references.sqlContext(moduleCell, { editable: true, draft: true }); // CHANGE
+                await showCityManagerDialog(ui, graph, citySel.value, unitsSel.value || curUnits || 'metric', () => { references.show(moduleCell); }, context); return; // NEW
+            } // NEW
             await showCityManagerDialog(ui, graph, citySel.value, unitsSel.value || curUnits || "metric", async saved => {
                 cities = await loadCities();
                 refreshCityOptions(saved.city_id, saved.city_name);
@@ -2541,6 +2557,31 @@ Draw.loadPlugin(function (ui) {
         syncModuleExternalMarginInput(curUnits); // CHANGE
         syncBedDimensionInputs(curUnits);
         syncPathWidthInputs(curUnits); // NEW
+        if (templateSelect) { // NEW
+            const choices = await references.templates(moduleCell); // NEW
+            choices.forEach((source, index) => { const option = document.createElement('option'); option.value = String(index); option.textContent = source.name; templateSelect.appendChild(option); }); // NEW
+            templateSelect.addEventListener('change', async () => { // NEW
+                const version = ++templateVersion; templateLoading = true; templateError = ''; try { // CHANGE
+                    const source = templateSelect.value === '' ? null : choices[Number(templateSelect.value)]; // NEW
+                    const prepared = await references.initialize(moduleCell, source); // NEW
+                    const nextContext = references.sqlContext(moduleCell, { store: prepared.store }), nextCities = await loadCities(nextContext); // CHANGE
+                    if (version !== templateVersion) { await nextContext.release(); return; } // NEW
+                    const previousContext = settingsReferenceContext; preparedReferences = prepared; settingsReferenceContext = nextContext; await previousContext?.release(); // CHANGE
+                    cities = nextCities; refreshCityOptions(source?.settings.city_id || curCityId, source?.settings.city_name || curCity); // CHANGE
+                    activeGardenDisplayUnits = activeBedDisplayUnits = activePathDisplayUnits = activeMarginDisplayUnits = ''; bedDimensionsEdited = pathWidthsEdited = false; // NEW: a source change resets the form before applying the chosen settings.
+                    unitsSel.value = source?.settings.unit_system || curUnits; unitsSel.dispatchEvent(new Event('change')); // NEW
+                    circleInputs.forEach(item => { item.input.value = String(item.value); }); err.style.display = 'none'; // NEW
+                    if (source) { // CHANGE: reflect all copied settings in the editable creation form.
+                        const saved = source.settings; unitsSel.value = saved.unit_system || curUnits; unitsSel.dispatchEvent(new Event('change')); // NEW
+                        if (saved.geometry) setGardenInputsFromCm({ widthCm: graphUnitsToCm(saved.geometry.width), lengthCm: graphUnitsToCm(saved.geometry.height) }, unitsSel.value); // NEW
+                        if (saved.default_bed_width_cm && saved.default_bed_length_cm) setBedInputsFromCm({ widthCm: Number(saved.default_bed_width_cm), lengthCm: Number(saved.default_bed_length_cm) }, unitsSel.value); // NEW
+                        pathPresetRows.forEach(item => { item.enabledInput.checked = saved[pathPresetEnabledAttr(item.preset.id)] !== '0'; item.widthInput.disabled = !item.enabledInput.checked; const width = saved[pathPresetWidthAttr(item.preset.id)]; if (width != null) item.widthInput.value = formatBedDisplayValue(lengthCmToDisplay(Number(width), unitsSel.value)); }); // NEW
+                        if (saved.module_external_margin != null) setModuleMarginInputFromUnits(moduleExternalMarginInput, Number(saved.module_external_margin), unitsSel.value); // NEW
+                        circleInputs.forEach(item => { if (saved[item.key] != null) item.input.value = saved[item.key]; }); // NEW
+                    } // NEW
+                } catch (error) { if (version === templateVersion) { templateError = error.message; showError(templateError); } } finally { if (version === templateVersion) templateLoading = false; } // CHANGE
+            }); // NEW
+        } // NEW
 
         function showError(msg) {
             err.textContent = msg;
@@ -2555,6 +2596,9 @@ Draw.loadPlugin(function (ui) {
 
         const cancelBtn = tilerButton("Cancel", () => ui.hideDialog(), "close"); // CHANGE: garden settings cancellation uses the red outline.
         const okBtn = tilerButton("OK", () => {
+            if (templateLoading) { showError('Wait for the selected template to finish loading.'); return; } // NEW
+            if (templateError) { showError('Choose an available template before saving. ' + templateError); return; } // NEW
+            if (!creating && settingsReferenceContext && references.read(moduleCell).current !== settingsReferenceContext.manifestId) { showError('Accepted definitions changed. Reopen Garden Settings.'); return; } // NEW
             err.style.display = "none";
             const chosenGardenName = String(gardenNameInput.value || "").trim() || "Garden";
             const chosenCityRow = selectedCityRow();
@@ -2581,10 +2625,12 @@ Draw.loadPlugin(function (ui) {
             if (!chosenPathPresetsCm || chosenPathPresetsCm.length !== DEFAULT_PATH_WIDTH_PRESETS.length) { showError("Enabled path widths must be positive numbers."); pathPresetRows[0].widthInput.focus(); return; } // NEW
             if (chosenModuleExternalMargin == null) { showError("External margin must be a non-negative number."); moduleExternalMarginInput.focus(); return; } // NEW
             if (!gardenDimensionsFit(chosenGardenWidthUnits, chosenGardenHeightUnits)) { showError(requiredGardenFitMessage(chosenUnits)); gardenWidthInput.focus(); return; } // CHANGE
+            try { preparedReferences?.finalize(chosenCityId); } catch (error) { showError(error.message); return; } // NEW: bind the first snapshot to the reviewed city before writing the garden.
 
             ui.hideDialog();
             model.beginUpdate();
             try {
+                preparedReferences?.apply(); // NEW: one creation/settings transaction, with fresh factory ownership and linked modules.
                 const geo = model.getGeometry(moduleCell); // CHANGE
                 if (geo) { // CHANGE
                     const nextGeo = geo.clone ? geo.clone() : new mxGeometry(geo.x, geo.y, geo.width, geo.height); // CHANGE
@@ -2622,6 +2668,8 @@ Draw.loadPlugin(function (ui) {
 
         ui.showDialog(div, 460, 640, true, true, notifyClose); // CHANGE: allow space for the two circle-budget fields.
         elevateTrellisDialog();
+        div.dataset.quickstartSurface = 'settings'; div.dataset.quickstartGarden = String(moduleCell.id); // NEW
+        for (const [key, node] of Object.entries({ 'settings-source': templateSelect, 'settings-name': gardenNameInput, 'settings-city': citySel, 'settings-units': unitsSel, 'settings-width': gardenWidthInput, 'settings-length': gardenLengthInput, 'settings-bed-width': bedWidthInput, 'settings-bed-length': bedLengthInput, 'settings-save': okBtn })) if (node) node.setAttribute('data-trellis-quickstart', key); // NEW
         gardenNameInput.focus();
     }
 
@@ -2857,6 +2905,7 @@ Draw.loadPlugin(function (ui) {
             allocateModeBtn = makeButton("Enter Allocation Mode", "open"); // NEW
             irrigationModeBtn = makeButton("Enter Irrigation Design Mode", "open"); // CHANGE
             toolbar.appendChild(labelInputWrap);
+            settingsBtn.setAttribute('data-trellis-quickstart', 'settings'); addBedBtn.setAttribute('data-trellis-quickstart', 'add-bed'); // NEW
             toolbar.appendChild(settingsBtn);
             toolbar.appendChild(addBedBtn);
             toolbar.appendChild(schedulePlantingBtn); // CHANGE
@@ -6327,6 +6376,7 @@ Draw.loadPlugin(function (ui) {
         const geometry = proposal.geometry || {};
         const model = activeGraphArg.getModel && activeGraphArg.getModel();
         const attrs = Object.assign({ tiler_group: '1', season_start_year: String(getCurrentGardenYear(moduleCell)), yield_unit: YIELD_UNIT, planting_actual_yield_kg: '0' }, input.attributes || proposal.attributes || {}, { // CHANGE: initialize identity and final crop attributes before publishing the group.
+            ...(moduleCell.getAttribute('trellis_references_json') ? { trellis_reference_pin: input.attributes?.trellis_reference_pin || graph.__trellisReferences.read(moduleCell).current } : {}), // NEW: pin before publishing the planting's creation transaction.
             allowed_overhang_pct: String(resolveAllowedOverhangPct(proposal.allowedOverhangPct)), // CHANGE
             ...(proposal.layoutAlignment === 'centered' && !proposal.sharedFootprint ? { layout_alignment: 'centered', // CHANGE
                 layout_base_offset_x_cm: String(proposal.layoutBaseOffsetXCm || 0), layout_base_offset_y_cm: String(proposal.layoutBaseOffsetYCm || 0) } : {}), // CHANGE
@@ -7353,6 +7403,7 @@ Draw.loadPlugin(function (ui) {
             if (!cells.length) return;
 
             const model = graph.getModel();
+            const changed = []; // CHANGE: only tiles whose dirty styling changed need an additional redraw.
             model.beginUpdate();
             try {
                 for (const cell of cells) {
@@ -7368,6 +7419,7 @@ Draw.loadPlugin(function (ui) {
                     // If it was auto-placed and user moved it, set as dirty
                     if (cell.getAttribute("auto") === "1" && cell.getAttribute("dirty") !== "1") {
                         setAttrsTxn(model, cell, { auto: "0", dirty: "1" });
+                        changed.push(cell); // CHANGE
                     }
                 }
             } finally {
@@ -7375,7 +7427,7 @@ Draw.loadPlugin(function (ui) {
             }
 
             // Refresh moved cells so styles/labels update if you choose to reflect dirty state visually
-            for (const cell of cells) graph.refresh(cell);
+            for (const cell of changed) graph.refresh(cell); // CHANGE: unrelated movement already receives native geometry validation.
         });
     })();
 
@@ -11279,7 +11331,8 @@ Draw.loadPlugin(function (ui) {
         function refresh() { // NEW
             scheduled = false; if (disposed) return; // NEW
             const core = window.USL?.scheduler?.sharedCore, date = todayISO(), live = new Set(); // NEW
-            for (const cell of Object.values(model.cells || {})) { // NEW
+            const renderedCells = graph.__trellisModules?.clusters?.renderedCells() || Object.values(model.cells || {}); // CHANGE: cluster-aware refreshes visit rendered plantings; standalone hosts retain their existing badge lifecycle.
+            for (const cell of renderedCells) { // CHANGE
                 if (!isTilerGroup(cell)) continue; live.add(cell.id); // NEW
                 let entry = entries.get(cell.id); // NEW
                 if (!entry) { entry = {}; entries.set(cell.id, entry); } // NEW
@@ -11313,6 +11366,7 @@ Draw.loadPlugin(function (ui) {
         listen(model, mxEvent.CHANGE, invalidate); listen(graph.getSelectionModel?.(), mxEvent.CHANGE, schedule); // NEW
         [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE, mxEvent.UP, mxEvent.DOWN].forEach(name => listen(graph.view, name, schedule)); // NEW
         [mxEvent.REFRESH, mxEvent.PAN].forEach(name => listen(graph, name, schedule)); // NEW
+        listen(graph, 'trellisClustersChanged', schedule); // NEW: remove badges when their rendering neighborhood leaves the canvas.
         const events = ['resize', 'trellisPlantGrowthReady', 'usl:varietyEditorSaved', 'usl:growthStagesSaved', 'trellis:database-restored', 'trellisHistoryAfterRestore']; // NEW
         if (window.addEventListener) events.forEach(name => { window.addEventListener(name, invalidate); listeners.push(() => window.removeEventListener(name, invalidate)); }); // NEW
         if (graph.container) { graph.container.addEventListener('scroll', schedule); listeners.push(() => graph.container.removeEventListener('scroll', schedule)); } // NEW
@@ -11327,7 +11381,8 @@ Draw.loadPlugin(function (ui) {
             entries.forEach(entry => entry.badge?.remove()); entries.clear(); outlines.clear(); // NEW
             if (renderer?.createShape === createGrowthShape) renderer.createShape = original.createShape; // CHANGE
             if (renderer?.createTextShape === createGrowthText) renderer.createTextShape = original.createTextShape; // CHANGE
-            for (const cell of Object.values(model.cells || {})) { const state = graph.view?.getState?.(cell); if (state && isPlantCircle(cell)) renderer?.redraw(state, true); } // CHANGE: restore native live glyphs and circles when this controller is disposed.
+            const renderedCells = graph.__trellisModules?.clusters?.renderedCells() || Object.values(model.cells || {}); // CHANGE
+            for (const cell of renderedCells) { const state = graph.view?.getState?.(cell); if (state && isPlantCircle(cell)) renderer?.redraw(state, true); } // CHANGE: restore only live glyphs when this controller is disposed.
         } // NEW
         graph.destroy = function () { dispose(); return originalDestroy?.apply(this, arguments); }; // NEW
         armRollover(); schedule(); // NEW

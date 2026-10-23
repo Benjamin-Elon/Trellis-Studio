@@ -19,6 +19,7 @@ var mxSettings =
 		'trellisUpdatesLinks', // NEW
 		'trellisDatabaseTools', // NEW
 		'trellisUiCleanup', // NEW
+		'gardenReferences', // NEW: portable garden catalogs.
 		'trellisUsers', // NEW
 		'trellisSyncthing', // NEW: sharing entry points remain available before diagram login.
 		'trellisContextMenu', // NEW
@@ -27,6 +28,7 @@ var mxSettings =
 		'plantingGroup', // NEW
 		'gardenTasks', // NEW
 		'gardenGuide', // CHANGE
+		'gardenQuickstart', // NEW
 		'gardenRoadmapCore', // NEW
 		'gardenRoadmaps', // NEW
 		'gardenModules', // NEW
@@ -48,6 +50,7 @@ var mxSettings =
 		trellisUpdatesLinks: 'plugins/garden_planner_plugins/Trellis_Updates_Links.js', // NEW
 		trellisDatabaseTools: 'plugins/garden_planner_plugins/Trellis_Database_Tools.js', // NEW
 		trellisUiCleanup: 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js', // NEW
+		gardenReferences: 'plugins/garden_planner_plugins/Garden_References.js', // NEW
 		trellisUsers: 'plugins/garden_planner_plugins/Trellis_Users.js', // NEW
 		trellisSyncthing: 'plugins/garden_planner_plugins/Trellis_Syncthing.js', // NEW
 		trellisContextMenu: 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', // NEW
@@ -57,6 +60,7 @@ var mxSettings =
 		plantTiler: 'plugins/garden_planner_plugins/Planting_Group.js', // NEW
 		gardenTasks: 'plugins/garden_planner_plugins/Garden_Task_Manager.js', // NEW
 		gardenGuide: 'plugins/garden_planner_plugins/Garden_Guide.js', // CHANGE
+		gardenQuickstart: 'plugins/garden_planner_plugins/Garden_Quickstart.js', // NEW
 		gardenRoadmapCore: 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', // NEW
 		gardenRoadmaps: 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', // NEW
 		gardenModules: 'plugins/garden_planner_plugins/Modules_Standalone.js', // NEW

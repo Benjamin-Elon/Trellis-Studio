@@ -22,9 +22,15 @@ export function averageDistance(origin, cities) { // NEW
     return distances.reduce((sum, distance) => sum + distance, 0) / distances.length; // NEW
 } // NEW
 
-/** All pages share one validated user store; only joined users with access count. */ // NEW
+/** A project matches a radius when at least one resolved module lies within it. */ // NEW
+export function nearestDistance(origin, cities) { // NEW
+    const distances = (cities || []).map(city => averageDistance(origin, [city])).filter(Number.isFinite); // NEW
+    return distances.length ? Math.min(...distances) : null; // NEW
+} // NEW
+
+/** Accept saved XML or an already inspected diagram; count only joined users with access. */ // CHANGE
 export function projectSummary(xml, cities, sharingConfigured, now = Date.now(), actorUserId) { // CHANGE
-    const diagram = inspectDiagram(xml); // NEW
+    const diagram = typeof xml === 'string' ? inspectDiagram(xml) : xml; // CHANGE: coordinators reuse their validated state instead of parsing it twice.
     const identityNode = diagram.cells.find(cell => cell.node.hasAttribute('trellis_users_diagram_id')) || diagram.cells.find(cell => cell.parentId === '0' && cell.node.hasAttribute('trellis_history_id')); // NEW
     const diagramId = identityNode?.node.getAttribute('trellis_users_diagram_id') || identityNode?.node.getAttribute('trellis_history_id') || null; // NEW
     const users = new Set((diagram.store.users || []).filter(user => !user.disabled && hasCanvasAccess(diagram, user.id, now)).map(user => user.id)); // NEW
@@ -35,5 +41,7 @@ export function projectSummary(xml, cities, sharingConfigured, now = Date.now(),
         const matches = id ? cities.filter(city => String(city.cityId) === id) : name ? cities.filter(city => city.name === name) : []; // NEW
         if (matches.length === 1) moduleCities.push(matches[0]); // NEW
     } // NEW
-    return { diagramId, userCount: users.size, classification: sharingConfigured && users.size >= 2 ? 'shared' : 'private', accessible: !actorUserId || users.has(actorUserId), moduleCities, gardenModuleCount: modules.length, pendingInvitationCount: (diagram.store.invites || []).filter(invite => invite.status === 'pending' && invite.expiresAt > now).length, updatedAt: now }; // CHANGE
+    const members = (diagram.store.users || []).filter(user => users.has(user.id)).map(user => ({ userId: user.id, identityId: user.portableIdentityId || null })); // NEW
+    const userCount = new Set(members.map(member => member.identityId || member.userId)).size; // NEW
+    return { diagramId, members, userCount, classification: sharingConfigured && userCount >= 2 ? 'shared' : 'private', accessible: !actorUserId || users.has(actorUserId), moduleCities, gardenModuleCount: modules.length, locationsComplete: moduleCities.length === modules.length, pendingInvitationCount: (diagram.store.invites || []).filter(invite => invite.status === 'pending' && invite.expiresAt > now).length, updatedAt: now }; // CHANGE
 } // NEW

@@ -4,9 +4,187 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
-function fixture() {
-    const dom = new JSDOM('<body><div id="splash" class="trellis-splash-root"><div class="trellis-splash-center"><div class="trellis-license-contact-panel">License</div></div><div class="trellis-splash-actions"><button>Create New Garden</button><button>Open Existing Garden</button><button>Explore &amp; Support My Projects</button></div></div></body>', { runScripts: 'outside-only' });
-    const window = dom.window, calls = [], actions = new Map();
+const openHomes = new Set(); test.afterEach(() => { for (const dom of openHomes) dom.window.close(); openHomes.clear(); }); // NEW: window-local snapshots and DOM must not outlive test fixtures.
+
+/** Controlled time proves that idle snapshot browsing performs no scheduled work. */ // NEW
+function homeClock(f) { // NEW
+    let now = 1000, next = 0; const timers = new Map(); f.window.Date.now = () => now; // NEW
+    f.window.setTimeout = (action, delay = 0) => { timers.set(++next, { action, at: now + delay }); return next; }; f.window.clearTimeout = id => timers.delete(id); // NEW
+    return { timers, async advance(milliseconds) { now += milliseconds; const due = [...timers].filter(([, timer]) => timer.at <= now); for (const [id, timer] of due) { timers.delete(id); timer.action(); } await tick(); } }; // NEW
+} // NEW
+
+/** Legacy interaction checks explicitly reload both project sections. */ // CHANGE
+function reloadProjects(state) { state.projectLoadHeaders.shared.reload.click(); state.projectLoadHeaders.private.reload.click(); } // CHANGE
+
+for (const count of [0, 1, 10, 11, 50, 51]) test('snapshot of ' + count + ' gardens makes no requests on idle, status, tabs or reopening', async () => { // CHANGE
+    const f = fixture(), clock = homeClock(f); f.setSession({ identityId: 'alice', generation: 1, username: 'Alice' }); let calls = 0, local = 0, cities = 0; // CHANGE
+    f.window.trellisGardenLibrary.list = async () => { calls++; return { gardens: Array.from({ length: count }, (_, index) => ({ diagramId: 'g' + index, name: 'Garden ' + index, classification: 'private' })) }; }; // CHANGE
+    f.window.trellisGardenLibrary.listLocal = async () => { local++; return { gardens: [], folder: '/local' }; }; f.window.trellisGardenLibrary.cities = async () => { cities++; return { cities: [] }; }; // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; assert.equal(calls, 1); // CHANGE
+    await clock.advance(300000); await f.emitStatus({ session: await f.window.trellisIdentity.getSession() }); state.setProjectView('trash'); state.setProjectView('active'); f.ui.hideDialog(); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // CHANGE
+    assert.equal(calls, 1); assert.equal(local, 1); assert.equal(cities, 1); assert.equal(clock.timers.size, 0); // CHANGE
+}); // CHANGE
+
+test('sections load independently, suppress repeat clicks, retain failed rows and timestamp, and retry explicitly', async () => { // CHANGE
+    const f = fixture(), clock = homeClock(f); f.setSession({ identityId: 'alice', generation: 1, username: 'Alice' }); let releaseCommunity, releaseRequests, calls = 0, fail = false, releaseLibrary; // CHANGE
+    f.window.trellisGardenLibrary.list = async () => { calls++; if (fail) throw new Error('Offline'); if (releaseLibrary === null) return new Promise(resolve => { releaseLibrary = resolve; }); return { gardens: [{ diagramId: 'g', name: 'Ready', classification: 'private' }] }; }; // CHANGE
+    f.window.trellisGardenCommunities = { onStatus() {}, list: () => new Promise(resolve => { releaseCommunity = resolve; }), listRequests: () => new Promise(resolve => { releaseRequests = resolve; }) }; // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome, header = state.projectLoadHeaders.private, row = state.privateRows.querySelector('strong'), timestamp = header.updated.textContent; // CHANGE
+    assert.equal(row.textContent, 'Ready'); assert.equal(header.status.textContent, ''); assert.match(header.updated.getAttribute('aria-label'), /Updated at/); assert.equal(state.projectLoadHeaders.communities.status.textContent, 'Loading…'); state.projectSectionToggles.communities.click(); // CHANGE
+    releaseCommunity({ communities: [] }); await tick(); assert.equal(state.privateRows.querySelector('strong'), row); assert.equal(state.projectLoadHeaders.requests.status.textContent, 'Loading…'); releaseRequests({ requests: [] }); await tick(); // CHANGE
+    fail = true; header.reload.click(); await tick(); assert.equal(header.updated.textContent, timestamp); assert.match(header.status.textContent, /Offline/); assert.equal(state.privateRows.querySelector('strong'), row); assert.equal(header.reload.disabled, false); // CHANGE
+    fail = false; releaseLibrary = null; header.reload.click(); header.reload.click(); await clock.advance(300000); assert.equal(calls, 3); assert.equal(header.reload.disabled, true); assert.equal(state.projectLoadHeaders.shared.reload.disabled, false); // CHANGE
+    releaseLibrary({ gardens: [{ diagramId: 'g', name: 'Ready', classification: 'private' }] }); await tick(); assert.equal(header.reload.disabled, false); assert.notEqual(header.updated.textContent, timestamp); assert.equal(state.privateRows.querySelector('strong'), row); // CHANGE
+}); // CHANGE
+
+test('pending initial requests survive closure and reopen without duplication or detached UI updates', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', generation: 1, username: 'Alice' }); let calls = 0, finish; f.window.trellisGardenLibrary.list = () => { calls++; return new Promise(resolve => { finish = resolve; }); }; // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const old = f.ui.__trellisGardenHome.privateRows; f.ui.hideDialog(); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); assert.equal(calls, 1); f.ui.hideDialog(); finish({ gardens: [{ diagramId: 'g', name: 'Cached while closed', classification: 'private' }] }); await tick(); assert.doesNotMatch(old.textContent, /Cached while closed/); // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); assert.equal(calls, 1); assert.match(f.ui.__trellisGardenHome.privateRows.textContent, /Cached while closed/); // CHANGE
+}); // CHANGE
+
+test('identity snapshots survive logout and return, while obsolete generations cannot publish', async () => { // CHANGE
+    const f = fixture(); let name = 'Alice garden', finish; const alice = { identityId: 'alice', generation: 1, username: 'Alice' }; f.setSession(alice); // CHANGE
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'g', name, classification: 'private' }] }); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; // CHANGE
+    f.window.trellisGardenLibrary.list = () => new Promise(resolve => { finish = resolve; }); state.projectLoadHeaders.private.reload.click(); await tick(); f.setSession(null); await f.emitStatus({ session: null }); await tick(); assert.doesNotMatch(state.projectsRoot.textContent, /Alice garden/); // CHANGE
+    finish({ gardens: [{ diagramId: 'late', name: 'Obsolete', classification: 'private' }] }); await tick(); name = 'Bob garden'; f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'b', name, classification: 'private' }] }); const bob = { identityId: 'bob', generation: 2, username: 'Bob' }; f.setSession(bob); await f.emitStatus({ session: bob }); await tick(); assert.match(state.privateRows.textContent, /Bob garden/); // CHANGE
+    let returnedReads = 0; f.window.trellisGardenLibrary.list = async () => { returnedReads++; return { gardens: [] }; }; const returned = { ...alice, generation: 3 }; f.setSession(returned); await f.emitStatus({ session: returned }); await tick(); assert.equal(returnedReads, 0); assert.match(state.privateRows.textContent, /Alice garden/); assert.doesNotMatch(state.privateRows.textContent, /Obsolete/); // CHANGE
+}); // CHANGE
+
+test('community Reload refreshes discovery explicitly and unjoined rows omit active counts', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', generation: 1, username: 'Alice' }); let calls = 0, fail = true; // CHANGE
+    f.window.trellisGardenCommunities = { onStatus() {}, list: async () => { calls++; if (fail) throw new Error('Discovery failed'); return { communities: [{ id: 'c', name: 'Community', gardens: [{ diagramId: 'g', name: 'Unjoined', joined: false, people: { userCount: 2, onlineCount: 1 } }] }] }; }, listRequests: async () => ({ requests: [] }) }; // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; assert.match(state.projectLoadHeaders.communities.status.textContent, /Discovery failed/); f.ui.hideDialog(); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); assert.equal(calls, 1); // CHANGE
+    fail = false; state.projectLoadHeaders.communities.reload.click(); await tick(); assert.equal(calls, 2); assert.match(state.communitiesRows.textContent, /Unjoined/); assert.doesNotMatch(state.communitiesRows.textContent, /online/); state.projectLoadHeaders.requests.reload.click(); await tick(); assert.equal(calls, 2); // CHANGE
+}); // CHANGE
+
+test('section-only reload moves changed categories and preserves unrelated garden DOM', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); let moved = false; // CHANGE
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'a', name: 'Transfer', classification: moved ? 'shared' : 'private' }, { diagramId: 'b', name: moved ? 'Incoming unrelated edit' : 'Unchanged', classification: 'shared' }] }); // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome, unchanged = state.sharedRows.querySelector('strong'); moved = true; state.projectLoadHeaders.private.reload.click(); await tick(); assert.doesNotMatch(state.privateRows.textContent, /Transfer/); assert.match(state.sharedRows.textContent, /Transfer/); assert.match(state.sharedRows.textContent, /Unchanged/); assert.doesNotMatch(state.sharedRows.textContent, /Incoming unrelated edit/); assert.equal([...state.sharedRows.querySelectorAll('strong')].find(node => node.textContent === 'Unchanged'), unchanged); // CHANGE
+}); // CHANGE
+
+test('separate windows own independent identity snapshots', async () => { // CHANGE
+    for (const name of ['Window one', 'Window two']) { const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'g', name, classification: 'private' }] }); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); assert.match(f.ui.__trellisGardenHome.privateRows.textContent, new RegExp(name)); } // CHANGE
+}); // CHANGE
+
+test('managed projects publish before local Trash recovery and standalone scans', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); let finishTrash, scans = 0; // CHANGE
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'g', name: 'Managed', classification: 'private' }] }); f.window.trellisGardenLibrary.listTrash = () => new Promise(resolve => { finishTrash = resolve; }); f.window.trellisGardenLibrary.listLocal = async () => { scans++; return { gardens: [], folder: '/local' }; }; // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; assert.match(state.privateRows.textContent, /Managed/); assert.equal(scans, 0); finishTrash({ gardens: [] }); await tick(); assert.equal(scans, 1); // CHANGE
+}); // CHANGE
+
+test('community reload transfers gardens in both directions while preserving unrelated project metadata', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); let grouped = false, reads = 0; // CHANGE
+    f.window.trellisGardenLibrary.list = async () => { reads++; return { gardens: [{ diagramId: 'g', name: 'Transfer', classification: 'shared', available: true }, { diagramId: 'p', name: reads === 1 ? 'Unrelated snapshot' : 'Incoming unrelated edit', classification: 'private' }] }; }; // CHANGE
+    f.window.trellisGardenCommunities = { onStatus() {}, list: async () => ({ communities: grouped ? [{ id: 'c', name: 'Community', gardens: [{ diagramId: 'g', name: 'Transfer', joined: true }] }] : [] }), listRequests: async () => ({ requests: [] }) }; // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome, untouched = state.privateRows.querySelector('strong'), timestamp = state.projectLoadHeaders.private.updated.textContent; grouped = true; state.projectLoadHeaders.communities.reload.click(); await tick(); // CHANGE
+    assert.doesNotMatch(state.sharedRows.textContent, /Transfer/); assert.match(state.communitiesRows.textContent, /Transfer/); assert.equal(state.libraryProjects.filter(project => project.diagramId === 'g').length, 1); assert.equal(state.privateRows.querySelector('strong'), untouched); assert.equal(state.projectLoadHeaders.private.updated.textContent, timestamp); // CHANGE
+    grouped = false; state.projectLoadHeaders.communities.reload.click(); await tick(); assert.match(state.sharedRows.textContent, /Transfer/); assert.doesNotMatch(state.communitiesRows.textContent, /Transfer/); assert.equal(state.privateRows.querySelector('strong'), untouched); // CHANGE
+}); // CHANGE
+
+test('window unload releases all snapshots and suppresses pending publication', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); let finish; f.window.trellisGardenLibrary.list = () => new Promise(resolve => { finish = resolve; }); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; // CHANGE
+    f.window.dispatchEvent(new f.window.Event('unload')); assert.equal(state.projectSnapshots.size, 0); finish({ gardens: [{ diagramId: 'g', name: 'Late', classification: 'private' }] }); await tick(); assert.doesNotMatch(state.privateRows.textContent, /Late/); // CHANGE
+}); // CHANGE
+
+test('a successful targeted edit stays immediate and survives an older pending section response', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); const original = { diagramId: 'g', name: 'Before', projectName: 'Before', classification: 'private', available: true, canEditSuffix: true }, other = { diagramId: 'other', name: 'Other', classification: 'private' }; // CHANGE
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [original, other] }); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; let finish; // CHANGE
+    f.window.trellisGardenLibrary.list = input => input?.diagramId ? Promise.resolve({ gardens: [{ ...original, name: 'Edited locally', suffix: 'Me' }] }) : new Promise(resolve => { finish = resolve; }); f.window.trellisGardenLibrary.setSuffix = async () => ({ ok: true }); // CHANGE
+    [...state.privateRows.querySelectorAll('button')].find(control => control.textContent === 'Edit my suffix').click(); const form = state.actionPanel; state.projectLoadHeaders.private.reload.click(); await tick(); form.querySelector('input').value = 'Me'; [...form.querySelectorAll('button')].find(control => control.textContent === 'Save suffix').click(); await tick(); // CHANGE
+    assert.match(state.privateRows.textContent, /Edited locally/); assert.equal(state.projectLoadHeaders.private.status.textContent, 'Loading…'); finish({ gardens: [original, { ...other, name: 'Other incoming update' }] }); await tick(); assert.match(state.privateRows.textContent, /Edited locally/); assert.match(state.privateRows.textContent, /Other incoming update/); assert.doesNotMatch(state.privateRows.textContent, /BeforeDownloaded/); // CHANGE
+}); // CHANGE
+
+for (const section of ['shared', 'trash']) test(section + ' reload transfers a restored garden out of cached Trash', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); let restored = false, targeted = 0; const garden = { diagramId: 'g', name: 'Restored', classification: 'shared', available: true }; // CHANGE
+    f.window.trellisGardenLibrary.list = async input => { if (input?.diagramId) targeted++; return { gardens: restored ? [garden] : [] }; }; f.window.trellisGardenLibrary.listTrash = async () => ({ gardens: restored ? [] : [{ ...garden, source: 'library', trashId: 't' }] }); // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; assert.equal(state.trashedProjects.length, 1); restored = true; state.projectLoadHeaders[section].reload.click(); await tick(); assert.equal(state.trashedProjects.length, 0); assert.match(state.sharedRows.textContent, /Restored/); assert.equal(state.libraryProjects.length, 1); assert.equal(targeted, section === 'trash' ? 1 : 0); // CHANGE
+}); // CHANGE
+
+test('Trash reload moves a known community garden out of accessible cached rows', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); let trashed = false; const garden = { diagramId: 'g', name: 'Move to Trash', classification: 'shared', available: true }; // CHANGE
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [garden] }); f.window.trellisGardenLibrary.listTrash = async () => ({ gardens: trashed ? [{ ...garden, source: 'library', trashId: 't' }] : [] }); f.window.trellisGardenCommunities = { onStatus() {}, list: async () => ({ communities: [{ id: 'c', name: 'Community', gardens: [{ ...garden, joined: true }] }] }), listRequests: async () => ({ requests: [] }) }; // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; assert.match(state.communitiesRows.textContent, /Move to Trash/); trashed = true; state.projectLoadHeaders.trash.reload.click(); await tick(); assert.equal(state.libraryProjects.length, 0); assert.equal(state.trashedProjects.length, 1); assert.doesNotMatch(state.communitiesRows.textContent, /Move to Trash/); // CHANGE
+}); // CHANGE
+
+test('shared counters deduplicate people and radius filters preserve private projects', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
+    const people = (keys, online, complete = true) => ({ userCount: keys.length, memberKeys: keys, onlineMemberKeys: online, onlineCount: online.length || (complete ? 0 : null), membershipComplete: true, presenceComplete: complete }); // NEW
+    const gardens = [{ diagramId: 'far', name: 'Far', classification: 'shared', distanceKm: 80, people: people(['alice', 'bob'], ['alice'], false) }, { diagramId: 'near', name: 'Near', classification: 'shared', distanceKm: 25, people: people(['alice', 'carol'], ['alice', 'carol']) }, { diagramId: 'unknown', name: 'Unknown', classification: 'shared', distanceKm: null, people: people(['dave'], []) }, { diagramId: 'private', name: 'Private', classification: 'private' }]; // NEW
+    f.window.trellisGardenLibrary.list = async () => ({ gardens }); f.window.trellisGardenLibrary.getReferenceCity = async () => ({ city: { cityId: 'origin', name: 'Origin', latitude: 0, longitude: 0 } }); // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome, counts = state.projectSectionCounts.shared; // NEW
+    assert.match(counts.textContent, /3 projects.*at least 2 online \/ 4 users/); assert.deepEqual([...state.sharedRows.querySelectorAll('strong')].map(node => node.textContent), ['Near', 'Far', 'Unknown']); // NEW
+    const radius = state.referenceHost.querySelector('input[type=number]'); radius.value = '25'; radius.dispatchEvent(new f.window.Event('input')); // NEW
+    assert.match(counts.textContent, /1 of 3 projects.*2 online \/ 2 users/); assert.match(state.privateRows.textContent, /Private/); assert.match(state.distanceNotice.textContent, /1 shared garden hidden/); // CHANGE
+    radius.value = '-1'; radius.dispatchEvent(new f.window.Event('input')); assert.equal(state.maxDistanceKm, 25); assert.equal(radius.getAttribute('aria-invalid'), 'true'); // NEW
+    radius.value = '0'; radius.dispatchEvent(new f.window.Event('input')); assert.match(counts.textContent, /0 of 3 projects/); assert.equal(f.window.localStorage.getItem('trellis.gardenProjects.radius.v1.alice'), '0'); // NEW
+    state.projectSectionToggles.shared.click(); assert.match(counts.textContent, /0 of 3 projects/); radius.value = ''; radius.dispatchEvent(new f.window.Event('input')); assert.match(counts.textContent, /3 projects/); assert.equal(state.sharedRows.hidden, true); // CHANGE
+    gardens[0].people = people(['alice', 'bob'], ['alice', 'bob']); reloadProjects(state); await tick(); assert.match(counts.textContent, /3 online \/ 4 users/); assert.equal(state.sharedRows.hidden, true); // NEW
+    f.window.trellisGardenLibrary.list = async () => { throw new Error('Transport unavailable'); }; reloadProjects(state); await tick(); assert.match(counts.textContent, /3 online \/ 4 users/); f.dom.window.close(); // NEW
+}); // NEW
+
+test('community membership folds remember choices and search overrides them temporarily', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
+    f.window.trellisGardenCommunities = { onStatus() {}, list: async () => ({ communities: [{ id: 'one', name: 'Community', description: '', gardens: [{ diagramId: 'a', name: 'Joined', joined: true }, { diagramId: 'b', name: 'Orchids', joined: false }] }] }), listRequests: async () => ({ requests: [] }) }; // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); let state = f.ui.__trellisGardenHome; // NEW
+    assert.deepEqual([...state.projectsRoot.querySelectorAll('.trellis-projects-title')].map(node => node.textContent), ['Garden communities', 'Shared garden projects', 'Private garden projects']); // NEW
+    const find = key => state.communitiesRows.querySelector('[data-project-details="community:one' + key + '"]'); // NEW
+    assert.equal(find(':joined').open, true); assert.equal(find(':not-joined').open, false); find('').querySelector('summary').click(); find(':not-joined').querySelector('summary').click(); // NEW
+    f.ui.hideDialog(); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); state = f.ui.__trellisGardenHome; assert.equal(find('').open, true); assert.equal(find(':not-joined').open, true); // NEW
+    find(':not-joined').querySelector('summary').click(); state.searchControl.value = 'orchids'; state.searchControl.dispatchEvent(new f.window.Event('input')); assert.equal(find(':not-joined').open, true); assert.equal(find(':joined'), null); // NEW
+    state.searchControl.value = ''; state.searchControl.dispatchEvent(new f.window.Event('input')); assert.equal(find(':not-joined').open, false); assert.equal(find(':joined').open, true); f.dom.window.close(); // NEW
+}); // NEW
+
+test('popover outside clicks preserve their target action and Escape restores trigger focus', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'a', name: 'A', shared: true }] }); // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome, menu = state.sharedRows.querySelector('.trellis-project-menu'), summary = menu.querySelector('summary'); // NEW
+    summary.focus(); menu.open = true; state.searchControl.dispatchEvent(new f.window.MouseEvent('click', { bubbles: true })); assert.equal(menu.open, false); // NEW
+    menu.open = true; summary.focus(); const event = new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); summary.dispatchEvent(event); assert.equal(menu.open, false); assert.equal(event.defaultPrevented, true); assert.equal(f.window.document.activeElement, summary); assert.equal(state.projectsRoot.isConnected, true); // NEW
+    menu.open = true; state.projectSectionToggles.private.click(); assert.equal(menu.open, false); assert.equal(state.privateRows.hidden, true); // NEW
+    assert.equal(state.accountHost.parentNode.className, 'trellis-projects-top'); assert.match(state.accountHost.textContent, /Alice/); f.dom.window.close(); // NEW
+}); // NEW
+
+test('city picker searches country and territory, selects cities, and preserves focused drafts', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); const city = { cityId: 'langley', name: 'Langley', region: 'British Columbia', country: 'Canada', latitude: 49, longitude: -122 }; let selected = null; // NEW
+    f.window.trellisGardenLibrary.cities = async () => ({ cities: [city, { ...city, cityId: 'seattle', name: 'Seattle', region: 'Washington', country: 'United States' }] }); // NEW
+    f.window.trellisGardenLibrary.getReferenceCity = async () => ({ city: selected }); f.window.trellisGardenLibrary.setReferenceCity = async ({ cityId }) => { selected = cityId ? city : null; return { city: selected }; }; // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome, picker = state.referenceHost.querySelector('.trellis-city-picker'), search = picker.querySelector('input'); // NEW
+    assert.equal(state.referenceHost.querySelector('input[type=number]').disabled, true); picker.open = true; search.focus(); search.value = 'British Columbia'; search.dispatchEvent(new f.window.Event('input')); // NEW
+    assert.match(picker.textContent, /Canada.*British Columbia.*Langley/); assert.doesNotMatch(picker.querySelector('.trellis-city-tree').textContent, /Seattle/); // NEW
+    reloadProjects(state); await tick(); assert.equal(picker.querySelector('input'), search); assert.equal(search.value, 'British Columbia'); // NEW
+    [...picker.querySelectorAll('button')].find(button => button.textContent === 'Langley').click(); await tick(); assert.equal(selected.cityId, city.cityId); assert.equal(picker.open, false); assert.equal(state.referenceHost.querySelector('input[type=number]').disabled, false); // NEW
+    assert.match(picker.querySelector('summary').textContent, /Langley, British Columbia, Canada/); f.dom.window.close(); // NEW
+}); // NEW
+
+test('community headings, restricted discovery, and ungrouped migration preserve private gardens and search', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
+    f.window.trellisGardenCommunities = { onStatus() {}, list: async () => ({ communities: [{ id: 'community', name: 'Neighborhood', description: 'Grow together', canAdminister: false, gardens: [{ diagramId: 'joined', name: 'Joined garden', description: 'Known plot', joined: true }, { diagramId: 'discover', name: 'Hidden garden', description: 'Rare orchids', joined: false }], admissions: [] }] }), listRequests: async () => ({ requests: [] }) }; // NEW
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'joined', name: 'Joined garden - My role', source: 'library', available: false, shared: false }, { diagramId: 'ungrouped', name: 'Old shared garden', source: 'library', shared: true }, { diagramId: 'private', name: 'My private garden', source: 'library', shared: false }] }); // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome, root = state.projectsRoot; // NEW
+    assert.match(root.textContent, /Garden communities/); assert.match(state.sharedRows.textContent, /Old shared garden/); assert.match(state.privateRows.textContent, /My private garden/); assert.doesNotMatch(state.privateRows.textContent, /Joined garden/); // NEW
+    const group = state.communitiesRows.querySelector('details[data-project-details="community:community"]'); group.open = true; assert.match(group.textContent, /Rare orchids/); // NEW
+    assert.equal([...group.querySelectorAll('button')].filter(b => b.textContent === 'Request access').length, 1); // NEW
+    const search = root.querySelector('input[aria-label="Search garden projects"]'); search.value = 'orchids'; search.dispatchEvent(new f.window.Event('input')); assert.match(state.communitiesRows.textContent, /Neighborhood/); assert.match(state.communitiesRows.textContent, /Hidden garden/); assert.doesNotMatch(state.communitiesRows.textContent, /Joined garden/); // NEW
+    assert.equal(state.communitiesRows.querySelector('details[data-project-details="community:community"]').open, true); // NEW
+}); // NEW
+
+test('request forms retain typed notes during refresh and report server errors without losing input', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); let changed, received; // NEW
+    f.window.trellisGardenCommunities = { onStatus(listener) { changed = listener; }, list: async () => ({ communities: [{ id: 'community', name: 'Community', description: '', gardens: [{ diagramId: 'garden', name: 'Garden', description: '', joined: false }], admissions: [] }] }), listRequests: async () => ({ requests: [] }), requestAccess: async payload => { received = payload; throw new Error('Garden membership changed.'); } }; // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; [...state.communitiesRows.querySelectorAll('button')].find(b => b.textContent === 'Request access').click(); // NEW
+    const panel = state.actionPanel, note = panel.querySelector('input[aria-label="Optional note"]'); note.value = 'Let me help'; note.focus(); changed?.(); await tick(); assert.equal(state.actionPanel, panel); assert.equal(f.window.document.activeElement, note); assert.equal(note.value, 'Let me help'); // NEW
+    panel.querySelector('form').dispatchEvent(new f.window.Event('submit', { bubbles: true, cancelable: true })); await tick(); assert.equal(received.note, 'Let me help'); assert.match(panel.textContent, /Garden membership changed/); assert.equal(note.value, 'Let me help'); assert.equal(panel.querySelector('button[type="submit"]').disabled, false); // NEW
+}); // NEW
+
+test('personal access requests remain visible when no community membership remains', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
+    f.window.trellisGardenCommunities = { onStatus() {}, list: async () => ({ communities: [] }), listRequests: async () => ({ requests: [{ id: 'request', gardenName: 'Another garden', requesterName: 'Alice', requesterIdentityId: 'alice', note: 'Still waiting', status: 'queued', scopes: [], canDecide: false }] }) }; // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; assert.match(state.communityRequestRows.textContent, /Another garden/); assert.match(state.communityRequestRows.textContent, /Still waiting/); assert.match(state.communityRequestRows.textContent, /queued/); // NEW
+}); // NEW
+function fixture({ sharedButtons = true } = {}) { // CHANGE
+    const dom = new JSDOM('<body><div id="splash" class="trellis-splash-root"><div class="trellis-splash-center"><div class="trellis-license-contact-panel">License</div></div><div class="trellis-splash-actions"><button>Create New Garden</button><button>Open Existing Garden</button><button>Explore &amp; Support My Projects</button></div></div></body>', { runScripts: 'outside-only', url: 'https://trellis.test/' }); // CHANGE: a stable origin enables real local-storage preference checks.
+    openHomes.add(dom); const window = dom.window, calls = [], actions = new Map(); // CHANGE
     let current = null, session = null, statusListener; // CHANGE: exercise actual background session invalidation.
     window.trellisIdentity = { list: async () => ({ identities: [], session }), getSession: async () => session, onStatus(listener) { statusListener = listener; }, onLocked() {} }; // CHANGE
     window.trellisGardenLibrary = { list: async () => ({ gardens: [] }), listLocal: async () => ({ gardens: [], folder: '/local' }), cities: async () => ({ cities: [] }), getReferenceCity: async () => ({ city: null }) }; // CHANGE
@@ -16,12 +194,90 @@ function fixture() {
     const ui = { pickFile() { calls.push('local-picker'); }, actions: { get: id => actions.get(id), addAction(id, funct) { const action = { funct }; actions.set(id, action); return action; } }, menus: { get: () => null }, getCurrentFile: () => current, showSplash() {}, hideDialog() { calls.push('hide'); }, fileLoaded(file) { calls.push(['loaded', file]); current = file; }, confirm(_text, cancel, ok) { ok(); }, readGraphFile(success, error, filename) { error(new Error('Missing ' + filename)); }, handleError() {} };
     const splash = dom.window.document.getElementById('splash'); // NEW
     ui.showSplash = () => dom.window.document.body.append(splash); // NEW
-    ui.showDialog = (panel, _w, _h, _modal, _closable, onClose) => { const container = dom.window.document.createElement('div'); container.className = 'geDialog'; container.append(panel); dom.window.document.body.append(container); ui.dialog = { container }; ui.onClose = onClose; }; // NEW
-    ui.hideDialog = cancel => { calls.push('hide'); if (ui.dialog) { const close = ui.onClose; ui.dialog.container.remove(); ui.dialog = null; ui.onClose = null; close?.(cancel); } else splash.remove(); }; // NEW
+    ui.dialogs = []; // CHANGE: exercise the same stacked ownership and close veto as EditorUi.
+    ui.showDialog = (panel, width, height, _modal, closable, onClose, _noScroll, _transparent, _minSize, ignoreBgClick) => { // CHANGE
+        const container = window.document.createElement('div'), bg = window.document.createElement('div'); container.className = 'geDialog'; bg.className = 'geBackground'; container.append(panel); // CHANGE
+        if (closable) { const close = window.document.createElement('div'); close.className = 'geButton'; close.title = 'close'; close.addEventListener('click', () => ui.hideDialog(true)); container.append(close); } // CHANGE
+        if (!ignoreBgClick) bg.addEventListener('click', () => ui.hideDialog(true)); // CHANGE
+        window.document.body.append(bg, container); ui.dialog = { container, bg, onClose, width, height, ignoreBgClick }; ui.dialogs.push(ui.dialog); // CHANGE
+    }; // CHANGE
+    ui.hideDialog = (cancel, isEsc, matchContainer) => { // CHANGE
+        calls.push('hide'); const dialog = ui.dialog; // CHANGE
+        if (!dialog) { splash.remove(); return; } // CHANGE
+        if (matchContainer && matchContainer !== dialog.container.firstChild || dialog.onClose?.(cancel, isEsc) === false) return; // CHANGE
+        dialog.container.remove(); dialog.bg.remove(); ui.dialogs.splice(ui.dialogs.indexOf(dialog), 1); ui.dialog = ui.dialogs.at(-1) || null; // CHANGE
+    }; // CHANGE
+    if (sharedButtons) { window.Draw = { loadPlugin() {} }; window.eval(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8')); } // CHANGE: use production style tokens rather than a test imitation.
     actions.set('new', { funct: () => calls.push('new') }); // NEW
     window.eval(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/js/trellis-garden-home.js'), 'utf8'));
     return { dom, window, ui, calls, setCurrent: value => { current = value; }, setSession: value => { session = value; }, emitStatus: value => statusListener(value) }; // CHANGE
 }
+/** Observe navigation ordering while retaining the real Home installation and file save contract. */ // NEW
+function homeFixture(modified = false) { // NEW
+    const f = fixture(), events = [], errors = []; let dirty = modified; // NEW
+    f.window.document.getElementById('splash').remove(); // NEW
+    const file = { isModified: () => dirty, save(_revision, success) { events.push('save'); dirty = false; success(); } }; // NEW
+    const graph = { isEditing: () => false, stopEditing() { events.push('edit'); }, __trellisReferences: { async flushDrafts() { events.push('references'); } } }; // NEW
+    f.setCurrent(file); f.ui.editor = { graph }; f.ui.handleError = error => errors.push(error); // NEW
+    f.ui.showSplash = () => events.push('splash'); // NEW
+    f.ui.fileLoaded = async (next, noDialogs) => { events.push(['close', next, noDialogs]); f.setCurrent(next); }; // NEW
+    const state = f.window.TrellisGardenHome.install(f.ui); // NEW
+    return { ...f, file, graph, state, events, errors, dirty: value => { dirty = value; } }; // NEW
+} // NEW
+test('Home closes clean and untouched blank documents without saving and flushes references first', async () => { // NEW
+    const f = homeFixture(); await f.ui.showSplash(true); // NEW
+    assert.deepEqual(f.events, ['references', ['close', null, true], 'splash']); assert.equal(f.ui.getCurrentFile(), null); assert.equal(f.state.homeTransition, null); assert.equal(f.state.savedFile, null); // CHANGE
+    f.dom.window.close(); // NEW
+}); // NEW
+test('Home commits active editing and saves the entire modified document before closing', async () => { // NEW
+    const f = homeFixture(), pages = ['page one', 'page two']; let editing = true; // NEW
+    f.graph.isEditing = () => editing; f.graph.stopEditing = () => { editing = false; f.dirty(true); f.events.push('edit'); }; // NEW
+    f.file.save = (_revision, success) => { f.events.push(['save', ...pages]); f.dirty(false); success(); }; // NEW
+    await f.ui.showSplash(true); // NEW
+    assert.deepEqual(f.events, ['edit', 'references', ['save', ...pages], ['close', null, true], 'splash']); assert.deepEqual(f.errors, []); // NEW
+    f.dom.window.close(); // NEW
+}); // NEW
+test('canceled and failed Home saves keep the document and allow a later retry', async () => { // NEW
+    for (const canceled of [true, false]) { // NEW
+        const f = homeFixture(true); f.file.draft = 'recovery'; // NEW
+        f.file.save = (_revision, _success, error, _unloading, _overwrite, cancel) => canceled ? cancel() : error(new Error('Permission denied')); // NEW
+        await f.ui.showSplash(true); // NEW
+        assert.equal(f.ui.getCurrentFile(), f.file); assert.equal(f.file.draft, 'recovery'); assert.equal(f.file.isModified(), true); assert.equal(f.state.homeTransition, null); // NEW
+        assert.equal(f.errors.length, canceled ? 0 : 1); assert.equal(f.events.includes('splash'), false); // NEW
+        f.file.save = (_revision, success) => { f.dirty(false); success(); }; await f.ui.showSplash(true); // NEW
+        assert.equal(f.ui.getCurrentFile(), null); assert.equal(f.events.filter(event => event === 'splash').length, 1); f.dom.window.close(); // NEW
+    } // NEW
+}); // NEW
+test('Home requests share one save and late callbacks cannot close a replacement or changed document', async () => { // NEW
+    for (const change of ['none', 'replacement', 'edit']) { // NEW
+        const f = homeFixture(true); let saved, saves = 0; // NEW
+        f.file.save = (_revision, success) => { saves++; saved = success; }; // NEW
+        const first = f.ui.showSplash(true), second = f.ui.showSplash(true); assert.equal(first, second); await tick(); assert.equal(saves, 1); // NEW
+        f.dirty(false); const replacement = { isModified: () => false }; // NEW
+        if (change === 'replacement') f.setCurrent(replacement); // NEW
+        if (change === 'edit') { f.graph.isEditing = () => true; f.graph.stopEditing = () => f.dirty(true); } // NEW
+        saved(); await first; // NEW
+        assert.equal(f.ui.getCurrentFile(), change === 'none' ? null : change === 'replacement' ? replacement : f.file); // NEW
+        assert.equal(f.events.filter(event => event === 'splash').length, change === 'none' ? 1 : 0); assert.equal(f.errors.length, change === 'edit' ? 1 : 0); f.dom.window.close(); // NEW
+    } // NEW
+}); // NEW
+test('Home refuses in-flight saves, renames, retirement, and closing without touching the document', async () => { // NEW
+    for (const busy of ['savingFile', '__trellisCollaborativeSaving', '__trellisNamingMove', 'retirement', 'closing']) { // NEW
+        const f = homeFixture(true); // NEW
+        if (busy === 'retirement') f.state.retirement = {}; else if (busy === 'closing') f.window.__trellisClosing = true; else f.file[busy] = true; // NEW
+        await f.ui.showSplash(true); assert.equal(f.ui.getCurrentFile(), f.file); assert.deepEqual(f.events, []); assert.match(f.errors[0].message, /finish/); assert.equal(f.state.homeTransition, null); f.dom.window.close(); // NEW
+    } // NEW
+}); // NEW
+test('reference persistence failures abort Home before saving or closing', async () => { // NEW
+    const f = homeFixture(true); f.graph.__trellisReferences.flushDrafts = async () => { throw new Error('Reference storage unavailable'); }; // NEW
+    await f.ui.showSplash(true); assert.equal(f.ui.getCurrentFile(), f.file); assert.deepEqual(f.events, []); assert.match(f.errors[0].message, /Reference/); f.dom.window.close(); // NEW
+}); // NEW
+test('Home operates only on its own window and does not replace an existing splash', async () => { // NEW
+    const first = homeFixture(true), second = homeFixture(true); await first.ui.showSplash(true); // NEW
+    assert.equal(second.ui.getCurrentFile(), second.file); assert.deepEqual(second.events, []); // NEW
+    const panel = first.window.document.createElement('div'); panel.className = 'trellis-splash-root'; first.ui.showDialog(panel, 700, 630, true, false); // NEW
+    await first.ui.showSplash(true); assert.equal(first.events.filter(event => event === 'splash').length, 1); first.dom.window.close(); second.dom.window.close(); // NEW
+}); // NEW
 test('personal suffix controls preserve the shared prefix and expose server validation errors', async () => { // NEW
     const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
     const project = { diagramId: 'garden', source: 'library', projectName: 'Community Garden', suffix: '', name: 'Community Garden', available: false, canRename: false, canEditSuffix: true }; // NEW
@@ -146,9 +402,9 @@ for (const flow of ['Log in', 'Create identity', 'Connect existing identity']) {
             form.dispatchEvent(new f.window.Event('submit', { bubbles: true, cancelable: true })); await f.tick(); // NEW: Enter uses the form's submit event.
             assert.equal(calls.length, 1); assert.equal(calls[0].keepLoggedIn, checked); assert.equal(calls[0].password, 'sample-password'); // NEW
             if (flow === 'Create identity') assert.equal(calls[0].username, 'Alice'); else assert.equal(calls[0].identityId, 'alice'); // NEW
-            assert.equal(password.value, ''); assert.match(f.window.document.querySelector('.trellis-home-panel').textContent, /Logged in as Alice/); // NEW
+            assert.equal(password.value, ''); assert.match(f.ui.__trellisGardenHome.accountHost.textContent, /Alice/); // NEW
             assert.equal(f.window.document.querySelector('[role=status]').textContent, warning); // NEW
-            f.find('Refresh').click(); await f.tick(); // NEW
+            f.ui.__trellisGardenHome.projectLoadHeaders.private.reload.click(); await f.tick(); // NEW
             assert.equal(f.window.document.querySelector('[role=status]').textContent, warning); // NEW: subsequent logged-in redraws retain the notice.
             if (flow === 'Create identity') assert.ok(f.find('Copy login reminder')); // CHANGE: refreshing projects preserves the explicit reminder action. // NEW: navigating away uses the existing reminder lifetime.
         }); // NEW
@@ -193,6 +449,102 @@ test('a delayed identity-list response cannot erase an opened login form', async
 }); // NEW
 
 const tick = () => new Promise(resolve => setImmediate(resolve)); // NEW
+const foldStorageKey = identity => 'trellis.gardenProjects.folds.v1.' + (identity ? 'identity:' + identity : 'signed-out'); // NEW
+test('section symbols fold contents and creation while headings remain visible', async () => { // NEW
+    for (const communities of [false, true]) { // NEW
+        const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
+        if (communities) f.window.trellisGardenCommunities = { onStatus() {}, list: async () => ({ communities: [] }), listRequests: async () => ({ requests: [] }) }; // NEW
+        f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // NEW
+        const state = f.ui.__trellisGardenHome, { shared, private: privateToggle } = state.projectSectionToggles; // NEW
+        assert.equal(shared.textContent, '−'); assert.equal(privateToggle.getAttribute('aria-expanded'), 'true'); // NEW
+        assert.equal(shared.getAttribute('aria-label'), 'Collapse Shared garden projects'); // NEW
+        assert.equal(f.window.document.getElementById(shared.getAttribute('aria-controls')), state.sharedRows); // NEW
+        const detail = f.window.document.createElement('details'); detail.open = true; state.privateRows.append(detail); // NEW
+        privateToggle.click(); assert.equal(state.privateRows.hidden, true); assert.equal(state.sharedRows.hidden, false); // NEW
+        assert.equal(privateToggle.textContent, '+'); assert.equal(privateToggle.title, 'Expand Private garden projects'); // NEW
+        assert.equal(privateToggle.getAttribute('aria-expanded'), 'false'); assert.equal(detail.isConnected, true); // NEW
+        state.privateRows.parentNode.querySelector('.trellis-projects-title').click(); assert.equal(state.privateRows.hidden, true); // NEW
+        const privateCreate = state.creationButtons.at(-1); assert.equal(privateCreate.hidden, true); assert.equal(privateCreate.disabled, false); privateToggle.click(); // CHANGE
+        privateCreate.click(); const form = state.creationForm; // NEW
+        assert.equal(form.closest('[hidden]'), null); assert.equal(f.window.document.activeElement.getAttribute('aria-label'), 'Project name'); // NEW
+        privateToggle.click(); assert.equal(form.hidden, true); privateToggle.click(); assert.equal(detail.open, true); assert.equal(state.privateRows.hidden, false); // NEW
+        assert.equal(form.isConnected, true); shared.click(); assert.equal(state.sharedRows.hidden, true); // NEW
+        privateToggle.click(); assert.equal(state.privateRows.hidden, true); assert.equal(form.hidden, true); // CHANGE // NEW
+        f.dom.window.close(); // NEW
+    } // NEW
+}); // NEW
+test('saved section folds survive UI recreation and remain isolated by identity and signed-out use', async () => { // NEW
+    const f = fixture(); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // NEW
+    let state = f.ui.__trellisGardenHome; state.projectSectionToggles.private.click(); // NEW
+    const changeIdentity = async identity => { const session = identity ? { identityId: identity, username: identity } : null; f.setSession(session); await f.emitStatus({ session }); await tick(); }; // NEW
+    await changeIdentity('alice'); assert.equal(state.privateRows.hidden, false); state.projectSectionToggles.shared.click(); // NEW
+    await changeIdentity('bob'); assert.equal(state.sharedRows.hidden, false); assert.equal(state.privateRows.hidden, false); // NEW
+    state.projectSectionToggles.private.click(); await changeIdentity('alice'); // NEW
+    assert.equal(state.sharedRows.hidden, true); assert.equal(state.privateRows.hidden, false); // NEW
+    await changeIdentity(null); assert.equal(state.sharedRows.hidden, false); assert.equal(state.privateRows.hidden, true); // NEW
+    const restarted = fixture(); restarted.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
+    for (const identity of [null, 'alice', 'bob']) restarted.window.localStorage.setItem(foldStorageKey(identity), f.window.localStorage.getItem(foldStorageKey(identity))); // NEW
+    restarted.window.TrellisGardenHome.showProjects(restarted.ui); await tick(); state = restarted.ui.__trellisGardenHome; // NEW
+    assert.equal(state.sharedRows.hidden, true); assert.equal(state.privateRows.hidden, false); // NEW
+    f.dom.window.close(); restarted.dom.window.close(); // NEW
+}); // NEW
+test('search folds are temporary and survive typing, refreshes and identity changes correctly', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; // NEW
+    state.projectSectionToggles.shared.click(); state.projectSectionToggles.private.click(); // NEW
+    const saved = f.window.localStorage.getItem(foldStorageKey('alice')); // NEW
+    const search = value => { state.searchControl.value = value; state.searchControl.dispatchEvent(new f.window.Event('input')); }; // NEW
+    search('a'); assert.equal(state.sharedRows.hidden, false); assert.equal(state.privateRows.hidden, false); // NEW
+    state.projectSectionToggles.shared.click(); search('ap'); // NEW
+    assert.equal(state.sharedRows.hidden, true); assert.equal(state.privateRows.hidden, false); // NEW
+    reloadProjects(state); await tick(); // NEW
+    assert.equal(state.sharedRows.hidden, true); assert.equal(f.window.localStorage.getItem(foldStorageKey('alice')), saved); // NEW
+    search(''); assert.equal(state.sharedRows.hidden, true); assert.equal(state.privateRows.hidden, true); // NEW
+    search('a'); state.projectSectionToggles.shared.click(); // NEW
+    const bob = { identityId: 'bob', username: 'Bob' }; f.setSession(bob); await f.emitStatus({ session: bob }); await tick(); // NEW
+    assert.equal(state.sharedRows.hidden, false); assert.equal(state.privateRows.hidden, false); // NEW
+    state.projectSectionToggles.private.click(); search(''); // NEW
+    assert.equal(state.sharedRows.hidden, false); assert.equal(state.privateRows.hidden, false); // NEW
+    assert.equal(f.window.localStorage.getItem(foldStorageKey('bob')), null); f.dom.window.close(); // NEW
+}); // NEW
+test('section folds survive refresh, Trash navigation and reopening and hide creation', async () => { // NEW
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); let state = f.ui.__trellisGardenHome; // NEW
+    state.projectSectionToggles.private.click(); // NEW
+    for (const label of ['Reload', 'Trash', 'Projects']) { // NEW
+        [...state.projectsRoot.querySelectorAll('button')].find(b => b.textContent === label).click(); await tick(); // NEW
+        assert.equal(state.privateRows.hidden, true); assert.equal(state.sharedRows.hidden, false); // NEW
+        assert.equal(state.privateRows.parentNode.hidden, label === 'Trash'); // NEW
+    } // NEW
+    f.ui.hideDialog(); f.window.TrellisGardenHome.showProjects(f.ui, { focus: 'create' }); await tick(); state = f.ui.__trellisGardenHome; // NEW
+    assert.equal(state.privateRows.hidden, true); assert.equal(f.window.document.activeElement, state.creationButtons[0]); // NEW
+    assert.equal(state.creationButtons[1].hidden, true); f.dom.window.close(); // NEW
+}); // NEW
+test('invalid or unavailable fold storage defaults safely and storage failures keep in-memory choices', async () => { // NEW
+    for (const value of ['broken', 'null', 'true', '{"shared":"true","private":1}', '{"shared":true,"private":"bad"}']) { // NEW
+        const f = fixture(); f.window.localStorage.setItem(foldStorageKey(null), value); // NEW
+        f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; // NEW
+        assert.equal(state.sharedRows.hidden, value.includes('"shared":true')); assert.equal(state.privateRows.hidden, false); // NEW
+        f.dom.window.close(); // NEW
+    } // NEW
+    const f = fixture(); Object.defineProperty(f.window, 'localStorage', { value: { getItem() { throw new Error('Storage blocked'); }, setItem() { throw new Error('Storage full'); } } }); // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); let state = f.ui.__trellisGardenHome; // NEW
+    assert.equal(state.sharedRows.hidden, false); state.projectSectionToggles.shared.click(); // NEW
+    f.ui.hideDialog(); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); state = f.ui.__trellisGardenHome; // NEW
+    assert.equal(state.sharedRows.hidden, true); state.projectSectionToggles.shared.click(); assert.equal(state.sharedRows.hidden, false); // NEW
+    f.dom.window.close(); // NEW
+}); // NEW
+test('opening and refresh never focus rows in folded sections', async () => { // NEW
+    const f = fixture(); f.window.localStorage.setItem(foldStorageKey(null), JSON.stringify({ shared: true, private: true })); // NEW
+    f.window.trellisGardenLibrary.listLocal = async () => ({ folder: '/local', gardens: [{ path: '/local/a', name: 'Apple', source: 'local', available: true }] }); // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; // NEW
+    assert.equal(f.window.document.activeElement, state.projectSectionToggles.shared); // NEW
+    state.projectSectionToggles.private.click(); const open = state.privateRows.querySelector('button'); open.focus(); // NEW
+    state.projectSectionToggles.private.click(); assert.equal(f.window.document.activeElement, state.projectSectionToggles.private); // NEW
+    reloadProjects(state); await tick(); // NEW
+    assert.equal(f.window.document.activeElement, state.projectSectionToggles.private); assert.equal(f.window.document.activeElement.closest('[hidden]'), null); // NEW
+    f.dom.window.close(); // NEW
+}); // NEW
 test('Create and Open splash buttons reuse the dialog with different focus and preserve its origin', async () => { // NEW
     for (const intent of ['create', 'open']) { // NEW
         const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
@@ -201,11 +553,11 @@ test('Create and Open splash buttons reuse the dialog with different focus and p
         assert.equal(f.window.document.querySelectorAll('.trellis-projects-root').length, 1); // NEW
         assert.equal(f.ui.__trellisGardenHome.focus, intent); // NEW
         if (intent === 'create') assert.equal(f.window.document.activeElement.textContent, 'Create New Shared Garden Project'); // NEW
-        f.ui.__trellisGardenHome.projectsRoot.querySelector('.trellis-home-row:last-child button:last-child').click(); await new Promise(resolve => setTimeout(resolve, 10)); // NEW
+        f.ui.__trellisGardenHome.projectsBody.lastElementChild.querySelector('button:last-child').click(); await new Promise(resolve => setTimeout(resolve, 10)); // NEW
         assert.equal(f.window.document.querySelector('.trellis-projects-root'), null); assert.ok(f.window.document.getElementById('splash')); // NEW
     } // NEW
 }); // NEW
-test('shared bands, private sources, deduplication, and Unknown seeds are rendered without nested lists', async () => { // NEW
+test('shared rows, private sources, deduplication, and Unknown seeds render without distance bands', async () => { // NEW
     const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
     f.window.trellisGardenLibrary.list = async () => ({ gardens: [ // NEW
         { diagramId: 'near', path: '/near', name: 'Nearby', available: true, classification: 'shared', userCount: 2, seeds: 3, distanceKm: 24.9 }, // NEW
@@ -216,7 +568,7 @@ test('shared bands, private sources, deduplication, and Unknown seeds are render
     f.window.trellisGardenLibrary.listLocal = async () => ({ folder: '/local', gardens: [{ path: '/private', name: 'Duplicate file', source: 'local', available: true }, { path: '/local/file', name: 'Local file', source: 'local', available: true }, { diagramId: 'private', path: '/copied', name: 'Duplicate project identity', source: 'local', available: true }] }); // NEW
     f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // NEW
     const root = f.window.document.querySelector('.trellis-projects-root'), shared = f.ui.__trellisGardenHome.sharedRows; // NEW
-    assert.deepEqual([...shared.querySelectorAll('h4')].map(node => node.textContent), ['Under 25 km', '100–500 km', 'Unknown distance']); // NEW
+    assert.deepEqual([...shared.querySelectorAll('h4')], []); // CHANGE // NEW
     assert.match(shared.textContent, /2 users · 3 seeds/); assert.match(shared.textContent, /Seeds: Unknown/); // NEW
     assert.match(f.ui.__trellisGardenHome.privateRows.textContent, /Local file.*Local file.*Private library.*Downloaded/); // NEW
     assert.equal(root.textContent.includes('Duplicate project identity'), false); assert.equal(root.textContent.includes('Duplicate file'), false); // CHANGE assert.equal(root.querySelector('.trellis-home-list'), null); // NEW
@@ -225,12 +577,12 @@ test('shared bands, private sources, deduplication, and Unknown seeds are render
 test('availability refresh preserves search input, row focus, expanded details, scroll, and login form input', async () => { // NEW
     const f = await loginFixture(), state = f.ui.__trellisGardenHome; // NEW
     f.window.trellisGardenLibrary.listLocal = async () => ({ folder: '/local', gardens: [{ path: '/local/a', name: 'Apple', source: 'local', available: true }] }); // NEW
-    f.find('Refresh').click(); await tick(); // NEW
+    f.ui.__trellisGardenHome.projectLoadHeaders.private.reload.click(); await tick(); // NEW
     const search = f.window.document.querySelector('input[aria-label="Search garden projects"]'); search.value = 'App'; search.dispatchEvent(new f.window.Event('input')); // NEW
     const details = state.privateRows.querySelector('details'); details.open = true; // NEW
-    const open = state.privateRows.querySelector('button'); open.focus(); state.projectsRoot.scrollTop = 123; // NEW
-    f.find('Refresh').click(); await tick(); assert.equal(f.window.document.activeElement.getAttribute('data-project-focus'), '/local/a:open'); // NEW
-    assert.equal(search.value, 'App'); assert.equal(state.privateRows.querySelector('details').open, true); assert.equal(state.projectsRoot.scrollTop, 123); // NEW
+    const open = state.privateRows.querySelector('button'); open.focus(); state.projectsBody.scrollTop = 123; // NEW
+    f.ui.__trellisGardenHome.projectLoadHeaders.private.reload.click(); await tick(); assert.equal(f.window.document.activeElement.getAttribute('data-project-focus'), '/local/a:open'); // NEW
+    assert.equal(search.value, 'App'); assert.equal(state.privateRows.querySelector('details').open, true); assert.equal(state.projectsBody.scrollTop, 123); // NEW
     f.find('Log in').click(); const password = f.window.document.querySelector('input[type=password]'); password.value = 'keep typing'; // NEW
     await f.emitStatus({ session: null }); await tick(); assert.equal(password.isConnected, true); assert.equal(password.value, 'keep typing'); // NEW
 }); // NEW
@@ -239,7 +591,7 @@ test('a failed identity library does not hide signed-out-capable local browsing'
     f.window.trellisGardenLibrary.list = async () => { throw new Error('Metadata unavailable'); }; // NEW
     f.window.trellisGardenLibrary.listLocal = async () => ({ folder: '/local', gardens: [{ path: '/local/a', name: 'Local project', source: 'local', available: true }] }); // NEW
     f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // NEW
-    assert.match(f.ui.__trellisGardenHome.privateRows.textContent, /Local project/); assert.match(f.ui.__trellisGardenHome.projectsStatus.textContent, /Metadata unavailable/); // NEW
+    assert.match(f.ui.__trellisGardenHome.privateRows.textContent, /Local project/); assert.match(f.ui.__trellisGardenHome.projectLoadHeaders.private.status.textContent, /Metadata unavailable/); // CHANGE: failures remain section-local.
 }); // NEW
 function creationMechanics(f) { // NEW
     const children = [], seeded = [], invited = [], saved = [], completed = []; // CHANGE
@@ -302,6 +654,16 @@ test('closing during creation keeps the previous document and opening the retain
     f.window.TrellisGardenHome.showProjects(f.ui); await tick(); find('Open').click(); await tick(); // NEW
     assert.equal(f.ui.getCurrentFile().fileObject.path, '/retained'); assert.deepEqual(mechanics.seeded, ['garden']); assert.equal(creates, 1); // NEW
 }); // NEW
+test('local-only old projects show their status and open without sharing or managed actions', async () => { // CHANGE
+    const f = await loginFixture(), mechanics = creationMechanics(f); f.setSession({ identityId: 'alice', username: 'Alice' }); // CHANGE
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'old', name: 'Retained local garden', path: '/old', source: 'library', available: true, starterPending: false, classification: 'private', localOnly: true, userCount: 3 }] }); // CHANGE
+    await f.emitStatus({ session: await f.window.trellisIdentity.getSession() }); await tick(); // CHANGE
+    const row = [...f.window.document.querySelectorAll('.trellis-home-garden')].find(row => row.textContent.includes('Retained local garden')); // CHANGE
+    assert.ok(row); assert.match(row.textContent, /Local only · Sharing off/); // CHANGE
+    assert.deepEqual([...row.querySelectorAll('button')].map(button => button.textContent), ['Open']); // CHANGE
+    row.querySelector('button').click(); await tick(); assert.equal(f.ui.getCurrentFile().fileObject.path, '/old'); assert.equal(mechanics.seeded.length, 0); // CHANGE
+}); // CHANGE
+
 test('an older empty project is opened without starter initialization', async () => { // NEW
     const f = await loginFixture(), mechanics = creationMechanics(f); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
     f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'old', name: 'Old empty', path: '/old', source: 'library', available: true, starterPending: false, classification: 'private', conflicts: [] }] }); // NEW
@@ -322,8 +684,8 @@ test('delete removes the active row, exposes Trash, restores it, and omits the o
     const root = f.window.document.querySelector('.trellis-projects-root'); assert.doesNotMatch(root.textContent, /Keep available offline|Remove from this device|Remove download/); // NEW
     assert.equal(root.querySelector('[aria-label="Actions for Kitchen garden"]').textContent, '⋯'); // NEW
     root.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // NEW
-    assert.match(root.querySelector('.trellis-project-action').textContent, /paired devices.*invitations/); // NEW
-    [...root.querySelectorAll('.trellis-project-action button')].find(b => b.textContent === 'Delete project').click(); await tick(); await tick(); // NEW
+    assert.match(f.ui.__trellisGardenHome.confirmation.panel.textContent, /paired devices.*invitations/); // NEW
+    [...f.ui.__trellisGardenHome.confirmation.panel.querySelectorAll('button')].find(b => b.textContent === 'Move to Trash').click(); await tick(); await tick(); // NEW
     assert.equal(f.ui.__trellisGardenHome.privateRows.querySelector('.trellis-home-garden'), null); // NEW
     [...root.querySelectorAll('button')].find(b => b.textContent === 'Trash').click(); await tick(); // NEW
     assert.equal(f.ui.__trellisGardenHome.trashSection.hidden, false); root.querySelector('[data-project-focus="trash-one:restore"]').click(); await tick(); // NEW
@@ -337,20 +699,20 @@ test('leaving requires a selected connected successor and remains visible while 
     f.window.trellisGardenLibrary.leave = async payload => { submitted = payload; departing = true; return { ok: true, complete: false, reason: 'Leaving… Waiting for acknowledgement.' }; }; // NEW
     f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const root = f.window.document.querySelector('.trellis-projects-root'); // NEW
     root.querySelector('[data-project-focus="shared:remove"]').click(); await tick(); // NEW
-    const panel = root.querySelector('.trellis-project-action'), select = panel.querySelector('select'); assert.deepEqual([...select.options].map(o => o.textContent), ['Choose a connected member', 'Connected Bob']); // NEW
+    const panel = f.ui.__trellisGardenHome.confirmation.panel, select = panel.querySelector('select'); assert.deepEqual([...select.options].map(o => o.textContent), ['Choose a connected member', 'Connected Bob']); // NEW
     [...panel.querySelectorAll('button')].find(b => b.textContent === 'Leave project').click(); await tick(); assert.equal(submitted, undefined); // NEW
     select.value = 'bob'; [...panel.querySelectorAll('button')].find(b => b.textContent === 'Leave project').click(); await tick(); await tick(); // NEW
     assert.equal(submitted.successorUserId, 'bob'); assert.match(f.ui.__trellisGardenHome.sharedRows.textContent, /Leaving/); assert.equal(root.querySelector('[data-project-focus="shared:open"]').disabled, true); // NEW
 }); // NEW
 
-test('cancelling deletion keeps the unsaved file and Save and delete saves before the mutation', async () => { // NEW
+test('cancelling deletion keeps the unsaved file and Save and move to Trash saves before the mutation', async () => { // NEW
     const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); const order = []; let dirty = true; // NEW
     const file = { fileObject: { path: '/garden' }, isModified: () => dirty, save(_force, success) { order.push('save'); dirty = false; success(); } }; f.setCurrent(file); // NEW
     f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'dirty', name: 'Draft', source: 'library', userCount: 1, available: true, path: '/garden' }] }); // NEW
     f.window.trellisGardenLibrary.actions = async () => ({ canDelete: true }); f.window.trellisGardenLibrary.trash = async () => { order.push('trash'); return { ok: true }; }; // NEW
     f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const root = f.window.document.querySelector('.trellis-projects-root'); // NEW
-    root.querySelector('[data-project-focus="dirty:remove"]').click(); await tick(); [...root.querySelectorAll('.trellis-project-action button')].find(b => b.textContent === 'Cancel').click(); assert.equal(f.ui.getCurrentFile(), file); assert.equal(dirty, true); assert.deepEqual(order, []); // NEW
-    root.querySelector('[data-project-focus="dirty:remove"]').click(); await tick(); [...root.querySelectorAll('.trellis-project-action button')].find(b => b.textContent === 'Save and delete').click(); await tick(); await tick(); assert.deepEqual(order, ['save', 'trash']); // NEW
+    root.querySelector('[data-project-focus="dirty:remove"]').click(); await tick(); [...f.ui.__trellisGardenHome.confirmation.panel.querySelectorAll('button')].find(b => b.textContent === 'Cancel').click(); assert.equal(f.ui.getCurrentFile(), file); assert.equal(dirty, true); assert.deepEqual(order, []); // NEW
+    root.querySelector('[data-project-focus="dirty:remove"]').click(); await tick(); [...f.ui.__trellisGardenHome.confirmation.panel.querySelectorAll('button')].find(b => b.textContent === 'Save and move to Trash').click(); await tick(); await tick(); assert.deepEqual(order, ['save', 'trash']); // NEW
 }); // NEW
 
 test('remote retirement serializes a draft, detects intervening edits, and unfreezes on cancellation', async () => { // NEW
@@ -361,3 +723,228 @@ test('remote retirement serializes a draft, detects intervening edits, and unfre
     assert.equal(prepared.xml, '<draft/>'); assert.equal(enabled, false); changed(); await assert.rejects(retiring({ phase: 'commit', path: '/remote.drawio' }), /changed/); // NEW
     assert.equal(f.ui.getCurrentFile(), file); await retiring({ phase: 'cancel' }); assert.equal(enabled, true); // NEW
 }); // NEW
+
+/** A single project keeps lifecycle cases focused on the real controls and bridge boundary. */ // CHANGE
+async function removalFixture(overrides = {}, options) { // CHANGE
+    const f = fixture(options); f.setSession({ identityId: 'alice', username: 'Alice' }); // CHANGE
+    const project = { diagramId: 'garden', name: 'Apple garden', source: 'library', userCount: 1, available: true, path: '/garden', ...overrides }; // CHANGE
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [project] }); // CHANGE
+    f.window.trellisGardenLibrary.actions = async () => ({ canDelete: true }); // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // CHANGE
+    return { ...f, project, state: f.ui.__trellisGardenHome }; // CHANGE
+} // CHANGE
+
+test('library, identity, creation, and dynamic menu buttons reuse the production semantic contract', async () => { // CHANGE
+    const f = await removalFixture({ canRename: true, canEditSuffix: true, projectName: 'Apple garden' }), root = f.state.projectsRoot; // CHANGE
+    const find = label => [...root.querySelectorAll('button')].find(node => node.textContent === label); // CHANGE
+    const variant = (label, expected) => assert.equal(find(label).getAttribute('data-trellis-button-variant'), expected, label); // CHANGE
+    for (const node of root.querySelectorAll('button')) assert.ok(node.classList.contains('trellis-button'), node.textContent); // CHANGE
+    variant('Open', 'open'); variant('Create New Private Garden Project', 'add'); variant('Move to Trash…', 'danger'); variant('Log out', 'close'); variant('Reload', 'neutral'); // CHANGE
+    assert.equal(root.querySelector('.trellis-project-menu>summary').getAttribute('data-trellis-button-variant'), 'neutral'); // CHANGE
+    assert.equal(find('Projects').classList.contains('trellis-button-active'), true); find('Trash').click(); await tick(); // CHANGE
+    assert.equal(find('Projects').classList.contains('trellis-button-active'), false); assert.equal(find('Trash').getAttribute('aria-pressed'), 'true'); assert.equal(find('Trash').classList.contains('trellis-button-active'), true); // CHANGE
+    find('Projects').click(); await tick(); find('Create New Private Garden Project').click(); // CHANGE
+    assert.equal(root.querySelector('button[type=submit]').getAttribute('data-trellis-button-variant'), 'add'); find('Cancel').click(); // CHANGE
+    find('Edit my suffix').click(); variant('Save suffix', 'add'); find('Cancel').click(); // CHANGE
+    find('Identity settings').click(); find('Change password').click(); // CHANGE
+    const form = f.state.panel.querySelector('form'); assert.equal(form.querySelector('button').getAttribute('data-trellis-button-variant'), 'add'); assert.equal(form.querySelector('button:last-child').getAttribute('data-trellis-button-variant'), 'close'); // CHANGE
+}); // CHANGE
+
+test('community creation and destructive community submissions have explicit variants', async () => { // CHANGE
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // CHANGE
+    f.window.trellisGardenCommunities = { onStatus() {}, listRequests: async () => ({ requests: [] }), list: async () => ({ communities: [{ id: 'community', name: 'Neighborhood', description: '', canAdminister: true, gardens: [{ diagramId: 'garden', name: 'Apple garden', description: '', joined: false }], admissions: [{ id: 'admission', name: 'New garden' }] }] }) }; // CHANGE
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; // CHANGE
+    const find = label => [...state.projectsRoot.querySelectorAll('button')].find(node => node.textContent === label); // CHANGE
+    for (const [label, expected] of [['Create Garden Community', 'add'], ['Detach garden', 'danger'], ['Decline garden', 'danger'], ['Request access', 'add']]) { // CHANGE
+        find(label).click(); assert.equal(state.actionPanel.querySelector('button[type=submit]').getAttribute('data-trellis-button-variant'), expected, label); // CHANGE
+        [...state.actionPanel.querySelectorAll('button')].find(node => node.textContent === 'Cancel').click(); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('lifecycle prompts retain functional host button fallbacks before the shared helper loads', async () => { // CHANGE
+    const f = await removalFixture({}, { sharedButtons: false }); f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+    const panel = f.state.confirmation.panel; assert.equal(panel.querySelector('button').className, 'geBtn'); panel.querySelector('button:last-child').click(); assert.equal(f.ui.dialogs.length, 1); // CHANGE
+}); // CHANGE
+
+test('modal cancellation preserves the library, traps focus, and resolves refreshed origins', async () => { // CHANGE
+    for (const dismissal of ['cancel', 'escape', 'close']) { // CHANGE
+        const f = await removalFixture(), root = f.state.projectsRoot; // CHANGE
+        const search = f.state.searchControl; search.value = 'Apple'; search.dispatchEvent(new f.window.Event('input')); // CHANGE
+        root.querySelector('details[data-project-details="garden:locations"]').open = true; root.scrollTop = 123; // CHANGE
+        root.querySelector('.trellis-project-menu').open = true; root.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+        const prompt = f.state.confirmation, cancel = prompt.controls.lastChild; assert.equal(f.ui.dialogs.length, 2); assert.equal(root.querySelector('.trellis-project-action'), null); assert.equal(root.inert, true); // CHANGE
+        assert.equal(f.window.document.activeElement, cancel); assert.equal(prompt.panel.getAttribute('role'), 'alertdialog'); assert.equal(f.window.document.getElementById(prompt.panel.getAttribute('aria-labelledby')), prompt.heading); // CHANGE
+        const key = (name, shiftKey = false) => f.window.document.activeElement.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: name, shiftKey, bubbles: true, cancelable: true })); // CHANGE
+        key('Tab'); assert.equal(f.window.document.activeElement, prompt.controls.firstChild); key('Tab', true); assert.equal(f.window.document.activeElement, cancel); // CHANGE
+        search.focus(); assert.equal(f.window.document.activeElement, cancel); f.ui.dialog.bg.click(); assert.equal(f.state.confirmation, prompt); // CHANGE
+        reloadProjects(f.ui.__trellisGardenHome); await tick(); assert.equal(f.window.document.activeElement, cancel); // CHANGE
+        if (dismissal === 'cancel') cancel.click(); else if (dismissal === 'escape') key('Escape'); else f.ui.dialog.container.querySelector('.geButton').click(); // CHANGE
+        await new Promise(resolve => setTimeout(resolve, 5)); assert.equal(f.ui.dialogs.length, 1); assert.equal(f.ui.dialog.container.firstChild, root); assert.equal(root.inert, false); // CHANGE
+        assert.equal(f.window.document.activeElement.getAttribute('data-project-focus'), 'garden:menu'); assert.equal(search.value, 'Apple'); assert.equal(root.scrollTop, 123); assert.equal(root.querySelector('details[data-project-details="garden:locations"]').open, true); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('cancelling after the originating project disappears falls back to library search', async () => { // CHANGE
+    const f = await removalFixture(); f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [] }); await f.emitStatus({ session: await f.window.trellisIdentity.getSession() }); reloadProjects(f.state); await tick(); // CHANGE: status signals defer data changes until cadence or explicit refresh.
+    f.state.confirmation.controls.lastChild.click(); await new Promise(resolve => setTimeout(resolve, 5)); assert.equal(f.window.document.activeElement, f.state.searchControl); // CHANGE
+}); // CHANGE
+
+test('cancelled or identity-invalidated membership responses cannot modify another dialog', async () => { // CHANGE
+    for (const invalidate of ['cancel', 'identity']) { // CHANGE
+        const f = await removalFixture(); let release; f.window.trellisGardenLibrary.actions = () => new Promise(resolve => { release = resolve; }); // CHANGE
+        f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); const panel = f.state.confirmation.panel; // CHANGE
+        if (invalidate === 'cancel') f.state.confirmation.controls.lastChild.click(); else await f.emitStatus({ session: { identityId: 'bob', username: 'Bob' } }); // CHANGE
+        const other = f.window.document.createElement('section'); f.ui.showDialog(other, 200, 100, true, true); release({ canDelete: true }); await tick(); // CHANGE
+        assert.equal(panel.isConnected, false); assert.equal(f.ui.dialog.container.firstChild, other); assert.equal(other.textContent, ''); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('membership failures and ineligible actions stay cancellable without exposing a destructive button', async () => { // CHANGE
+    for (const fail of [false, true]) { // CHANGE
+        const f = await removalFixture(); f.window.trellisGardenLibrary.actions = async () => { if (fail) throw new Error('Membership unavailable'); return { canDelete: false, canLeave: false, reason: 'No connected successor' }; }; // CHANGE
+        f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); const prompt = f.state.confirmation; // CHANGE
+        assert.match(prompt.error.textContent, fail ? /Membership unavailable/ : /No connected successor/); assert.equal(prompt.controls.children.length, 1); prompt.controls.lastChild.click(); assert.equal(f.ui.dialogs.length, 1); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('pending mutations block duplicate submission and dismissal; bridge failures remain retryable', async () => { // CHANGE
+    const f = await removalFixture(); let reject, calls = 0; f.window.trellisGardenLibrary.trash = () => { calls++; return new Promise((_resolve, failure) => { reject = failure; }); }; // CHANGE
+    f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); const prompt = f.state.confirmation; // CHANGE
+    prompt.controls.firstChild.click(); prompt.controls.firstChild.click(); prompt.controls.lastChild.click(); f.ui.dialog.container.querySelector('.geButton').click(); // CHANGE
+    prompt.panel.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); // CHANGE
+    assert.equal(calls, 1); assert.equal(prompt.busy, true); assert.equal(prompt.panel.getAttribute('aria-busy'), 'true'); assert.equal(f.ui.dialogs.length, 2); // CHANGE
+    reject(new Error('Project is busy')); await tick(); assert.equal(prompt.busy, false); assert.match(prompt.error.textContent, /Project is busy/); assert.equal(prompt.controls.firstChild.disabled, false); // CHANGE
+    f.window.trellisGardenLibrary.trash = async () => { calls++; return { ok: true }; }; prompt.controls.firstChild.click(); await tick(); // CHANGE
+    assert.equal(calls, 2); assert.equal(f.state.confirmation, null); assert.equal(f.ui.dialogs.length, 1); // CHANGE
+}); // CHANGE
+
+test('save failures preserve the dirty editor; discard skips saving before moving to Trash', async () => { // CHANGE
+    for (const discard of [false, true]) { // CHANGE
+        const f = await removalFixture(); let saves = 0, moves = 0; const file = { fileObject: { path: '/garden' }, isModified: () => true, save(_force, _ok, fail) { saves++; fail(new Error('Disk full')); } }; f.setCurrent(file); // CHANGE
+        f.window.trellisGardenLibrary.trash = async () => { moves++; return { ok: true }; }; f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+        const prompt = f.state.confirmation; (discard ? prompt.controls.children[1] : prompt.controls.firstChild).click(); await tick(); // CHANGE
+        if (discard) { assert.equal(saves, 0); assert.equal(moves, 1); assert.equal(f.ui.getCurrentFile(), null); } // CHANGE
+        else { assert.equal(saves, 1); assert.equal(moves, 0); assert.equal(f.ui.getCurrentFile(), file); assert.match(prompt.error.textContent, /Disk full/); assert.equal(prompt.controls.firstChild.disabled, false); } // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('a delayed save cannot authorize a mutation after the identity changes', async () => { // CHANGE
+    const f = await removalFixture(); let finishSave, moves = 0; const file = { fileObject: { path: '/garden' }, isModified: () => true, save(_force, success) { finishSave = success; } }; f.setCurrent(file); // CHANGE
+    f.window.trellisGardenLibrary.trash = async () => { moves++; return { ok: true }; }; f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+    f.state.confirmation.controls.firstChild.click(); await f.emitStatus({ session: null }); finishSave(); await tick(); assert.equal(moves, 0); assert.equal(f.ui.getCurrentFile(), file); assert.equal(f.state.confirmation, null); // CHANGE
+}); // CHANGE
+
+test('a delayed bridge completion cannot close the editor after identity invalidation', async () => { // CHANGE
+    const f = await removalFixture(); let finishMove; const file = { fileObject: { path: '/garden' }, isModified: () => false }; f.setCurrent(file); // CHANGE
+    f.window.trellisGardenLibrary.trash = () => new Promise(resolve => { finishMove = resolve; }); f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+    f.state.confirmation.controls.firstChild.click(); await f.emitStatus({ session: null }); finishMove({ ok: true }); await tick(); assert.equal(f.ui.getCurrentFile(), file); assert.equal(f.state.confirmation, null); // CHANGE
+}); // CHANGE
+
+test('editor changes invalidate an unsubmitted prompt and a delayed save cannot retire a replacement document', async () => { // CHANGE
+    for (const saving of [false, true]) { // CHANGE
+        const f = fixture(); let onFileLoaded, finishSave, moves = 0; // CHANGE
+        f.ui.editor = { addListener(name, callback) { if (name === 'fileLoaded') onFileLoaded = callback; } }; // CHANGE
+        const original = { fileObject: { path: '/garden' }, isModified: () => saving, save(_force, success) { finishSave = success; } }, replacement = { isModified: () => true }; f.setCurrent(original); // CHANGE
+        f.setSession({ identityId: 'alice', username: 'Alice' }); f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'garden', name: 'Apple garden', source: 'library', userCount: 1, available: true, path: '/garden' }] }); // CHANGE
+        f.window.trellisGardenLibrary.actions = async () => ({ canDelete: true }); f.window.trellisGardenLibrary.trash = async () => { moves++; return { ok: true }; }; // CHANGE
+        f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+        if (saving) state.confirmation.controls.firstChild.click(); f.setCurrent(replacement); onFileLoaded(); if (saving) finishSave(); await tick(); // CHANGE
+        assert.equal(moves, 0); assert.equal(f.ui.getCurrentFile(), replacement); assert.equal(state.confirmation, null); assert.equal(f.ui.dialogs.length, 1); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('retiring the current editor suppresses its automatic splash and leaves only the library', async () => { // CHANGE
+    for (const remoteCommit of [false, true]) { // CHANGE
+        const f = fixture(); let retiring, suppressed; f.window.trellisGardenLibrary.onRetiring = listener => { retiring = listener; }; // CHANGE
+        const file = { fileObject: { path: '/garden' }, isModified: () => false }; f.setCurrent(file); f.setSession({ identityId: 'alice', username: 'Alice' }); // CHANGE
+        f.ui.fileLoaded = (value, noDialogs) => { suppressed = noDialogs; f.setCurrent(value); if (!value && !noDialogs) f.ui.showDialog(f.window.document.createElement('section'), 200, 100, true, true); }; // CHANGE
+        f.window.trellisGardenLibrary.list = async () => ({ gardens: [{ diagramId: 'garden', name: 'Apple garden', source: 'library', userCount: 1, path: '/garden', available: true }] }); // CHANGE
+        f.window.trellisGardenLibrary.actions = async () => ({ canDelete: true }); // CHANGE
+        f.window.trellisGardenLibrary.trash = async () => { if (remoteCommit) { await retiring({ phase: 'prepare', path: '/garden' }); await retiring({ phase: 'commit', path: '/garden' }); } return { ok: true }; }; // CHANGE
+        f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome; state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+        state.confirmation.controls.firstChild.click(); await tick(); assert.equal(suppressed, true); assert.equal(f.ui.dialogs.length, 1); assert.equal(f.ui.dialog.container.firstChild, state.projectsRoot); assert.equal(state.confirmation, null); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+test('standalone Trash works while signed out and names its device-only consequences', async () => { // CHANGE
+    const f = fixture(); let payload; f.window.trellisGardenLibrary.listLocal = async () => ({ folder: '/local', gardens: [{ source: 'local', name: 'Standalone', path: '/local/file.drawio', available: true }] }); // CHANGE
+    f.window.trellisGardenLibrary.trash = async input => { payload = input; return { ok: true }; }; f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // CHANGE
+    const state = f.ui.__trellisGardenHome; state.projectsRoot.querySelector('[data-project-focus="/local/file.drawio:remove"]').click(); await tick(); // CHANGE
+    assert.match(state.confirmation.description.textContent, /on this device.*Neighboring files and assets/); state.confirmation.controls.firstChild.click(); await tick(); // CHANGE
+    assert.equal(payload.path, '/local/file.drawio'); assert.equal(payload.source, 'local'); assert.equal(payload.confirm, true); // CHANGE
+}); // CHANGE
+
+test('permanent deletion uses explicit modal confirmation and retains local and paired-device copy', async () => { // CHANGE
+    for (const source of ['local', 'library']) { // CHANGE
+        const f = await removalFixture(); let payload, calls = 0; f.window.trellisGardenLibrary.listTrash = async () => ({ gardens: [{ trashId: 'retained', diagramId: 'garden', name: 'Retained Apple garden', source }] }); // CHANGE
+        f.window.trellisGardenLibrary.purge = async input => { calls++; payload = input; if (calls === 1) throw new Error('Retry deletion'); return { ok: true }; }; // CHANGE
+        f.state.projectLoadHeaders.trash.reload.click(); await tick(); await f.state.setProjectView('trash'); f.state.trashRows.querySelector('[data-project-focus="retained:purge"]').click(); const prompt = f.state.confirmation; // CHANGE
+        assert.match(prompt.heading.textContent, /Retained Apple garden/); assert.match(prompt.description.textContent, source === 'local' ? /retained local file/ : /paired devices/); assert.equal(prompt.panel.querySelector('input'), null); // CHANGE
+        assert.equal(f.window.document.activeElement, prompt.controls.lastChild); assert.equal(prompt.controls.firstChild.getAttribute('data-trellis-button-variant'), 'danger'); // CHANGE
+        prompt.controls.firstChild.click(); await tick(); assert.match(prompt.error.textContent, /Retry deletion/); prompt.controls.firstChild.click(); await tick(); // CHANGE
+        assert.equal(payload.confirm, true); assert.equal(payload.trashId, 'retained'); assert.equal(f.state.confirmation, null); assert.equal(f.ui.dialogs.length, 1); // CHANGE
+    } // CHANGE
+}); // CHANGE
+
+/** Guide requests are scoped to an existing project and preserve live project-browser forms. */ // NEW
+async function quickstartProjectFixture() {
+    const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' });
+    const records = [], token = { diagramId: 'target' };
+    f.ui.editor = { graph: { __trellisQuickstart: { capture: () => token, record: (kind, captured) => records.push({ kind, captured }) } } };
+    f.window.trellisGardenLibrary.list = async () => ({ gardens: [
+        { diagramId: 'first', name: 'First project', available: true, canRename: true, source: 'library' },
+        { diagramId: 'target', name: 'Current project', available: true, canRename: true, source: 'library' }
+    ] });
+    f.window.trellisGardenCommunities = { onStatus() {}, listRequests: async () => ({ requests: [] }), list: async () => ({ communities: [
+        { id: 'community', name: 'Neighborhood', description: '', gardens: [{ diagramId: 'unrelated', name: 'Other garden', description: '', joined: false }], admissions: [] }
+    ] }) };
+    f.window.TrellisGardenHome.showProjects(f.ui, { highlight: 'community-sharing', diagramId: 'target' }); await tick();
+    return { ...f, records, state: f.ui.__trellisGardenHome };
+}
+
+test('quickstart highlights communities after loading and reuses open dialogs without losing drafts or focus', async () => { // NEW
+    const f = await quickstartProjectFixture(), original = f.state.projectsRoot;
+    assert.equal(original.dataset.quickstartSurface, 'projects');
+    f.window.TrellisGardenHome.showProjects(f.ui, { highlight: 'community-sharing', diagramId: 'target', communityPath: 'create' });
+    const create = original.querySelector('[data-trellis-quickstart="community-sharing"]'); assert.equal(create.textContent, 'Create Garden Community'); create.click();
+    const form = f.state.actionPanel.querySelector('form'), name = form.querySelector('input[aria-label="Community name"]'); name.value = 'My unsent community'; name.focus();
+    assert.equal(form.querySelector('select').value, 'target');
+    f.window.TrellisGardenHome.showProjects(f.ui, { highlight: 'community-sharing', diagramId: 'target', communityPath: 'existing' }); await tick();
+    assert.equal(f.state.projectsRoot, original); assert.equal(f.state.actionPanel.querySelector('form'), form); assert.equal(name.value, 'My unsent community'); assert.equal(f.window.document.activeElement, name);
+    f.ui.hideDialog(); assert.equal(f.state.quickstartHighlight, null);
+});
+
+test('both community paths preselect the requested project and record only successful submission', async () => { // NEW
+    for (const route of ['create', 'existing']) {
+        const f = await quickstartProjectFixture(); let sent, fail = true;
+        const action = async payload => { sent = payload; if (fail) throw new Error('Try again'); return { status: 'pending' }; };
+        f.window.trellisGardenCommunities.create = action; f.window.trellisGardenCommunities.addGarden = action;
+        if (route === 'create') f.state.creationButtons.find(node => node.dataset.quickstartProjectKind === 'communities').click();
+        else { const group = f.state.communitiesRows.querySelector('details'); group.open = true; group.querySelector('[data-quickstart-community-add]').click(); }
+        const form = f.state.actionPanel.querySelector('form');
+        assert.equal(form.querySelector('select').value, 'target');
+        const name = form.querySelector('input[aria-label="Community name"]'); if (name) name.value = 'Shared neighborhood';
+        form.requestSubmit(); await tick(); assert.match(form.textContent, /Try again/); assert.equal(f.records.length, 0);
+        fail = false; form.requestSubmit(); await tick(); assert.equal(sent.diagramId, 'target'); assert.equal(f.records.length, 1); assert.equal(f.records[0].kind, 'community');
+    }
+});
+
+test('community guide requests are cleared on identity changes', async () => { // NEW
+    const f = await quickstartProjectFixture(); f.setSession({ identityId: 'bob', username: 'Bob' }); await f.emitStatus({ session: { identityId: 'bob', username: 'Bob' } }); await tick();
+    assert.equal(f.state.quickstartHighlight, null);
+});
+
+test('switching community paths during a descriptor read retains its completion and pending project selection', async () => { // NEW
+    const f = await quickstartProjectFixture(); let release;
+    f.window.trellisGardenLibrary.list = async options => options?.diagramId === 'late' ? new Promise(resolve => { release = resolve; }) : { gardens: [] };
+    f.window.TrellisGardenHome.showProjects(f.ui, { highlight: 'community-sharing', diagramId: 'late' }); await tick();
+    const request = f.state.quickstartHighlight; assert.equal(request.loading, true);
+    f.window.TrellisGardenHome.showProjects(f.ui, { highlight: 'community-sharing', diagramId: 'late', communityPath: 'create' });
+    assert.equal(f.state.quickstartHighlight, request);
+    f.state.creationButtons.find(node => node.dataset.quickstartProjectKind === 'communities').click();
+    const form = f.state.actionPanel.querySelector('form'), select = form.querySelector('select');
+    assert.equal(select.value, 'late'); assert.equal(select.selectedOptions[0].disabled, true); assert.equal(form.querySelector('[type=submit]').disabled, true);
+    release({ gardens: [{ diagramId: 'late', name: 'Loaded current garden', available: true, canRename: true, source: 'library' }] }); await tick(); await tick();
+    assert.equal(request.loading, false); assert.equal(select.value, 'late'); assert.equal(select.selectedOptions[0].disabled, false); assert.equal(form.querySelector('[type=submit]').disabled, false);
+});

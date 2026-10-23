@@ -1,8 +1,24 @@
 import test from 'node:test'; // NEW
 import assert from 'node:assert/strict'; // NEW
-import { projectSummary, cityRecord, averageDistance } from '../src/main/trellis-project-summary.js'; // NEW
+import { projectSummary, cityRecord, averageDistance, nearestDistance } from '../src/main/trellis-project-summary.js'; // CHANGE
+import { projectPeople } from '../src/main/trellis-project-people.js'; // NEW
 import { countProjectSeeds } from '../src/main/trellis-syncthing-service.js'; // NEW
 const cities = [{ cityId: 'a', name: 'Origin', latitude: 0, longitude: 0 }, { cityId: 'b', name: 'East', latitude: 0, longitude: 1 }]; // NEW
+test('nearest distance handles multiple cities, zero, missing data and the date line', () => { // NEW
+    assert.equal(nearestDistance(cities[0], [cities[1], cities[0]]), 0); assert.equal(nearestDistance(null, cities), null); assert.equal(nearestDistance(cities[0], []), null); // NEW
+    assert.ok(nearestDistance({ latitude: 0, longitude: 179 }, [{ latitude: 0, longitude: -179 }, cities[0]]) < 223); // NEW
+}); // NEW
+test('people counts deduplicate devices and portable identities without disclosing identities', () => { // NEW
+    const members = [{ identityId: 'alice', userId: 'a', devices: [{ deviceId: 'local' }, { deviceId: 'phone' }] }, { identityId: 'bob', userId: 'b', devices: [{ deviceId: 'remote' }] }]; // NEW
+    const telemetry = { available: true, deviceId: 'local', connections: { phone: { connected: true }, remote: { connected: false } } }; // NEW
+    const first = projectPeople(members, 'viewer', telemetry), second = projectPeople([{ ...members[0], userId: 'different-project-user' }], 'viewer', telemetry); // NEW
+    assert.equal(first.userCount, 2); assert.equal(first.onlineCount, 1); assert.equal(first.presenceComplete, true); assert.equal(first.memberKeys[0], second.memberKeys[0]); // NEW
+    assert.equal(projectPeople(members, 'viewer', { ...telemetry, paused: true }).onlineCount, 1); // NEW: transfer state is separate from connectivity.
+    assert.notEqual(first.memberKeys[0], projectPeople(members, 'other-viewer', telemetry).memberKeys[0]); assert.doesNotMatch(JSON.stringify(first), /alice|bob/); // NEW
+    const partial = projectPeople(members, 'viewer', { ...telemetry, connections: {} }); assert.equal(partial.onlineCount, 1); assert.equal(partial.presenceComplete, false); // NEW
+    const unavailable = projectPeople(members, 'viewer', { available: false }); assert.equal(unavailable.onlineCount, null); assert.equal(unavailable.presenceComplete, false); // NEW
+    assert.equal(projectPeople([{ userId: 'legacy', devices: [] }], 'viewer', telemetry).membershipComplete, false); // NEW
+}); // NEW
 function diagram(users, modules = [], pending = []) { // NEW
     const store = JSON.stringify({ usersEnabled: true, users, invites: pending }).replace(/"/g, '&quot;'); // NEW
     return '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_users_json="' + store + '"><mxCell parent="0"/></object>' + modules.map((city, index) => '<object id="g' + index + '" garden_module="1" city_id="' + city + '"><mxCell parent="1" vertex="1"/></object>').join('') + '</root></mxGraphModel>'; // NEW

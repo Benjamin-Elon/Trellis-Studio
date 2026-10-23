@@ -58,7 +58,7 @@ test('badge fills follow posting, resolving, reopening, description commits and 
 }); // CHANGE
 
 test('malformed and externally updated comments keep badge state readable without rewriting discussion', async t => { // CHANGE
-    const h = harness(t), broken = '{"version":2,"comments":[]}', cell = h.vertex('shape', null, { trellis_comments_json: broken }); h.controller.refresh(); // CHANGE
+    const h = harness(t), broken = '{"version":9,"comments":[]}', cell = h.vertex('shape', null, { trellis_comments_json: broken }); h.controller.refresh(); // CHANGE
     const badge = h.w.document.querySelector('[data-cell-id="shape"]'); // CHANGE
     assert.ok(badge); assert.equal(badge.firstElementChild.style.backgroundColor, 'rgb(239, 246, 255)'); assert.match(badge.title, /Comment status unavailable/); assert.equal(cell.getAttribute('trellis_comments_json'), broken); // CHANGE
     const remote = cell.value.cloneNode(true); remote.setAttribute('trellis_comments_json', encode([record('remote')])); h.graph.model.setValue(cell, remote); await h.tick(); // CHANGE
@@ -183,11 +183,11 @@ test('selecting posted text deactivates the private composer toolbar and keyboar
 
 test('bad schemas and duplicate IDs cannot overwrite stored discussion, and unrelated concurrent posts survive editing', t => { // CHANGE
     const h = harness(t), now = Date.now(), actor = { enabled: true, editable: true, user: { id: 'user-a', name: 'user-a' } }, first = record('first', now - 2000), second = record('second', now - 1000); // CHANGE
-    for (const raw of ['broken JSON', '{"version":2,"comments":[]}', JSON.stringify({ version: 1, comments: [first], extra: true }), encode([first, first]), encode([{ ...first, resolvedAt: now, resolvedByUserId: null }])]) { // CHANGE
+    for (const raw of ['broken JSON', '{"version":9,"comments":[]}', JSON.stringify({ version: 1, comments: [first], extra: true }), encode([first, first]), encode([{ ...first, resolvedAt: now, resolvedByUserId: null }])]) { // CHANGE
         assert.throws(() => h.core.changeComments(raw, { type: 'post', id: 'new', html: '<p>New</p>' }, actor, now)); assert.equal(h.core.commentsChangeAllowed(raw, '', actor, now), false); // CHANGE
     } // CHANGE
     const result = h.core.changeComments(encode([first, second]), { type: 'edit', id: first.id, baseline: JSON.stringify(first), html: '<p>Updated first</p>' }, actor, now); // CHANGE
-    const records = h.core.parseComments(result); assert.equal(records.length, 2); assert.equal(JSON.stringify(records[1]), JSON.stringify(second)); // CHANGE
+    const records = h.core.parseComments(result); assert.equal(records.length, 2); assert.equal(JSON.stringify(records[1]), JSON.stringify({ ...second, isAlert: false })); // CHANGE
 }); // CHANGE
 
 test('composition and permission loss cannot post text; the native selection and toolbar belong to the composer', async t => { // CHANGE
@@ -203,7 +203,7 @@ test('stale edits and malformed discussion are preserved rather than overwritten
     const h = harness(t), cell = h.vertex('shape', null, { trellis_comments_json: encode([record('comment')]) }); h.controller.open(cell); panel(h, cell).querySelector('[data-comment-action="edit"]').click(); compose(h, cell, '<p>My edit</p>'); // CHANGE
     const remote = record('comment', comments(h, cell)[0].createdAt, { html: '<p>Remote edit</p>', updatedAt: Date.now() }); cell.value.setAttribute('trellis_comments_json', encode([remote])); // CHANGE
     panel(h, cell).querySelector('[data-comment-action="submit"]').click(); await h.tick(); assert.match(comments(h, cell)[0].html, /Remote edit/); assert.match(panel(h, cell).querySelector('.trellis-comment-editor').innerHTML, /My edit/); assert.match(panel(h, cell).textContent, /changed elsewhere/); // CHANGE
-    const broken = '{"version":2,"comments":[]}'; cell.value.setAttribute('trellis_comments_json', broken); h.controller.refresh(); // CHANGE
+    const broken = '{"version":9,"comments":[]}'; cell.value.setAttribute('trellis_comments_json', broken); h.controller.refresh(); // CHANGE
     assert.equal(panel(h, cell).querySelector('[data-comment-action="submit"]').disabled, true); assert.match(panel(h, cell).textContent, /preserved unchanged/); assert.equal(cell.getAttribute('trellis_comments_json'), broken); // CHANGE
 }); // CHANGE
 

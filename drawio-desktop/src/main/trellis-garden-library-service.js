@@ -3,10 +3,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { inspectDiagram, diagramDocument, hasCanvasAccess } from './trellis-share-protocol.js';
-import { cityRecord, projectSummary, averageDistance } from './trellis-project-summary.js'; // NEW
+import { cityRecord, projectSummary, nearestDistance } from './trellis-project-summary.js'; // CHANGE
+import { projectPeople } from './trellis-project-people.js'; // NEW
 import { createGardenLifecycle } from './trellis-garden-lifecycle.js'; // NEW
 import { createLibraryNaming } from './trellis-library-naming.js'; // NEW
 import { naming, withProjectName } from './trellis-project-naming.js'; // NEW
+import { referenceCore as references } from './trellis-reference-database.js'; // NEW
+import { referenceEditor } from './trellis-reference-policy.js'; // NEW
+import { projectLifecycle } from './trellis-project-trash.js'; // NEW
 const p = globalThis.TrellisIdentityProtocol;
 const uuid = () => crypto.randomUUID();
 const safe = value => { if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(value)) throw new Error('Invalid garden identifier.'); return value; };
@@ -14,37 +18,47 @@ const escape = value => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quo
 async function readJson(filename) { return JSON.parse(await fs.readFile(filename, 'utf8')); }
 async function writeJson(filename, value) { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename, JSON.stringify(value), { flag: 'wx', mode: 0o600 }); }
 
-export function createGardenLibraryService({ identities, legacyService, listCities = async () => [], getLocalFolder = () => '', getTrashRoot = () => path.join(getLocalFolder(), '.trellis-trash'), beforeRetire, setLocalFolder, validateLocalPath = async () => {}, validateStandalonePath = validateLocalPath }) { // CHANGE
+export function createGardenLibraryService({ identities, legacyService, listLegacyLocalCanvases = async () => [], listCities = async () => [], getLocalFolder = () => '', getTrashRoot = () => path.join(getLocalFolder(), '.trellis-trash'), beforeRetire, setLocalFolder, validateLocalPath = async () => {}, validateStandalonePath = validateLocalPath }) { // CHANGE
     const privatePath = identityId => path.join(identities.identityRoot(identityId), 'local-gardens');
     const catalogPath = identityId => path.join(identities.metadataRoot(identityId), 'catalog');
     const own = () => { const session = identities.session(); if (!session) throw new Error('Log in to Garden library first.'); return session; };
     const virtualCaller = identityId => 'identity-library:' + identityId;
-    async function verifiedRecords(identityId, directory, errors) { // CHANGE: list views can isolate an unverifiable record while mutation paths remain strict.
-        const current = await identities.state(identityId);
+    const summaries = new Map(), verifiedSignatures = new Map(); // NEW: process-local observations; authorization still uses current signed identity state.
+    let summaryLogin = ''; // NEW
+    identities.onChange?.(() => { const session = identities.session(), key = session ? session.identityId + ':' + session.generation : ''; if (summaryLogin !== key) { summaries.clear(); summaryLogin = key; } }); // NEW
+    async function verifiedRecords(identityId, directory, errors, current) { // CHANGE: reuse one verified trust state within a listing.
+        current ||= await identities.state(identityId); // CHANGE
         const keys = new Map(current.records.filter(record => record.payload.device).map(record => [record.payload.device.id, record.payload.device.publicKey]));
         const names = await fs.readdir(directory).catch(err => { if (err.code === 'ENOENT') return []; throw err; });
         const records = [];
         for (const name of names.filter(name => /^[A-Za-z0-9_-]+\.json$/.test(name))) {
             try { // NEW
                 const record = await readJson(path.join(directory, name)), data = record.payload;
-                if (!data || data.identityId !== identityId || !keys.has(data.author) || !await p.verify(record, keys.get(data.author))) throw new Error('Library signature is invalid.');
+                const key = keys.get(data?.author), token = key + ':' + JSON.stringify(record), filename = path.join(directory, name); // NEW
+                if (!data || data.identityId !== identityId || !key || verifiedSignatures.get(filename) !== token && !await p.verify(record, key)) throw new Error('Library signature is invalid.'); // CHANGE
+                if (verifiedSignatures.size > 4096) verifiedSignatures.clear(); verifiedSignatures.set(filename, token); // NEW: changed bytes or trust keys always require verification.
                 records.push(record);
             } catch (error) { if (!errors) throw error; errors.push('Project metadata could not be verified: ' + name); } // NEW
         }
         return records.sort((a, b) => a.payload.time - b.payload.time || (a.payload.id < b.payload.id ? -1 : 1));
     }
-    async function catalog(identityId, errors) { // CHANGE
+    async function catalog(identityId, errors, current, includeLocalOnly = false) { // CHANGE
         const entries = new Map();
-        for (const record of await verifiedRecords(identityId, catalogPath(identityId), errors)) { // CHANGE
+        for (const record of await verifiedRecords(identityId, catalogPath(identityId), errors, current)) { // CHANGE
             try { // NEW
                 const data = record.payload;
                 if (data.kind !== 'garden-record' || !data.entry) throw new Error('Unsupported library record.');
                 if (typeof data.entry.name !== 'string' || !data.entry.name.trim()) throw new Error('Invalid project name in library metadata.'); // NEW
                 safe(data.entry.diagramId); safe(data.entry.shareId);
-                entries.set(data.entry.diagramId, data.entry);
+                const localOnly = data.entry.protocolVersion === undefined || data.entry.protocolVersion === 1; // CHANGE
+                if (!localOnly && data.entry.protocolVersion !== 2) { // CHANGE
+                    entries.delete(data.entry.diagramId); // CHANGE: a newer unsupported record cannot resurrect an older descriptor.
+                    errors?.push('Unsupported project metadata: ' + record.payload.id); continue; // CHANGE
+                } // CHANGE
+                entries.set(data.entry.diagramId, localOnly ? { ...data.entry, localOnly: true } : data.entry); // CHANGE
             } catch (error) { if (!errors) throw error; errors.push('Unsupported project metadata: ' + record.payload.id); } // NEW
         }
-        return [...entries.values()];
+        return [...entries.values()].filter(entry => includeLocalOnly || !entry.localOnly); // CHANGE
     }
     async function publish(entry) {
         const session = own(), record = await identities.signAction('garden-record', { entry });
@@ -93,63 +107,85 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
         const entries = await fs.readdir(folder, { withFileTypes: true }).catch(error => { if (error.code === 'ENOENT') return []; throw error; }); // NEW
         const cityList = await cities().then(result => result.cities).catch(() => null); // CHANGE
         for (const entry of entries.filter(entry => entry.isFile() && /\.drawio$/i.test(entry.name) && !/\.sync-conflict-/i.test(entry.name))) { // NEW
-            const filename = path.join(folder, entry.name), garden = { name: entry.name.replace(/\.drawio$/i, ''), path: filename, folderPath: folder, source: 'local', classification: 'private', shared: false, available: true, conflicts: [], seeds: 0, userCount: null, moduleCities: [] }; // NEW
+            const filename = path.join(folder, entry.name), garden = { name: entry.name.replace(/\.drawio$/i, ''), path: filename, folderPath: folder, source: 'local', classification: 'private', shared: false, available: true, seeds: 0, userCount: null, moduleCities: [] }; // CHANGE
             try { // NEW
                 await validateLocalPath(filename); // NEW
-                Object.assign(garden, projectSummary(await fs.readFile(filename, 'utf8'), cityList || [], false)); // CHANGE
+                const { members, ...summary } = projectSummary(await fs.readFile(filename, 'utf8'), cityList || [], false); Object.assign(garden, summary); // CHANGE: portable rosters remain in the main process.
             } catch (error) { garden.available = false; garden.reason = error.message; } // NEW
             gardens.push(garden); // NEW
         } // NEW
         gardens.sort((a, b) => a.name.localeCompare(b.name)); return { ok: true, folder, gardens }; // NEW
     } // NEW
-    async function list() {
+    async function list(input = {}) { // CHANGE: targeted mutation results reuse the same read-only path.
         const session = own();
-        await lifecycle.processLifecycle(session.identityId); // NEW
-        const errors = [], entries = await catalog(session.identityId, errors), daemon = await identities.transport(session.identityId); // CHANGE
-        const registered = await daemon.listCanvases();
+        const current = await identities.state(session.identityId), errors = [], entries = await catalog(session.identityId, errors, current, true), daemon = await identities.transport(session.identityId); // CHANGE
+        const [registered, retirements, suffixes] = await Promise.all([daemon.listCanvases(), lifecycle.lifecycleRecords(session.identityId, current), projectNaming.suffixes(session.identityId, current)]); // NEW
+        const retained = [...registered.filter(canvas => canvas.localOnly), ...await listLegacyLocalCanvases().catch(error => { errors.push(error.message); return []; })]; // CHANGE
+        errors.push(...(daemon.getRegistrationIssues?.() || []).map(issue => 'Sharing registration: ' + issue.reason)); // CHANGE
+        for (const canvas of retained) if (canvas.available && !entries.some(entry => entry.diagramId === canvas.diagramId)) entries.push({ ...canvas, name: canvas.name || canvas.filename, localOnly: true }); // CHANGE
+        let legacy, legacyList; // NEW: each transport registry is scanned at most once per view.
         const cityList = await cities().then(result => result.cities).catch(() => null); // CHANGE
-        const reference = await getReferenceCity().then(result => result.city).catch(() => null); // NEW
+        const referenceRecords = await verifiedRecords(session.identityId, path.join(identities.metadataRoot(session.identityId), 'reference-city'), [], current); // NEW
+        const reference = cityRecord(referenceRecords.filter(record => record.payload.kind === 'reference-city').at(-1)?.payload.city); // CHANGE
         const result = [];
-        for (const entry of entries) {
-            const retirement = await lifecycle.lifecycle(session.identityId, entry.diagramId); // NEW
+        if (input.diagramId !== undefined) safe(input.diagramId); // NEW
+        for (const entry of entries.filter(entry => input.diagramId === undefined || entry.diagramId === input.diagramId)) {
+            const retirement = projectLifecycle(retirements, entry.diagramId); // CHANGE
             if (retirement.state !== 'active' || retirement.pending) continue; // NEW
-            let source, local, summary = entry.summary || null, stale = true, metadataError = ''; // CHANGE
+            const summaryKey = session.identityId + ':' + entry.diagramId; // NEW
+            let source, local, diagram, summary = summaries.get(summaryKey) || entry.summary || null, stale = true, metadataError = ''; // CHANGE
             try { // NEW
                 source = await localSource(session.identityId, entry.diagramId); // CHANGE
                 if (retirement.record?.operation === 'restore' && source?.lifecycleStatus) continue; // NEW: failed restoration stays reviewable in Trash.
-                const localList = source?.legacy ? await (await legacyService()).listCanvases() : registered; // CHANGE
-                local = localList.find(canvas => canvas.shareId === entry.shareId);
-                const replacement = localList.find(canvas => canvas.protocolVersion === 2 && canvas.replacesShareId === entry.shareId && canvas.diagramId === entry.diagramId && canvas.available); // NEW: an admin upgrade keeps this identity's library entry attached to the replacement.
-                if (replacement) { const descriptor = await (source?.legacy ? await legacyService() : daemon).libraryDescriptor(replacement.shareId); const updated = { ...entry, ...descriptor, name: entry.name, workerId: entry.workerId }; await publish(updated); Object.assign(entry, updated); local = replacement; } // NEW
+                if (source?.legacy && !legacyList) { legacy = await legacyService(); legacyList = await legacy.listCanvases(); } // NEW
+                const localList = source?.legacy ? legacyList : registered; // CHANGE
+                local = localList.find(canvas => canvas.shareId === entry.shareId) || retained.find(canvas => canvas.shareId === entry.shareId && canvas.diagramId === entry.diagramId); // CHANGE
+                if (entry.localOnly || local?.localOnly) { // CHANGE
+                    if (local?.localOnly && local.available) { const row = await localProject(entry, local, cityList || []); if (row) result.push(row); } // CHANGE
+                    continue; // CHANGE: retained diagrams never enter naming, membership, or download workflows.
+                } // CHANGE
+                const replacement = localList.find(canvas => canvas.protocolVersion === 2 && canvas.replacesShareId === entry.shareId && canvas.diagramId === entry.diagramId && canvas.available); // NEW: coordinator recovery keeps the library entry attached to the replacement.
+                if (replacement) { Object.assign(entry, await (source?.legacy ? legacy : daemon).libraryDescriptor(replacement.shareId), { name: entry.name }); local = replacement; } // CHANGE: observing a replacement never publishes catalog records.
  // CHANGE
                 if (local?.available) { // NEW
-                    const descriptor = await (await sourceService(session.identityId, source)).libraryDescriptor(entry.shareId); // NEW
-                    if (descriptor.coordinatorDeviceId !== entry.coordinatorDeviceId) { Object.assign(entry, descriptor, { name: entry.name }); await publish(entry); } // NEW
+                    const descriptor = await (source?.legacy ? legacy : daemon).libraryDescriptor(entry.shareId); // CHANGE
+                    if (descriptor.coordinatorDeviceId !== entry.coordinatorDeviceId) Object.assign(entry, descriptor, { name: entry.name }); // CHANGE
                     const knownCities = new Map((cityList || []).map(city => [city.cityId, city])); // NEW
                     const cachedCities = new Map((summary?.moduleCities || []).filter(city => !knownCities.has(city.cityId)).map(city => [city.cityId, city])); // NEW
-                    const fresh = projectSummary(await fs.readFile(local.path, 'utf8'), [...knownCities.values(), ...cachedCities.values()], true, Date.now(), entry.workerId); // CHANGE: retain signed coordinates absent from this device's city catalog and revalidate the linked user's access.
+                    diagram = inspectDiagram(await fs.readFile(local.path, 'utf8')); // NEW: summary and naming share one XML parse.
+                    const fresh = projectSummary(diagram, [...knownCities.values(), ...cachedCities.values()], true, Date.now(), entry.workerId); // CHANGE
                     stale = cityList == null || fresh.moduleCities.some(city => cachedCities.has(city.cityId)); // NEW
                     if (stale && summary?.updatedAt) fresh.updatedAt = summary.updatedAt; // NEW
                     const comparable = value => JSON.stringify(value && { ...value, updatedAt: 0 }); // NEW
-                    if (comparable(fresh) !== comparable(summary) || entry.starterPending === true && fresh.gardenModuleCount > 0) { // CHANGE
-                        summary = fresh; // NEW
-                        try { await publish({ ...entry, summary, shared: summary.classification === 'shared', starterPending: entry.starterPending === true && fresh.gardenModuleCount === 0 }); } // CHANGE
-                        catch (error) { metadataError = 'Summary could not be saved: ' + error.message; } // NEW
-                    } // NEW
+                    if (comparable(fresh) !== comparable(summary)) summary = fresh; // CHANGE
+                    summaries.set(summaryKey, summary); // NEW: durable publication belongs to background maintenance.
                 } // NEW
-            } catch (error) { metadataError = error.message; } // NEW
+            } catch (error) { if (entry.localOnly || local?.localOnly) { errors.push(error.message); continue; } metadataError = error.message; } // CHANGE
             if (!source?.departing && (summary?.accessible === false || local?.state === 'revoked')) continue; // CHANGE: a pending departure remains visible until its signed acknowledgement.
             const classification = summary?.classification || (entry.shared ? 'shared' : 'private'); // NEW
-            result.push({ ...entry, summary, classification, shared: classification === 'shared', starterPending: entry.starterPending === true && !summary?.gardenModuleCount, source: 'library', userCount: summary?.userCount ?? null, moduleCities: summary?.moduleCities || [], gardenModuleCount: summary?.gardenModuleCount ?? null, summaryUpdatedAt: summary?.updatedAt || null, metadataStale: stale, metadataError, distanceKm: averageDistance(reference, summary?.moduleCities), seeds: local?.seeds ?? null, path: local?.path || null, folderPath: local?.folderPath || null, available: !!local?.available, state: local?.state || 'not-downloaded', reason: local?.reason || (!local?.available ? 'Download from another approved device.' : ''), conflicts: local?.conflicts || [], keepOffline: !!source?.keepOffline }); // CHANGE
-            result.at(-1).departing = !!source?.departing; // NEW
-            Object.assign(result.at(-1), await projectNaming.describe(session.identityId, entry).catch(error => ({ canRename: false, canEditSuffix: false, namingError: error.message }))); // NEW
+            const transport = source?.legacy ? legacy : daemon; // CHANGE
+            const descriptor = await transport?.libraryDescriptor(entry.shareId).catch(() => entry); // NEW: current approved devices supersede an older catalog descriptor.
+            const members = summary?.members?.map(member => ({ ...member, devices: (descriptor?.members || []).filter(device => device.userId === member.userId) })); // CHANGE
+            const people = projectPeople(members, session.identityId, transport?.memberConnections?.(), summary?.userCount ?? null); // CHANGE
+            const { members: privateMembers, ...publicSummary } = summary || {}; // NEW
+            result.push({ ...entry, summary, people, classification, shared: classification === 'shared', starterPending: entry.starterPending === true && !summary?.gardenModuleCount, source: 'library', userCount: summary?.userCount ?? null, moduleCities: summary?.moduleCities || [], gardenModuleCount: summary?.gardenModuleCount ?? null, locationsComplete: summary?.locationsComplete === true, summaryUpdatedAt: summary?.updatedAt || null, metadataStale: stale, metadataError, distanceKm: nearestDistance(reference, summary?.moduleCities), seeds: local?.seeds ?? null, path: local?.path || null, folderPath: local?.folderPath || null, available: !!local?.available, state: local?.state || 'not-downloaded', reason: local?.reason || (!local?.available ? 'Download from another approved device.' : ''), keepOffline: !!source?.keepOffline }); // CHANGE
+            result.at(-1).summary = summary ? publicSummary : null; result.at(-1).departing = !!source?.departing; // CHANGE
+            Object.assign(result.at(-1), projectNaming.inspect(session.identityId, entry, local, diagram, suffixes.get(entry.diagramId))); // CHANGE
         }
+        if (identities.session()?.identityId !== session.identityId || identities.session()?.generation !== session.generation) throw new Error('The active identity changed while listing projects.'); // NEW
         result.sort((a, b) => a.name.localeCompare(b.name) || a.diagramId.localeCompare(b.diagramId));
         return { ok: true, gardens: result, errors }; // CHANGE
     }
+    /** Display a retained local document without publishing summaries or changing its signed catalog. */ // CHANGE
+    async function localProject(entry, local, cityList) { // CHANGE
+        const { members, ...summary } = projectSummary(await fs.readFile(local.path, 'utf8'), cityList, true, Date.now(), entry.workerId); // CHANGE
+        if (!summary.accessible || summary.diagramId !== entry.diagramId) return null; // CHANGE
+        return { ...entry, ...summary, summary, name: entry.name || local.name, source: 'library', path: local.path, folderPath: local.folderPath, filename: local.filename, localOnly: true, managed: false, state: 'localOnly', available: true, seeds: 0, connectedCollaborators: 0, canRename: false, canEditSuffix: false, starterPending: false, keepOffline: false, reason: local.reason }; // CHANGE
+    } // CHANGE
     async function getEntry(diagramId) {
-        const session = own(), entry = (await catalog(session.identityId)).find(item => item.diagramId === diagramId);
+        const session = own(), entry = (await catalog(session.identityId, undefined, undefined, true)).find(item => item.diagramId === diagramId); // CHANGE
         if (!entry) throw new Error('Garden is not in this identity library.');
+        if (entry.localOnly) throw new Error('Sharing is disabled for this old project. Open and save its local file instead.'); // CHANGE
         await lifecycle.assertActive(session.identityId, diagramId); // NEW
         return entry;
     }
@@ -167,6 +203,7 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
         const legacyExisting = legacyList.find(matchesPath), identityExisting = identityList.find(matchesPath), existing = legacyExisting || identityExisting; // CHANGE
         if (retirement.state === 'left' && (!existing?.rejoined || existing.diagramId !== input.diagramId)) throw new Error('Rejoin through a fresh approved invitation before adding this project again.'); // NEW
         let daemon, managed, descriptor;
+        if (existing?.localOnly) throw new Error('Sharing is disabled for this old project. Open and save its local file instead.'); // CHANGE
         if (existing) { daemon = legacyExisting ? legacy : identityDaemon; descriptor = await daemon.libraryDescriptor(existing.shareId); } // CHANGE
         else {
             daemon = await identities.transport(session.identityId);
@@ -271,7 +308,18 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
     /** Signed self-device requests cannot approve somebody else's shared access. */
     async function processDownloads(identityId) {
         await lifecycle.processLifecycle(identityId); // NEW
-        const entries = await catalog(identityId);
+        const catalogEntries = await catalog(identityId), entries = []; // CHANGE
+        const registries = new Map(); // NEW: upgrades and coordinator changes reconcile during maintenance, never during reads.
+        for (const entry of catalogEntries) { // CHANGE
+            const source = await localSource(identityId, entry.diagramId), daemon = await sourceService(identityId, source); // NEW
+            if (!registries.has(daemon)) registries.set(daemon, await daemon.listCanvases()); // NEW
+            const canvases = registries.get(daemon); // CHANGE
+            if (canvases.some(canvas => canvas.shareId === entry.shareId && canvas.localOnly)) continue; // CHANGE
+            entries.push(entry); // CHANGE
+            const replacement = canvases.find(canvas => canvas.protocolVersion === 2 && canvas.replacesShareId === entry.shareId && canvas.diagramId === entry.diagramId && canvas.available); // CHANGE
+            const descriptor = await daemon.libraryDescriptor(replacement?.shareId || entry.shareId).catch(() => null); // NEW
+            if (descriptor && (replacement || descriptor.coordinatorDeviceId !== entry.coordinatorDeviceId)) { Object.assign(entry, descriptor, { name: entry.name }); if (identities.session()?.identityId === identityId) await publish(entry); } // NEW
+        } // NEW
         for (const record of await verifiedRecords(identityId, path.join(identities.metadataRoot(identityId), 'downloads'))) {
             const request = record.payload, entry = entries.find(item => item.diagramId === request.diagramId && item.workerId === request.workerId);
             if (!entry || request.kind !== 'garden-download') continue;
@@ -285,7 +333,71 @@ export function createGardenLibraryService({ identities, legacyService, listCiti
             try { await daemon.approveLibraryDevice({ shareId: entry.shareId, userId: entry.workerId, deviceId: device.syncthingId, publicKey: device.sharingPublicKey }); }
             catch (err) { if (!/needs approval/.test(err.message)) throw err; }
         }
-        for (const entry of entries) { const retirement = await lifecycle.lifecycle(identityId, entry.diagramId); if (retirement.state === 'active' && !retirement.pending) await projectNaming.reconcile(identityId, [entry]); } // CHANGE
+        const records = await lifecycle.lifecycleRecords(identityId), active = entries.filter(entry => { const state = projectLifecycle(records, entry.diagramId); return state.state === 'active' && !state.pending; }); // NEW
+        await projectNaming.reconcile(identityId, active, registries); // CHANGE: batch naming once, outside the listing path.
+        if (identities.session()?.identityId === identityId) for (const entry of active) { // NEW
+            const summary = summaries.get(identityId + ':' + entry.diagramId); // NEW
+            if (summary && JSON.stringify({ ...summary, updatedAt: 0 }) !== JSON.stringify({ ...entry.summary, updatedAt: 0 })) await publish({ ...entry, summary, shared: summary.classification === 'shared', starterPending: entry.starterPending === true && !summary.gardenModuleCount }); // NEW
+        } // NEW
     }
-    return { list, create, completeStarter, importCurrent, rename, setSuffix: projectNaming.setSuffix, duplicate, download, setOffline, removeLocal, getEntry, catalog, verifiedRecords, processDownloads, cities, getReferenceCity, setReferenceCity, listLocal, configureLocalFolder, ...lifecycle }; // CHANGE
+    /** Internal community integration resolves only signed library entries. */ // NEW
+    async function communitySource(identityId, diagramId) { // NEW
+        const entry = (await catalog(identityId)).find(e => e.diagramId === diagramId); // NEW
+        if (!entry) return null; // NEW
+        return { entry, daemon: await sourceService(identityId, await localSource(identityId, diagramId)) }; // NEW
+    } // NEW
+    /** The community service verifies coordinator authority before calling this internal method. */ // NEW
+    async function acceptCommunityGrant(input) { // NEW
+        const session = own(); await identities.requireSession(); // NEW
+        const existing = (await catalog(session.identityId)).find(e => e.diagramId === input.descriptor.diagramId); // NEW
+        if (existing?.communityGrantId !== input.requestId && !existing?.communityGrantIds?.includes(input.requestId)) { // CHANGE: older completed requests cannot replace a newer entitlement on replay.
+            const state = await lifecycle.lifecycle(session.identityId, input.descriptor.diagramId); // NEW
+            if (!['active', 'left'].includes(state.state)) throw new Error('Restore the garden before accepting new access.'); // NEW
+            await (await identities.transport(session.identityId)).communities.prepareGrant({ ...input.descriptor, communityGrantId: input.requestId }); // NEW
+            const entry = { ...existing, ...input.descriptor, name: input.descriptor.name, summary: null, workerId: input.workerId, ownerIdentityId: session.identityId, shared: true, communityGrantId: input.requestId, communityGrantIds: [...new Set([...(existing?.communityGrantIds || []), existing?.communityGrantId, input.requestId].filter(Boolean))] }; // CHANGE
+            await publish(entry); if (state.state === 'left') await lifecycle.completeRejoin(entry); // NEW
+            if (existing) await setLocalSource(session.identityId, entry.diagramId, { ...await localSource(session.identityId, entry.diagramId), departing: false, lifecycleStatus: '', lifecycleState: 'active' }); // NEW
+        } // CHANGE
+        return { ok: true }; // NEW
+    } // NEW
+    async function referenceTemplates() { // NEW: readable local projections only; no diagram download or filesystem write.
+        const session = own(), templates = [], messages = [], errors = []; // NEW
+        for (const entry of (await list()).gardens.filter(item => item.available && item.path)) { // NEW
+            try { // NEW
+                const state = inspectDiagram(await fs.readFile(entry.path, 'utf8')), user = state.store.users?.find(user => user.id === entry.workerId && user.portableIdentityId === session.identityId && !user.disabled); // NEW
+                if (!user || !hasCanvasAccess(state, user.id)) continue; // NEW
+                for (const cell of state.cells.filter(cell => cell.node.hasAttribute(references.ATTR))) { // NEW
+                    const store = references.validate(JSON.parse(cell.node.getAttribute(references.ATTR))), settings = {}; // NEW
+                    for (const attr of Array.from(cell.node.attributes)) if (['city_id', 'city_name', 'unit_system', 'default_bed_width_cm', 'default_bed_length_cm', 'module_external_margin', 'plant_circle_max_per_planting', 'plant_circle_max_total'].includes(attr.name) || /^default_path_.+_(?:width_cm|enabled)$/.test(attr.name)) settings[attr.name] = attr.value; // CHANGE
+                    const margin = /(?:^|;)module_external_margin=([^;]+)/.exec(cell.node.getElementsByTagName('mxCell')[0]?.getAttribute('style') || ''); if (margin) settings.module_external_margin = margin[1]; // NEW
+                    const geometry = cell.node.getElementsByTagName('mxGeometry')[0]; if (geometry) settings.geometry = { width: Number(geometry.getAttribute('width')), height: Number(geometry.getAttribute('height')) }; // NEW
+                    const pageId = state.document.pages.find(page => page.doc === cell.node.ownerDocument)?.container?.getAttribute('id') || ''; // NEW
+                    templates.push({ name: entry.name + ' / ' + (cell.node.getAttribute('garden_name') || cell.node.getAttribute('label') || cell.id), source: { diagramId: entry.diagramId, gardenId: cell.id, pageId }, references: references.template(store), settings, canPropose: referenceEditor(state, cell, user.id) }); // CHANGE
+                    const log = JSON.parse(cell.node.getAttribute(references.PROPOSALS) || '{"version":1,"requests":[],"decisions":[]}'); // NEW
+                    for (const proposal of log.requests.filter(item => item.author === user.id)) messages.push({ diagramId: entry.diagramId, gardenId: cell.id, gardenName: entry.name, proposalId: proposal.id, source: proposal.source, decisions: log.decisions.filter(item => item.proposalId === proposal.id), pending: proposal.changes.length - log.decisions.filter(item => item.proposalId === proposal.id).reduce((sum, item) => sum + item.items.length, 0) }); // NEW
+                } // NEW
+            } catch (error) { errors.push({ diagramId: entry.diagramId, message: error.message }); } // NEW
+        } // NEW
+        return { ok: true, templates, messages, errors }; // NEW
+    } // NEW
+    async function sendReferenceProposal(input) { // NEW: reuse signed object transactions and their recoverable concurrent-edit rejection.
+        const session = own(); await identities.requireSession(); const entry = await getEntry(input.diagramId), source = await localSource(session.identityId, entry.diagramId), daemon = await sourceService(session.identityId, source); // NEW
+        const local = (await daemon.listCanvases()).find(item => item.shareId === entry.shareId && item.available && item.protocolVersion === 2); // NEW
+        if (!local) throw new Error('The receiving garden must be locally available with collaboration enabled.'); // NEW
+        const caller = 'reference-proposal:' + session.identityId + ':' + uuid(); // NEW
+        daemon.setContext(caller, { diagramPath: local.path, diagramId: entry.diagramId, userId: entry.workerId }); // NEW
+        try { // NEW
+            const snapshot = await daemon.collaborationAction(caller, { shareId: entry.shareId, kind: 'get' }), state = inspectDiagram(snapshot.xml), user = state.store.users?.find(user => user.id === entry.workerId && user.portableIdentityId === session.identityId && !user.disabled); // NEW
+            const pages = state.document.pages.filter(page => input.pageId == null || (page.container?.getAttribute('id') || '') === input.pageId).map(page => page.doc); // NEW
+            const cells = state.cells.filter(cell => pages.includes(cell.node.ownerDocument) && cell.id === input.gardenId && cell.node.hasAttribute(references.ATTR)); // CHANGE
+            if (!user || cells.length !== 1 || !referenceEditor(state, cells[0], user.id)) throw new Error('Editing access to the receiving garden is required.'); // NEW
+            const proposal = references.clone(references.validateProposal(input.proposal)); proposal.source.originalAuthor = proposal.author; proposal.author = user.id; proposal.target = { diagramId: entry.diagramId, gardenId: input.gardenId, pageId: input.pageId || '' }; // CHANGE
+            const cell = cells[0], log = JSON.parse(cell.node.getAttribute(references.PROPOSALS) || '{"version":1,"requests":[],"decisions":[]}'); // NEW
+            if (log.requests.some(item => item.id === proposal.id)) return { ok: true, duplicate: true }; // NEW
+            const accepted = references.validate(JSON.parse(cell.node.getAttribute(references.ATTR))); proposal.changes = proposal.changes.filter(item => !item.dependency || !accepted.manifests[accepted.current].heads[item.entityId]); // NEW
+            log.requests.push(proposal); references.logValid(log); cell.node.setAttribute(references.PROPOSALS, JSON.stringify(log)); // NEW
+            return await daemon.collaborationAction(caller, { shareId: entry.shareId, kind: 'save', baseXml: snapshot.xml, xml: state.document.serialize() }); // NEW
+        } finally { daemon.forgetContext(caller); } // NEW
+    } // NEW
+    return { referenceTemplates, sendReferenceProposal, communitySource, acceptCommunityGrant, list, create, completeStarter, importCurrent, rename, setSuffix: projectNaming.setSuffix, duplicate, download, setOffline, removeLocal, getEntry, catalog, verifiedRecords, processDownloads, cities, getReferenceCity, setReferenceCity, listLocal, configureLocalFolder, ...lifecycle }; // CHANGE
 }

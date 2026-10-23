@@ -99,7 +99,9 @@
     }
 })(typeof window !== 'undefined' ? window : globalThis);
 
-Draw.loadPlugin(function (ui) {
+(function () { // NEW: each reference view gets its own existing models, caches and dialog closures.
+function createScheduler(ui, referenceScope = null) { // NEW
+    const dbBridge = referenceScope ? referenceScope.bridge : new Proxy({}, { get: (_target, key) => window.dbBridge?.[key] }); // CHANGE: captured garden handles remain fixed; legacy bridges retain their existing late-initialization behavior.
     const graph = ui.editor && ui.editor.graph;
     if (!graph) return;
 
@@ -630,11 +632,11 @@ Draw.loadPlugin(function (ui) {
             return __dbPathCached;
         }
 
-        if (!window.dbBridge || typeof window.dbBridge.resolvePath !== "function") {
+        if (!dbBridge || typeof dbBridge.resolvePath !== "function") {
             throw new Error("dbBridge.resolvePath not available; add dbResolvePath wiring");
         }
 
-        const r = await window.dbBridge.resolvePath({
+        const r = await dbBridge.resolvePath({
             dbName: "Trellis_database.sqlite"
             // seedRelPath omitted -> main uses its default ../../trellis_database/Trellis_database.sqlite
             // reset: true // only for testing if you want to re-copy seed
@@ -648,20 +650,20 @@ Draw.loadPlugin(function (ui) {
     // -------------------- DB helpers (open → exec/run → close) ------------------------------
 
     async function queryAllOnDb(dbId, sql, params = []) {
-        if (!window.dbBridge || typeof window.dbBridge.query !== 'function') {
+        if (!dbBridge || typeof dbBridge.query !== 'function') {
             throw new Error('dbBridge.query not available');
         }
-        const res = await window.dbBridge.query(dbId, sql, params || []);
+        const res = await dbBridge.query(dbId, sql, params || []);
         return Array.isArray(res?.rows) ? res.rows : [];
     }
 
     async function execRunOnDb(dbId, sql, params = []) {
         try {
-            if (typeof window.dbBridge.exec === "function") {
-                return await window.dbBridge.exec(dbId, sql, params || []);
+            if (typeof dbBridge.exec === "function") {
+                return await dbBridge.exec(dbId, sql, params || []);
             }
-            if (typeof window.dbBridge.run === "function") {
-                return await window.dbBridge.run(dbId, sql, params || []);
+            if (typeof dbBridge.run === "function") {
+                return await dbBridge.run(dbId, sql, params || []);
             }
             throw new Error("dbBridge.exec/run not available");
         } catch (e) {
@@ -672,11 +674,11 @@ Draw.loadPlugin(function (ui) {
 
     async function withDbWrite(fn) {
         const dbPath = await getDbPath();
-        const opened = await window.dbBridge.open(dbPath, { readOnly: false });
+        const opened = await dbBridge.open(dbPath, { readOnly: false });
         try {
             return await fn(opened.dbId);
         } finally {
-            try { await window.dbBridge.close(opened.dbId); } catch (_) { }
+            try { await dbBridge.close(opened.dbId); } catch (_) { }
         }
     }
 
@@ -695,37 +697,37 @@ Draw.loadPlugin(function (ui) {
     }
 
     async function queryAll(sql, params) {
-        if (!window.dbBridge || typeof window.dbBridge.open !== 'function') {
+        if (!dbBridge || typeof dbBridge.open !== 'function') {
             throw new Error('dbBridge not available; check preload/main wiring');
         }
         const dbPath = await getDbPath();
-        const opened = await window.dbBridge.open(dbPath, { readOnly: true });
+        const opened = await dbBridge.open(dbPath, { readOnly: true });
         try {
-            const res = await window.dbBridge.query(opened.dbId, sql, params);
+            const res = await dbBridge.query(opened.dbId, sql, params);
             return Array.isArray(res?.rows) ? res.rows : [];
         } finally {
-            try { await window.dbBridge.close(opened.dbId); } catch (_) { }
+            try { await dbBridge.close(opened.dbId); } catch (_) { }
         }
     }
 
     async function execAll(sql, params) {
-        if (!window.dbBridge || typeof window.dbBridge.open !== 'function') {
+        if (!dbBridge || typeof dbBridge.open !== 'function') {
             throw new Error('dbBridge not available; check preload/main wiring');
         }
 
         const dbPath = await getDbPath();
-        const opened = await window.dbBridge.open(dbPath, { readOnly: false });
+        const opened = await dbBridge.open(dbPath, { readOnly: false });
 
         try {
-            if (typeof window.dbBridge.exec === 'function') {
-                await window.dbBridge.exec(opened.dbId, sql, params || []);
-            } else if (typeof window.dbBridge.run === 'function') {
-                await window.dbBridge.run(opened.dbId, sql, params || []);
+            if (typeof dbBridge.exec === 'function') {
+                await dbBridge.exec(opened.dbId, sql, params || []);
+            } else if (typeof dbBridge.run === 'function') {
+                await dbBridge.run(opened.dbId, sql, params || []);
             } else {
                 throw new Error('dbBridge.exec/run not available');
             }
         } finally {
-            try { await window.dbBridge.close(opened.dbId); } catch (_) { }
+            try { await dbBridge.close(opened.dbId); } catch (_) { }
         }
     }
 
@@ -782,6 +784,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     async function ensureSchedulerPhysiologySchema() {
+        if (referenceScope) return; // NEW: accepted reference schemas are immutable.
         if (schedulerPhysiologySchemaEnsured) return;
         await withDbWrite(async dbId => {
             await ensureTableColumns(dbId, 'Plants', PHYSIOLOGY_PLANT_COLUMNS);
@@ -892,7 +895,7 @@ Draw.loadPlugin(function (ui) {
           WHERE abbr IS NOT NULL
           ORDER BY plant_name;`;
             const rows = await queryAll(sql, []);
-            return rows.map(r => new PlantModel(r));
+            return (referenceScope ? referenceScope.filterRows('Plants', rows) : rows).map(r => new PlantModel(r)); // CHANGE: retirement affects future choices; pinned views retain their earlier rows.
         }
 
         static async listAllowedMethodCategoriesForPlant(plantId) {
@@ -911,7 +914,7 @@ Draw.loadPlugin(function (ui) {
                        LOWER(TRIM(pam.method_category_id));`;
             const rows = await queryAll(sql, [Number(plantId)]);
             const seen = new Set(); // FIX: collapse invalid case-only duplicates deterministically
-            return rows.flatMap(row => {
+            return (referenceScope ? referenceScope.filterRows('PlantingMethodCategories', referenceScope.filterRows('PlantAllowedMethodCategories', rows)) : rows).flatMap(row => { // CHANGE: retired definitions cannot become new method choices.
                 const methodCategoryId = normId(row?.method_category_id);
                 if (!methodCategoryId || seen.has(methodCategoryId)) return [];
                 seen.add(methodCategoryId);
@@ -939,7 +942,7 @@ Draw.loadPlugin(function (ui) {
                        method_name;`;
             const rows = await queryAll(sql, [mcid]);
             const seen = new Set();
-            return rows.flatMap(row => {
+            return (referenceScope ? referenceScope.filterRows('PlantingMethods', rows) : rows).flatMap(row => { // CHANGE
                 const methodId = normId(row?.method_id);
                 if (!methodId || seen.has(methodId)) return [];
                 seen.add(methodId);
@@ -1247,6 +1250,7 @@ Draw.loadPlugin(function (ui) {
             return String(id);
         }
         static async ensurePairDefaultsRelationship(sourcePlant, companionPlant, relationship = null, opts = {}) {
+            if (referenceScope) return; // NEW
             const existingId = finiteNumberOrNull(relationship?.relationId);
             if (existingId != null) return Object.assign({}, relationship, { relationId: String(existingId) });
             const sourceId = finiteNumberOrNull(sourcePlant?.plant_id ?? relationship?.sourcePlantId ?? relationship?.storedSourcePlantId);
@@ -1483,6 +1487,7 @@ Draw.loadPlugin(function (ui) {
 
     class TaskTemplateModel {
         static async ensureTables() {
+            if (referenceScope) return; // NEW
             const plantTemplateSql = `
                 CREATE TABLE IF NOT EXISTS PlantTaskTemplates (
                   plant_id      INTEGER NOT NULL,
@@ -1519,6 +1524,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async _ensurePlantRecipeColumns() {
+            if (referenceScope) return; // NEW
             const existing = new Set((await queryAll("PRAGMA table_info(PlantTaskTemplates);", [])).map(row => String(row.name || row[1] || "")));
             for (const [name, type] of Object.entries(this._plantRecipeColumnDefinitions())) {
                 if (!existing.has(name)) await execAll(`ALTER TABLE PlantTaskTemplates ADD COLUMN ${name} ${type};`, []); // NEW
@@ -1909,6 +1915,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async ensureTable() {
+            if (referenceScope) return; // NEW
             const sql = `
                     CREATE TABLE IF NOT EXISTS PlantVarieties (
                         variety_id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1963,7 +1970,7 @@ Draw.loadPlugin(function (ui) {
                     WHERE plant_id = ?
                     ORDER BY variety_name COLLATE NOCASE;`;
             const rows = await queryAll(sql, [pid]);
-            return rows.map(r => new PlantVarietyModel(r));
+            return (referenceScope ? referenceScope.filterRows('PlantVarieties', rows) : rows).map(r => new PlantVarietyModel(r)); // CHANGE
         }
 
         static async loadById(varietyId, { readOnly = false } = {}) { // CHANGE
@@ -2068,6 +2075,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async ensureTable() {
+            if (referenceScope) return; // NEW
             await ensureSchedulerPhysiologySchema();
         }
 
@@ -2083,7 +2091,7 @@ Draw.loadPlugin(function (ui) {
                 FROM PlantGrowthStages
                 WHERE plant_id = ? ${whereActive}
                 ORDER BY is_default DESC, sort_order ASC, stage_label COLLATE NOCASE;`, [pid]);
-            return rows.map(row => new PlantGrowthStageModel(row));
+            return (referenceScope ? referenceScope.filterRows('PlantGrowthStages', rows) : rows).map(row => new PlantGrowthStageModel(row)); // CHANGE
         }
 
         static async saveForPlant(plantId, stages) {
@@ -2110,11 +2118,17 @@ Draw.loadPlugin(function (ui) {
                 unique.push(entry);
             });
             await withDbTransaction(async dbId => {
-                await execRunOnDb(dbId, 'DELETE FROM PlantGrowthStages WHERE plant_id = ?;', [pid]);
+                const prior = referenceScope ? await queryAllOnDb(dbId, 'SELECT * FROM PlantGrowthStages WHERE plant_id = ?;', [pid]) : []; // NEW
+                if (referenceScope && unique.length) await execRunOnDb(dbId, 'DELETE FROM PlantGrowthStages WHERE plant_id = ? AND stage_key NOT IN (' + unique.map(() => '?').join(',') + ');', [pid, ...unique.map(entry => entry.stage.stageKey)]); // NEW
+                else await execRunOnDb(dbId, 'DELETE FROM PlantGrowthStages WHERE plant_id = ?;', [pid]); // CHANGE
                 const now = new Date().toISOString();
                 for (let index = 0; index < unique.length; index += 1) {
                     const entry = unique[index];
                     const stage = entry.stage;
+                    const existing = prior.find(row => row.stage_key === stage.stageKey); // NEW
+                    if (existing) { // NEW: ordinary edits keep the stage's portable identity and original creation timestamp.
+                        await execRunOnDb(dbId, 'UPDATE PlantGrowthStages SET stage_label=?, gdd_ratio=?, yield_ratio=?, spacing_ratio=?, plant_diameter_ratio=?, plant_height_ratio=?, sort_order=?, active=?, is_default=?, updated_at=? WHERE stage_id=?;', [stage.stageLabel, stage.gddRatio, stage.yieldRatio, entry.spacingRatioOverride, entry.diameterRatioOverride, entry.heightRatioOverride, Number.isFinite(Number(stage.sortOrder)) ? Number(stage.sortOrder) : index, stage.active, stage.isDefault, now, existing.stage_id]); continue; // NEW
+                    } // NEW
                     await execRunOnDb(dbId, `INSERT INTO PlantGrowthStages (
                         plant_id, stage_key, stage_label, gdd_ratio, yield_ratio, spacing_ratio,
                         plant_diameter_ratio, plant_height_ratio, sort_order, active, is_default,
@@ -2169,11 +2183,13 @@ Draw.loadPlugin(function (ui) {
     
         const variety = await PlantVarietyModel.loadById(vid, options); // CHANGE
         if (!variety) {
+            if (referenceScope) throw new Error('The pinned variety definition is missing.'); // NEW
             return basePlant;
         }
     
         // Safety: ensure the variety belongs to the requested plant
         if (Number(variety.plant_id) !== pid) {
+            if (referenceScope) throw new Error('The pinned variety does not belong to this crop.'); // NEW
             console.warn("[resolveEffectivePlant] variety does not belong to plant", {
                 plantId: pid,
                 varietyId: vid,
@@ -2217,7 +2233,7 @@ Draw.loadPlugin(function (ui) {
             await ensureSchedulerPhysiologySchema();
             const sql = `SELECT * FROM Cities ORDER BY city_name;`;
             const rows = await queryAll(sql, []);
-            return rows.map(r => new CityClimate(r));
+            return (referenceScope ? referenceScope.filterRows('Cities', rows) : rows).map(r => new CityClimate(r)); // CHANGE
         }
 
         static async loadByName(name) {
@@ -2453,6 +2469,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function readClimateModelJsonAttr(cell, attrName, fallback) {
+        if (referenceScope && window.TrellisReferenceCore.CATALOGS.includes(attrName)) return window.TrellisReferenceCore.catalog(referenceScope.store, attrName, referenceScope.manifestId) || fallback; // NEW
         const raw = cell?.getAttribute?.(attrName);
         if (!raw) return fallback;
         const parsed = safeJsonParse(String(raw), fallback);
@@ -6230,6 +6247,7 @@ Draw.loadPlugin(function (ui) {
 
 
     async function openPlantEditorDialog(ui, { mode, plantId = null, varietyId = null, startVarietyMode = null } = {}) {
+        if (!referenceScope?.definitionEditor && graph.__trellisReferences && window.USL.scheduler?.forGarden) { const cell = referenceScope?.garden || graph.__trellisReferences.activeGarden(); if (cell?.getAttribute('trellis_references_json')) { await graph.__trellisReferences.restoreDraft(cell); return window.USL.scheduler.forGarden(cell, { editable: true, draft: true }).openPlantEditorDialog(ui, { mode, plantId, varietyId, startVarietyMode }); } } // CHANGE
 
         console.group('[PlantEditorDialog] OPEN');
         console.log('params:', { mode, plantId, varietyId, startVarietyMode });
@@ -13985,6 +14003,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function canUpdateTaskRecipe(recipe) {
+        if (referenceScope) return graph.__trellisReferences.editor(referenceScope.garden); // NEW: manual recipe changes become owner-reviewed proposals.
         if (!recipeUsersEnabled()) return true; // NEW
         const actor = getCurrentTaskRecipeActor(); // NEW
         return !!(actor.id && String(recipe && recipe.ownerUserId || "") === actor.id); // NEW
@@ -14024,7 +14043,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function readTaskRecipeLibrary(moduleCell) {
-        const raw = readCellJsonAttr(moduleCell, TASK_RECIPE_LIBRARY_ATTR, null); // NEW
+        const raw = referenceScope ? window.TrellisReferenceCore.catalog(referenceScope.store, TASK_RECIPE_LIBRARY_ATTR, referenceScope.manifestId) : graph.__trellisReferences?.catalog(moduleCell, TASK_RECIPE_LIBRARY_ATTR) || readCellJsonAttr(moduleCell, TASK_RECIPE_LIBRARY_ATTR, null); // CHANGE // NEW
         const items = Array.isArray(raw && raw.items) ? raw.items : Array.isArray(raw) ? raw : []; // NEW
         const seen = new Set(); // NEW
         return items.map(normalizeTaskRecipe).filter(function (recipe) { // NEW
@@ -14038,6 +14057,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function writeTaskRecipeLibrary(moduleCell, recipes) {
+        if (graph.__trellisReferences?.saveCatalog(moduleCell, TASK_RECIPE_LIBRARY_ATTR, { version: TASK_RECIPE_LIBRARY_VERSION, items: recipes })) return; // NEW
         const items = (Array.isArray(recipes) ? recipes : []).map(normalizeTaskRecipe).filter(Boolean).sort(function (a, b) { // NEW
             return a.plantName.localeCompare(b.plantName) || a.name.localeCompare(b.name); // NEW
         });
@@ -15562,6 +15582,9 @@ Draw.loadPlugin(function (ui) {
     }
 
     function applyCellAttributePatch(cell, patch, model = null) {
+        if (graph.__trellisReferences && cell?.getAttribute?.('trellis_references_json')) { // NEW
+            patch = { ...patch }; for (const key of Object.keys(patch)) if (window.TrellisReferenceCore.CATALOGS.includes(key)) { const value = typeof patch[key] === 'string' ? JSON.parse(patch[key] || '{}') : patch[key] || {}; if (graph.__trellisReferences.saveCatalog(cell, key, value)) delete patch[key]; } // NEW
+        } // NEW
         for (const [key, value] of Object.entries(patch || {})) {
             writeCellAttribute(cell, key, value, model);
         }
@@ -15695,6 +15718,7 @@ Draw.loadPlugin(function (ui) {
                     if (!targetCell || !isTilerGroup(targetCell)) throw new Error('Scheduler save target is not a planting group.'); // CHANGE
                     appliedTargetCell = targetCell; // CHANGE
                     applyCellAttributePatch(targetCell, attributePatch, model);
+                    graph.__trellisReferences?.pin(targetCell, referenceScope?.manifestId); // NEW
                     if (options.targetGeometryRect) setCellAbsoluteRect(graph, targetCell, options.targetGeometryRect, model);
                     extraAttributePatches.forEach(spec => {
                         applyCellAttributePatch(spec.cell, spec.patch, model);
@@ -17872,6 +17896,45 @@ Draw.loadPlugin(function (ui) {
         normalizeCompanionLayoutTemplate
     };
 
+    /** Prepare an existing planting with the same scheduler and task compiler used by Save. // NEW
+     * Keep its occupied rectangle fixed: a reference update cannot move neighboring plantings. */ // NEW
+    async function prepareReferenceRecalculation(cell) { // NEW
+        if (!referenceScope) throw new Error('A captured candidate reference view is required.'); // NEW
+        const C = window.TrellisReferenceCore, model = graph.getModel(); // NEW
+        const attributes = () => Object.fromEntries(Array.from(cell.value?.attributes || []).map(attr => [attr.name, attr.value])); // NEW
+        const before = attributes(), geometry = model.getGeometry(cell), rectangle = geometry?.clone?.(); // NEW
+        const taskFingerprint = () => C.canonical(Object.values(model.cells || {}).filter(item => String(item.getAttribute?.('linkedTo') || '').split(',').map(id => id.trim()).includes(String(cell.id))).map(item => [item.id, Array.from(item.value?.attributes || []).map(attr => [attr.name, attr.value])]).sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'en'))); // CHANGE
+        const originalTasks = taskFingerprint(); // CHANGE: capture linked work before asynchronous preparation begins.
+        if (!rectangle) throw new Error('The planting geometry is unavailable.'); // NEW
+        const parent = model.getParent(cell), garden = findGardenModuleAncestor(model, cell), plantId = Number(before.plant_id); // NEW
+        const plant = await resolveEffectivePlant(plantId, before.variety_id || null); if (!plant) throw new Error('The selected planting crop is unavailable.'); // NEW
+        const stage = await resolveGrowthStageForPlanCrop(plantId, before.growth_stage_key || DEFAULT_GROWTH_STAGE_KEY); if (!stage.ok) throw new Error(stage.reason); // NEW
+        const startISO = before.sow_date || before.lifespan_start, year = Number(before.season_start_year || String(startISO).slice(0, 4)); // NEW
+        if (!startISO || !Number.isInteger(year)) throw new Error('The saved schedule start is missing.'); // NEW
+        const bed = resolveScheduleBedContext(cell), context = await buildScheduleContextFromForm({ // NEW
+            plantId, varietyId: before.variety_id || null, cityId: before.city_id || garden?.getAttribute('city_id'), cityName: before.city_name || garden?.getAttribute('city_name'), // NEW
+            methodCategoryId: before.method_category_id, methodId: before.method_id, startISO, seasonStartYear: year, seasonEndISO: before.lifespan_end || '', // NEW
+            growthStage: stage.stage, harvestWindowDays: plant.harvest_window_days, minYieldMultiplier: 0, // NEW
+            transplantDaysOverrideEnabled: before.days_transplant != null && before.days_transplant !== '', transplantDaysOverrideValue: before.days_transplant, bedProfile: bed.profile, bedProfileSource: bed.source // CHANGE
+        }, plant, { climateModelModuleCell: garden, bedProfile: bed.profile, bedProfileSource: bed.source }); // NEW
+        requireNoBlockingScheduleQualityDiagnostics(context.inputs); // NEW
+        const result = computeScheduleResult(context.inputs); // NEW
+        if (result.kind !== 'perennial' && !result.schedule?.length) throw new Error('The new references cannot produce a feasible schedule for this planting.'); // NEW
+        const template = (await resolveTaskTemplate({ cell, plantId, varietyId: before.variety_id || null, methodId: context.inputs.methodId })).template; // NEW
+        const tasks = await buildTasksForPlan({ method: context.inputs.methodId, plant: context.plant, schedule: result.schedule, timelines: result.timelines, taskTemplate: template, plantId, varietyId: before.variety_id || null, varietyName: before.variety_name || '', methodCategoryId: context.inputs.methodCategoryId, methodId: context.inputs.methodId }); // NEW
+        const patch = buildScheduleAttributePatch(context.inputs, result, { taskTemplateJson: template ? JSON.stringify(template) : '', transplantDaysOverrideEnabled: before.days_transplant != null && before.days_transplant !== '', effectiveTransplantDays: before.days_transplant }); // NEW
+        const taskCommand = window.USL?.tasks?.applySchedulerTaskReplacement, tiler = window.USL?.tiler; // NEW
+        if (typeof taskCommand !== 'function' || typeof tiler?.retileGroup !== 'function') throw new Error('Task reconciliation or planting layout is unavailable.'); // NEW
+        function check() { // NEW
+            referenceScope.guard(); const current = model.getGeometry(cell); // NEW
+            if (model.getCell(cell.id) !== cell || model.getParent(cell) !== parent || !C.equal(before, attributes()) || !C.equal([current?.x, current?.y, current?.width, current?.height], [rectangle.x, rectangle.y, rectangle.width, rectangle.height]) || originalTasks !== taskFingerprint()) throw new Error('A selected planting or its tasks changed. Preview again.'); // NEW
+        } // NEW
+        return { cell, before, patch, tasks, check, apply() { // NEW
+            check(); applyCellAttributePatch(cell, patch, model); graph.__trellisReferences.pin(cell, referenceScope.manifestId); // NEW
+            taskCommand({ mode: 'replace', targetGroupId: cell.id, tasks, plantName: context.plant.plant_name, varietyName: context.inputs.varietyName || '' }, { insideUpdate: true, focusCreated: false }); // NEW
+            tiler.retileGroup(graph, cell, { inTransaction: true, preferInPlace: true }); model.setGeometry(cell, rectangle.clone()); // NEW
+        } }; // NEW
+    } // NEW
     const growthContextCaches = { plants: new Map(), cities: new Map(), climate: new Map() }; // NEW
     /** Invalidate reusable reference data after an editor save or database replacement. */ // NEW
     function invalidateGrowthContexts() { // NEW
@@ -17914,7 +17977,9 @@ Draw.loadPlugin(function (ui) {
     if (window.addEventListener) ['usl:varietyEditorSaved', 'usl:growthStagesSaved', 'trellis:database-restored'].forEach(name => window.addEventListener(name, invalidateGrowthContexts)); // NEW
 
     window.USL = window.USL || {};
-    window.USL.scheduler = Object.assign({}, window.USL.scheduler, {
+    const schedulerApi = { // NEW
+        openPlantEditorDialog, prepareReferenceRecalculation, // CHANGE
+        referenceDefaults: { climatePolicy: { ...DEFAULT_CLIMATE_MODEL_POLICY } }, // NEW
         resolvePlantGrowthContext, invalidateGrowthContexts, // NEW: read-only context service for the planting renderer.
         openScheduleDialog: (ui, cell) => openScheduleDialog(ui, cell),
         openBedScheduleDialog: (ui, bedCell, options) => openBedScheduleDialog(ui, bedCell, options), // CHANGE
@@ -17933,7 +17998,9 @@ Draw.loadPlugin(function (ui) {
         persistAllocationReusableDefaults,
         taskGuide: { resolveContext: resolveTaskGuideContext, readRecipes: readTaskRecipeLibrary, canUpdateRecipe: canUpdateTaskRecipe, saveRecipe: saveTaskGuideRecipe }, // CHANGE: narrow Guide integration reuses the existing recipe registry.
         layoutTools
-    });
+    }; // CHANGE
+    if (referenceScope) { bindRequiredSchedulerCores(); return schedulerApi; } // NEW
+    window.USL.scheduler = Object.assign({}, window.USL.scheduler, schedulerApi); // CHANGE
     window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
 
     async function openSetPlantDialog(ui, cell) {
@@ -18025,6 +18092,7 @@ Draw.loadPlugin(function (ui) {
                 }
 
                 setAttr(cell, 'plant_id', String(row.plant_id));
+                graph.__trellisReferences?.pin(cell, referenceScope?.manifestId); // NEW
                 setAttr(cell, 'plant_name', row.plant_name);
                 if (row.abbr) setAttr(cell, 'plant_abbr', row.abbr);
                 setAttr(cell, 'plant_locked', '1');
@@ -18698,4 +18766,33 @@ Draw.loadPlugin(function (ui) {
 
     installSchedulerPluginAfterCoreLoad(ui);
 
-})
+    return schedulerApi; // NEW
+} // NEW
+Draw.loadPlugin(function (ui) { // NEW
+    const rootApi = createScheduler(ui), graph = ui.editor?.graph; // NEW
+    if (!rootApi || !graph || window.__TRELLIS_PLANTING_SCHEDULER_TEST__) return; // NEW
+    const cache = new WeakMap(); // NEW
+    function forGarden(cell, options = {}) { // NEW
+        const references = graph.__trellisReferences, garden = references?.gardenFor(cell) || cell; // NEW
+        if (!references) for (let current = cell; current; current = current.getParent?.() || current.parent) if (current.getAttribute?.('trellis_references_json') || current.getAttribute?.('trellis_reference_pin') || current.getAttribute?.('trellis_reference_pending') === '1') throw new Error('The garden reference plugin must be loaded for this garden.'); // CHANGE
+        if (!references || !garden) return rootApi; // NEW
+        const context = references.sqlContext(cell, { editable: false, ...options }); if (!context) return rootApi; // NEW
+        let entries = cache.get(garden); if (!entries) { entries = new Map(); cache.set(garden, entries); } // NEW
+        const key = [context.manifestId, options.store ? 'preview' : 'accepted', graph.__trellisUsers?.getCurrentUser()?.id || 'local-owner', options.editable ? 'edit' : 'read', options.draft ? 'draft' : 'accepted'].join(':'); // CHANGE
+        if (entries.has(key)) { context.release().catch(() => {}); return entries.get(key); } // NEW
+        const api = createScheduler(ui, context); api.referenceContext = context; entries.set(key, api); // CHANGE
+        if (entries.size > 12) { const oldest = entries.keys().next().value; entries.get(oldest).referenceContext.release().catch(() => {}); entries.delete(oldest); } return api; // NEW
+    } // NEW
+    function target(name, args) { // NEW
+        if (['resolvePlantGrowthContext', 'resolveCityForModule'].includes(name)) return args[0]; // NEW
+        if (['openScheduleDialog', 'openBedScheduleDialog', 'openDerivedScheduleDialog', 'openSetPlantDialog'].includes(name)) return args[1]; // NEW
+        const input = args.find(value => value && typeof value === 'object' && (value.referenceCell || value.moduleCell || value.gardenModuleCell || value.sourceCell)); // NEW
+        return input?.referenceCell || input?.moduleCell || input?.gardenModuleCell || input?.sourceCell || graph.__trellisReferences?.activeGarden(); // NEW
+    } // NEW
+    const facade = { ...window.USL.scheduler, forGarden }; // NEW
+    for (const [name, fn] of Object.entries(rootApi)) if (typeof fn === 'function') facade[name] = function (...args) { const cell = target(name, args), garden = graph.__trellisReferences?.gardenFor(cell) || cell; if (/^open/.test(name) && garden?.getAttribute?.('trellis_references_json') && graph.__trellisReferences) return graph.__trellisReferences.restoreDraft(garden).then(() => forGarden(cell, { editable: true, draft: name === 'openPlantEditorDialog' })[name](...args)); return forGarden(cell, { editable: /^open|^persist|^save/.test(name) })[name](...args); }; // CHANGE: restore private work before opening an editor; ordinary scheduling still reads its accepted pin.
+    facade.layoutTools = Object.fromEntries(Object.entries(rootApi.layoutTools).map(([name, fn]) => [name, typeof fn !== 'function' ? fn : function (...args) { const rows = args.find(Array.isArray) || args.find(value => value?.rows)?.rows || []; const cell = args.find(value => value?.getAttribute && !value.getModel) || rows.find(row => row?.cell)?.cell || rows.find(row => row?.sourceCell)?.sourceCell || graph.__trellisReferences?.activeGarden(); return forGarden(cell, { editable: /^save|^apply/.test(name) }).layoutTools[name](...args); }])); // NEW: spacing defaults use the same captured garden view as scheduling.
+    facade.taskGuide = { ...rootApi.taskGuide, resolveContext: (group, card) => forGarden(group).taskGuide.resolveContext(group, card), readRecipes: cell => forGarden(cell).taskGuide.readRecipes(cell), saveRecipe: (cell, ...args) => forGarden(cell).taskGuide.saveRecipe(cell, ...args) }; // NEW
+    window.USL.scheduler = facade; window.openUSLScheduleDialog = facade.openScheduleDialog; // NEW
+}); // NEW
+})(); // NEW

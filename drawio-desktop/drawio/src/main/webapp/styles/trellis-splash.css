@@ -3,16 +3,42 @@
 .trellis-splash-project-launcher .trellis-splash-center { flex:0 0 auto;overflow:visible; } /* NEW */
 .trellis-splash-login-status { color:#314437;font-weight:600;margin:12px 0; } /* NEW */
 .trellis-projects-dialog { background:#fbf8ed !important;border-radius:12px;overflow:hidden !important;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px); } /* NEW */
-.trellis-projects-root { box-sizing:border-box;height:100%;overflow-y:auto;overflow-x:hidden;padding:16px 20px;color:#253c2d;text-align:left; } /* NEW */
+.trellis-projects-root { box-sizing:border-box;height:100%;display:flex;flex-direction:column;overflow:hidden;padding:0;color:#253c2d;text-align:left; } /* CHANGE */
+.trellis-projects-header { flex:none;padding:16px 20px 10px;background:#fbf8ed;z-index:30;border-bottom:1px solid #d3dac8; } /* NEW */
+.trellis-projects-top { display:flex;align-items:start;justify-content:space-between;gap:12px;flex-wrap:wrap; } /* NEW */
+.trellis-projects-account { margin-left:auto;max-width:100%; } /* NEW */
+.trellis-projects-body { min-height:0;flex:1;overflow-y:auto;overflow-x:hidden;padding:8px 20px 16px;scrollbar-gutter:stable; } /* NEW */
 .trellis-projects-root h2 { margin:0 0 12px; } /* NEW */
 .trellis-projects-section { background:#fffdf6;border:1px solid #d3dac8;border-radius:10px;padding:12px;margin:12px 0; } /* NEW */
 .trellis-projects-section h3 { margin:0 0 10px; } /* NEW */
+.trellis-projects-heading { display:flex;align-items:center;gap:8px; } /* NEW: static heading text beside the independent fold button. */
+.trellis-projects-count { font-size:12px;font-weight:400;color:#59675b;overflow-wrap:anywhere; } /* NEW */
+.trellis-projects-root .trellis-projects-heading .trellis-projects-toggle { margin-left:auto; } /* CHANGE: override the general library button margin. */
+.trellis-projects-title { min-width:0;overflow-wrap:anywhere; } /* NEW */
+.trellis-project-group { margin:10px 0;padding-left:10px; } /* NEW */
+.trellis-projects-root details:not([data-project-popover])>summary { display:flex;align-items:center;justify-content:space-between;gap:10px;list-style:none; } /* NEW */
+.trellis-projects-root details:not([data-project-popover])>summary::after { content:'+';flex:none;margin-left:auto; } /* NEW */
+.trellis-projects-root details:not([data-project-popover])[open]>summary::after { content:'−'; } /* NEW */
+.trellis-projects-root summary::-webkit-details-marker { display:none; } /* NEW */
+.trellis-account-menu,.trellis-city-picker { position:relative;max-width:100%; } /* NEW */
+.trellis-projects-root details[data-project-popover]>summary { list-style:none;overflow-wrap:anywhere; } /* NEW */
+.trellis-projects-root details[data-project-popover]:not([open])>.trellis-project-menu-items,.trellis-city-picker:not([open])>.trellis-city-popup { display:none; } /* NEW */
+.trellis-account-menu .trellis-project-menu-items { max-width:calc(100vw - 70px); } /* NEW */
+.trellis-city-popup { position:absolute;top:100%;left:0;z-index:25;width:440px;max-width:calc(100vw - 100px);box-sizing:border-box;padding:10px;background:#fffdf6;border:1px solid #c8d2c8;border-radius:6px;box-shadow:0 4px 12px #253c2d26; } /* NEW */
+.trellis-city-popup .trellis-home-field { margin-top:0; } /* NEW */
+.trellis-city-popup input { width:100%; } /* NEW */
+.trellis-city-tree { max-height:min(300px,35vh);overflow:auto; } /* NEW */
+.trellis-city-tree details { padding-left:10px; } /* NEW */
+.trellis-city-tree button { display:block;width:calc(100% - 4px);text-align:left; } /* NEW */
+.trellis-projects-reference { display:flex;flex-wrap:wrap;align-items:center;gap:0 12px; } /* NEW */
+.trellis-projects-reference input[type=number] { width:110px; } /* NEW */
+.trellis-projects-root .trellis-projects-toggle { box-sizing:border-box;flex:0 0 26px;min-width:26px;width:26px;height:26px;padding:0;line-height:1;font-size:18px; } /* NEW: compact symbol control retains shared button and focus styling. */
 .trellis-projects-section h4 { margin:14px 0 6px;color:#59675b; } /* NEW */
 .trellis-projects-root .trellis-home-panel { margin:8px 0; } /* NEW */
 .trellis-projects-root .trellis-home-row { align-items:flex-start; } /* NEW */
 .trellis-projects-root .geBtn { margin:2px;max-width:100%;white-space:normal; } /* NEW */
 .trellis-projects-root summary { cursor:pointer;margin:5px 0; } /* NEW */
-.trellis-projects-root input:focus-visible,.trellis-projects-root select:focus-visible,.trellis-projects-root button:focus-visible,.trellis-projects-root summary:focus-visible { outline:2px solid #376b25;outline-offset:2px; } /* NEW */
+.trellis-projects-root input:focus-visible,.trellis-projects-root select:focus-visible,.trellis-projects-root button:not(.trellis-button):focus-visible,.trellis-projects-root summary:not(.trellis-button):focus-visible { outline:2px solid #376b25;outline-offset:2px; } /* CHANGE: shared buttons own their focus treatment. */
 /* Identity and library controls remain below the existing license content. */ /* NEW */
 .trellis-home-panel { background:#fffdf6;border:1px solid #d3dac8;border-radius:10px;padding:12px;margin:12px 0;text-align:left; } /* NEW */
 .trellis-home-row { display:flex;align-items:center;flex-wrap:wrap;gap:8px; } /* NEW */
@@ -22,11 +48,16 @@
 .trellis-home-garden { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:12px;border-top:1px solid #d3dac8;padding:12px 0; } /* CHANGE */
 .trellis-project-controls { display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;justify-content:flex-end; } /* NEW */
 .trellis-project-menu { position:relative; } /* NEW */
-.trellis-project-menu>summary { list-style:none;border:1px solid #c8d2c8;border-radius:4px;padding:5px 12px;margin:2px;font-weight:700; } /* NEW */
+.trellis-project-menu>summary { list-style:none;margin:2px; } /* CHANGE: keep native disclosure behavior and share button styling. */
+.trellis-project-menu>summary:not(.trellis-button) { border:1px solid #c8d2c8;border-radius:4px;padding:5px 12px;font-weight:700; } /* CHANGE: host styling remains the startup fallback. */
 .trellis-project-menu>summary::-webkit-details-marker { display:none; } /* NEW */
 .trellis-project-menu-items { position:absolute;right:0;top:100%;z-index:20;display:flex;flex-direction:column;align-items:stretch;min-width:190px;max-width:calc(100vw - 80px);padding:6px;background:#fffdf6;border:1px solid #c8d2c8;border-radius:6px;box-shadow:0 4px 12px #253c2d26; } /* CHANGE: expanding actions never shifts Open or changes row height. */
 .trellis-project-menu-items .geBtn { text-align:left; } /* NEW */
-.trellis-project-menu-items .geBtn:last-child:not(:disabled) { color:#9c2f26; } /* NEW */
+.trellis-project-confirmation-dialog { box-sizing:border-box;height:auto !important;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);padding:24px !important;overflow:hidden !important;background:#fbf8ed !important;border-radius:12px; } /* CHANGE */
+.trellis-project-confirmation { box-sizing:border-box;max-height:calc(100vh - 76px);overflow:auto;color:#253c2d;text-align:left;overflow-wrap:anywhere; } /* CHANGE: fit short prompts to their content and scroll long prompts on small windows. */
+.trellis-project-confirmation h3 { margin:0 0 12px; } /* CHANGE */
+.trellis-project-confirmation .trellis-home-row { justify-content:flex-end;gap:8px; } /* CHANGE */
+.trellis-project-confirmation .geBtn { margin:2px;max-width:100%;white-space:normal; } /* CHANGE */
 .trellis-project-action { border:1px solid #8c9c80;border-radius:8px;padding:12px;margin:12px 0;background:#fffdf6; } /* NEW */
 .trellis-project-action h3 { margin:0 0 8px; } /* NEW */
 .trellis-projects-root [hidden] { display:none !important; } /* NEW */
@@ -675,3 +706,10 @@
 		transition: none;
 	}
 }
+.trellis-projects-loading { font-size: 12px; font-weight: normal; color: #586653; margin-left: 8px; } /* NEW: section status remains visible when rows are folded. */
+.trellis-projects-loading.is-loading::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 5px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: trellis-projects-loading 0.8s linear infinite; } /* NEW */
+@keyframes trellis-projects-loading { to { transform: rotate(360deg); } } /* NEW */
+@media (prefers-reduced-motion: reduce) { .trellis-projects-loading.is-loading::before { animation: none; } } /* NEW */
+
+.trellis-projects-heading { flex-wrap: wrap; } /* CHANGE: section controls remain usable in narrow dialogs. */
+.trellis-projects-updated { font-size: 11px; font-weight: normal; color: #586653; } /* CHANGE: static snapshot boundary, with full date in accessible text. */

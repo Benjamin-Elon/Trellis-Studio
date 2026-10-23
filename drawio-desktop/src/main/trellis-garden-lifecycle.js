@@ -8,9 +8,9 @@ export function createGardenLifecycle({ identities, own, catalog, verifiedRecord
     let queue = Promise.resolve(); // NEW
     const serialized = operation => { const next = queue.then(operation); queue = next.catch(() => {}); return next; }; // NEW
     const directory = identityId => path.join(identities.metadataRoot(identityId), 'project-lifecycle'); // NEW
-    const records = async identityId => { // CHANGE: new identities have no journal or trust anchor yet.
+    const records = async (identityId, current) => { // CHANGE: a listing reuses its verified identity state.
         if (!await fs.stat(directory(identityId)).then(s => s.isDirectory()).catch(error => { if (error.code === 'ENOENT') return false; throw error; })) return []; // NEW
-        return verifiedRecords(identityId, directory(identityId)); // NEW
+        return verifiedRecords(identityId, directory(identityId), undefined, current); // CHANGE
     }; // NEW
     const lifecycle = async (identityId, diagramId) => projectLifecycle(await records(identityId), diagramId); // NEW
     const localRoot = () => path.resolve(getTrashRoot()); // NEW
@@ -194,5 +194,5 @@ export function createGardenLifecycle({ identities, own, catalog, verifiedRecord
         if (state.state !== 'left') throw new Error('Only a departed project can be rejoined.'); // NEW
         await publish(entry, 'rejoin', state, { target: state.record.id }); // NEW
     } // NEW
-    return { actions, trash, restore, purge, leave, listTrash, processLifecycle, lifecycle, assertActive, fenceTransport, completeRejoin }; // NEW
+    return { actions, trash, restore, purge, leave, listTrash, processLifecycle, lifecycle, lifecycleRecords: records, assertActive, fenceTransport, completeRejoin }; // CHANGE
 } // NEW

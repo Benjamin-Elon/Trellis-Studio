@@ -1305,6 +1305,31 @@ Draw.loadPlugin(function (ui) {
         try { roles.forEach(syncRoleCardSummary); } finally { model.endUpdate(); syncingRoleCardSummaries = false; }
     }
 
+    /** Update only roles affected by content changes; root replacement retains the one-time repair pass. */ // NEW
+    function syncChangedRoleCardSummaries(event) { // NEW
+        if (syncingRoleCardSummaries) return; // NEW
+        const changes = event && event.getProperty && event.getProperty("changes"); // NEW
+        if (!changes || changes.some(change => typeof mxRootChange !== "undefined" && change instanceof mxRootChange)) return syncAllRoleCardSummaries(); // NEW
+        const roles = new Set(); // NEW
+        function addAncestor(cell) { // NEW
+            for (let current = cell; current; current = model.getParent(current)) { // NEW
+                if (isRoleCardV2(current)) { if (model.getCell(cellId(current)) === current) roles.add(current); return; } // NEW
+            } // NEW
+        } // NEW
+        changes.forEach(change => { // NEW
+            if (typeof mxGeometryChange !== "undefined" && change instanceof mxGeometryChange || typeof mxCollapseChange !== "undefined" && change instanceof mxCollapseChange) return; // NEW
+            addAncestor(change.cell || change.child); // NEW
+            if (change.child) { // NEW
+                addAncestor(change.previous); // NEW
+                const stack = [change.child]; // NEW
+                while (stack.length) { const cell = stack.pop(); if (isRoleCardV2(cell)) addAncestor(cell); else stack.push.apply(stack, model.getChildren(cell) || []); } // NEW
+            } // NEW
+        }); // NEW
+        if (!roles.size) return; // NEW
+        syncingRoleCardSummaries = true; model.beginUpdate(); // NEW
+        try { roles.forEach(syncRoleCardSummary); } finally { model.endUpdate(); syncingRoleCardSummaries = false; } // NEW
+    } // NEW
+
     function makeAlternateBounds(x, y, width, height) {
         return (typeof mxRectangle !== "undefined") ? new mxRectangle(x, y, width, height) : new mxGeometry(x, y, width, height);
     }
@@ -1493,7 +1518,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     if (model.addListener && typeof mxEvent !== "undefined" && mxEvent.CHANGE) {
-        model.addListener(mxEvent.CHANGE, function () { syncAllRoleCardSummaries(); });
+        model.addListener(mxEvent.CHANGE, function (_sender, event) { syncChangedRoleCardSummaries(event); }); // CHANGE: unrelated edits never scan every role.
     }
 
     function getRoleImageRow(roleCard) {
@@ -2762,7 +2787,7 @@ Draw.loadPlugin(function (ui) {
             if (moduleType !== "regular") setModuleType(mod, moduleType);
             if (window.Trellis && window.Trellis.users && typeof window.Trellis.users.stampCreatedOwner === "function") window.Trellis.users.stampCreatedOwner(mod); // NEW: modules created by logged-in users become ownership boundaries
             if (moduleType === "team") bootstrapNewTeamModule(mod); // NEW
-            if (moduleType === "garden") { const team = ensureGardenTeamModule(mod, { insideUpdate: true }); bootstrapNewTeamModule(team); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); ensureGardenRoadmapModule(mod); } // CHANGE
+            if (moduleType === "garden") { setStringValueAttr(mod, 'trellis_reference_pending', '1'); const team = ensureGardenTeamModule(mod, { insideUpdate: true }); bootstrapNewTeamModule(team); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); ensureGardenRoadmapModule(mod); } // CHANGE: fresh gardens must capture defaults or a template before scheduling.
             if (moduleType === "roadmap" && !graph.__trellisRoadmapManager.ensureMainRoadmapInRoadmapModule(mod)) { model.remove(mod); return null; } // NEW
             enforceModuleExternalMarginsFor([mod], { manageUpdate: false }); // NEW
             if (mod && graph.setSelectionCell) graph.setSelectionCell(mod);
@@ -3819,6 +3844,490 @@ Draw.loadPlugin(function (ui) {
             return selectRoleImage(ui, graph, roleCard);
         }
     };
+
+    /** // NEW
+     * Owns page-local cluster indexes and rendering policy. Folding remains native model data; // NEW
+     * city/neighborhood membership never writes visibility flags or removes document cells. // NEW
+     */ // NEW
+    function createModuleClusterController() { // NEW
+        if (!model.execute || !graph.view || !graph.view.validateCell) return null; // NEW
+        const ALL = "all", NONE = "none", LIMIT = 1000; // NEW
+        const records = new Map(), usage = new Map(), listeners = [], restorers = []; // NEW
+        const geographicLabels = new Map(), pendingCities = new Set(); let cityGeneration = 0; // NEW
+        const stats = { fullScans: 0, topologyBuilds: 0, neighborhoodBuilds: 0, indexedCells: 0 }; // NEW
+        let clusters = [], byModule = new WeakMap(), rendered = new Set(), gardens = []; // NEW
+        let clock = 0, order = 0, root = null, lastModule = null, city = ALL, cityMemory = {}; // NEW
+        let topologyDirty = true, neighborhoodDirty = true, normalizing = false, disposed = false, nativeExpansion = false; // NEW
+        let prepared = null, preparedCount = 0, handlingModel = false, preference = ""; // NEW
+
+        function children(cell) { return model.getChildren(cell) || []; } // NEW
+        function attr(cell, key) { return getValueAttr(cell, key); } // NEW
+        function live(cell) { return !!cell && model.getCell(cellId(cell)) === cell; } // NEW
+        function changeIs(change, name) { return typeof window[name] === "function" && change instanceof window[name]; } // NEW
+        function nearestModule(cell) { // NEW
+            for (let current = cell; current; current = model.getParent(current)) if (isModule(current)) return current; // NEW
+            return null; // NEW
+        } // NEW
+        function outerModule(cell) { // NEW
+            let outer = null; // NEW
+            for (let current = cell; current; current = model.getParent(current)) if (isModule(current)) outer = current; // NEW
+            return outer; // NEW
+        } // NEW
+        function origin(cell) { // NEW
+            let x = 0, y = 0; // NEW
+            for (let current = cell; current; current = model.getParent(current)) { // NEW
+                const geo = model.getGeometry(current); // NEW
+                if (geo) { x += Number(geo.x) || 0; y += Number(geo.y) || 0; } // NEW
+            } // NEW
+            return { x, y }; // NEW
+        } // NEW
+        /** Stable IDs distinguish same-named cities; legacy names include available geography. */ // NEW
+        function cityInfo(cell) { // NEW
+            const rawName = attr(cell, "city_name").trim(); // NEW
+            const name = rawName ? plainCellLabel({ value: rawName }, "").trim() : ""; // NEW
+            const id = attr(cell, "city_id").trim(); // NEW
+            const region = attr(cell, "region_name") || attr(cell, "region_code"); // NEW
+            const country = attr(cell, "country_name") || attr(cell, "country_code"); // NEW
+            if (!name && !id) return { key: NONE, label: "No city" }; // NEW
+            const geography = [region, country].filter(Boolean).join(", "); // NEW
+            return { key: id ? "id:" + id : "name:" + [name, region, country].join("|").toLocaleLowerCase(), // NEW
+                label: (name || id) + (geography ? " — " + geography : "") }; // NEW
+        } // NEW
+        function record(cell) { // NEW
+            const previous = records.get(cellId(cell)); // NEW
+            if (!live(cell) || !isModule(cell)) { // NEW
+                if (previous) { records.delete(cellId(cell)); usage.delete(cellId(cell)); topologyDirty = true; } // NEW
+                return; // NEW
+            } // NEW
+            const info = cityInfo(cell), garden = isGardenModule(cell); // NEW
+            const links = Array.from(new Set([attr(cell, LINK_ATTR), attr(cell, ATTR_GARDEN_TEAM_MODULE), // NEW
+                attr(cell, ATTR_GARDEN_TASK_MODULE), attr(cell, ATTR_TEAM_GARDEN_MODULE), // NEW
+                attr(cell, "roadmap_module_id"), attr(cell, "roadmap_garden_module_id"), // NEW
+                attr(cell, "roadmap_task_module_id")].join(",").split(",").map(id => id.trim()).filter(Boolean))); // NEW
+            const label = plainCellLabel(cell, ""), topologySignature = JSON.stringify([links, garden]); // NEW
+            const signature = JSON.stringify([topologySignature, info.key, info.label, label]); // NEW
+            if (previous && previous.cell === cell && previous.signature === signature) return; // NEW
+            if (previous && (previous.info.key !== info.key || previous.info.label !== info.label)) { geographicLabels.delete(info.key); pendingCities.delete(info.key); } // NEW
+            records.set(cellId(cell), { cell, order: previous ? previous.order : order++, links, garden, info, label, signature, topologySignature }); // NEW
+            if (!previous || previous.cell !== cell || previous.topologySignature !== topologySignature) topologyDirty = true; // NEW
+            else if (previous.info.key !== info.key) { // NEW: metadata edits update just their component rather than rebuilding connectivity.
+                const group = byModule.get(cell); // NEW
+                if (group) group.cities = new Set(group.gardens.length ? group.gardens.map(garden => records.get(cellId(garden)).info.key) : [NONE]); // NEW
+                if (city !== ALL && city !== NONE && !clusters.some(group => group.cities.has(city))) city = ALL; // NEW
+                neighborhoodDirty = true; // NEW
+            } // NEW
+        } // NEW
+        function visit(cell, callback) { // NEW
+            const stack = cell ? [cell] : []; // NEW
+            while (stack.length) { // NEW
+                const current = stack.pop(); // NEW
+                callback(current); // NEW
+                const kids = children(current); // NEW
+                for (let index = kids.length - 1; index >= 0; index--) stack.push(kids[index]); // NEW
+            } // NEW
+        } // NEW
+        function preferenceKey() { // NEW
+            const users = window.Trellis && window.Trellis.users; // NEW
+            const diagram = users && users.getDiagramKey && users.getDiagramKey({ create: false }); // NEW
+            if (!diagram) return ""; // NEW
+            const page = ui.currentPage, pageId = page && (page.getId ? page.getId() : page.id) || "default-page"; // NEW
+            const user = users.getCurrentUser && users.getCurrentUser(); // NEW
+            return "trellis-cluster-city:" + diagram + ":" + pageId + ":" + (user && user.id ? "user:" + user.id : "shared"); // NEW
+        } // NEW
+        function readPreference() { // NEW
+            preference = preferenceKey(); city = ALL; cityMemory = {}; // NEW
+            try { // NEW
+                const saved = preference && JSON.parse(window.localStorage.getItem(preference) || "null"); // NEW
+                if (saved) { city = typeof saved.city === "string" ? saved.city : ALL; cityMemory = saved.gardens || {}; } // NEW
+            } catch (_) { /* Unavailable storage must not prevent editing. */ } // NEW
+        } // NEW
+        function savePreference() { // NEW
+            preference = preferenceKey(); // NEW
+            try { if (preference) window.localStorage.setItem(preference, JSON.stringify({ city, gardens: cityMemory })); } // NEW
+            catch (_) { /* Preferences remain useful in memory when storage is unavailable. */ } // NEW
+        } // NEW
+        function reset() { // NEW
+            geographicLabels.clear(); pendingCities.clear(); cityGeneration++; // NEW: discard database labels and pending callbacks from the previous page.
+            root = model.getRoot(); records.clear(); usage.clear(); order = 0; lastModule = null; // NEW
+            byModule = new WeakMap(); rendered = new Set(); topologyDirty = true; neighborhoodDirty = true; // NEW
+            stats.fullScans++; // NEW
+            visit(root, cell => { stats.indexedCells++; if (isModule(cell)) record(cell); }); // NEW
+            readPreference(); // NEW
+            buildTopology(); // NEW
+            const selected = graph.getSelectionCells().find(live); // NEW
+            let remembered = null; // NEW
+            try { if (preference) remembered = model.getCell(window.localStorage.getItem(preference.replace("trellis-cluster-city:", "trellis.gardenDashboard.lastGarden.v1:"))); } catch (_) { /* Keep startup usable without localStorage. */ } // NEW
+            const focus = focusForCity(selected || remembered); // NEW
+            if (focus) touch(focus); // NEW: establish startup priority before root-change validation can fold saved expanded modules.
+        } // NEW
+        /** Rebuild connected components only after module/link metadata or hierarchy changes. */ // NEW
+        function buildTopology() { // NEW
+            if (!topologyDirty) return; // NEW
+            stats.topologyBuilds++; topologyDirty = false; neighborhoodDirty = true; // NEW
+            const paths = new Map(), siblingPositions = new Map(); // NEW: structural changes can reorder existing modules; ties follow current document order.
+            function documentPath(cell) { // NEW: index siblings once, avoiding a linear sibling search for every module in large layers.
+                if (!cell || cell === root) return []; // NEW
+                if (!paths.has(cell)) { // NEW
+                    const parent = model.getParent(cell); // NEW
+                    if (!siblingPositions.has(parent)) siblingPositions.set(parent, new Map(children(parent).map((child, index) => [child, index]))); // NEW
+                    paths.set(cell, documentPath(parent).concat(siblingPositions.get(parent).get(cell))); // NEW
+                } // NEW
+                return paths.get(cell); // NEW
+            } // NEW
+            const entries = Array.from(records.values()).sort((a, b) => mxCellPath.compare(documentPath(a.cell), documentPath(b.cell))); // NEW
+            entries.forEach((entry, index) => { entry.order = index; }); order = entries.length; // NEW
+            const parents = new Map(), owners = new Map(), groups = new Map(); // NEW
+            entries.forEach(entry => { // NEW
+                const owner = outerModule(entry.cell); // NEW
+                if (owner) { owners.set(cellId(entry.cell), cellId(owner)); parents.set(cellId(owner), cellId(owner)); } // NEW
+            }); // NEW
+            function find(id) { // NEW
+                let head = id; // NEW
+                while (parents.get(head) !== head) head = parents.get(head); // NEW
+                while (id !== head) { const next = parents.get(id); parents.set(id, head); id = next; } // NEW
+                return head; // NEW
+            } // NEW
+            function join(left, right) { // NEW
+                if (!left || !right) return; // NEW
+                const a = find(left), b = find(right); // NEW
+                if (a !== b) parents.set(b, a); // NEW
+            } // NEW
+            entries.forEach(entry => entry.links.forEach(id => join(owners.get(cellId(entry.cell)), owners.get(id)))); // NEW
+            entries.forEach(entry => { // NEW
+                const owner = owners.get(cellId(entry.cell)); // NEW
+                if (!owner) return; // NEW
+                const id = find(owner); // NEW
+                if (!groups.has(id)) groups.set(id, { id, order: entry.order, modules: [], roots: [], gardens: [], cities: new Set(), last: null, used: 0 }); // NEW
+                const group = groups.get(id); // NEW
+                group.modules.push(entry.cell); // NEW
+                if (cellId(entry.cell) === owner) group.roots.push(entry.cell); // NEW
+                if (entry.garden) { group.gardens.push(entry.cell); group.cities.add(entry.info.key); } // NEW
+                const used = usage.get(cellId(entry.cell)) || 0; // NEW
+                if (!group.last || used > group.used) { group.last = entry.cell; group.used = used; } // NEW
+            }); // NEW
+            clusters = Array.from(groups.values()); // NEW
+            byModule = new WeakMap(); // NEW
+            gardens = []; // NEW
+            clusters.forEach(group => { // NEW
+                if (!group.gardens.length) group.cities.add(NONE); // NEW
+                group.modules.forEach(cell => byModule.set(cell, group)); // NEW
+                gardens.push.apply(gardens, group.gardens); // NEW
+            }); // NEW
+            if (city !== ALL && city !== NONE && !clusters.some(group => group.cities.has(city))) city = ALL; // NEW
+        } // NEW
+        function getCluster(cell) { return byModule.get(cell) || byModule.get(nearestModule(cell)) || null; } // NEW: renderer visits of indexed modules avoid repeating ancestor and style lookup.
+        function eligible(group) { return city === ALL || group.cities.has(city); } // NEW
+        function expanded() { return clusters.filter(group => group.modules.some(cell => !graph.isCellCollapsed(cell))); } // NEW: nested modules share the outer cluster's expansion slot.
+        function touch(cell) { // NEW
+            const member = nearestModule(cell), group = getCluster(member); // NEW
+            if (!group) return; // NEW
+            const changedAnchor = group.last !== member || lastModule !== member; // NEW
+            usage.set(cellId(member), ++clock); group.used = clock; group.last = member; lastModule = member; // NEW
+            if (isGardenModule(member) && (city === ALL || cityInfo(member).key === city)) { cityMemory[city] = cellId(member); savePreference(); } // NEW: mixed-city clusters may expose gardens outside the picker's selected city.
+            if (changedAnchor) neighborhoodDirty = true; // NEW
+        } // NEW
+        function sync(changes) { // NEW
+            if (root !== model.getRoot()) { reset(); return; } // NEW
+            (changes || []).forEach(change => { // NEW
+                if (changeIs(change, "mxRootChange")) return; // NEW
+                if (changeIs(change, "mxChildChange")) { // NEW
+                    visit(change.child, cell => { if (records.has(cellId(cell)) || isModule(cell)) { record(cell); topologyDirty = true; } }); // NEW: content-only additions never rebuild module connectivity.
+                } else if (changeIs(change, "mxValueChange") || changeIs(change, "mxStyleChange") || changeIs(change, "mxCellAttributeChange")) { // NEW
+                    if (records.has(cellId(change.cell)) || isModule(change.cell)) record(change.cell); // NEW
+                } else if (changeIs(change, "mxGeometryChange") || changeIs(change, "mxCollapseChange")) { // NEW
+                    if (records.has(cellId(change.cell))) neighborhoodDirty = true; // NEW
+                } // NEW
+            }); // NEW
+            buildTopology(); // NEW
+        } // NEW
+        function syncPending() { // NEW
+            if (root !== model.getRoot()) reset(); // NEW
+            const changes = model.currentEdit && model.currentEdit.changes; // NEW
+            if (changes && changes.length) sync(changes); // NEW
+            buildTopology(); // NEW
+        } // NEW
+        const nativeFold = graph.cellsFolded; // NEW
+        /** Corrections join normal commands; replay/load corrections must not create recursive undo edits. */ // NEW
+        function collapseGroups(groups, transient) { // NEW
+            const cells = groups.flatMap(group => group.modules.filter(cell => !graph.isCellCollapsed(cell))); // NEW: evict every expanded member, including nested modules.
+            if (!cells.length) return; // NEW
+            const edit = model.currentEdit, start = edit && edit.changes.length; // NEW
+            model.beginUpdate(); // NEW
+            normalizing = true; // NEW
+            try { // NEW
+                nativeFold.call(graph, cells, true, false, false); // NEW
+                cells.forEach(cell => graph.view.invalidate(cell)); // NEW
+                if (transient && edit && model.currentEdit === edit) edit.changes.splice(start); // NEW
+                neighborhoodDirty = true; // NEW
+            } finally { normalizing = false; model.endUpdate(); } // NEW
+        } // NEW
+        function normalize(preferred, transient) { // NEW
+            if (normalizing) return; // NEW
+            const active = expanded(); // NEW
+            const priority = preferred || []; // NEW
+            const allowed = active.filter(eligible).sort((a, b) => { // NEW
+                const ap = priority.indexOf(a), bp = priority.indexOf(b); // NEW
+                if (ap >= 0 || bp >= 0) return (ap < 0 ? Infinity : ap) - (bp < 0 ? Infinity : bp); // NEW
+                return b.used - a.used || a.order - b.order; // NEW
+            }); // NEW
+            const keep = new Set(allowed.slice(0, 2)); // NEW
+            collapseGroups(active.filter(group => !keep.has(group)), transient); // NEW
+        } // NEW
+        function isRendered(cell) { // NEW
+            if (!cell) return true; // NEW
+            if (model.isEdge(cell)) { // NEW
+                const source = model.getTerminal(cell, true), target = model.getTerminal(cell, false); // NEW
+                return !!source && !!target && isRendered(source) && isRendered(target); // NEW
+            } // NEW
+            const group = getCluster(cell); // NEW
+            return !group || rendered.has(group.id); // NEW
+        } // NEW
+        function renderedCells() { // NEW
+            return graph.view.states.getValues().map(state => state.cell).filter(cell => live(cell) && isRendered(cell)); // NEW
+        } // NEW
+        /** Encode the active rendering membership for desktop image/PDF workers without touching live cells or normal saves. */ // NEW
+        function exportModel() { // NEW
+            const codec = new mxCodec(mxUtils.createXmlDocument()); // NEW
+            const metadata = ui.editor.getGraphXml ? ui.editor.getGraphXml(false) : codec.document.createElement("mxGraphModel"); // NEW
+            const node = codec.document.importNode(metadata, false), cells = codec.document.createElement("root"); // NEW
+            node.appendChild(cells); codec.document.appendChild(node); // NEW
+            const stack = [model.getRoot()]; // NEW
+            while (stack.length) { // NEW
+                const cell = stack.pop(); // NEW
+                if (!isRendered(cell)) continue; // NEW
+                codec.encodeCell(cell, cells, false); // NEW
+                const kids = children(cell); // NEW
+                for (let index = kids.length - 1; index >= 0; index--) stack.push(kids[index]); // NEW
+            } // NEW
+            return node; // NEW
+        } // NEW
+        function publish(validate) { // NEW
+            if (disposed) return; // NEW
+            if (neighborhoodDirty) { // NEW
+                stats.neighborhoodBuilds++; neighborhoodDirty = false; // NEW
+                const candidates = clusters.filter(eligible), active = expanded().filter(eligible); // NEW
+                let anchors = active.map(group => group.last || group.roots[0]); // NEW
+                if (!anchors.length) anchors = [lastModule && eligible(getCluster(lastModule) || { cities: new Set() }) ? lastModule : candidates[0] && candidates[0].roots[0]].filter(Boolean); // NEW
+                const next = new Set(), take = anchors.length === 2 ? LIMIT / 2 : LIMIT; // NEW
+                const positions = new Map(); // NEW
+                candidates.forEach(group => positions.set(group, group.modules.map(origin))); // NEW
+                anchors.forEach(anchor => { // NEW
+                    const point = origin(anchor), own = getCluster(anchor); // NEW
+                    const ranked = candidates.map(group => ({ group, distance: group === own ? -1 : positions.get(group).reduce((nearest, pos) => Math.min(nearest, (pos.x - point.x) ** 2 + (pos.y - point.y) ** 2), Infinity) })); // NEW: avoid argument-count limits for very large connected clusters.
+                    ranked.sort((a, b) => a.distance - b.distance || a.group.order - b.group.order); // NEW
+                    ranked.slice(0, take).forEach(item => next.add(item.group.id)); // NEW
+                }); // NEW
+                rendered = next; // NEW
+                graph.view.states.getValues().forEach(state => { if (!live(state.cell) || !isRendered(state.cell)) graph.view.removeState(state.cell); }); // NEW
+                graph.fireEvent(new mxEventObject("trellisClustersChanged")); // NEW
+            } // NEW
+            if (validate && !handlingModel && !model.updateLevel) { graph.view.validate(); graph.sizeDidChange(); } // NEW
+        } // NEW
+        function focusForCity(preferred) { // NEW
+            function suitable(cell) { return cell && live(cell) && getCluster(cell) && eligible(getCluster(cell)) && (!isGardenModule(cell) || city === ALL || cityInfo(cell).key === city); } // NEW
+            if (suitable(preferred)) return preferred; // NEW
+            const remembered = model.getCell(cityMemory[city]); // NEW
+            if (suitable(remembered)) return remembered; // NEW
+            const available = gardens.filter(cell => city === ALL || cityInfo(cell).key === city); // NEW
+            available.sort((a, b) => plainCellLabel(a, "").localeCompare(plainCellLabel(b, "")) || records.get(cellId(a)).order - records.get(cellId(b)).order); // NEW
+            return available[0] || (clusters.find(eligible) || { roots: [] }).roots[0] || null; // NEW
+        } // NEW
+        function setCity(key, focus) { // NEW
+            syncPending(); // NEW
+            if (key !== ALL && key !== NONE && !clusters.some(group => group.cities.has(key))) key = ALL; // NEW: No city remains selectable when its result is empty.
+            if (city !== key) { // NEW
+                city = key; neighborhoodDirty = true; savePreference(); // NEW
+                collapseGroups(expanded().filter(group => !eligible(group)), false); // NEW
+            } // NEW
+            const destination = focusForCity(); // NEW
+            if (focus !== false && destination) touch(destination); // NEW
+            if (focus !== false && !destination) graph.clearSelection(); // NEW: empty city results must not retain hidden selection handles or an unrelated garden dashboard.
+            publish(true); // NEW
+            return destination; // NEW
+        } // NEW
+        function revealCell(cell) { // NEW
+            syncPending(); // NEW
+            const group = getCluster(cell); // NEW
+            if (!group) return; // NEW
+            if (!eligible(group)) { // NEW
+                const garden = isGardenModule(nearestModule(cell)) ? nearestModule(cell) : group.gardens[0]; // NEW
+                setCity(garden ? cityInfo(garden).key : NONE, false); // NEW
+            } // NEW
+            touch(cell); // NEW
+            publish(true); // NEW
+        } // NEW
+        function cities() { // NEW
+            const result = new Map([[ALL, "All cities"], [NONE, "No city"]]); // NEW
+            records.forEach(entry => { // NEW
+                if (!entry.garden) return; // NEW
+                const key = entry.info.key, resolver = window.USL && window.USL.scheduler && window.USL.scheduler.resolveCityForModule; // NEW
+                result.set(key, geographicLabels.get(key) || entry.info.label); // NEW
+                if (key === NONE || !resolver || pendingCities.has(key)) return; // NEW
+                pendingCities.add(key); const generation = cityGeneration; // NEW: resolve each stored city once, rather than issuing one lookup per garden.
+                Promise.resolve().then(() => resolver(entry.cell)).then(resolved => { // NEW: the existing scheduler owns city database and reference-context resolution.
+                    const current = records.get(cellId(entry.cell)); // NEW
+                    if (disposed || generation !== cityGeneration || !resolved || !resolved.ok || !current || current.info.key !== key || current.info.label !== entry.info.label) return; // NEW
+                    const location = resolved.city, region = location.region_name || location.region_code, country = location.country_name || location.country_code; // NEW
+                    const geography = [region, country].filter(Boolean).join(", "); // NEW
+                    const label = (location.city_name || entry.info.label) + (geography ? " — " + geography : ""); // NEW
+                    if (label !== (geographicLabels.get(key) || entry.info.label)) { geographicLabels.set(key, label); graph.fireEvent(new mxEventObject("trellisClustersChanged")); } // NEW
+                }).catch(() => { /* Stored IDs and cell labels keep the picker usable when the city database is unavailable. */ }); // NEW
+            }); // NEW
+            const counts = new Map(); // NEW
+            result.forEach(label => counts.set(label, (counts.get(label) || 0) + 1)); // NEW
+            return [{ key: ALL, label: "All cities" }].concat(Array.from(result, ([key, label]) => ({ key, label: counts.get(label) > 1 && key.startsWith("id:") ? label + " (#" + key.slice(3) + ")" : label })) // NEW
+                .filter(item => item.key !== ALL && item.key !== NONE).sort((a, b) => a.label.localeCompare(b.label)), [{ key: NONE, label: "No city" }]); // NEW
+        } // NEW
+        function listen(source, event, callback) { // NEW
+            if (!source || !source.addListener) return; // NEW
+            source.addListener(event, callback); listeners.push(() => source.removeListener(callback)); // NEW
+        } // NEW
+        /** Restore only hooks still owned by this controller; later plugin wrappers remain intact. */ // NEW
+        function hook(target, name, wrapper) { // NEW
+            const original = target[name]; // NEW
+            if (typeof original !== "function") return; // NEW
+            const replacement = wrapper(original); target[name] = replacement; // NEW
+            restorers.push(() => { if (target[name] === replacement) target[name] = original; }); // NEW
+        } // NEW
+
+        reset(); // NEW
+        const initial = graph.getSelectionCells && graph.getSelectionCells()[0]; // NEW
+        if (initial) touch(initial); // NEW
+        normalize(initial ? [getCluster(initial)] : [], true); // NEW
+        publish(false); // NEW
+        hook(model, "rootChanged", original => function () { // NEW: native page switching changes the root directly before validating its restored view.
+            const previous = original.apply(this, arguments); // NEW
+            if (root !== model.getRoot()) { reset(); normalize([], true); publish(false); } // NEW
+            return previous; // NEW
+        }); // NEW
+        hook(graph, "isCellVisible", original => function (cell) { return original.apply(this, arguments) && isRendered(cell); }); // NEW
+        hook(graph.view, "getState", original => function (cell, create) { return create && !isRendered(cell) ? null : original.apply(this, arguments); }); // NEW
+        hook(graph.view, "validateCell", original => function (cell, visible) { // NEW
+            if (visible === false || cell && !graph.isCellVisible(cell)) { // NEW: the instance visibility hook already checks membership.
+                if (cell && this.getState(cell)) graph.removeStateForCell(cell); // NEW: release existing hidden descendants before pruning their traversal.
+                return cell; // NEW
+            } // NEW
+            return original.apply(this, arguments); // NEW
+        }); // NEW
+        hook(graph.view, "invalidate", original => function (cell, recurse, edges) { // NEW
+            if (cell && !isRendered(cell)) return; // NEW
+            if (cell && graph.isCellCollapsed(cell) && cell !== this.currentRoot) return original.call(this, cell, false, edges); // NEW
+            return original.apply(this, arguments); // NEW
+        }); // NEW
+        hook(model, "setCollapsed", original => function (cell, collapse) { // NEW: direct native controls also mark an explicit expansion as the most recent interaction.
+            if (!normalizing && !nativeExpansion && collapse === false && graph.isCellCollapsed(cell)) revealCell(cell); // NEW
+            return original.apply(this, arguments); // NEW
+        }); // NEW
+        hook(graph, "foldCells", original => function (collapse, recurse, cells, checkFoldable, event) { // NEW
+            if (normalizing) return original.apply(this, arguments); // NEW
+            syncPending(); // NEW
+            let targets = cells || graph.getFoldableCells(graph.getSelectionCells(), collapse); // NEW
+            if (!collapse) { // NEW
+                const requested = []; // NEW
+                targets.forEach(cell => { const group = getCluster(cell); if (group && !requested.includes(group)) requested.push(group); }); // NEW
+                const accepted = requested.slice(0, 2); // NEW
+                targets = targets.filter(cell => !getCluster(cell) || accepted.includes(getCluster(cell))); // NEW
+                const previousExpansion = nativeExpansion; nativeExpansion = true; // NEW: preserve requested batch order despite the native folder iterating cells in reverse.
+                model.beginUpdate(); // NEW
+                try { // NEW
+                    accepted.forEach(group => revealCell(targets.find(cell => getCluster(cell) === group))); // NEW
+                    const keep = accepted.concat(expanded().filter(group => !accepted.includes(group)).sort((a, b) => b.used - a.used || a.order - b.order)).slice(0, 2); // NEW
+                    collapseGroups(expanded().filter(group => !keep.includes(group)), false); // NEW
+                    return original.call(this, collapse, recurse, targets, checkFoldable, event); // NEW
+                } finally { nativeExpansion = previousExpansion; neighborhoodDirty = true; model.endUpdate(); } // NEW
+            } // NEW
+            return original.call(this, collapse, recurse, targets, checkFoldable, event); // NEW
+        }); // NEW
+        hook(graph.getSelectionModel(), "changeSelection", original => function (added) { // NEW
+            if (added && added.length) revealCell(added[0]); // NEW: cover setSelectionCell, additive selection and native mouse selection before handles are created.
+            return original.apply(this, arguments); // NEW
+        }); // NEW
+        hook(graph, "startEditingAtCell", original => function (cell) { // NEW
+            const destination = cell || graph.getSelectionCell(); // NEW
+            if (destination) revealCell(destination); // NEW
+            return original.apply(this, arguments); // NEW
+        }); // NEW
+        hook(graph, "scrollCellToVisible", original => function (cell) { // NEW
+            if (cell) revealCell(cell); // NEW
+            return original.apply(this, arguments); // NEW
+        }); // NEW
+        hook(graph, "enterGroup", original => function (cell) { // NEW
+            const destination = cell || graph.getSelectionCell(); // NEW
+            if (destination) revealCell(destination); // NEW
+            return original.apply(this, arguments); // NEW
+        }); // NEW
+        ["getCellAt", "getScaledCellAt", "getCells"].forEach(name => hook(graph, name, original => function (x, y, parent) { // NEW
+            const candidate = name === "getCells" ? arguments[4] : parent; // NEW
+            if (candidate && (!isRendered(candidate) || graph.isCellCollapsed(candidate) && candidate !== graph.view.currentRoot)) return name === "getCells" ? arguments[5] || [] : null; // NEW: mouse hit testing must not traverse folded or excluded contents, while drill-down keeps the current root interactive.
+            return original.apply(this, arguments); // NEW
+        })); // NEW
+        hook(graph, "graphModelChanged", original => function (changes) { // NEW
+            handlingModel = true; // NEW
+            try { // NEW
+                if (changes !== prepared || changes.length !== preparedCount) { sync(changes); normalize([], true); } // NEW
+                prepared = null; publish(false); // NEW
+                return original.apply(this, arguments); // NEW
+            } finally { handlingModel = false; } // NEW
+        }); // NEW
+        let exportingView = false; // NEW
+        hook(ui, "getFileData", original => function () { // NEW
+            return exportingView ? mxUtils.getXml(exportModel()) : original.apply(this, arguments); // NEW
+        }); // NEW
+        hook(ui, "downloadRequestBuilder", original => function (_filename, format, ignoreSelection) { // NEW
+            if (ignoreSelection === false || !["png", "xmlpng", "jpg", "jpeg", "svg", "pdf"].includes(format)) return original.apply(this, arguments); // NEW
+            exportingView = true; // NEW
+            try { // NEW
+                const request = original.apply(this, arguments); // NEW
+                request.from = null; request.to = null; request.allPages = null; // NEW: the worker receives exactly the active page's rendered subset.
+                return request; // NEW
+            } finally { exportingView = false; } // NEW
+        }); // NEW
+        listen(model, mxEvent.BEFORE_UNDO, function (_sender, event) { // NEW
+            if (normalizing) return; // NEW
+            const edit = event.getProperty("edit"); // NEW
+            sync(edit.changes); normalize([], false); // NEW
+            prepared = edit.changes; preparedCount = edit.changes.length; // NEW
+            publish(false); // NEW
+        }); // NEW
+        listen(ui.editor, "fileLoaded", function () { // NEW
+            if (root !== model.getRoot()) reset(); else { readPreference(); neighborhoodDirty = true; } // NEW: root-change validation already indexed this page; fileLoaded only finalizes preferences and focus.
+            const selected = graph.getSelectionCells()[0]; // NEW
+            const users = window.Trellis && window.Trellis.users; // NEW
+            const diagram = users && users.getDiagramKey && users.getDiagramKey({ create: false }); // NEW
+            const page = ui.currentPage, pageId = page && (page.getId ? page.getId() : page.id) || "default-page"; // NEW
+            const user = users && users.getCurrentUser && users.getCurrentUser(); // NEW
+            let remembered = null; // NEW
+            try { if (diagram) remembered = model.getCell(window.localStorage.getItem("trellis.gardenDashboard.lastGarden.v1:" + diagram + ":" + pageId + ":" + (user && user.id ? "user:" + user.id : "shared"))); } catch (_) { /* Startup can fall back to selection. */ } // NEW
+            const focus = focusForCity(selected || remembered); // NEW
+            if (focus) touch(focus); // NEW
+            normalize(focus ? [getCluster(focus)] : [], true); publish(true); // NEW
+        }); // NEW
+        function restoreUserPreference() { // NEW
+            if (preferenceKey() === preference) return; // NEW
+            geographicLabels.clear(); pendingCities.clear(); cityGeneration++; // NEW: city database/reference resolution belongs to the current user context.
+            readPreference(); // NEW
+            if (city !== ALL && city !== NONE && !clusters.some(group => group.cities.has(city))) city = ALL; // NEW
+            neighborhoodDirty = true; normalize([], true); publish(true); // NEW
+        } // NEW
+        window.addEventListener("trellisUsersSessionChanged", restoreUserPreference); // NEW
+        listeners.push(() => window.removeEventListener("trellisUsersSessionChanged", restoreUserPreference)); // NEW
+        function dispose() { // NEW
+            if (disposed) return; // NEW
+            disposed = true; listeners.splice(0).forEach(remove => remove()); // NEW
+            restorers.reverse().forEach(restore => restore()); // NEW
+            records.clear(); usage.clear(); geographicLabels.clear(); pendingCities.clear(); clusters = []; gardens = []; rendered.clear(); // NEW
+        } // NEW
+        listen(graph, mxEvent.DESTROY, dispose); // NEW
+        return { getCluster, getCities: cities, getCity: () => city, setCity, revealCell, focusForCity, cityForGarden: cell => cityInfo(cell).key, // NEW
+            gardenLabel: cell => { const entry = records.get(cellId(cell)); return entry ? entry.label : plainCellLabel(cell, "Garden Module"); }, // NEW
+            gardenCity: cell => { const entry = records.get(cellId(cell)); return entry && entry.info.key !== NONE ? geographicLabels.get(entry.info.key) || entry.info.label : ""; }, // NEW
+            hasModules: () => records.size > 0, // NEW
+            listModules: () => Array.from(records.values(), entry => entry.cell), // NEW: shared module index for rendering-only projection consumers.
+            listGardens: () => gardens.slice(), isRendered, renderedCells, exportModel, dispose, // NEW
+            snapshot: () => ({ city, clusters: clusters.length, expanded: expanded().map(group => group.id), rendered: Array.from(rendered), stats: Object.assign({}, stats) }) }; // NEW
+    } // NEW
+
+    graph.__trellisModules.clusters = createModuleClusterController(); // NEW
 
     installRootModuleCreationOverlay();
     installSelectedTeamModuleRoleOverlay();

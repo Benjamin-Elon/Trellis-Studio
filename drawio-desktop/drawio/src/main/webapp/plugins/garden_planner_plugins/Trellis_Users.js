@@ -1969,7 +1969,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function incomingAccessRequestCount(options) {
-        return listIncomingAccessRequests(options).length;
+        return listIncomingAccessRequests(options).length + (graph.__trellisReferences?.pendingCount(options) || 0); // CHANGE: typed reference requests share Messages and its notification count.
     }
 
     function cellAncestorIds(cell) {
@@ -2843,6 +2843,8 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     function changeAllowed(change, context) {
+        const referencePermission = graph.__trellisReferences?.changeAllowed(change, context); // NEW
+        if (referencePermission === false) return false; // NEW: apply before administrator shortcuts.
         const namingAttrs = changedAttributeNames(change); // NEW
         const namedRemoval = change?.constructor?.name === 'mxChildChange' && change.child?.getAttribute?.('trellis_project_name') != null && !currentParentOfChange(change); // NEW
         if ((namingAttrs.includes('trellis_project_name') || namedRemoval) && !isAdmin()) return false; // NEW: ownership and field exceptions cannot rename the project.
@@ -2870,6 +2872,7 @@ Draw.loadPlugin(function (ui) {
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && PROTECTED_ATTRS.has(String(change.key || "")) && !canManageAccess(cell)) return false;
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && protectedAttrsChanged(change) && !canManageAccess(cell)) return false;
         if (plantCircleBudgetChangeAllowed(change, context)) return true; // NEW: unrelated changes still pass all ordinary permission checks.
+        if (referencePermission === true) return true; // NEW: eligible gardeners may submit typed proposals without general module-edit access.
         if ((name === "mxCellAttributeChange" || name === "mxValueChange") && isModuleCell(cell)) return canEditCell(cell);
         if (isPlantingSummaryLifecycleChange(change)) return !!(context && context.summaryGroups && context.summaryGroups.has(cell)); // NEW: fail closed, after all protected metadata checks.
         if (name === "mxChildChange") {
@@ -3546,6 +3549,7 @@ Draw.loadPlugin(function (ui) {
         const historyButton = host.querySelector && host.querySelector(".trellis-changemap-history-button");
         if (historyButton && historyButton.parentNode === host) host.insertBefore(toolbarButton, historyButton);
         else host.appendChild(toolbarButton);
+        const storageButton = host.querySelector && host.querySelector('.trellis-history-storage-button'); if (storageButton) host.insertBefore(storageButton, toolbarButton.nextSibling); // NEW: storage always follows the account menu, regardless of plugin load order.
         updateToolbarButton();
     }
 
@@ -4281,9 +4285,10 @@ Draw.loadPlugin(function (ui) {
         list.className = "trellis-users-messages-list";
         const render = function () {
             clearNode(list);
+            const referenceCount = graph.__trellisReferences?.renderMessages(list, options || {}) || 0; // NEW
             const requests = listIncomingAccessRequests(options);
             const responses = listAccessMessages(options);
-            if (!requests.length && !responses.length) {
+            if (!requests.length && !responses.length && !referenceCount) { // CHANGE
                 const empty = document.createElement("div");
                 empty.style.cssText = "color:#6B7280;padding:8px 0;";
                 empty.textContent = "No messages.";

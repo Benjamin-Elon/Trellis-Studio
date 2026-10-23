@@ -331,7 +331,7 @@ test("PlanSchema adds default demand channels only when the collection is absent
 });
 
 test("Planting-method SQL starts directly with SQL text", () => {
-    const functionSource = PLUGIN_SOURCE.match(/async function queryPlantingMethodsForPlantId[\s\S]*?return await queryAll\(sql, \[pid\]\);/);
+    const functionSource = PLUGIN_SOURCE.match(/async function queryPlantingMethodsForPlantId[\s\S]*?const sql = `[\s\S]*?`;/); // CHANGE: test SQL text independently of the reference-row filtering after the query.
     assert.ok(functionSource);
     assert.doesNotMatch(functionSource[0], /const sql = `\s*\/\//);
     assert.match(functionSource[0], /const sql = `\s*SELECT pm\.method_id/);

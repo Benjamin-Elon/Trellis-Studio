@@ -94,7 +94,7 @@ test('remembered creation and unlock restore across service restart without expo
     const made = await f.service.create({ username: 'Alice', password: 'first-password', keepLoggedIn: true }); // NEW
     const text = await fs.readFile(filename, 'utf8'); // NEW
     assert.equal(text.includes('first-password'), false); assert.equal(text.includes('vaultKey'), false); assert.equal(text.includes('privateKey'), false); // NEW
-    assert.deepEqual(Object.keys(made.session).sort(), ['deviceId', 'identityId', 'passwordConflict', 'username']); // NEW
+    assert.deepEqual(Object.keys(made.session).sort(), ['deviceId', 'generation', 'identityId', 'passwordConflict', 'username']); assert.ok(Number.isSafeInteger(made.session.generation)); // CHANGE: the public login generation invalidates browsing snapshots and carries no credentials.
     const restarted = f.restart(); await restarted.initialize(); // NEW
     assert.deepEqual(restarted.session(), made.session); // NEW
     await restarted.lock(); assert.equal(restarted.session(), null); // NEW

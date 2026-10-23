@@ -9,7 +9,8 @@ async function run() { // NEW
     if (path.dirname(path.resolve(directory)) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('trellis-smoke-run-')) throw new Error('Unexpected smoke control directory.'); // NEW: validate the exact recursive-cleanup target.
     const stopFile = path.join(directory, 'stop'); // NEW
     const env = { ...process.env, TRELLIS_SMOKE_STOP_FILE: stopFile }; delete env.ELECTRON_RUN_AS_NODE; // NEW
-    const child = spawn(require('electron'), [path.join(__dirname, '../test/helpers/garden-home-production-electron.cjs')], { env, windowsHide: true, stdio: 'inherit' }); // NEW
+    const helper = process.env.TRELLIS_SPLASH_DIAGNOSTIC === '1' ? 'splash-diagnostic-electron.cjs' : 'garden-home-production-electron.cjs'; // CHANGE: reuse the bounded parent for focused splash diagnostics.
+    const child = spawn(require('electron'), [path.join(__dirname, '../test/helpers', helper)], { env, windowsHide: true, stdio: 'inherit' }); // CHANGE
     let force; // NEW
     const timeout = setTimeout(async () => { // NEW
         console.error('Production smoke exceeded its parent deadline; requesting owned cleanup.'); // NEW

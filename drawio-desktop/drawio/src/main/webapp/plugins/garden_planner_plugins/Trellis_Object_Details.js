@@ -92,9 +92,15 @@
         function selectedOwners() { return new Set(graph.getSelectionCells().map(cell => core.detailsOwner(cell, model())).filter(Boolean)); } // NEW
         function cellBounds(cell) { // NEW
             const state = graph.view.getState(cell); if (!state) return null; // NEW
+            const bounds = model().isEdge(cell) ? core.edgeBounds(state.absolutePoints) : state; if (!bounds) return null; // CHANGE
             const scale = graph.useCssTransforms ? graph.view.scale : 1, translate = graph.useCssTransforms ? graph.view.translate : { x: 0, y: 0 }; // NEW
-            return { x: (state.x + translate.x) * scale + (graph.panDx || 0), y: (state.y + translate.y) * scale + (graph.panDy || 0), width: state.width * scale, height: state.height * scale }; // NEW
+            return { x: (bounds.x + translate.x) * scale + (graph.panDx || 0), y: (bounds.y + translate.y) * scale + (graph.panDy || 0), width: bounds.width * scale, height: bounds.height * scale }; // CHANGE
         } // NEW
+        /** Share screen/export placement while retaining the original vertex inset at each badge size. */ // CHANGE
+        function badgeBounds(cell, size = 20) { // CHANGE
+            const bounds = cellBounds(cell); if (!bounds) return null; // CHANGE
+            return { x: model().isEdge(cell) ? bounds.x - size / 2 : bounds.x + Math.max(4, bounds.width - size - 4), y: model().isEdge(cell) ? bounds.y - size - 4 : bounds.y + 4, width: size, height: size }; // CHANGE
+        } // CHANGE
         function title(cell) { const node = document.createElement('div'); node.innerHTML = Graph.sanitizeHtml(graph.convertValueToString(cell)); return node.textContent || 'Object'; } // NEW
         function state(entry, name, error) { // NEW
             entry.error = name === 'failed' ? error || new Error('The details could not be saved.') : null; // NEW
@@ -158,9 +164,10 @@
             toggle.style.cssText = 'display:inline-flex;align-items:stretch;gap:0;max-width:100%;border:1px solid #c7c7cc;border-radius:4px;overflow:hidden;box-sizing:border-box;'; // CHANGE
             toggle.setAttribute('role', 'group'); toggle.setAttribute('aria-label', 'Details section'); row.appendChild(toggle); // CHANGE
             entry.activeTab = read(entry.cell) || !readComments(entry.cell) && !hasCommentDraft(entry.cell) ? 'info' : 'comments'; entry.tabButtons = []; // CHANGE
+            if (badgeStatus(entry.cell).activeAlerts > 0) entry.activeTab = 'alerts'; // CHANGE
             entry.comments = root.TrellisDetailsComments.mount({ entry, core, toolbar, title: title(entry.cell), graph, ui, users, identity: preferenceIdentity(entry.cell), // CHANGE
                 button: makeButton, isCurrent: () => exists(entry) && entry.user === userKey(), canEdit: () => canEdit(entry), read: () => readComments(entry.cell), write: raw => writeComments(entry, raw), changed: requestRefresh, flush: flushAll }); // CHANGE
-            for (const [key, label] of [['info', 'Additional info'], ['comments', 'Comments']]) { // CHANGE
+            for (const [key, label] of [['info', 'Additional info'], ['comments', 'Comments'], ['alerts', 'Alerts']]) { // CHANGE
                 const button = makeButton(label, 'Show ' + label.toLowerCase(), () => { // CHANGE
                     if (key === entry.activeTab) return; // CHANGE
                     if (entry.activeTab === 'info' && !flushEntry(entry)) return; // CHANGE
@@ -171,16 +178,17 @@
             entry.panel.insertBefore(row, entry.editor); entry.panel.insertBefore(entry.comments.element, entry.status); updateTabs(entry); // CHANGE
         } // CHANGE
         function updateTabs(entry) { // CHANGE
-            let count = '?'; try { count = core.parseComments(readComments(entry.cell)).length; } catch (_) { /* Keep damaged discussion discoverable. */ } // CHANGE
+            let count = '?', activeAlerts = '?'; try { const records = core.parseComments(readComments(entry.cell)); count = records.length; activeAlerts = records.filter(item => item.isAlert && item.resolvedAt === null).length; } catch (_) { /* Keep damaged discussion discoverable. */ } // CHANGE
             for (const button of entry.tabButtons) { // CHANGE
                 const active = button.dataset.detailsTab === entry.activeTab; button.setAttribute('aria-pressed', String(active)); // CHANGE
                 if (button.dataset.detailsTab === 'comments') button.textContent = 'Comments (' + count + ')'; // CHANGE
+                if (button.dataset.detailsTab === 'alerts') button.textContent = 'Alerts (' + activeAlerts + ')'; // CHANGE
                 if (root.Trellis && root.Trellis.ui && root.Trellis.ui.applyButtonStyle) root.Trellis.ui.applyButtonStyle(button, 'mode', { compact: true, active }); // CHANGE
                 else button.style.cssText = 'box-sizing:border-box;border:0;border-radius:0;padding:3px 6px;font:12px Arial,sans-serif;white-space:nowrap;outline-offset:-2px;cursor:pointer;background:' + (active ? '#ecfeff' : '#fff') + ';color:' + (active ? '#155e75' : '#374151') + ';font-weight:' + (active ? '700' : '400') + ';'; // CHANGE
                 button.style.minWidth = '0'; button.style.whiteSpace = 'normal'; button.style.height = 'auto'; button.style.minHeight = '24px'; // CHANGE: the joined selector remains usable at the existing minimum panel width.
             } // CHANGE
             entry.editor.style.display = entry.activeTab === 'info' ? '' : 'none'; entry.status.style.display = entry.activeTab === 'info' ? '' : 'none'; // CHANGE
-            entry.comments.element.style.display = entry.activeTab === 'comments' ? '' : 'none'; entry.comments.refresh(); // CHANGE
+            entry.comments.element.style.display = entry.activeTab !== 'info' ? '' : 'none'; entry.comments.refresh(); // CHANGE
         } // CHANGE
         function createEntry(cell, creating) { // NEW
             const entry = { cell, model: model(), root: model().getRoot(), page: pageKey(), user: userKey(), identity: preferenceIdentity(cell), preferences: getPreferences(cell), creating: !!creating, error: null }; // CHANGE
@@ -244,14 +252,14 @@
             const hasDetails = !!read(cell); // CHANGE
             try { // CHANGE
                 const comments = core.parseComments(readComments(cell)); // CHANGE
-                return { hasDetails, commentCount: comments.length, unresolvedCount: comments.filter(comment => comment.resolvedAt === null).length }; // CHANGE
-            } catch (_) { return { hasDetails, commentCount: null, unresolvedCount: null }; } // CHANGE
+                return { hasDetails, commentCount: comments.length, unresolvedCount: comments.filter(comment => comment.resolvedAt === null).length, activeAlerts: comments.filter(comment => comment.isAlert && comment.resolvedAt === null).length }; // CHANGE
+            } catch (_) { return { hasDetails, commentCount: null, unresolvedCount: null, activeAlerts: null }; } // CHANGE
         } // CHANGE
 
         /** Badges occupy the inside corner; collaboration activity labels occupy the outside corner. */ // NEW
         function updateBadge(cell) { // NEW
-            const cellState = cellBounds(cell), status = badgeStatus(cell); let badge = badges.get(cell); // CHANGE
-            if (!cellState || !status.hasDetails && status.commentCount === 0) { if (badge) { badge.remove(); badges.delete(cell); } return; } // CHANGE
+            const bounds = badgeBounds(cell), status = badgeStatus(cell); let badge = badges.get(cell); // CHANGE
+            if (!bounds || !status.hasDetails && status.commentCount === 0) { if (badge) { badge.remove(); badges.delete(cell); } return; } // CHANGE
             if (!badge) { // NEW
                 badge = makeButton('', '', () => { // CHANGE
                     const selected = selectedOwners().has(cell), preferences = getPreferences(cell); // NEW
@@ -268,9 +276,11 @@
             } // NEW
             badge.style.backgroundColor = status.hasDetails ? '#1e40af' : '#eff6ff'; // CHANGE
             badge.firstElementChild.style.backgroundColor = status.unresolvedCount > 0 ? '#facc15' : '#eff6ff'; // CHANGE
+            badge.style.outline = status.activeAlerts > 0 ? '2px solid #dc2626' : ''; badge.style.outlineOffset = status.activeAlerts > 0 ? '1px' : ''; // CHANGE
             const commentStatus = status.unresolvedCount === null ? 'Comment status unavailable' : status.unresolvedCount + ' unresolved comment' + (status.unresolvedCount === 1 ? '' : 's'); // CHANGE
-            badge.title = 'Show or hide details for ' + title(cell) + '. ' + (status.hasDetails ? 'Extra details available' : 'No extra details') + '. ' + commentStatus + '.'; badge.setAttribute('aria-label', badge.title); // CHANGE
-            badge.style.left = cellState.x + Math.max(4, cellState.width - 24) + 'px'; badge.style.top = cellState.y + 4 + 'px'; // CHANGE
+            const alertStatus = status.activeAlerts === null ? 'Alert status unavailable' : status.activeAlerts + ' active alert' + (status.activeAlerts === 1 ? '' : 's'); // CHANGE
+            badge.title = 'Show or hide details for ' + title(cell) + '. ' + (status.hasDetails ? 'Extra details available' : 'No extra details') + '. ' + commentStatus + '. ' + alertStatus + '.'; badge.setAttribute('aria-label', badge.title); // CHANGE
+            badge.style.left = bounds.x + 'px'; badge.style.top = bounds.y + 'px'; // CHANGE
         } // NEW
         function refresh() { // NEW
             if (disposed) return; refreshTimer = null; // NEW
@@ -288,6 +298,7 @@
                 if (entry.user !== currentUser) { entry.panel.hidden = true; entry.panel.style.display = 'none'; entry.draft.cancel(); continue; } // NEW
                 const onPage = exists(entry) && entry.page === pageKey(), preferences = onPage ? getPreferences(entry.cell) : entry.preferences; // NEW
                 entry.preferences = preferences; // NEW
+                if (onPage && !cellBounds(entry.cell)) { entry.panel.hidden = true; entry.panel.style.display = 'none'; entry.draft.cancel(); continue; } // CHANGE: retain private work without showing an unanchored overlay.
                 const showing = onPage && cellBounds(entry.cell) && selected.has(entry.cell) && preferences.visible && (hasContent(entry.cell) || entry.creating || entry.draft.dirty() || entry.comments.hasDraft() || entry.panel.contains(document.activeElement)); // CHANGE
                 if (!showing && !entry.error) { if (!flushEntry(entry)) { entry.panel.hidden = false; continue; } removeEntry(entry); continue; } // NEW
                 entry.panel.hidden = false; entry.panel.style.display = 'flex'; entry.editor.contentEditable = String(canEdit(entry)); // NEW
@@ -307,7 +318,8 @@
             if (!graph.isCellSelected(cell)) graph.addSelectionCell(cell); // NEW
             const preferences = savePreferences(cell, { ...getPreferences(cell), visible: true }); // NEW
             let entry = entries.get(cell); if (!entry) entry = createEntry(cell, true); entry.creating = true; entry.preferences = preferences; // NEW
-            positionEntry(entry); entry.panel.hidden = false; entry.panel.style.display = 'flex'; if (entry.activeTab === 'comments') entry.comments.focus(); else entry.editor.focus(); requestRefresh(); // CHANGE
+            if (!cellBounds(cell)) { entry.panel.hidden = true; entry.panel.style.display = 'none'; requestRefresh(); return; } // CHANGE
+            positionEntry(entry); entry.panel.hidden = false; entry.panel.style.display = 'flex'; if (entry.activeTab !== 'info') entry.comments.focus(); else entry.editor.focus(); requestRefresh(); // CHANGE
         } // NEW
 
         /** Export snapshots are display data, with screen dimensions converted to unscaled diagram coordinates. */ // NEW
@@ -328,8 +340,8 @@
             } // NEW
             for (const cell of badges.keys()) { // CHANGE
                 if (!read(cell)) continue; // CHANGE: comment-only badges never enter rendered exports.
-                const cellState = cellBounds(cell); // CHANGE: keep the original 18px export geometry independent of the 20px canvas badge.
-                records.push({ ownerId: cell.id, badge: true, fontSize: 14 / scale, geometry: geometry({ x: cellState.x + Math.max(4, cellState.width - 22), y: cellState.y + 4, width: 18, height: 18 }) }); // CHANGE
+                const bounds = badgeBounds(cell, 18); if (!bounds) continue; // CHANGE: exports share edge anchors and keep the original 18px appearance.
+                records.push({ ownerId: cell.id, badge: true, fontSize: 14 / scale, geometry: geometry(bounds) }); // CHANGE
             } // NEW
             return { [pageKey()]: records }; // NEW
         } // NEW

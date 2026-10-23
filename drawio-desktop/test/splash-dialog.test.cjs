@@ -205,9 +205,9 @@ function makeAvatarRecord(overrides = {}) {
 }
 
 function loadShowSplashHarness(options = {}) {
-    const appSource = fs.readFileSync(appPath, "utf8");
-    const start = appSource.indexOf("App.prototype.showSplash = function(force)");
-    const end = appSource.indexOf("App.prototype.createFileSystemOptions", start);
+    const appSource = fs.readFileSync(options.bundled ? bundledPath : appPath, "utf8"); // CHANGE: execute the packaged implementation as well as source.
+    const start = appSource.indexOf(options.bundled ? "App.prototype.showSplash=function(" : "App.prototype.showSplash = function(force)"); // CHANGE
+    const end = appSource.indexOf("App.prototype.addLanguageMenu", start); // CHANGE
     const calls = {
         createFile: [],
         exitRequests: [],
@@ -658,18 +658,19 @@ test("Incomplete splash dismissal requests exit and does not create a blank diag
     assert.equal(calls.createFile.length, 0);
 });
 
-test("Completed splash dismissal preserves blank diagram creation", () => {
-    const { calls, context } = loadShowSplashHarness({ complete: true });
-    const result = calls.showDialog.closeCallback(true, false);
-
-    assert.equal(calls.showDialog.ignoreBgClick, true);
-    assert.equal(result, undefined);
-    assert.equal(calls.exitRequests.length, 0);
-    assert.equal(calls.exitMessages, 0);
-    assert.equal(calls.createFile.length, 1);
-    assert.equal(calls.createFile[0][0], "Untitled Diagram.drawio");
-    assert.equal(context.Editor.useLocalStorage, true);
-});
+test("Completed splash rejects dismissal and only explicit launch actions can leave Home", () => { // CHANGE
+    for (const bundled of [false, true]) { // NEW
+        const { calls } = loadShowSplashHarness({ complete: true, bundled }); // CHANGE
+        assert.equal(calls.showDialog.closable, true); // CHANGE: enhancement removes the visible control and restores it only for incomplete licensing.
+        assert.equal(calls.showDialog.ignoreBgClick, true); // CHANGE
+        assert.equal(calls.showDialog.closeCallback(true, false), false); // CHANGE
+        assert.equal(calls.showDialog.closeCallback(false, true), false); // NEW
+        assert.equal(calls.showDialog.closeCallback(false, false), undefined); // NEW: Create and Open dismiss programmatically.
+        assert.equal(calls.exitRequests.length, 0); // CHANGE
+        assert.equal(calls.exitMessages, 0); // CHANGE
+        assert.equal(calls.createFile.length, 0); // CHANGE
+    } // NEW
+}); // CHANGE
 
 test("SplashDialog source and bundle use oath wizard storage, close hook, validation, and card dimensions", () => {
 	const appSource = fs.readFileSync(appPath, "utf8");
@@ -723,7 +724,7 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.match(bundledSource, /Explore & Support My Projects/);
     assert.match(bundledSource, /https:\/\/patreon\.com\/Benjamin980/);
     assert.doesNotMatch(bundledSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance|Support on Patreon|Support: Patreon/);
-    assert.match(bundledSource, /showDialog\(p\.container,700,630[\s\S]*!0,null,null,!0/);
+    assert.match(bundledSource, /showDialog\(dlg\.container,700,630[\s\S]*true,null,null,true/); // CHANGE: regenerated splash preserves backdrop protection.
 });
 
 test("Trellis splash enhancement adds the branded shell, saved-state structure, and actions without the Help row", () => {
@@ -959,7 +960,7 @@ test("Trellis splash outer decoration stays below app chrome and applies a valid
     assert.equal(requests[0].action, "getTrellisSplashBackground");
     assert.match(backdrop.style.getPropertyValue("--trellis-splash-image"), /garden%20view\.webp/);
     assert.match(backgroundLayer.getAttribute("src"), /garden%20view\.webp/);
-    assert.equal(closeButton.getAttribute("aria-label"), "Continue with a blank diagram");
+    assert.equal(outerContainer.contains(closeButton), false); // CHANGE: completed licensing removes the splash exit control.
 });
 
 test("Trellis splash eats percentage margins before compact mode and removes its resize listener", () => {
@@ -1095,6 +1096,16 @@ test("Trellis splash rejects unsafe background filenames and keeps the gradient 
     assert.equal(closeButton.getAttribute("aria-label"), "Exit Trellis OS"); // CHANGE: Trellis OS branding.
 });
 
+test("Change license restores the original exit control until licensing completes again", () => { // NEW
+    const { dom, dialog, context, editorUi } = loadSplashDialog({ savedRecord: makeSavedRecord() }); // NEW
+    const container = dom.window.document.createElement('div'), bg = dom.window.document.createElement('div'), close = dom.window.document.createElement('div'); // NEW
+    close.className = 'geButton'; container.append(close); const outer = { container, bg }; let complete = true; // NEW
+    dialog.isTrellisLicenseWizardComplete = () => complete; // NEW
+    context.window.TrellisSplashEnhancements.decorateOuterDialog(editorUi, dialog, outer); assert.equal(container.contains(close), false); // NEW
+    complete = false; dialog.container.dispatchEvent(new dom.window.Event('click')); // NEW
+    assert.equal(container.contains(close), true); assert.equal(close.getAttribute('aria-label'), 'Exit Trellis OS'); // NEW
+    complete = true; dialog.container.dispatchEvent(new dom.window.Event('click')); assert.equal(container.contains(close), false); dom.window.close(); // NEW
+}); // NEW
 test("Trellis splash tries the packaged default before Electron selection", () => {
 	const { dom, dialog, context, editorUi } = loadSplashDialog();
 	const outerContainer = dom.window.document.createElement("div");

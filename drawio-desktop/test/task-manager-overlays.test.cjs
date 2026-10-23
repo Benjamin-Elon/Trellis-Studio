@@ -225,8 +225,7 @@ function selectedWeekOverrideDay(h, dayIndex) {
 
 function addHarnessCard(h, lane, id, attrs = {}, height = 60) {
     const card = new TestCell(id, makeValue(h.document, Object.assign({ kanban_card: "1", title: id }, attrs)), new TestGeometry(30, 60 + (lane.children.length * 70), 120, height));
-    card.parent = lane;
-    lane.children.push(card);
+    h.addCell(lane, card); // CHANGE: fixtures must also be discoverable through the model's cell registry.
     return card;
 }
 
@@ -261,6 +260,7 @@ function makeHarness(options = {}) {
     const viewListeners = [];
     const mouseListeners = [];
     const graphListeners = new Map();
+    const editorListeners = new Map(); // NEW: exercise document/page lifecycle through the production plugin listeners.
     let selectedCells = [];
     let lastDialog = null;
     let currentUi = null;
@@ -504,7 +504,7 @@ function makeHarness(options = {}) {
         Draw: {
             loadPlugin(registerPlugin) {
                 const ui = {
-                    editor: { graph, undoManager: { undoableEditHappened() {} } },
+                    editor: { graph, undoManager: { undoableEditHappened() {} }, addListener(event, listener) { if (!editorListeners.has(event)) editorListeners.set(event, []); editorListeners.get(event).push(listener); } }, // CHANGE
                     hideDialog() {
                         if (currentUi && currentUi.dialog && currentUi.dialog.bg && currentUi.dialog.bg.parentNode) currentUi.dialog.bg.parentNode.removeChild(currentUi.dialog.bg);
                         if (currentUi && currentUi.dialog && currentUi.dialog.container && currentUi.dialog.container.parentNode) currentUi.dialog.container.parentNode.removeChild(currentUi.dialog.container);
@@ -571,6 +571,7 @@ function makeHarness(options = {}) {
         mxGeometryChange: class { constructor(cell, previous) { this.cell = cell; this.previous = previous || null; } }
     });
 
+    if (options.beforeInstall) options.beforeInstall({ board, stagedLane, stagedCard, card1, addCell: add }); // NEW: simulate saved projection caches before a fresh plugin session starts.
     vm.runInContext(fs.readFileSync(TASK_MANAGER_PATH, "utf8"), context, { filename: TASK_MANAGER_PATH });
     const taskHooks = context.globalThis.__TRELLIS_TASK_MANAGER_TEST_HOOKS__;
     const runtimeHooks = context.globalThis.__TRELLIS_TASK_MANAGER_RUNTIME_TEST_HOOKS__;
@@ -650,6 +651,7 @@ function makeHarness(options = {}) {
         get lastDialog() { return lastDialog; },
         get ui() { return currentUi; },
         geometryChange(cell, previous) { return new context.mxGeometryChange(cell, previous); },
+        valueChange(cell) { const change = new context.mxValueChange(); change.cell = cell; return change; }, // NEW
         childChange(cell, previous) { const change = new context.mxChildChange(); change.child = cell; change.previous = previous; return change; },
         setState(cell, state) { states.set(cell, state); },
         fireViewEvent(eventName = "repaint") {
@@ -659,6 +661,7 @@ function makeHarness(options = {}) {
             const evt = { getProperty(key) { return Object.prototype.hasOwnProperty.call(props, key) ? props[key] : null; } };
             (graphListeners.get(eventName) || []).forEach(listener => listener(graph, evt));
         },
+        fireEditorEvent(eventName) { (editorListeners.get(eventName) || []).forEach(listener => listener()); }, // NEW
         fireModelChange(edit = null) {
             const evt = { getProperty(key) { return key === "edit" ? edit : null; } };
             modelListeners.filter(entry => entry.event === "change").forEach(entry => entry.listener(null, evt));
@@ -1982,6 +1985,314 @@ test("task manager restores staged card style when week card is dragged back to 
     assert.ok(counters.lanes > 0);
     assert.ok(counters.layout > 0);
 });
+
+test('selected backlog accumulates unfinished cards in Full view without authoring task changes', async () => { // NEW
+    const h = makeHarness({ initialNonDayLaneHeight: 1000 }); // NEW
+    const header = h.document.querySelector('.trellis-task-board-header-controls'); // NEW
+    const actions = h.document.querySelector('.trellis-task-selected-card-actions'); // NEW
+    setAttr(h.board, 'task_view_mode', 'FULL'); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    h.setState(h.card1, { x: 30, y: 60, width: 120, height: 80 }); // NEW
+    h.setState(h.card2, { x: 30, y: 160, width: 120, height: 80 }); // NEW
+    const fields = ['workflow_state', 'assigned_day', 'start', 'end', 'base_start', 'base_end', 'date_override', 'linkedTo', 'manual_staged', 'task_assignee_role_ids_json']; // NEW
+    const before = [h.card1, h.card2].map(card => fields.map(field => attr(card, field))); // NEW
+    h.graph.setSelectionCell(h.card1); // NEW
+    await nextTick(); // NEW
+    h.clearValueWrites(); // NEW
+    buttonByText(actions, 'Add to backlog').click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(attr(h.board, 'task_view_mode'), 'FULL'); // NEW
+    assert.equal(h.card1.parent, h.todoLane); // NEW
+    assert.equal(h.valueWrites.length, 0); // NEW: enrollment is view state, not an authored card command.
+    h.graph.setSelectionCell(h.card2); // NEW
+    await nextTick(); // NEW
+    buttonByText(actions, 'Add to backlog').click(); // NEW
+    assert.equal(h.runtimeHooks.addSelectedBacklogCards([h.card1, h.card1]), 0); // NEW
+    await nextTick(); // NEW
+    assert.match(boardModeLabel(header).textContent, /Selected backlog \(2\)/); // NEW
+    assert.deepEqual([h.card1, h.card2].map(card => fields.map(field => attr(card, field))), before); // NEW
+    modeToggleButton(header).click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(h.card1.parent, h.stagedLane); // NEW
+    assert.equal(h.card2.parent, h.stagedLane); // NEW
+    assert.equal(h.card1.visible, true); // NEW
+    assert.equal(h.stagedCard.visible, false); // NEW
+    assert.equal(h.weekLaneCard.visible, true); // NEW: the selected backlog never filters day workload.
+    assert.match(attr(h.stagedLane, 'label'), /^Selected backlog \(2\)/); // NEW
+    h.graph.setSelectionCells([h.card1, h.card2]); // NEW
+    await nextTick(); // NEW
+    buttonByText(actions, 'Remove from backlog').click(); // NEW
+    assert.equal(h.card1.parent, h.todoLane); // NEW
+    assert.equal(h.card2.parent, h.todoLane); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (0)'); // NEW
+    assert.equal(h.graph.getSelectionCell(), h.board); // NEW: removing projected TODO cards cannot leave actions attached to an invisible source lane.
+    assert.deepEqual([h.card1, h.card2].map(card => fields.map(field => attr(card, field))), before); // NEW
+}); // NEW
+
+test('selected backlog supports individual removal, clear-to-empty, and explicit staged restoration', async () => { // NEW
+    const h = makeHarness(); // NEW
+    const header = h.document.querySelector('.trellis-task-board-header-controls'); // NEW
+    const actions = h.document.querySelector('.trellis-task-selected-card-actions'); // NEW
+    h.setState(h.stagedCard, { x: 30, y: 60, width: 120, height: 80 }); // NEW
+    assert.equal(h.runtimeHooks.addSelectedBacklogCards([h.stagedCard, h.stagedBeforeCard]), 2); // NEW
+    h.graph.setSelectionCell(h.stagedCard); // NEW
+    await nextTick(); // NEW
+    buttonByText(actions, 'Remove from backlog').click(); // NEW
+    assert.equal(h.stagedCard.visible, false); // NEW
+    assert.equal(h.stagedBeforeCard.visible, true); // NEW
+    assert.equal(attr(h.stagedCard, 'workflow_state'), 'STAGED'); // NEW
+    assert.equal(attr(h.stagedCard, 'assigned_day'), null); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+    buttonByText(header, 'Clear all').click(); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (0)'); // NEW
+    assert.equal(h.stagedBeforeCard.visible, false); // NEW
+    assert.equal(h.weekLaneCard.visible, true); // NEW
+    await nextTick(); // NEW
+    assert.equal(buttonByText(header, 'Use staged backlog').style.display, ''); // NEW
+    buttonByText(header, 'Use staged backlog').click(); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'TODO (staged)'); // NEW
+    assert.equal(h.stagedCard.visible, true); // NEW
+    assert.equal(h.stagedBeforeCard.visible, true); // NEW
+    h.window.dispatchEvent(new h.window.Event('trellisHistoryAfterRestore')); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'TODO (staged)'); // NEW
+}); // NEW
+
+test('selected backlog preserves other-week assignments and upcoming placement across view changes', async () => { // NEW
+    const h = makeHarness({ DateCtor: createFixedLocalDateConstructor('2026-07-12') }); // NEW
+    setAttr(h.board, 'task_view_mode', 'FULL'); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    const futureLane = new TestCell('chosen-future-lane', makeValue(h.document, { lane_key: 'UPCOMING_FUTURE', status: 'UPCOMING (future)' }), new TestGeometry(0, 0, 220, 1000)); // NEW
+    h.addCell(h.board, futureLane); // NEW
+    const future = addHarnessCard(h, futureLane, 'chosen-future', { workflow_state: 'STAGED', start: '2028-01-01', end: '2028-01-02', linkedTo: 'crop-a' }); // NEW
+    const doing = addHarnessCard(h, h.doingLane, 'chosen-doing', { workflow_state: 'DOING', assigned_day: '2026-07-21', start: '2026-07-20', end: '2026-07-22', scheduler_dates_locked: '1' }); // NEW
+    const header = h.document.querySelector('.trellis-task-board-header-controls'); // NEW
+    h.runtimeHooks.addSelectedBacklogCards([future, doing, h.weekLaneCard]); // NEW
+    await nextTick(); // NEW
+    modeToggleButton(header).click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(future.parent, h.stagedLane); // NEW
+    assert.equal(doing.parent, h.stagedLane); // NEW
+    assert.equal(h.weekLaneCard.parent, h.weekWedLane); // NEW
+    assert.equal(attr(doing, 'workflow_state'), 'DOING'); // NEW
+    assert.equal(attr(doing, 'assigned_day'), '2026-07-21'); // NEW
+    assert.equal(attr(future, 'manual_staged'), null); // NEW
+    modeToggleButton(header).click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(future.parent, futureLane); // NEW
+    assert.equal(doing.parent, h.doingLane); // NEW
+    assert.equal(attr(future, 'task_backlog_source_lane'), null); // NEW
+    assert.equal(attr(future, 'linkedTo'), 'crop-a'); // NEW
+    assert.equal(attr(future, 'start'), '2028-01-01'); // NEW
+    modeToggleButton(header).click(); // NEW
+    await nextTick(); // NEW
+    buttonByText(header, '>').click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(attr(h.board, 'task_selected_week_start'), '2026-07-19'); // NEW
+    assert.equal(attr(doing.parent, 'lane_key'), 'WEEK_TUE'); // NEW
+    assert.equal(future.parent, h.stagedLane); // NEW
+    assert.equal(future.visible, true); // NEW
+}); // NEW
+
+test('selected backlog consumes scheduled cards and follows existing model/history restoration', async () => { // NEW
+    const h = makeHarness(); // NEW
+    const header = h.document.querySelector('.trellis-task-board-header-controls'); // NEW
+    h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]); // NEW
+    const originalValue = h.stagedCard.value.cloneNode(true); // NEW
+    h.graph.moveCells([h.stagedCard], 0, 0, false, h.weekTueLane); // NEW
+    assert.equal(attr(h.stagedCard, 'assigned_day'), '2026-07-14'); // NEW
+    assert.equal(attr(h.stagedCard, 'workflow_state'), 'TODO'); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (0)'); // NEW
+    const scheduledValue = h.stagedCard.value.cloneNode(true); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+    buttonByText(header, '>').click(); // NEW
+    await nextTick(); // NEW
+    assert.notEqual(h.stagedCard.parent, h.stagedLane); // NEW: consumed items do not return when navigating weeks.
+    assert.equal(h.stagedCard.parent.visible, false); // NEW: cached child visibility is irrelevant inside an off-week hidden lane.
+    buttonByText(header, '<').click(); // NEW
+    await nextTick(); // NEW
+    h.model.setValue(h.stagedCard, originalValue.cloneNode(true)); // NEW: emulate the existing model undo edit, then let normal CHANGE repair classify it.
+    h.fireModelChange({ changes: [h.valueChange(h.stagedCard)] }); // NEW
+    await nextTick(); // NEW
+    assert.equal(h.stagedCard.parent, h.stagedLane); // NEW
+    assert.equal(h.stagedCard.visible, true); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (1)'); // NEW
+    h.model.setValue(h.stagedCard, scheduledValue.cloneNode(true)); // NEW
+    h.window.dispatchEvent(new h.window.Event('trellisHistoryAfterRestore')); // NEW
+    assert.equal(h.stagedCard.parent, h.weekTueLane); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (0)'); // NEW
+    h.graph.moveCells([h.stagedCard], 0, 0, false, h.stagedLane); // NEW
+    assert.equal(attr(h.stagedCard, 'assigned_day'), null); // NEW
+    assert.equal(attr(h.stagedCard, 'manual_staged'), '1'); // NEW
+    assert.equal(h.stagedCard.visible, true); // NEW
+    assert.equal(h.runtimeHooks.removeSelectedBacklogCards([h.stagedCard]), 1); // NEW
+    h.model.setValue(h.stagedCard, originalValue.cloneNode(true)); // NEW
+    h.window.dispatchEvent(new h.window.Event('trellisHistoryAfterRestore')); // NEW
+    assert.equal(h.stagedCard.visible, false); // NEW: explicit removal prevents restoration from resurrecting membership.
+    h.graph.moveCells([h.weekLaneCard], 0, 0, false, h.stagedLane); // NEW
+    assert.equal(h.weekLaneCard.visible, true); // NEW: returning an unenrolled scheduled card adds it to the custom backlog.
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (1)'); // NEW
+}); // NEW
+
+test('selected backlog retains pending tasks when an existing closed-day guard rejects scheduling', () => { // NEW
+    const h = makeHarness(); // NEW
+    h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]); // NEW
+    const hours = JSON.parse(attr(h.board, 'task_work_hours_defaults_json')); // NEW
+    hours.days[2].closed = true; // NEW
+    setAttr(h.board, 'task_work_hours_defaults_json', JSON.stringify(hours)); // NEW
+    h.graph.moveCells([h.stagedCard], 0, 0, false, h.weekTueLane); // NEW
+    assert.equal(h.stagedCard.parent, h.stagedLane); // NEW
+    assert.equal(attr(h.stagedCard, 'workflow_state'), 'STAGED'); // NEW
+    assert.equal(attr(h.stagedCard, 'assigned_day'), null); // NEW
+    assert.equal(h.stagedCard.visible, true); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (1)'); // NEW
+}); // NEW
+
+test('selected backlog rejects completed, break, mixed-board, non-card, and inaccessible selections', async () => { // NEW
+    const h = makeHarness({ secondaryBoard: true }); // NEW
+    const done = addHarnessCard(h, h.weekWedLane, 'backlog-done', { workflow_state: 'DONE', assigned_day: '2026-07-15', completed: '2026-07-15' }); // NEW
+    const rest = addHarnessCard(h, h.weekWedLane, 'backlog-break', { schedule_break: '1', assigned_day: '2026-07-15' }); // NEW
+    for (const cells of [[done], [rest], [h.board], [h.stagedCard, done], [h.stagedCard, h.secondaryWeekWedCard]]) { // NEW
+        assert.equal(h.runtimeHooks.addSelectedBacklogCards(cells), 0); // NEW
+    } // NEW
+    h.graph.isEnabled = () => false; // NEW
+    assert.equal(h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]), 0); // NEW
+    h.graph.isEnabled = () => true; // NEW
+    h.window.Trellis.users = { isEnabled: () => true, getCurrentUser: () => null }; // NEW
+    assert.equal(h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]), 0); // NEW
+    h.window.Trellis.users.getCurrentUser = () => ({ id: 'denied' }); // NEW
+    h.window.Trellis.users.canEditCell = () => false; // NEW
+    assert.equal(h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]), 0); // NEW
+    h.window.Trellis.users.canEditCell = () => true; // NEW
+    h.window.Trellis.users.isTeamPermissionModeActive = () => true; // NEW
+    assert.equal(h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]), 0); // NEW
+    h.window.Trellis.users.isTeamPermissionModeActive = () => false; // NEW
+    h.setState(h.stagedCard, { x: 30, y: 60, width: 120, height: 80 }); // NEW
+    h.setState(h.secondaryWeekWedCard, { x: 2500, y: 60, width: 120, height: 80 }); // NEW
+    h.graph.setSelectionCells([h.stagedCard, h.secondaryWeekWedCard]); // NEW
+    await nextTick(); // NEW
+    assert.equal(buttonByText(h.document.querySelector('.trellis-task-selected-card-actions'), 'Add to backlog').style.display, 'none'); // NEW
+    assert.equal(h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]), 1); // NEW
+    assert.equal(h.runtimeHooks.addSelectedBacklogCards([h.secondaryWeekWedCard]), 1); // NEW
+    assert.match(attr(h.stagedLane, 'label'), /^Selected backlog \(1\)/); // NEW
+}); // NEW
+
+test('selected backlog isolates users and pages and resets on document reload', () => { // NEW
+    const h = makeHarness(); // NEW
+    let user = 'alice'; // NEW
+    h.window.Trellis.users = { isEnabled: () => true, getCurrentUser: () => ({ id: user }) }; // NEW
+    h.ui.currentPage = { id: 'page-a' }; // NEW
+    h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]); // NEW
+    user = 'bob'; // NEW
+    h.window.dispatchEvent(new h.window.Event('trellisUsersSessionChanged')); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'TODO (staged)'); // NEW
+    h.runtimeHooks.addSelectedBacklogCards([h.stagedBeforeCard]); // NEW
+    assert.equal(h.stagedCard.visible, false); // NEW
+    assert.equal(h.stagedBeforeCard.visible, true); // NEW
+    user = 'alice'; // NEW
+    h.window.dispatchEvent(new h.window.Event('trellisUsersStoreChanged')); // NEW
+    assert.equal(h.stagedCard.visible, true); // NEW
+    assert.equal(h.stagedBeforeCard.visible, false); // NEW
+    h.ui.currentPage = { id: 'page-b' }; // NEW
+    h.fireEditorEvent('pageSelected'); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'TODO (staged)'); // NEW
+    h.ui.currentPage = { id: 'page-a' }; // NEW
+    h.fireEditorEvent('pageSelected'); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (1)'); // NEW
+    h.fireEditorEvent('fileLoaded'); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'TODO (staged)'); // NEW
+    user = 'bob'; // NEW
+    h.window.dispatchEvent(new h.window.Event('trellisUsersSessionChanged')); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'TODO (staged)'); // NEW
+}); // NEW
+
+test('selected backlog shows chosen repeat occurrences, composes search/paging, and respects year visibility', async () => { // NEW
+    const h = makeHarness(); // NEW
+    const selected = Array.from({ length: 12 }, (_, index) => addHarnessCard(h, h.stagedLane, 'chosen-repeat-' + index, { // NEW
+        workflow_state: 'STAGED', title: 'Repeat watering', linkedTo: 'same-crop', start: '2026-07-' + String(index + 1).padStart(2, '0'), card_note: index === 8 ? 'unique-search-target' : '' // NEW
+    })); // NEW
+    const unselected = addHarnessCard(h, h.stagedLane, 'unchosen-repeat', { workflow_state: 'STAGED', title: 'Repeat watering', linkedTo: 'same-crop', start: '2026-06-01' }); // NEW
+    h.runtimeHooks.addSelectedBacklogCards(selected); // NEW
+    h.setState(h.stagedLane, { x: 20, y: 40, width: 220, height: 260 }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+    const pager = h.document.querySelector(".trellis-task-lane-pager[data-lane-id='staged'] select"); // NEW
+    assert.ok(pager.options.length > 1); // NEW
+    assert.equal(unselected.visible, false); // NEW
+    const search = h.document.querySelector('.trellis-task-staged-search input'); // NEW
+    assert.equal(search.placeholder, 'Search selected backlog'); // NEW
+    search.value = 'unique-search-target'; // NEW
+    search.dispatchEvent(new h.window.Event('input')); // NEW
+    await nextTick(); // NEW
+    assert.equal(selected[8].visible, true); // NEW
+    assert.equal(selected.filter(card => card.visible).length, 1); // NEW
+    assert.equal(attr(selected[8], 'repeat_expanded'), null); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (12)'); // NEW
+    setAttr(selected[8], 'year_hidden', '1'); // NEW
+    h.window.dispatchEvent(new h.window.Event('yearFilterChanged')); // NEW
+    assert.equal(selected[8].visible, false); // NEW
+    setAttr(selected[8], 'year_hidden', null); // NEW
+    h.window.dispatchEvent(new h.window.Event('yearFilterChanged')); // NEW
+    assert.equal(selected[8].visible, true); // NEW
+    h.runtimeHooks.useStagedBacklog(h.board); // NEW
+    assert.equal(attr(selected[8], 'repeat_hidden'), '1'); // NEW
+    assert.equal(selected[8].visible, false); // NEW
+}); // NEW
+
+test('selected backlog reload discards serialized projection caches and preserves upcoming provenance', () => { // NEW
+    const h = makeHarness({ initialNonDayLaneHeight: 1000, beforeInstall({ stagedLane, card1, addCell }) { // NEW
+        setAttr(stagedLane, 'label', 'Selected backlog (1)'); // NEW
+        addCell(stagedLane, card1); // NEW: a saved custom view may physically project an open task into the backlog.
+    } }); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'TODO (staged)'); // NEW
+    assert.equal(h.card1.parent, h.todoLane); // NEW
+    assert.equal(h.todoLane.visible, false); // NEW
+    assert.equal(h.stagedCard.visible, true); // NEW
+    const future = makeHarness({ DateCtor: createFixedLocalDateConstructor('2026-07-12'), beforeInstall({ board, stagedCard, addCell }) { // NEW
+        setAttr(board, 'task_view_mode', 'FULL'); // NEW
+        setAttr(stagedCard, 'task_backlog_source_lane', 'UPCOMING_FUTURE'); // NEW
+        setAttr(stagedCard, 'start', '2028-01-01'); // NEW
+        addCell(board, new TestCell('saved-future-lane', makeValue(stagedCard.value.ownerDocument, { lane_key: 'UPCOMING_FUTURE', status: 'UPCOMING (future)' }), new TestGeometry(0, 0, 220, 1000))); // NEW
+    } }); // NEW
+    assert.equal(attr(future.stagedCard.parent, 'lane_key'), 'UPCOMING_FUTURE'); // NEW
+    assert.equal(attr(future.stagedCard, 'task_backlog_source_lane'), null); // NEW
+    assert.equal(attr(future.stagedCard, 'manual_staged'), null); // NEW
+}); // NEW
+
+test('selected backlog prunes deleted or transferred cards without enrolling replacement occurrences', () => { // NEW
+    const h = makeHarness({ secondaryBoard: true }); // NEW
+    h.runtimeHooks.addSelectedBacklogCards([h.stagedCard, h.card1]); // NEW
+    h.model.remove(h.stagedCard); // NEW
+    h.addCell(h.secondaryWeekWedLane, h.card1); // NEW
+    const replacement = addHarnessCard(h, h.stagedLane, 'backlog-regenerated', { workflow_state: 'STAGED', title: 'Stage compost', scheduler_task_key: 'compost::0' }); // NEW
+    h.window.dispatchEvent(new h.window.Event('trellisHistoryAfterRestore')); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (0)'); // NEW
+    assert.equal(replacement.visible, false); // NEW
+    h.addCell(h.stagedLane, h.stagedCard); // NEW
+    h.window.dispatchEvent(new h.window.Event('trellisHistoryAfterRestore')); // NEW
+    assert.equal(h.stagedCard.visible, false); // NEW: deleted membership is pruned rather than being inferred from task identity.
+    assert.equal(h.runtimeHooks.useStagedBacklog(h.board), true); // NEW
+    assert.equal(replacement.visible, true); // NEW
+}); // NEW
+
+test('selected backlog does not enroll tasks created by real scheduler replacement', () => { // NEW
+    const h = makeHarness(); // NEW
+    const group = new TestCell('backlog-scheduler-group', makeValue(h.document, { tiler_group: '1', linkedTo: h.stagedCard.id }), new TestGeometry(0, 0, 120, 80), 'tiler_group=1;'); // NEW
+    h.addCell(h.root, group); // NEW
+    setAttr(h.stagedCard, 'linkedTo', group.id); // NEW
+    setAttr(h.stagedCard, 'scheduler_task_key', 'compost::0'); // NEW
+    h.runtimeHooks.addSelectedBacklogCards([h.stagedCard]); // NEW
+    const created = h.runtimeHooks.replaceTasks(group.id, [{ title: 'Regenerated compost', startISO: '2026-07-14', endISO: '2026-07-14', scheduler_task_key: 'compost::0' }], { focusCreated: false }); // NEW
+    const replacement = h.model.getCell(created[0].cellId); // NEW
+    assert.ok(replacement); // NEW
+    assert.notEqual(replacement.id, h.stagedCard.id); // NEW
+    assert.equal(h.stagedCard.parent, null); // NEW
+    assert.equal(replacement.visible, false); // NEW
+    assert.equal(attr(h.stagedLane, 'label'), 'Selected backlog (0)'); // NEW
+    assert.equal(h.runtimeHooks.useStagedBacklog(h.board), true); // NEW
+    assert.equal(replacement.visible, true); // NEW
+}); // NEW
 
 test("task manager toggles destination view labels, arrows, and board selection", async () => {
     const h = makeHarness();

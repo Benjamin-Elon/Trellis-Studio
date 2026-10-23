@@ -1,7 +1,7 @@
 <!-- NEW: integration contract, operational behavior, and release acceptance checklist. -->
 # Trellis Managed Canvas Sharing
 
-The object-locking and delta-sharing protocol, guided collaboration dialog, migration, and verification commands are documented in [Object collaboration over Syncthing](collaboration-v2.md). Legacy file-sharing behavior below remains supported until an admin upgrades the share. <!-- NEW -->
+Object collaboration v2 is the only supported sharing protocol. Signed object changes, editing holds, recovery, and verification commands are documented in [Object collaboration over Syncthing](collaboration-v2.md). Registrations are classified individually: current shares synchronize, recognized old diagrams open locally, and unsupported or unsafe entries are diagnosed without blocking other projects. Legacy folders are removed from the daemon configuration while it is paused; there is no conversion tool. <!-- CHANGE -->
 
 ## Close, Quit, and background ownership <!-- NEW -->
 
@@ -123,23 +123,18 @@ folder configurations. Removal cannot erase downloaded content. A disconnected
 removed device may retain stale local membership until it receives a new signed
 manifest, even though updated peers no longer share with it.
 
-## Conflicts And History
+## Object Changes, Recovery, And History <!-- CHANGE -->
 
-Clean incoming replacements reload through trusted graph changes and revalidate
-the existing user. Missing/disabled users lose their session and return to the
-opaque auth gate. Receiving changes does not create a local-actor revision.
+Each share synchronizes its signed initial snapshot, immutable collaboration records,
+referenced assets, membership, and published history. The mutable local `.drawio`
+projection is excluded. Ordinary edits contain changed object XML; page/model
+structure changes can contain a complete diagram snapshot. <!-- CHANGE -->
 
-Unsaved local work or native conflict copies block shared saves. Unsaved XML is
-retained in local recovery storage, membership changes pause, and everyone can
-inspect versions, save another recovery copy, or explicitly reload the shared
-version. Only a logged-in admin may publish a reviewed version. Both the current
-and reviewed hashes are checked again; existing Users/ownership/access metadata
-is preserved instead of restoring stale permissions from the chosen content.
-Inputs and unresolved native conflicts are retained until explicit resolution.
-Conflict review shows added, changed, and removed cells (up to 100 detailed rows),
-as well as the selected XML. Page reordering preserves permissions by page ID,
-not position. Multi-page canvases require unique page IDs and consistent Users
-stores; full multi-page Users/ChangeMap workflow acceptance remains outstanding.
+Incoming records are verified and replayed locally. Native page patches preserve
+unrelated unsaved work and revalidate the current user. Locally saved proposals can
+later lose concurrent arbitration; their exact submitted XML remains in private
+recovery copies. External or interrupted projection changes are preserved before
+rebuilding. Recovery does not pause unrelated membership processing. <!-- CHANGE -->
 
 Successful saves publish their stable ChangeMap checkpoint as immutable revision
 and snapshot JSON with a unique ID, checksum, actor, and parent. Intermediate work
@@ -193,4 +188,4 @@ while startup requests are still pending.
 Git controls, automatic coordinator takeover, mobile clients, and historical backfill
 remain intentionally deferred. Planned coordinator transfer is supported by the
 authenticated project-departure flow described in garden-projects-library.md. <!-- CHANGE --> Object co-editing
-is available for upgraded shares through the v2 protocol described above. <!-- CHANGE -->
+is available through the v2 protocol described above. <!-- CHANGE -->

@@ -184,6 +184,7 @@ Draw.loadPlugin(function (ui) {
     function createOverlayDiv() {
         const div = document.createElement("div");
         div.style.position = "absolute";
+        div.style.transform = "translateX(-50%)"; // CHANGE: CSS centers the chip without a synchronous width/layout read.
         div.style.pointerEvents = "none";
         div.style.zIndex = String(OVERLAY_Z);
         div.style.padding = OVERLAY_PADDING;
@@ -223,7 +224,7 @@ Draw.loadPlugin(function (ui) {
 
         const cellId = getCellId(cell);
         const hiddenForResize = cellId && activeResizeCellIds.has(cellId);
-        entry.div.textContent = text;
+        if (entry.div.textContent !== text) entry.div.textContent = text; // CHANGE: repeated view updates must not invalidate label layout when dimensions have not changed.
         entry.div.style.display = hiddenForResize ? "none" : "";
         if (hiddenForResize) return true;
 
@@ -234,10 +235,9 @@ Draw.loadPlugin(function (ui) {
             height: Number(state.height) || 0
         };
         const bb = getRotatedBounds(bounds, getRotationDeg(cell));
-        const chipWidth = entry.div.clientWidth || entry.div.offsetWidth || 0;
-
-        entry.div.style.left = `${Math.round(bb.x + (bb.width - chipWidth) / 2)}px`;
-        entry.div.style.top = `${Math.round(bb.y + bb.height + CHIP_Y_OFFSET)}px`;
+        const left = `${Math.round(bb.x + bb.width / 2)}px`, top = `${Math.round(bb.y + bb.height + CHIP_Y_OFFSET)}px`; // CHANGE
+        if (entry.div.style.left !== left) entry.div.style.left = left; // CHANGE: unchanged view notifications must not dirty layout.
+        if (entry.div.style.top !== top) entry.div.style.top = top; // CHANGE
         return true;
     }
 

@@ -3402,17 +3402,20 @@ test("direct link edges do not receive proportional pipe stroke widths", () => {
 });
 
 test("reused generated pipe edges are restyled from the current pipe part", () => {
-    const { api, graph, moduleCell, bed } = loadPlugin();
+    const { api, graph, moduleCell, bed, document } = loadPlugin(); // CHANGE
     api.writeCatalog(moduleCell, sampleCatalog());
     const source = api.__test.createSourceEndpoint(moduleCell, "Source", { connectorType: "mght", nominalSize: "1/2", usableFlowGpm: 5, staticPressurePsi: 45 });
     const target = api.__test.createBedEndpoint(bed, "Target", { connectorType: "fght", nominalSize: "1/2" });
     const reusable = graph.insertEdge(moduleCell, "oldGenerated", "", source, target, "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4d8f6f;strokeWidth=9;");
+    const discussion = JSON.stringify({ version: 2, comments: [{ id: 'pipe-alert', authorUserId: 'author', authorName: 'Author', html: '<p>Inspect this segment</p>', createdAt: 1000, updatedAt: 1000, resolvedAt: null, resolvedByUserId: null, resolvedByName: null, isAlert: true }] }); // CHANGE
+    reusable.value = document.createElement('object'); reusable.value.setAttribute('trellis_details_html', '<p>Pipe installation notes</p>'); reusable.value.setAttribute('trellis_comments_json', discussion); // CHANGE
     api.__test.writePaths(moduleCell, [{ id: "reuse_path", sourceEndpointId: source.getId(), targetEndpointId: target.getId(), pipePartId: "pipe_cheap", pipeEdgeIds: [reusable.getId()], componentCellIds: [] }]);
     const staged = api.__test.stagePath({ id: "reuse_path", sourceEndpoint: source, targetEndpoint: target, pipePartId: "pipe_half", bedDemand: { flowGpm: 0, operatingPressurePsi: 0 } });
     const committed = api.__test.commitStagedPath(moduleCell, staged);
     assert.equal(committed.blockingErrors, undefined);
     assert.equal(committed.pipeEdgeIds[0], reusable.getId());
     assert.equal(styleToken(reusable.style, "strokeWidth"), "2");
+    assert.equal(reusable.getAttribute('trellis_details_html'), '<p>Pipe installation notes</p>'); assert.equal(reusable.getAttribute('trellis_comments_json'), discussion); // CHANGE: updating a reused pipe preserves its own description and flagged discussion.
 });
 
 test("irrigation mode renders global port badges and highlights compatible free targets", () => {

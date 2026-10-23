@@ -6,8 +6,9 @@ import os from 'node:os'; // NEW
 import path from 'node:path'; // NEW
 import crypto from 'node:crypto'; // NEW
 import zlib from 'node:zlib'; // NEW
+import { DOMParser } from '@xmldom/xmldom'; // CHANGE
 import { signRecord } from '../src/main/trellis-share-protocol.js'; // NEW
-import { replay, diffObjects, applyChanges, objects, HOLD_MS, HANDOFF_MS } from '../src/main/trellis-collaboration-protocol.js'; // NEW
+import { replay, diffObjects, applyChanges, objects, authorityFor, HOLD_MS, HANDOFF_MS } from '../src/main/trellis-collaboration-protocol.js'; // CHANGE
 import { createCollaborationStore } from '../src/main/trellis-collaboration-store.js'; // NEW
 const escaped = s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); // NEW
 const key = id => JSON.stringify(['', id]); // NEW
@@ -38,6 +39,29 @@ test('viewing never holds objects and heartbeats do not renew edit activity', ()
     assert.equal(replay(initial, [view], HOLD_MS).holds.length, 0); // NEW
     assert.equal(replay(initial, [held, view], held.at + HOLD_MS).holds.length, 0); // NEW
 }); // NEW
+
+test('a thousand presence records reuse unchanged hold authority without extending its deadline', t => { // CHANGE
+    const initial = canvas(), held = claim('held', 'A', 'alice', [key('a')]); let parses = 0; const parse = DOMParser.prototype.parseFromString; // CHANGE
+    t.mock.method(DOMParser.prototype, 'parseFromString', function (...args) { parses++; return parse.apply(this, args); }); // CHANGE
+    const views = Array.from({ length: 1000 }, (_, i) => record('view-' + i, 'view', 'B', 'bob', { targets: [key('b')], parents: [i ? 'view-' + (i - 1) : 'held'], clock: i + 2, at: held.at + i + 1 })); // CHANGE
+    const active = replay(initial, [held, ...views], 3000); assert.equal(active.holds.length, 1); assert.equal(active.holds[0].expiresAt, held.at + HOLD_MS); // CHANGE
+    assert.ok(parses < 50, 'Read-only history must not repeatedly parse the complete document for the same hold.'); // CHANGE
+    assert.equal(replay(initial, [held, ...views], held.at + HOLD_MS).holds.length, 0); // CHANGE
+}); // CHANGE
+test('action-local authority parsing is shared across targets and invalidated by policy changes', t => { // CHANGE
+    let parses = 0; const parse = DOMParser.prototype.parseFromString, context = {}, initial = canvas(); // CHANGE
+    t.mock.method(DOMParser.prototype, 'parseFromString', function (...args) { parses++; return parse.apply(this, args); }); // CHANGE
+    assert.equal(authorityFor(initial, key('a'), 'alice', context), 3); const first = parses; // CHANGE
+    assert.equal(authorityFor(initial, key('b'), 'alice', context), 0); assert.equal(parses, first); // CHANGE
+    const revoked = initial.replace('trellis_owner_user_id="alice"', 'trellis_owner_user_id="bob"'); assert.equal(authorityFor(revoked, key('a'), 'alice', context), 0); assert.ok(parses > first); // CHANGE
+    assert.equal(authorityFor(initial, key('a'), 'alice', context), 3); // NEW: changing back cannot retain the intervening revocation.
+    for (let attempt = 0; attempt < 2; attempt++) assert.throws(() => authorityFor('<!DOCTYPE forbidden>' + initial, key('a'), 'alice', context), /Invalid diagram XML/); // NEW: failed parsing cannot poison the authority cache.
+}); // CHANGE
+test('ordinary edits in a wide model do not reparse policy for each unchanged protected field', t => { // CHANGE
+    const initial = canvas().replace('</root>', Array.from({ length: 200 }, (_, i) => '<object id="extra-' + i + '"><mxCell vertex="1" parent="1"/></object>').join('') + '</root>'), changed = initial.replace('label="A"', 'label="Changed"'), held = claim('wide-claim', 'A', 'alice', [key('a')]), transaction = edit('wide-edit', held, initial, changed); // CHANGE
+    let parses = 0; const parse = DOMParser.prototype.parseFromString; t.mock.method(DOMParser.prototype, 'parseFromString', function (...args) { parses++; return parse.apply(this, args); }); // CHANGE
+    assert.deepEqual(replay(initial, [held, transaction], 2000).accepted, ['wide-edit']); assert.ok(parses < 100, 'Unchanged protected fields must not trigger a full policy parse per cell.'); // CHANGE
+}); // CHANGE
 test('release request deadline never extends, finishing edits survive, and cooldown protects the requester', () => { // NEW
     const initial = canvas(), held = claim('held', 'A', 'alice', [key('a')]); // NEW
     const request = record('request', 'request', 'B', 'admin', { claimIds: ['held'], parents: ['held'], clock: 2, at: 2000 }); // NEW
@@ -94,6 +118,16 @@ test('durable peer journals recover a losing saved proposal after reconnection a
     const fresh = restart('A'), state = await fresh.journal.refresh(); assert.ok(state.recoveries.length); // NEW
     assert.match(await fs.readFile(state.recoveries[0].recoveryPath, 'utf8'), /Alice/); // NEW
 }); // NEW
+
+test('read-only collaboration actions replay once and unchanged projections do not rewrite markers', async t => { // CHANGE
+    const { a } = await peers(t); let reads = 0, markers = 0; const readFile = fs.readFile, writeFile = fs.writeFile; // CHANGE
+    t.mock.method(fs, 'readFile', async (filename, ...args) => { if (path.basename(filename) === 'genesis.json') reads++; return readFile(filename, ...args); }); // CHANGE
+    t.mock.method(fs, 'writeFile', async (filename, ...args) => { if (path.basename(filename) === 'projection.json') markers++; return writeFile(filename, ...args); }); // CHANGE
+    await a.journal.action(1, 'alice', { kind: 'get' }); await a.journal.action(1, 'alice', { kind: 'get' }); // CHANGE
+    assert.equal(reads, 2); assert.equal(markers, 1); // CHANGE
+    await a.journal.action(1, 'alice', { kind: 'view', objects: [] }); const before = reads; // CHANGE
+    await a.journal.action(1, 'alice', { kind: 'view', objects: [] }); assert.equal(reads - before, 1); // CHANGE
+}); // CHANGE
 
 test('compressed multiple pages use page-specific cell identities and preserve independent edits', () => { // NEW
     const page = text => zlib.deflateRawSync(Buffer.from(encodeURIComponent(text))).toString('base64'); // NEW

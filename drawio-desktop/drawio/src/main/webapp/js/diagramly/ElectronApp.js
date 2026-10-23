@@ -162,6 +162,13 @@ mxStencilRegistry.allowEval = false;
 			if (!plugins.some(plugin => /(?:^|\/)Trellis_API_Keys\.js$/.test(plugin) || plugin === 'trellisApiKeys')) plugins.push(App.pluginRegistry.trellisApiKeys);
 			mxSettings.setPlugins(plugins); mxSettings.save(); localStorage.setItem('.trellisApiKeysDefault.v1', '1');
 		} // NEW
+		App.pluginRegistry.gardenQuickstart = 'plugins/garden_planner_plugins/Garden_Quickstart.js'; // NEW: production also registers plugins outside the compiled web bundle.
+		if (App.publicPlugin.indexOf('gardenQuickstart') < 0) App.publicPlugin.push('gardenQuickstart'); // NEW
+		if (localStorage.getItem('.trellisQuickstartDefault.v1') == null) { // NEW: migrate existing profiles once, retaining deliberate subsequent removal.
+			plugins = (plugins || []).slice(); // NEW
+			if (!plugins.some(plugin => /(?:^|\/)Garden_Quickstart\.js$/.test(plugin) || plugin === 'gardenQuickstart')) plugins.push(App.pluginRegistry.gardenQuickstart); // NEW
+			mxSettings.setPlugins(plugins); mxSettings.save(); localStorage.setItem('.trellisQuickstartDefault.v1', '1'); // NEW
+		} // NEW
 		App.initPluginCallback();
 
 		if (plugins != null && plugins.length > 0)
@@ -411,9 +418,10 @@ mxStencilRegistry.allowEval = false;
 			try { // NEW
 				if (payload.phase === 'seal' || payload.phase === 'discard') { // NEW
 					reply.snapshotValid = matches(payload.snapshotId); // NEW
-					if (reply.snapshotValid) { seal(); if (payload.phase === 'discard') await discard(); } // NEW
+					if (reply.snapshotValid) { seal(); await ui.editor.graph.__trellisReferences?.flushDrafts(); if (payload.phase === 'discard') await discard(); } // CHANGE: finish private unsent reference work before the renderer closes.
 				} else { // NEW
 					const file = ui.getCurrentFile(); if (file && ui.editor.graph.isEditing()) ui.editor.graph.stopEditing(); // NEW
+					await ui.editor.graph.__trellisReferences?.flushDrafts(); // NEW
 					reply.isModified = !!file?.isModified(); reply.draftPath = EditorUi.enableDrafts && file?.fileObject ? file.fileObject.draftFileName : null; // NEW
 					if (payload.phase === 'prepare') { release(); snapshot = { ...capture(), id: String(++sequence) }; reply.snapshotId = snapshot.id; } // NEW
 				} // NEW
@@ -1524,15 +1532,33 @@ mxStencilRegistry.allowEval = false;
 	
 	var autoSaveEnabled = false;
 
-	LocalFile.prototype.save = function(revision, success, error, unloading, overwrite)
+	// Optional cancel callback lets navigation observe native dialog dismissal without changing existing save callers. // NEW
+	LocalFile.prototype.save = function(revision, success, error, unloading, overwrite, cancel) // CHANGE
 	{
 		if (this.__trellisNamingMove) { const args = arguments; this.__trellisNamingMove.then(() => this.save.apply(this, args)); return; } // NEW
-		if (!this.isEditable())
-		{
-			this.saveAs(this.title, success, error);
-			return;
-		}
-
+		if (this.__trellisLocalSavePending) { // CHANGE: native saveFile otherwise drops requests while an autosave is writing.
+			const args = arguments; // CHANGE
+			this.__trellisLocalSavePending.then(() => { // CHANGE
+				if (this.ui.getCurrentFile && this.ui.getCurrentFile() !== this) { if (typeof error === 'function') error({ message: 'The diagram changed before the queued save started.' }); return; } // CHANGE: never capture a replacement document into the previous file.
+				this.save.apply(this, args); // CHANGE
+			}); // CHANGE
+			return; // CHANGE
+		} // CHANGE
+		if (!this.isEditable()) // CHANGE: Save As reenters save after selecting its writable destination.
+		{ // CHANGE
+			this.saveAs(this.title, success, error, cancel); // CHANGE
+			return; // CHANGE
+		} // CHANGE
+		let release, completed = false; const file = this; // CHANGE
+		const pending = this.__trellisLocalSavePending = new Promise(resolve => { release = resolve; }); // CHANGE
+		function finish(callback) { // CHANGE: every success, failure and native-dialog cancellation releases the same save gate.
+			return function () { // CHANGE
+				if (completed) return; completed = true; // CHANGE
+				try { if (typeof callback === 'function') return callback.apply(this, arguments); } // CHANGE
+				finally { if (file.__trellisLocalSavePending === pending) file.__trellisLocalSavePending = null; release(); } // CHANGE
+			}; // CHANGE
+		} // CHANGE
+		success = finish(success); error = finish(error); cancel = finish(cancel); // CHANGE
 		DrawioFile.prototype.save.apply(this, [revision, mxUtils.bind(this, function()
 		{
 			this.saveFile(revision, mxUtils.bind(this, function() 
@@ -1544,8 +1570,8 @@ mxStencilRegistry.allowEval = false;
 				}
 
 				autoSaveEnabled = false;
-				success.apply(this, arguments);
-			}), error, unloading, overwrite);
+				if (typeof success === 'function') success.apply(this, arguments); // CHANGE: native autosaves may omit the optional success callback.
+			}), error, unloading, overwrite, cancel); // CHANGE
 		}), error, unloading, overwrite]);
 	};
 
@@ -1554,7 +1580,7 @@ mxStencilRegistry.allowEval = false;
 		return stat != null && this.stat != null && stat.mtimeMs != this.stat.mtimeMs;
 	};
 	
-	LocalFile.prototype.saveFile = async function(revision, success, error, unloading, overwrite)
+	LocalFile.prototype.saveFile = async function(revision, success, error, unloading, overwrite, cancel) // CHANGE
 	{
 		//Safeguard in case saveFile is called from online code in the future
 		if (typeof success !== 'function')
@@ -1705,6 +1731,7 @@ mxStencilRegistry.allowEval = false;
 					else
 					{
 						this.ui.spinner.stop();
+						if (cancel != null) cancel(); // NEW: complete canceled first saves without reporting an error.
 					}
 				}
 				else
@@ -1748,7 +1775,7 @@ mxStencilRegistry.allowEval = false;
 		this.ui.addRecent({id: this.fileObject.path, title: title});
 	};
 
-	LocalFile.prototype.saveAs = async function(title, success, error)
+	LocalFile.prototype.saveAs = async function(title, success, error, cancel) // CHANGE
 	{
 		try
 		{
@@ -1789,8 +1816,9 @@ mxStencilRegistry.allowEval = false;
 				{
 					this.ui.watchFile(this);
 					success();
-				}), error, null, true);
+				}), error, null, true, cancel); // CHANGE
 			}
+			else if (cancel != null) cancel(); // NEW: read-only documents also report canceled Save As.
 		}
 		catch (e)
 		{
