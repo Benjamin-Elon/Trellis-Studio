@@ -1,3 +1,4 @@
+require('../../src/main/trellis-asset-scheme.cjs'); // NEW: production protocol privileges must precede app readiness.
 /** Exercise the production main process with throwaway profiles and hidden windows. */ // NEW
 const fs = require('node:fs'); // NEW
 const path = require('node:path'); // NEW
@@ -31,13 +32,32 @@ function watchWindowReadiness(win) { // CHANGE
     const finish = () => { // CHANGE
         if (win.isDestroyed() || !loaded || !appReady) return; // CHANGE
         initializedWindows.add(contentsId); cleanup(); process.stdout.write('LIFECYCLE_READY: ' + contentsId + '\n'); // CHANGE: machine-readable IDs must not acquire FORCE_COLOR numeric formatting.
-        if (mode !== 'hold' && !quitTimer) quitTimer = setTimeout(quit, mode === 'timeout' ? 30 : 0); // CHANGE: schedule Close/Quit only after the production close handshake is installed.
+        if (mode === 'draft-recovery') { verifyDraftRecovery(win).then(quit).catch(error => { console.error('LIFECYCLE_ERROR:', error.stack); quit(); }); } // NEW: exercise recovery with real files and the production renderer.
+        else if (mode !== 'hold' && !quitTimer) quitTimer = setTimeout(quit, mode === 'timeout' ? 30 : 0); // CHANGE: schedule Close/Quit only after the production close handshake is installed.
     }; // CHANGE
     const receive = event => { if (!win.isDestroyed() && event.sender.id === contentsId && event.senderFrame === contents.mainFrame) { appReady = true; finish(); } }; // CHANGE
     const didLoad = () => { loaded = true; finish(); }; // CHANGE
     const closed = () => { console.error('LIFECYCLE_ERROR: window closed before readiness:', contentsId); cleanup(); }; // CHANGE
     readinessCleanups.add(cleanup); ipcMain.on('app-load-finished', receive); contents.on('did-finish-load', didLoad); win.once('closed', closed); // CHANGE
 } // CHANGE
+/** Opening a document with a retained draft must still offer the existing recovery dialog. */ // NEW
+async function verifyDraftRecovery(win) { // NEW
+    const filename = path.join(profile, 'documents', 'Retained.drawio'), draftPath = path.join(profile, 'documents', '.$Retained.drawio.dtmp'); // NEW
+    const saved = '<mxfile><diagram id="saved"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>'; // NEW
+    const retained = saved.replace('id="saved"', 'id="retained"'); // NEW
+    fs.writeFileSync(filename, saved); fs.writeFileSync(draftPath, retained); // NEW: both paths are inside the validated, test-owned temporary profile.
+    const result = await win.webContents.executeJavaScript(`new Promise((resolve, reject) => Draw.loadPlugin(ui => { // NEW
+        ui.hideDialog(); const OriginalDraftDialog = window.DraftDialog; // NEW
+        window.DraftDialog = function(...args) { // NEW
+            window.DraftDialog = OriginalDraftDialog; const dialog = new OriginalDraftDialog(...args), init = dialog.init; // NEW
+            dialog.init = function() { init.apply(this, arguments); resolve({ data: args[2], visible: document.body.contains(dialog.container) }); }; return dialog; // NEW
+        }; // NEW
+        ui.readGraphFile(() => {}, reject, ${JSON.stringify(filename)}); // NEW
+    }))`); // NEW
+    if (!result.visible || result.data !== retained || fs.readFileSync(draftPath, 'utf8') !== retained) throw new Error('Retained draft recovery prompt was not preserved.'); // NEW
+    await win.webContents.executeJavaScript('new Promise(resolve => Draw.loadPlugin(ui => { ui.hideDialog(); resolve(); }))'); // NEW
+    console.log('LIFECYCLE_DRAFT_RECOVERY: offered'); // NEW
+} // NEW
 app.on('browser-window-created', (_event, win) => { // CHANGE
     windows.push(win); win.hide(); win.webContents.setBackgroundThrottling(false); // CHANGE: hidden test windows must finish startup without background scheduling delays.
     win.webContents.on('render-process-gone', (_event, details) => console.error('LIFECYCLE_ERROR: renderer', details.reason)); // NEW

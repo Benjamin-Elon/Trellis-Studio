@@ -8,8 +8,9 @@
             if (root.TrellisDetailsToolbar) loadComments(); // CHANGE
             else mxscript('plugins/garden_planner_plugins/Trellis_Details_Toolbar.js', loadComments); // CHANGE
         } // NEW
-        if (root.TrellisDetailsCore) loadToolbar(); // NEW
-        else mxscript('plugins/garden_planner_plugins/Trellis_Details_Core.js', loadToolbar); // NEW
+        const loadCore = () => root.TrellisDetailsCore ? loadToolbar() : mxscript('plugins/garden_planner_plugins/Trellis_Details_Core.js', loadToolbar); // CHANGE
+        if (root.TrellisPermissionCore) loadCore(); // NEW
+        else mxscript('js/trellis-permission-core.js', loadCore); // NEW: dynamically loaded details must receive the shared comment policy first.
     }); // NEW
 
     /** Own exactly one graph's listeners and DOM. Model data and display preferences use independent write paths. */ // NEW
@@ -101,7 +102,7 @@
             const bounds = cellBounds(cell); if (!bounds) return null; // CHANGE
             return { x: model().isEdge(cell) ? bounds.x - size / 2 : bounds.x + Math.max(4, bounds.width - size - 4), y: model().isEdge(cell) ? bounds.y - size - 4 : bounds.y + 4, width: size, height: size }; // CHANGE
         } // CHANGE
-        function title(cell) { const node = document.createElement('div'); node.innerHTML = Graph.sanitizeHtml(graph.convertValueToString(cell)); return node.textContent || 'Object'; } // NEW
+        function title(cell) { const value = graph.convertValueToString(cell); return (window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(value) : core.normalizeHtml(value).replace(/<[^>]*>/g, '')) || 'Object'; } // CHANGE: title extraction is inert. // NEW
         function state(entry, name, error) { // NEW
             entry.error = name === 'failed' ? error || new Error('The details could not be saved.') : null; // NEW
             entry.status.textContent = entry.error ? entry.error.message + ' Your text is retained.' : name === 'pending' ? 'Saving…' : canEdit(entry) ? 'Saved to diagram' : 'Read only'; // NEW
@@ -421,7 +422,16 @@
             removers.splice(0).reverse().forEach(remove => remove()); layer.remove(); // NEW
         } // NEW
         listen(graph, mxEvent.DESTROY, destroy); // NEW
-        graph.__trellisObjectDetails = { open, refresh, flush: flushAll, exportProjection, createExportGraph, destroy }; // NEW
+        graph.__trellisObjectDetails = { open, refresh, flush: flushAll, exportProjection, createExportGraph, destroy,
+            rejectHolds(keys) { // NEW: this is an explicit discard, unlike ordinary selection/page changes.
+                const rejected = new Set(keys); // CHANGE: page-scoped IDs can repeat in different pages.
+                const affected = entry => { let cell = entry.cell; while (cell) { if (rejected.has(JSON.stringify([entry.page, String(cell.id)])) || rejected.has(JSON.stringify(['', String(cell.id)]))) return true; cell = entry.model.getParent(cell); } return rejected.has('*'); }; // NEW
+                for (const entry of [...entries.values(), ...retainedEntries]) if (affected(entry)) {
+                    entry.error = 'Editing hold rejected'; entry.draft.dispose(); entry.comments?.discard();
+                    savePreferences(entry.cell, { ...entry.preferences, visible: false }); removeEntry(entry);
+                }
+            }
+        }; // CHANGE
         function registerMenu() { // NEW
             root.TrellisContextMenu.install(ui); root.TrellisContextMenu.register({ // NEW
                 id: 'objectDetails', priority: 850, addItems(menu, clicked) { // NEW

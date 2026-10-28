@@ -35,6 +35,9 @@ function fixture(options = {}) { // NEW
     w.mxCellHighlight = class { highlight(state) { highlighted = state.cell; } destroy() { highlighted = null; } };
     w.Draw = { loadPlugin: fn => fn(ui) }; w.__TRELLIS_QUICKSTART_TEST__ = true;
     w.USL = { planningCore: { loadPlanForYear: () => plan } };
+    w.mxClient = { IS_POINTER: options.pointer !== false, IS_TOUCH: !!options.touch }; // NEW: exercise native gesture registration rather than a drag-specific mock.
+    w.eval(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/mxgraph/src/util/mxEvent.js'), 'utf8')); // NEW
+    w.Editor = { moveImage: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==' }; // NEW
     w.eval(source);
     const api = graph.__trellisQuickstart;
     async function flush() { for (let n = 0; n < 20; n++) { await Promise.resolve(); if (!timers.size) return; const work = [...timers.values()]; timers.clear(); work.forEach(fn => fn()); } throw new Error('Quickstart render did not settle'); }
@@ -46,6 +49,110 @@ function fixture(options = {}) { // NEW
 function samplePlan(year) { return { year, crops: [{ id: 'crop', method: 'direct', kgPerPlant: 1 }], selfSufficiency: { enabled: true, lines: [{ cropId: 'crop', qty: 1, from: year + '-05-01', to: year + '-06-01' }] }, demands: [] }; } // NEW
 async function start(f) { await f.flush(); f.press('Start / Resume'); await f.flush(); } // NEW
 async function stage(f, key) { f.w.document.querySelector('[data-quickstart-focus="' + key + '"]').click(); await f.flush(); } // NEW
+
+/** Supply layout measurements only; input still passes through the real mxEvent implementation. */ // NEW
+function floatingCard(f) { // NEW
+    const card = f.w.document.querySelector('.trellis-quickstart-card'); // NEW
+    card.getBoundingClientRect = () => { // NEW
+        const left = parseFloat(card.style.left) || 0, top = parseFloat(card.style.top) || 0; // NEW
+        const width = Math.min(310, f.w.innerWidth - 16), height = Math.min(180, f.w.innerHeight - 24); // NEW
+        return { left, top, width, height, right: left + width, bottom: top + height }; // NEW
+    }; // NEW
+    return { card, handle: card.querySelector('[data-trellis-quickstart-drag-handle]'), position: () => ({ x: parseFloat(card.style.left), y: parseFloat(card.style.top) }) }; // NEW
+} // NEW
+function mouse(f, node, type, x, y, button = 0) { // NEW
+    const event = new f.w.MouseEvent(type, { clientX: x, clientY: y, button, bubbles: true, cancelable: true }); // NEW
+    node.dispatchEvent(event); return event; // NEW
+} // NEW
+
+test('module-style handle moves on both axes outside the handle and survives refresh without graph changes', async () => { // NEW
+    const f = fixture(); await start(f); const { card, handle, position } = floatingCard(f); // NEW
+    assert.equal(handle.getAttribute('aria-label'), 'Move Quickstart'); assert.equal(handle.querySelector('img').src, f.w.Editor.moveImage); // NEW
+    assert.equal(f.w.getComputedStyle(handle).width, '18px'); assert.equal(card.querySelector('strong').hasAttribute('tabindex'), false); // NEW
+    const origin = position(), graphBefore = JSON.stringify(f.garden.geometry), stored = JSON.stringify(f.state().preferences.position); // NEW
+    const body = card.lastElementChild; // NEW
+    assert.equal(mouse(f, handle, 'pointerdown', 20, 105).defaultPrevented, true); // NEW
+    mouse(f, f.w.document, 'pointermove', 100, 160); f.api.refresh(); await f.flush(); // NEW
+    assert.deepEqual(position(), { x: origin.x + 80, y: origin.y + 55 }); assert.equal(card.lastElementChild, body); // NEW
+    assert.equal(JSON.stringify(f.state().preferences.position), stored, 'an unfinished drag must not save its position'); // NEW
+    mouse(f, f.w.document, 'pointerup', 110, 170); await f.flush(); f.api.refresh(); await f.flush(); // NEW
+    assert.deepEqual(position(), { x: origin.x + 90, y: origin.y + 65 }); // NEW
+    assert.equal((f.w.document.mxListenerList || []).length, 0); assert.equal(f.graph.getSelectionCell(), null); assert.equal(JSON.stringify(f.garden.geometry), graphBefore); // NEW
+    const storage = Object.fromEntries(Object.keys(f.w.localStorage).map(key => [key, f.w.localStorage.getItem(key)])); // NEW
+    const restored = fixture({ storage }); await start(restored); assert.deepEqual(floatingCard(restored).position(), position()); // NEW
+}); // NEW
+
+test('title, card controls, and secondary mouse buttons do not start dragging', async () => { // NEW
+    const f = fixture(); await start(f); const { card, handle, position } = floatingCard(f), before = position(); // NEW
+    for (const [node, button] of [[card.querySelector('strong'), 0], [card.querySelector('select'), 0], [handle, 2]]) { // NEW
+        mouse(f, node, 'pointerdown', 20, 105, button); mouse(f, f.w.document, 'pointermove', 200, 200); mouse(f, f.w.document, 'pointerup', 200, 200, button); // NEW
+        assert.deepEqual(position(), before); assert.equal((f.w.document.mxListenerList || []).length, 0); // NEW
+    } // NEW
+}); // NEW
+
+test('interrupted drags restore the start, release listeners, and permit a subsequent drag', async () => { // NEW
+    for (const interruption of ['Escape', 'blur', 'pointercancel', 'touchcancel', 'close', 'removed', 'year', 'identity', 'file']) { // NEW
+        const f = fixture(); await start(f); let view = floatingCard(f); // NEW
+        view.handle.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })); // NEW
+        const before = view.position(), saved = JSON.stringify(f.state().preferences.position); // NEW
+        mouse(f, view.handle, 'pointerdown', 40, 105); mouse(f, f.w.document, 'pointermove', 140, 205); // NEW
+        if (interruption === 'Escape') f.w.document.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); // NEW
+        else if (interruption === 'blur') f.w.dispatchEvent(new f.w.Event('blur')); // NEW
+        else if (interruption === 'close') f.api.close(); // NEW
+        else if (interruption === 'removed') { view.card.remove(); f.api.refresh(); await f.flush(); } // NEW
+        else if (interruption === 'year') f.choose('Year', String(f.state().progress.year + 1)); // NEW
+        else if (interruption === 'identity') f.user({ id: 'u2', portableIdentityId: 'bob' }); // NEW
+        else if (interruption === 'file') f.open(); // NEW
+        else f.w.document.dispatchEvent(new f.w.Event(interruption, { bubbles: true })); // NEW
+        assert.deepEqual(view.position(), before, interruption); assert.equal((f.w.document.mxListenerList || []).length, 0, interruption); // NEW
+        if (interruption !== 'identity') assert.equal(JSON.stringify(f.state().preferences.position), saved, interruption); // NEW
+        mouse(f, f.w.document, 'pointermove', 300, 300); assert.deepEqual(view.position(), before, interruption); // NEW
+        if (!view.card.isConnected || f.state().offering) { f.api.show(); await f.flush(); view = floatingCard(f); } // NEW
+        mouse(f, view.handle, 'pointerdown', 40, 105); mouse(f, f.w.document, 'pointerup', 60, 125); await f.flush(); // NEW
+        assert.equal(view.card.classList.contains('trellis-quickstart-dragging'), false, interruption); // NEW
+    } // NEW
+}); // NEW
+
+test('docking cancels a drag, hides its handle, and restores floating offsets on return', async () => { // NEW
+    const f = fixture(); await start(f); const { card, handle, position } = floatingCard(f), before = position(); // NEW
+    mouse(f, handle, 'pointerdown', 20, 105); mouse(f, f.w.document, 'pointermove', 100, 150); // NEW
+    const modal = f.w.document.createElement('div'); f.w.document.body.appendChild(modal); f.ui.dialog = { container: modal }; await f.flush(); // NEW
+    assert.equal(handle.hidden, true); assert.equal(f.w.getComputedStyle(handle).display, 'none'); assert.equal(card.style.position, 'sticky'); // NEW
+    assert.equal(card.style.left, '0px'); assert.equal(card.style.top, '0px'); assert.equal((f.w.document.mxListenerList || []).length, 0); // NEW
+    handle.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); // NEW
+    f.ui.dialog = null; f.api.refresh(); await f.flush(); assert.equal(handle.hidden, false); assert.equal(card.style.position, 'fixed'); assert.deepEqual(position(), before); // NEW
+}); // NEW
+
+test('mouse fallback, keyboard movement, and resizing keep persisted coordinates within the viewport', async () => { // NEW
+    const f = fixture({ pointer: false }); await start(f); const { handle, position } = floatingCard(f); // NEW
+    mouse(f, handle, 'mousedown', 20, 105); mouse(f, f.w.document, 'mouseup', 5000, 5000); await f.flush(); // NEW
+    assert.deepEqual(position(), { x: f.w.innerWidth - 318, y: f.w.innerHeight - 188 }); // NEW
+    assert.equal(f.state().preferences.position.x, position().x); assert.equal(f.state().preferences.position.y, position().y); // NEW
+    f.w.innerWidth = 260; f.w.innerHeight = 220; f.w.dispatchEvent(new f.w.Event('resize')); await f.flush(); // NEW
+    assert.deepEqual(position(), { x: 8, y: 32 }); // NEW
+    handle.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true })); assert.deepEqual(position(), { x: 8, y: 16 }); // NEW
+    assert.equal(f.state().preferences.position.y, 16); // NEW
+}); // NEW
+
+test('legacy touch gestures follow document movement and commit on touch end', async () => { // NEW
+    const f = fixture({ pointer: false, touch: true }); await start(f); const { handle, position } = floatingCard(f), before = position(); // NEW
+    const touch = (node, type, clientX, clientY) => { // NEW
+        const event = new f.w.Event(type, { bubbles: true, cancelable: true }), point = { clientX, clientY, identifier: 1 }; // NEW
+        Object.defineProperties(event, { touches: { value: type === 'touchend' ? [] : [point] }, changedTouches: { value: [point] } }); node.dispatchEvent(event); // NEW
+    }; // NEW
+    touch(handle, 'touchstart', 20, 105); touch(f.w.document, 'touchmove', 60, 155); touch(f.w.document, 'touchend', 70, 170); await f.flush(); // NEW
+    assert.deepEqual(position(), { x: before.x + 50, y: before.y + 65 }); assert.equal((f.w.document.mxListenerList || []).length, 0); // NEW
+}); // NEW
+
+test('manual drops survive target overlap until the guidance target changes', async () => { // NEW
+    const f = fixture(); await start(f); f.select(f.garden); const target = f.target('add-bed'); // NEW
+    const box = () => ({ left: 400, top: 150, right: 460, bottom: 180, width: 60, height: 30 }); target.getBoundingClientRect = box; // NEW
+    await stage(f, 'layout'); const { handle, position } = floatingCard(f); // NEW
+    mouse(f, handle, 'pointerdown', 20, 105); mouse(f, f.w.document, 'pointerup', 420, 155); await f.flush(); // NEW
+    const manual = position(); f.api.refresh(); await f.flush(); assert.deepEqual(position(), manual); // NEW
+    target.remove(); const replacement = f.target('add-bed'); replacement.getBoundingClientRect = box; await f.flush(); // NEW
+    assert.notDeepEqual(position(), manual, 'a new target may reposition the card to keep the control clear'); // NEW
+}); // NEW
 
 test('layout explicitly requests the intended garden selection and never changes it silently', async () => { // NEW
     const f = fixture(); await start(f); await stage(f, 'layout');

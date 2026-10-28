@@ -1,3 +1,4 @@
+require('../../src/main/trellis-asset-scheme.cjs'); // NEW: production protocol privileges must precede app readiness.
 /** Smoke the real main process, preload, index, plugin loader, and home controls in an isolated profile. */ // NEW
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -64,7 +65,8 @@ async function run() {
     await until(() => window.webContents.executeJavaScript('!!window.Draw?.loadPlugin && !!window.TrellisGardenHome').catch(() => false), 'home scripts'); // CHANGE
     console.log('Production home scripts ready.'); // NEW
     smokeStage = 'editor plugin callback'; // NEW
-    await window.webContents.executeJavaScript(`new Promise(resolve => Draw.loadPlugin(ui => { window.smokeUi = ui; resolve(); }));`);
+    await window.webContents.executeJavaScript(`new Promise(resolve => Draw.loadPlugin(ui => { window.smokeUi = ui; const loaded = ui.fileLoaded; ui.fileLoaded = function() { const result = loaded.apply(this, arguments); Promise.resolve(result).then(() => { window.smokeInitialFileLoaded = true; }); return result; }; resolve(); }));`); // CHANGE
+    await until(() => window.webContents.executeJavaScript('!!window.smokeInitialFileLoaded && !smokeUi.openingFile'), 'initial file load'); // CHANGE: the startup file must finish before the smoke opens its own garden.
     await window.webContents.executeJavaScript(`localStorage.setItem('trellis.licenseWizard.v2', JSON.stringify({ version: '2', path: 'personal', contactGuidance: false, oathCompletedAt: new Date().toISOString(), name: 'Smoke Test', signature: 'Smoke Test', email: 'smoke@example.test' })); smokeUi.hideDialog(); smokeUi.showSplash(true);`);
     if (foldResume) { // NEW: verify durable preferences after the previous Electron app has quit completely.
         await until(() => window.webContents.executeJavaScript("document.querySelector('.trellis-splash-login-status')?.textContent === 'Logged in as Fold Smoke'"), 'app restart identity'); // NEW
@@ -113,36 +115,69 @@ async function run() {
     assert.deepEqual(opening.slice(0, 3), ['Garden communities', 'Shared garden projects', 'Private garden projects']); // CHANGE
     await window.webContents.executeJavaScript("Array.from(document.querySelectorAll('.trellis-projects-root button')).find(b => b.textContent === 'Close').click();"); // CHANGE
     assert.equal(await window.webContents.executeJavaScript('smokeUi.getCurrentFile().fileObject.path === smokeGarden.path'), true);
+    await window.webContents.executeJavaScript('Trellis.sharing.refresh()'); // CHANGE: load the current collaboration base before authoring fixture cells.
     const field = await window.webContents.executeJavaScript(`(async () => { // NEW: real renderer commands, preview pixels, durable save, and acknowledgment publication.
         const graph = smokeUi.editor.graph, worker = Trellis.users.getCurrentUser();
         const value = attributes => { const node = mxUtils.createXmlDocument().createElement('object'); for (const [name, text] of Object.entries(attributes)) node.setAttribute(name, text); return node; };
         const garden = graph.insertVertex(null, 'smoke-garden', value({ garden_module: '1', label: 'Field preview' }), 400, 300, 600, 400, 'module=1;'); // CHANGE: exercise the real garden-module discovery path.
+        if (graph.model.getCell(garden.id) !== garden) throw new Error('Initial garden insertion failed: ' + JSON.stringify({ id: garden.id, parent: garden.parent?.id, modelCells: Object.keys(graph.model.cells), attrs: garden.value?.outerHTML, root: graph.model.root?.id, defaultParent: graph.getDefaultParent()?.id, admin: Trellis.users.isAdmin(), sharing: Trellis.sharing.context(), status: smokeUi.editor.status })); // CHANGE
+        graph.__trellisModules.clusters.revealCell(garden); graph.foldCells(false, false, [garden]); // CHANGE: insert children against the full authored container before testing folded rendering.
         const bed = graph.insertVertex(garden, 'smoke-bed', value({ garden_bed: '1', label: 'Blue bed' }), 40, 50, 120, 90, 'fillColor=#0000ff;strokeColor=none;'); // CHANGE
         const planting = graph.insertVertex(bed, 'smoke-planting-group', value({ tiler_group: '1', label: 'Blue planting group', plant_name: 'Lettuce', linkedTo: 'smoke-task' }), 10, 10, 90, 60, 'fillColor=#0000ff;strokeColor=none;'); // CHANGE: production task/group links are reciprocal.
         graph.insertVertex(garden, 'smoke-plant', value({ plant_tiler: '1', label: 'Red plant' }), 350, 210, 45, 45, 'fillColor=#ff0000;strokeColor=none;'); // CHANGE
-        const unrelated = graph.insertVertex(garden, 'smoke-unrelated', value({ kanban_card: '1', title: 'Unrelated private instructions' }), 170, 50, 100, 90, 'fillColor=#00ff00;'); // NEW
+        const unrelated = graph.insertVertex(garden, 'smoke-unrelated', value({ trellis_role_user_id: worker.id, label: 'Unrelated private role' }), 170, 50, 100, 90, 'fillColor=#00ff00;role_card=1;'); // CHANGE: a valid private role avoids an orphan task's perpetual board reparenting.
+        const denied = graph.insertVertex(garden, 'smoke-denied', value({ label: 'Denied preview secret' }), 250, 50, 50, 50, 'fillColor=#00ff00;'); // CHANGE
+        graph.insertVertex(denied, 'smoke-denied-child', value({ label: 'Denied descendant secret' }), 0, 0, 20, 20); // CHANGE
+        const allowedDescendant = graph.insertVertex(denied, 'smoke-allowed-child', value({ label: 'Allowed descendant' }), 25, 25, 20, 20, 'fillColor=#ff0000;'); // CHANGE: explicit child access survives a denied ancestor without revealing that ancestor's label or shape.
+        graph.insertEdge(garden, 'smoke-denied-edge', value({ label: 'Denied endpoint secret' }), bed, denied); // CHANGE
         const role = graph.insertVertex(null, 'smoke-role', value({ trellis_role_user_id: worker.id }), 10, 300, 100, 60);
         const taskModule = graph.insertVertex(null, 'smoke-task-module', value({ task_module: '1', label: 'Field work' }), 10, 10, 600, 250); // CHANGE
         const template = graph.__trellisTaskManager.ensureMainBoardInTaskModule(taskModule), board = template.board, lane = template.lanes.TODO; // CHANGE: use the production template and every real workflow lane.
         const task = graph.insertVertex(lane, 'smoke-task', value({ kanban_card: '1', title: 'Water lettuce group', workflow_state: 'TODO', task_assignee_role_ids_json: JSON.stringify([role.id]), linkedTo: planting.id, start: '2026-10-01', end: '2026-10-01', assigned_day: '2026-10-01' }), 10, 10, 160, 100); // CHANGE
         graph.setSelectionCell(task);
+        if (graph.model.getCell(garden.id) !== garden) throw new Error('Garden fixture was not inserted into the live model: ' + JSON.stringify({ id: garden.id, parent: garden.parent?.id, modelCells: Object.keys(graph.model.cells), attrs: garden.value?.outerHTML })); // CHANGE
+        const originalUsers = graph.__trellisUsers; graph.__trellisUsers = Object.assign(Object.create(originalUsers || Trellis.users), { isAdmin: () => false, getAccessSummary: cell => ({ effectiveOpen: cell !== denied && cell.id !== 'smoke-denied-child' }) }); // CHANGE: exercise per-cell permissions and a connector with a denied endpoint.
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); // CHANGE: settle scheduled module/board normalization before observing rendering-only invariants.
+        if (graph.model.getCell(garden.id) !== garden) throw new Error('Garden fixture replaced during scheduled normalization.'); // CHANGE
+        await Trellis.field.snapshot(true); // CHANGE: assign persistent IDs before observing rendering-only invariants.
+        if (graph.model.getCell(garden.id) !== garden) throw new Error('Garden fixture replaced during first preview.'); // CHANGE
         const previewChecks = [];
-        for (const scale of [0.7, 1.4]) {
+        const foldPreferences = () => JSON.stringify(Object.entries(localStorage).filter(([key]) => key.startsWith('trellis.local-folds.')).sort()); // CHANGE: unrelated background preferences may persist during asynchronous rasterization.
+        const convertImages = smokeUi.editor.convertImages; smokeUi.editor.convertImages = function(svg) { window.smokePreviewSvg = mxUtils.getXml(svg); return convertImages.apply(this, arguments); }; // CHANGE: preserve the actual production SVG on a raster-alignment failure.
+        for (const [scale, mode] of [[0.7, 'current'], [1.4, 'folded'], [1, 'city-hidden']]) { // CHANGE
             graph.view.setScale(scale); graph.view.setTranslate(23, 17); graph.view.validate();
+            if (mode === 'folded') graph.foldCells(true, false, [garden]); // CHANGE
+            if (mode === 'city-hidden') { graph.model.setVisible(garden, false); graph.view.validate(); } // CHANGE: city filtering removes live states using visibility.
+            graph.setSelectionCell(task); // CHANGE: establish the selection being preserved after native fold controls finish changing their own selection.
+            const before = mxUtils.getXml(new mxCodec().encode(graph.model)), selection = graph.getSelectionCells().slice(), history = smokeUi.editor.undoManager.indexOfNextAdd, preferences = foldPreferences(), hosts = document.body.children.length; // CHANGE
             const work = await Trellis.field.snapshot(true), preview = work.gardens.find(item => item.id === garden.value.getAttribute('trellis_field_object_id'));
-            if (!preview) throw new Error('Missing garden preview.');
+            window.smokePreviewPng = preview?.png; // CHANGE
+            const unchanged = { model: before === mxUtils.getXml(new mxCodec().encode(graph.model)), history: history === smokeUi.editor.undoManager.indexOfNextAdd, preferences: preferences === foldPreferences(), hosts: hosts === document.body.children.length, selection: selection.length === graph.getSelectionCells().length && selection.every((cell, index) => graph.getSelectionCells()[index] === cell) }; // CHANGE
+            if (Object.values(unchanged).some(value => !value)) throw new Error('Preview changed editor state: ' + JSON.stringify({ mode, unchanged, historyBefore: history, historyAfter: smokeUi.editor.undoManager.indexOfNextAdd, edits: smokeUi.editor.undoManager.history.slice(history).map(edit => edit.changes.map(change => ({ type: change.constructor.name, id: change.cell?.id || change.child?.id }))) })); // CHANGE
+            if (!preview) throw new Error('Missing garden preview: ' + JSON.stringify({ mode, expected: garden.value.getAttribute('trellis_field_object_id'), gardens: work.gardens.map(item => ({ id: item.id, name: item.name })), liveGardens: Object.values(graph.model.cells).filter(cell => cell.getAttribute?.('garden_module') === '1').map(cell => ({ id: cell.id, fieldId: cell.getAttribute('trellis_field_object_id'), visible: cell.visible, collapsed: cell.collapsed })), sameGraph: graph === smokeUi.editor.graph })); // CHANGE
             if (preview.regions.some(region => region.id === unrelated.value.getAttribute('trellis_field_object_id'))) throw new Error('Preview contains unrelated task data.'); // NEW
+            if (preview.regions.some(region => /Denied/.test(region.label))) throw new Error('Preview leaked denied cells or connector endpoints.'); // CHANGE
+            if (/Denied|Unrelated|smoke-denied-edge|smoke-denied-child/.test(window.smokePreviewSvg)) throw new Error('Preview SVG leaked private subtree or endpoint content.'); // CHANGE
+            if (!preview.regions.some(region => region.id === allowedDescendant.getAttribute('trellis_field_object_id'))) throw new Error('Preview lost an explicitly readable descendant of a denied container.'); // CHANGE
             if (preview.width < 600 || preview.height < 400) throw new Error('Preview cropped the whole garden to a linked object.'); // NEW
             const region = preview.regions.find(item => item.id === planting.value.getAttribute('trellis_field_object_id')); // CHANGE
             if (region?.kind !== 'planting-group' || work.tasks.find(item=>item.title==='Water lettuce group').locations.join() !== region.id) throw new Error('Task highlights its bed instead of the linked planting group.'); // NEW
             const image = await new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = preview.png; });
             const canvas = document.createElement('canvas'); canvas.width = preview.width; canvas.height = preview.height; const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
             const pixel = [...context.getImageData(Math.floor(region.x + region.width * 0.25), Math.floor(region.y + region.height * 0.25), 1, 1).data];
-            if (pixel[2] < 240 || pixel[0] > 20 || pixel[1] > 20) throw new Error('Preview region is misaligned: ' + JSON.stringify({ region, pixel, scale }));
+            if (pixel[2] < 240 || pixel[0] > 20 || pixel[1] > 20) throw new Error('Preview region is misaligned: ' + JSON.stringify({ region, pixel, scale, liveStyle: planting.style, effectiveStyle: graph.view.getState(planting)?.style })); // CHANGE
             if (graph.getSelectionCell() !== task) throw new Error('Preview changed editor selection.');
-            previewChecks.push({ scale, pixel, wholeGarden: true, plantingGroupLinked: true }); window.smokeWork = work; // CHANGE
+            previewChecks.push({ scale, mode, pixel, wholeGarden: true, plantingGroupLinked: true, permissionsFiltered: true, liveStatePreserved: true }); window.smokeWork = work; // CHANGE
         }
-        graph.model.remove(unrelated); // NEW: the deliberately invalid privacy fixture must not keep triggering Task Manager's orphan placement during command/Undo checks.
+        const svgExport = Graph.prototype.getSvg, hostsBeforeFailure = document.body.children.length; let exportFailed = false; // CHANGE
+        try { Graph.prototype.getSvg = function() { if (this !== graph) throw new Error('Injected isolated export failure'); return svgExport.apply(this, arguments); }; await Trellis.field.snapshot(true); } // CHANGE
+        catch (error) { if (error.message !== 'Injected isolated export failure') throw error; exportFailed = true; } // CHANGE
+        finally { Graph.prototype.getSvg = svgExport; } // CHANGE
+        if (!exportFailed || document.body.children.length !== hostsBeforeFailure) throw new Error('Failed preview leaked its render graph or swallowed the export error.'); // CHANGE
+        graph.__trellisUsers = originalUsers; graph.model.setVisible(garden, true); // CHANGE
+        smokeUi.editor.convertImages = convertImages; // CHANGE
+        graph.model.remove(denied); graph.model.remove(graph.model.getCell('smoke-denied-edge')); // CHANGE
+        graph.model.remove(unrelated); // CHANGE: remove the privacy fixture before command/Undo checks.
         smokeUi.editor.undoManager.clear(); // CHANGE: save the stable task-board fixture after clearing its creation history.
         await new Promise((resolve, reject) => smokeUi.getCurrentFile().save(false, resolve, reject));
         await trellisField.publishWork({ work: smokeWork });
@@ -169,13 +204,15 @@ async function run() {
         await new Promise((resolve, reject) => smokeUi.getCurrentFile().save(false, resolve, reject)); // NEW
         await Trellis.field.processIncoming();
         if (task.value.getAttribute('card_note')) throw new Error('An acknowledged phone edit replayed after Undo.'); // NEW
-        Trellis.taskCommands.commitCardPatch(task, { card_note: 'Automatic saved desktop edit' }, { reflow: false }); // NEW
+        const automaticTarget = Object.values(graph.model.cells).find(cell => cell.getAttribute?.('trellis_field_object_id') === task.getAttribute('trellis_field_object_id')); // CHANGE: stable field identity survives replacement of the collaboration projection's cell objects and IDs.
+        const automaticEdit = automaticTarget && Trellis.taskCommands.commitCardPatch(automaticTarget, { card_note: 'Automatic saved desktop edit' }, { reflow: false }); // CHANGE
+        if (!automaticEdit || automaticTarget.getAttribute('card_note') !== 'Automatic saved desktop edit') throw new Error('Automatic desktop edit was rejected before publication: ' + JSON.stringify({ automaticEdit, targetFound: !!automaticTarget, sameCell: automaticTarget === task, saving: smokeUi.getCurrentFile().savingFile, collaborationSaving: smokeUi.getCurrentFile().__trellisCollaborativeSaving, tasks: Object.values(graph.model.cells).filter(cell=>cell.getAttribute?.('kanban_card')==='1').map(cell=>({id:cell.id,title:cell.getAttribute('title'),fieldId:cell.getAttribute('trellis_field_object_id')})) })); // CHANGE
         await new Promise((resolve, reject) => smokeUi.getCurrentFile().save(false, resolve, reject)); await Trellis.field.processIncoming(); // NEW
         return { previewChecks, desktopFieldApplication: true, persistedAcknowledgment: true, plannedDayPreserved: true, undoRedoPreserved: true, diagramId: smokeWork.diagramId, workerId: worker.id }; // CHANGE
     })();`); // NEW
     const identitySession = await window.webContents.executeJavaScript('trellisIdentity.getSession()'); // NEW
     const workDirectory = path.join(app.getPath('userData'), 'trellis-identities', identitySession.identityId, 'metadata', 'field', field.diagramId, field.workerId, 'work'); // NEW
-    await until(async () => fs.readdirSync(workDirectory).map(name => JSON.parse(fs.readFileSync(path.join(workDirectory, name), 'utf8'))).some(record => record.payload.work.tasks.find(task => task.title === 'Water lettuce group')?.annotation === 'Automatic saved desktop edit'), 'automatic saved field publication'); // CHANGE: the existing background poll may already own the processing guard.
+    await until(async () => fs.readdirSync(workDirectory).map(name => JSON.parse(fs.readFileSync(path.join(workDirectory, name), 'utf8'))).some(record => record.payload.work.tasks.find(task => task.title === 'Water lettuce group')?.annotation === 'Automatic saved desktop edit'), 'automatic saved field publication', 15000); // CHANGE: cover three background polls and report a bounded operation failure.
     const publishedFiles = fs.readdirSync(workDirectory); // NEW: inspect the actual signed outbox, not a renderer return value.
     await window.webContents.executeJavaScript(`(async()=>{Trellis.taskCommands.commitCardPatch(smokeUi.editor.graph.model.getCell('smoke-task'),{card_note:'Unpublished draft'},{reflow:false});await Trellis.field.processIncoming();})()`); // NEW
     assert.equal(fs.readdirSync(workDirectory).length, publishedFiles.length, 'A draft cannot trigger background field publication.'); // NEW
@@ -277,7 +314,12 @@ async function preparePhysicalDesktop(seed = true) { // CHANGE
     fs.writeFileSync(path.join(directory, 'control.json'), JSON.stringify({ url: 'http://127.0.0.1:' + server.address().port, token, identityId: session.identityId, username: session.username, password: 'local-smoke-password', profile, userData: app.getPath('userData') }), { mode: 0o600 }); // NEW: this isolated test password never unlocks user identities.
     console.log(JSON.stringify({ physicalDesktopReady: true, identityId: session.identityId, username: session.username, sampleTasks: 2 })); // NEW
 } // NEW
-run().catch(error => { console.error(error); if (diagnosticMode) { clearTimeout(timeout); setTimeout(() => { void cleanup(1); }, 180000).unref(); } else void cleanup(1); }); // CHANGE: failure, diagnostics and timeout share the same owned-resource exit.
+run().catch(async error => { // CHANGE: preserve public fixture pixels and vector data before the shared owned-resource cleanup.
+    console.error(error); // CHANGE
+    try { const state = await Promise.race([window?.webContents.executeJavaScript('({status:smokeUi.editor.status,modified:smokeUi.getCurrentFile()?.isModified(),saving:smokeUi.getCurrentFile()?.savingFile,editable:smokeUi.getCurrentFile()?.isEditable?.(),loggedIn:Trellis.users?.isLoggedIn(),liveTaskNote:smokeUi.editor.graph.model.getCell("smoke-task")?.getAttribute("card_note"),diagnostics:TrellisContentPolicy?.diagnostics()})'), new Promise(resolve => setTimeout(resolve, 2000))]); console.error('PRODUCTION_FAILURE_STATE:', JSON.stringify(state)); } catch (_) {} // CHANGE: operation diagnostics omit credentials and user document content.
+    try { const preview = await Promise.race([window?.webContents.executeJavaScript('({svg:window.smokePreviewSvg,png:window.smokePreviewPng})'), new Promise(resolve => setTimeout(resolve, 2000))]); if (preview?.svg) fs.writeFileSync(path.join(output, 'failed-preview.svg'), preview.svg); if (preview?.png) fs.writeFileSync(path.join(output, 'failed-preview.png'), Buffer.from(preview.png.split(',')[1], 'base64')); } catch (_) {} // CHANGE
+    if (diagnosticMode) { clearTimeout(timeout); setTimeout(() => { void cleanup(1); }, 180000).unref(); } else void cleanup(1); // CHANGE
+}); // CHANGE
 
 /** Focused community creation/discovery controls use the real renderer, preload and main process. */ // NEW
 async function runCommunitySmoke() { // NEW

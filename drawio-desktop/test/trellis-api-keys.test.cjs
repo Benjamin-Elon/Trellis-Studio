@@ -109,6 +109,9 @@ test('desktop startup installs API keys without overwriting saved plugin choices
     const start = source.indexOf("\t\tApp.pluginRegistry.trellisApiKeys =");
     const snippet = source.slice(start, source.indexOf('\t\tApp.initPluginCallback();', start));
     const values = new Map(), context = { App: { pluginRegistry: {}, publicPlugin: [] }, plugins: ['existing-plugin'], localStorage: { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }, mxSettings: { setPlugins: () => {}, save: () => {} } };
-    vm.runInNewContext(snippet, context); assert.equal(context.plugins[0], 'existing-plugin'); assert.equal(context.plugins.length, 2);
+    vm.runInNewContext(snippet, context); assert.equal(context.plugins[0], 'existing-plugin'); // CHANGE: other independent migrations may also install plugins.
+    const apiKeysPlugin = context.App.pluginRegistry.trellisApiKeys; // CHANGE
+    assert.ok(apiKeysPlugin); assert.equal(context.plugins.filter(plugin => plugin === apiKeysPlugin).length, 1); // CHANGE: assert API-key installation without coupling to Quickstart.
+    const installed = Array.from(context.plugins); vm.runInNewContext(snippet, context); assert.deepEqual(Array.from(context.plugins), installed); // CHANGE: migrations remain idempotent.
     context.plugins = ['deliberate-user-choice']; vm.runInNewContext(snippet, context); assert.deepEqual(context.plugins, ['deliberate-user-choice']);
 });

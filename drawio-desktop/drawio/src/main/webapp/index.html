@@ -23,11 +23,19 @@
     <link rel="stylesheet" type="text/css" href="styles/grapheditor.css">
 	<link rel="stylesheet" type="text/css" href="styles/trellis-splash.css"> <!-- NEW -->
 	<link rel="stylesheet" media="(forced-colors: active)" href="styles/high-contrast.css" id="high-contrast-stylesheet">
+	<script src="js/trellis-permission-core.js"></script> <!-- NEW: pure policy precedes Users and details plugins. -->
+	<script src="js/trellis-content-policy.js"></script> <!-- NEW: security policy precedes startup and decoding. -->
 	<script src="js/trellis-splash.js"></script> <!-- NEW -->
 	<script src="js/trellis-field-protocol.js"></script> <!-- NEW: desktop and Android share validation and merge rules. -->
 	<script src="js/trellis-field-runtime.js"></script> <!-- NEW: task commands remain the only diagram mutation path. -->
 	<script src="js/trellis-project-naming.js"></script> <!-- NEW: share naming rules with the main process. -->
 	<script src="js/trellis-garden-home.js"></script> <!-- NEW: identity/library presentation loads before the application. -->
+	<script src="js/trellis-local-view.js"></script> <!-- NEW: folding preferences are independent of authored document content. -->
+	<script src="js/trellis-incoming-changes.js"></script> <!-- NEW: incoming review UI and scoped native patches. -->
+	<script src="js/trellis-editing-holds.js"></script> <!-- NEW: editor draft recovery and draggable handoff countdown. -->
+	<script src="js/trellis-edit-context.js"></script> <!-- NEW: per-change provenance and deferred automation. -->
+	<script src="js/trellis-object-attribution.js"></script> <!-- NEW: read-only Change Map attribution overlays. -->
+	<script src="js/trellis-background-saving.js"></script> <!-- NEW: independent activity heartbeats and ten-second private checkpoints. -->
 	<script src="js/bootstrap.js"></script>
 	<style type="text/css">
 		.geBlock {

@@ -1276,7 +1276,7 @@ var SplashDialog = function(editorUi)
 	supportButton.style.padding = '10px'; // NEW
 	supportButton.style.width = '340px'; // NEW
 	supportButton.setAttribute('data-trellis-url', trellisLinks.patreon); // NEW
-	mxUtils.write(supportButton, 'Explore & Support My Projects'); // NEW
+	mxUtils.write(supportButton, 'Explore and Support Trellis'); // CHANGE: clarify that support is for Trellis.
 	mxEvent.addListener(supportButton, 'click', function() // NEW
 	{ // NEW
 		if (window.open != null) // NEW

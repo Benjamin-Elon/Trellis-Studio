@@ -109,7 +109,8 @@ app.whenReady().then(async () => {
         await window.webContents.executeJavaScript("Array.from(document.querySelectorAll('.trellis-invite-delivery-dialog button')).find(button => button.textContent === 'Copy Invitation').scrollIntoView({ block: 'center' }); void 0;"); // NEW
         const copySelector = await window.webContents.executeJavaScript("(() => { const button = Array.from(document.querySelectorAll('.trellis-invite-delivery-dialog button')).find(button => button.textContent === 'Copy Invitation'); button.id = 'copy-invitation'; return '#copy-invitation'; })()"); // NEW
         await click(window, copySelector); // NEW
-        assert.match(await window.webContents.executeJavaScript('window.copiedInvitation'), /To: grower@example.com\nSubject: Garden invitation\n\n.*\nEND INVITE/s); // NEW
+        const copyDiagnostics = await window.webContents.executeJavaScript("({status:document.querySelector('.trellis-invite-delivery-dialog [role=status]').textContent,disabled:document.getElementById('copy-invitation').disabled,active:document.activeElement.outerHTML.slice(0,160)})"); // NEW
+        assert.match(await window.webContents.executeJavaScript('window.copiedInvitation'), /To: grower@example.com\nSubject: Garden invitation\n\n.*\nEND INVITE/s, JSON.stringify(copyDiagnostics)); // CHANGE: retain native diagnostics for asynchronous delivery failures.
         await window.webContents.executeJavaScript("document.addEventListener('keydown', event => { window.deliveryKey = { key: event.key, target: event.target.outerHTML.slice(0, 120) }; }, true); void 0;"); // NEW
         window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); // NEW
         window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); // NEW

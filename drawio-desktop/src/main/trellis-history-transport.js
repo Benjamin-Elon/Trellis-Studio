@@ -1,3 +1,4 @@
+import { listBounded, readJson as readBoundedJson, readBounded, LIMITS, diagnostic } from './trellis-input-policy.js'; // NEW
 /** Versioned timeline transport. Collaboration genesis/records are never modified here. */ // NEW
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -18,11 +19,11 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
         return payload.issuerDeviceId === canvas.coordinatorDeviceId && payload.membershipVersion >= (history.at(-1)?.version || 0) ? canvas.coordinatorPublicKey : null;
     }
     const signed = payload => signRecord({ ...payload, issuerDeviceId: deviceId }, keys.privateKey);
-    async function optional(filename) { try { return JSON.parse(await fs.readFile(filename, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } }
-    async function readRecord(filename) {
-        const stat = await fs.stat(filename);
+    async function optional(filename) { try { return await readBoundedJson(filename, LIMITS.history) /* CHANGE: bound actual history bytes. */; } catch (error) { if (error.code === 'ENOENT') return null; throw error; } }
+    async function readRecord(filename, budget) {
+        const stat = await fs.stat(filename); // CHANGE
         if (stat.size > 180 * 1024 * 1024) throw new Error('History record exceeds its size limit.');
-        return JSON.parse(await fs.readFile(filename, 'utf8'));
+        return await readBoundedJson(filename, LIMITS.history, budget) /* CHANGE: bound received JSON before parsing. */;
     }
     /** Validate an independently recoverable baseline before accepting a reset marker. */ // NEW
     function validateReset(record) {
@@ -49,7 +50,7 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
         let record = await optional(path.join(directory, 'reset.json'));
         if (!record) {
             if (deviceId !== canvas.coordinatorDeviceId) return null;
-            const xml = await fs.readFile(canvas.diagramPath, 'utf8');
+            const xml = await readBounded(canvas.diagramPath, LIMITS.diagram) /* CHANGE */;
             const generation = expectedGeneration, baselineId = generation + '-baseline'; // CHANGE
             await run('reset', { generation, baselineId, xml, timestamp: Date.now() });
             const baseline = await run('export', { revisionId: baselineId, forceFull: true });
@@ -97,7 +98,7 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
         const pruningKey = digest(canonical([removed.slice().sort(), (await run('anchors')).sort()])); // NEW
         if (lastPruning === pruningKey) return; // NEW: unchanged maintenance never republishes anchors or scans all history exports.
         const anchors = [], publicRecords = new Map(), retired = new Set(removed); // CHANGE
-        for (const name of await fs.readdir(path.join(directory, reset.generation, 'records')).catch(() => [])) if (/^[a-zA-Z0-9_-]+\.json$/.test(name)) { // NEW
+        for (const name of await listBounded(path.join(directory, reset.generation, 'records')).catch(error => { if (error.code === 'ENOENT') return []; throw error; })) if (/^[a-zA-Z0-9_-]+\.json$/.test(name)) { // NEW
             const entry = validEntry(await readRecord(path.join(directory, reset.generation, 'records', name)), reset); publicRecords.set(entry.revision.id, entry); // NEW
         } // NEW
         const needed = new Set((await run('anchors')).filter(id => publicRecords.has(id) && !retired.has(id))); // NEW: private unsaved anchors never leave this device.
@@ -112,8 +113,8 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
         const manifestName = digest(canonical(payload)) + '.json'; // NEW
         await writeImmutable(path.join(directory, reset.generation, 'pruning', manifestName), signed(payload));
         for (const id of removed) await fs.rm(path.join(directory, reset.generation, 'records', safeId(id) + '.json'), { force: true });
-        for (const name of await fs.readdir(path.join(directory, reset.generation, 'pruning'))) if (/^[a-f0-9]+\.json$/.test(name) && name !== manifestName) await fs.rm(path.join(directory, reset.generation, 'pruning', name), { force: true }); // NEW
-        for (const name of await fs.readdir(path.join(directory, reset.generation, 'anchors'))) if (/^[a-zA-Z0-9_-]+\.json$/.test(name) && !anchors.includes(name)) await fs.rm(path.join(directory, reset.generation, 'anchors', name), { force: true }); // NEW
+        for (const name of await listBounded(path.join(directory, reset.generation, 'pruning'))) if (/^[a-f0-9]+\.json$/.test(name) && name !== manifestName) await fs.rm(path.join(directory, reset.generation, 'pruning', name), { force: true }); // NEW
+        for (const name of await listBounded(path.join(directory, reset.generation, 'anchors'))) if (/^[a-zA-Z0-9_-]+\.json$/.test(name) && !anchors.includes(name)) await fs.rm(path.join(directory, reset.generation, 'anchors', name), { force: true }); // NEW
         await clearRetiredArchives(reset.generation, removed); // NEW
         await run('compact');
         lastPruning = pruningKey; // NEW: only mark work complete after durable publication and cleanup.
@@ -127,7 +128,7 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
             try {
                 const resolved = await fs.realpath(folder);
                 if (resolved !== path.join(project, '.stversions', '.trellis', 'history-v2', generation, kind)) throw new Error('History archive cleanup path is outside its project.');
-                for (const item of await fs.readdir(folder, { withFileTypes: true })) {
+                for (const item of await listBounded(folder, { withFileTypes: true })) {
                     if (!item.isFile() || item.isSymbolicLink()) continue;
                     const matches = removed.some(id => item.name === id + '.json' || item.name.startsWith(id + '.json~') || item.name.startsWith(id + '~') && item.name.endsWith('.json') || kind === 'anchors' && item.name.startsWith(id + '-'));
                     if (matches) await fs.rm(path.join(folder, item.name), { force: true });
@@ -138,17 +139,17 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
     async function importAll(knownIds = []) {
         const reset = await ensureReset();
         if (!reset) return { ok: true, entries: [], errors: [], waitingForCoordinator: true };
-        const root = path.join(directory, reset.generation), errors = [], entries = [], known = new Set(knownIds);
+        const root = path.join(directory, reset.generation), errors = [], entries = [], known = new Set(knownIds), budget = { used: 0, maximum: LIMITS.replay }; // CHANGE
         // Prefer the newest cumulative signed manifest; older manifests can arrive after compaction. // NEW
         const manifests = []; // NEW
-        for (const name of (await fs.readdir(path.join(root, 'pruning')).catch(() => [])).sort()) {
+        for (const name of (await listBounded(path.join(root, 'pruning')).catch(error => { if (error.code === 'ENOENT') return []; throw error; })).sort()) {
             if (!/^[a-f0-9]+\.json$/.test(name)) continue;
             try {
-                const record = await readRecord(path.join(root, 'pruning', name)), p = record.payload;
+                const record = await readRecord(path.join(root, 'pruning', name), budget), p = record.payload;
                 if (p?.version !== 2 || p.shareId !== canvas.shareId || p.diagramId !== canvas.diagramId || p.generation !== reset.generation || digest(canonical(Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'issuerDeviceId')))) + '.json' !== name || !verifyRecord(record, coordinatorKey(p))) throw new Error('Invalid history pruning authority.');
                 if (!Array.isArray(p.removed) || !Array.isArray(p.anchors) || p.sequence !== p.removed.length) throw new Error('Invalid history pruning manifest.'); // NEW
                 manifests.push(p); // NEW
-            } catch (error) { errors.push({ filename: name, reason: error.message }); }
+            } catch (error) { if (error.code === 'REPLAY_LIMIT') throw error; errors.push({ filename: name, ...diagnostic(error, name) }); }
         }
         const manifest = manifests.sort((a, b) => b.sequence - a.sequence)[0]; // NEW
         if (manifest) { // NEW
@@ -156,22 +157,22 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
                 const p = manifest, anchors = [];
                 for (const anchorName of p.anchors) {
                     if (!/^[a-zA-Z0-9_-]+\.json$/.test(anchorName)) throw new Error('Invalid history anchor filename.');
-                    anchors.push(validEntry(await readRecord(path.join(root, 'anchors', anchorName)), reset));
+                    anchors.push(validEntry(await readRecord(path.join(root, 'anchors', anchorName), budget), reset));
                 }
                 await run('applyPrune', { anchors, removed: p.removed });
                 for (const id of p.removed) await fs.rm(path.join(root, 'records', safeId(id) + '.json'), { force: true });
                 await clearRetiredArchives(reset.generation, p.removed); // NEW
-            } catch (error) { errors.push({ filename: 'pruning', reason: error.message }); }
+            } catch (error) { if (error.code === 'REPLAY_LIMIT') throw error; errors.push({ filename: 'pruning', ...diagnostic(error) }); }
         }
         const retiredIds = new Set(await run('retired')); // NEW
-        for (const name of (await fs.readdir(path.join(root, 'records')).catch(() => [])).sort()) {
+        for (const name of (await listBounded(path.join(root, 'records')).catch(error => { if (error.code === 'ENOENT') return []; throw error; })).sort()) {
             if (/^[a-zA-Z0-9_-]+\.json$/.test(name) && retiredIds.has(name.slice(0, -5))) { await fs.rm(path.join(root, 'records', name), { force: true }); continue; } // NEW
             if (!/^[a-zA-Z0-9_-]+\.json$/.test(name) || known.has(name.slice(0, -5))) continue;
             try {
-                const entry = validEntry(await readRecord(path.join(root, 'records', name)), reset);
+                const entry = validEntry(await readRecord(path.join(root, 'records', name), budget), reset);
                 if (entry.revision.id + '.json' !== name) throw new Error('History filename identity mismatch.');
                 await run('import', { entry }); entries.push(entry);
-            } catch (error) { errors.push({ filename: name, reason: error.message }); }
+            } catch (error) { if (error.code === 'REPLAY_LIMIT') throw error; errors.push({ filename: name, ...diagnostic(error, name) }); } // CHANGE
         }
         return { ok: true, generation: reset.generation, reset: reset.baseline, entries, errors };
     }
@@ -183,7 +184,7 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
     }
     async function directoryBytes(directoryPath) {
         let total = 0;
-        for (const item of await fs.readdir(directoryPath, { withFileTypes: true }).catch(error => { if (error.code === 'ENOENT') return []; throw error; })) { // NEW
+        for (const item of await listBounded(directoryPath, { withFileTypes: true }).catch(error => { if (error.code === 'ENOENT') return []; throw error; })) { // NEW
             if (item.isSymbolicLink()) continue;
             const filename = path.join(directoryPath, item.name);
             if (item.isDirectory()) total += await directoryBytes(filename);
@@ -194,7 +195,7 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
     async function statistics() {
         const archiveBytes = await directoryBytes(path.join(canvas.folderPath, '.stversions', '.trellis', 'history-v2')); // NEW
         const legacyBytes = await directoryBytes(path.join(canvas.folderPath, '.trellis', 'history')) + await directoryBytes(path.join(canvas.folderPath, '.stversions', '.trellis', 'history')); // NEW
-        return { historyBytes: await directoryBytes(directory) + archiveBytes + legacyBytes, archiveBytes, legacyBytes, collaborationBytes: await directoryBytes(path.join(canvas.folderPath, '.trellis', 'collaboration-v2')), recoveryBytes: await directoryBytes(path.join(profile, 'recovery', canvas.shareId)) }; // CHANGE
+        return { historyBytes: await directoryBytes(directory) + archiveBytes + legacyBytes, archiveBytes, legacyBytes, collaborationBytes: await directoryBytes(path.join(canvas.folderPath, '.trellis', 'collaboration-v3')), recoveryBytes: await directoryBytes(path.join(profile, 'recovery', canvas.shareId)) }; // CHANGE
     }
     function serialized(work) { const result = queue.then(work); queue = result.catch(() => {}); return result; }
     return { publish: (...args) => serialized(() => publish(...args)), importAll: (...args) => serialized(() => importAll(...args)), maintain: () => serialized(maintain), statistics }; // CHANGE

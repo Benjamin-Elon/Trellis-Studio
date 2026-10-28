@@ -23,7 +23,7 @@ test('zero-offset planting circles balance opposite bed edges independently of s
             close(p.plantingRect.x + p.plantingRect.width / 2, 40 + width / 2); // CHANGE
             close(p.plantingRect.y + p.plantingRect.height / 2, 60 + height / 2); // CHANGE
             close(p.layoutOffsetXCm, 0); close(p.layoutOffsetYCm, 0); // CHANGE
-            const group = api.createPlantingFromProposal({ moduleCell: {}, proposal: p }); // CHANGE
+            const group = api.createPlantingFromProposal({ moduleCell: { getAttribute: () => null }, proposal: p }); // CHANGE
             assert.equal(group.attrs.layout_alignment, 'centered'); // CHANGE
             close(Number(group.attrs.layout_base_offset_x_cm), p.layoutBaseOffsetXCm); // CHANGE
             close(Number(group.attrs.layout_base_offset_y_cm), p.layoutBaseOffsetYCm); // CHANGE
@@ -39,7 +39,7 @@ test('percentage overhang is precise, diameter-relative, validated, and persiste
         const p = api.proposePlantingGeometry(input({ bedCell: bed(100, 250, 45), spacingXCm: 15, spacingYCm: 15, vegDiameterCm: diameter, allowedOverhangPct: percentage, fillAvailableBed: true })); // CHANGE
         assert.equal(p.allowedOverhangPct, percentage); // CHANGE
         close(p.geometry.width, 100 + 2 * api.toPx(diameter) * percentage / 100 + 8); // CHANGE
-        const group = api.createPlantingFromProposal({ moduleCell: {}, proposal: p }); // CHANGE
+        const group = api.createPlantingFromProposal({ moduleCell: { getAttribute: () => null }, proposal: p }); // CHANGE
         assert.equal(Number(group.attrs.allowed_overhang_pct), percentage); // CHANGE
     } // CHANGE
     assert.equal(api.proposePlantingGeometry(input()).allowedOverhangPct, 30); // CHANGE
@@ -53,7 +53,7 @@ test('offset-aware demand fitting agrees with committed circles on both axes and
         assert.equal(proposal.ok, true, JSON.stringify({ axis, rotation, x, y })); // CHANGE
         assert.ok(proposal.plantCount >= 17); assert.equal(proposal.slots.length, proposal.plantCount); // CHANGE
         close(proposal.layoutOffsetXCm, x); close(proposal.layoutOffsetYCm, y); // CHANGE
-        const group = api.createPlantingFromProposal({ moduleCell: {}, proposal }); // CHANGE
+        const group = api.createPlantingFromProposal({ moduleCell: { getAttribute: () => null }, proposal }); // CHANGE
         const stats = api.classifyPlantingSlots(group, api.toPx(20), api.toPx(30), api.groupLabelMetrics(group).bandPx, api.readDisabledSet(group)); // CHANGE
         assert.equal(stats.actual, proposal.plantCount); assert.equal(Number(group.attrs.plant_count), proposal.plantCount); // CHANGE
         for (const slot of proposal.slots) { // CHANGE
@@ -119,7 +119,7 @@ test('physical row capacity excludes header and never forces a plant into a narr
     const impossible = api.proposePlantingGeometry(input({ bedCell: bed(1, 1) })); // CHANGE
     assert.equal(impossible.ok, false); assert.equal(impossible.capacity, 0); assert.equal(impossible.plantCount, 0); // CHANGE
     assert.equal(impossible.reason, 'no_row_capacity'); // CHANGE
-    assert.throws(() => api.createPlantingFromProposal({ moduleCell: {}, proposal: impossible }), /physically fit/); // CHANGE
+    assert.throws(() => api.createPlantingFromProposal({ moduleCell: { getAttribute: () => null }, proposal: impossible }), /physically fit/); // CHANGE
     for (const width of [0, -1, NaN, Infinity]) { // CHANGE
         const invalid = api.proposePlantingGeometry(input({ bedCell: bed(width, 100) })); // CHANGE
         assert.equal(invalid.ok, false); assert.equal(invalid.reason, 'invalid_bed_geometry'); // CHANGE
@@ -139,7 +139,7 @@ test('dynamic headers, fitted diameter, and committed slot counts agree in detai
     const api = loadFittedPlantingGeometry(); // CHANGE
     for (const options of [input(), input({ bedCell: bed(2000, 2000), plantCount: 1200 }), input({ vegDiameterCm: 40 }), input({ bedCell: bed(100, 500, 37) })]) { // CHANGE
         const proposal = api.proposePlantingGeometry(options); // CHANGE
-        const group = api.createPlantingFromProposal({ moduleCell: {}, proposal }); // CHANGE
+        const group = api.createPlantingFromProposal({ moduleCell: { getAttribute: () => null }, proposal }); // CHANGE
         assert.equal(Number(group.attrs.plant_count_actual), proposal.plantCount); // CHANGE
         assert.equal(Number(group.attrs.plant_count), proposal.plantCount); // CHANGE
         assert.equal(group.attrs.lod_collapsed, proposal.lodCollapsed ? '1' : '0'); // CHANGE

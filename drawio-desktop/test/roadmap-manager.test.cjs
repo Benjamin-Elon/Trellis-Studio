@@ -25,6 +25,7 @@ function harness(t, extraPlugins = []) {
     const ui = { editor: { graph, getGraphXml: () => new w.mxCodec().encode(model) }, alert: message => alerts.push(message), showDialog: body => { dialogs.push(body); w.document.body.appendChild(body); }, hideDialog: () => { dialogs.forEach(body => body.remove()); dialogs.length = 0; }, actions: { get: key => actions.get(key) || { funct() {} }, addAction: (key, fn) => { const action = { funct: fn }; actions.set(key, action); return action; } }, menus: { createPopupMenu() {}, get: () => ({ funct() {} }) }, format: { refresh() {} } };
     w.Draw = { loadPlugin: fn => fn(ui) };
     w.ExportDialog = { exportFile(editorUi) { return editorUi.editor.getGraphXml(); } };
+    w.eval(fs.readFileSync(path.join(webapp, 'js/trellis-permission-core.js'), 'utf8')); // NEW
     const load = name => w.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins', name), 'utf8'));
     load('Garden_Roadmap_Core.js'); // CHANGE: core registers native roadmap rendering.
     extraPlugins.filter(name => ['Trellis_Users.js', 'Garden_Task_Manager.js'].includes(name)).forEach(load); // NEW
@@ -1340,4 +1341,29 @@ test('native outlines at 50 processes and 500 objects reuse the frozen layout wi
     h.graph.graphHandler.start(h.object, x, y); const layout = h.api._test.gesture.layout; // NEW
     for (let i = 1; i <= 20; i++) { pointer(h, 'mouseMove', x + i * 4, y, h.object); assert.equal(h.api._test.gesture.layout, layout); } // NEW
     assert.equal(h.xml(), before); h.graph.escape(); pointer(h, 'mouseUp', x + 80, y, h.object); assert.equal(h.xml(), before); // NEW
+}); // NEW
+
+/** Invitation setup must survive native guards and receive the same authorization in the XML adapter. */ // NEW
+test('visitor invitation creates its generated role atomically under the shared policy', async t => { // NEW
+    const h = harness(t, ['Trellis_Users.js', 'Garden_Task_Manager.js', 'Modules_Standalone.js']), users = h.graph.__trellisUsers; // NEW
+    users.enableUsers('Alice', '1234'); // NEW
+    const garden = h.graph.__trellisModules.createModuleAtPoint({ x: 500, y: 500 }, 'garden'); assert.ok(garden); // NEW
+    const invitation = users.createPendingInvite({ email: 'guest@example.org', scopeCellIds: [garden.id], preset: 'visitor' }); assert.equal(invitation.ok, true); // NEW
+    users.logout(); const before = h.xml(), accepted = users.acceptInvite({ email: 'guest@example.org', code: invitation.code, name: 'Guest', pin: '5678' }); // NEW
+    assert.equal(accepted.ok, true); assert.equal(users.getCurrentUser()?.id, invitation.invite.pendingUserId); // NEW
+    const roles = Object.values(h.model.cells).filter(cell => cell.getAttribute?.('trellis_role_user_id') === accepted.user.id); assert.equal(roles.length, 1, 'The generated role must not be rolled back.'); // NEW
+    const { validatePermissionChanges } = await import('../src/main/trellis-permission-policy.js'); // NEW
+    const decision = validatePermissionChanges(before, h.xml(), accepted.user.id, Date.now()); assert.equal(decision.allowed, true, decision.reason); // NEW
+}); // NEW
+
+/** A coordinator's grant command owns its generated role effects but cannot edit unrelated profiles. */ // NEW
+test('coordinator grant changes create archive and restore roles through native and replay policy', async t => { // NEW
+    const h = harness(t, ['Trellis_Users.js', 'Garden_Task_Manager.js', 'Modules_Standalone.js']), users = h.graph.__trellisUsers; // NEW
+    users.enableUsers('Alice', '1234'); const bob = users.createUser('Bob', '5678', false).user, charlie = users.createUser('Charlie', '9012', false).user; // NEW
+    const garden = h.graph.__trellisModules.createModuleAtPoint({ x: 500, y: 500 }, 'garden'); users.setScopeGrant(garden, { userId: bob.id, preset: 'coordinator' }); users.login('Bob', '5678'); // NEW
+    const { validatePermissionChanges } = await import('../src/main/trellis-permission-policy.js'); // NEW
+    for (const operation of [() => users.setScopeGrant(garden, { userId: charlie.id, preset: 'gardener' }), () => users.removeScopeGrant(garden, charlie.id), () => users.setScopeGrant(garden, { userId: charlie.id, preset: 'gardener' })]) { // NEW
+        const before = h.xml(); assert.equal(operation().ok, true); const result = validatePermissionChanges(before, h.xml(), bob.id, Date.now()); assert.equal(result.allowed, true, result.reason); // NEW
+    } // NEW
+    assert.equal(Object.values(h.model.cells).filter(cell => cell.getAttribute?.('trellis_role_user_id') === charlie.id).length, 1); // NEW
 }); // NEW

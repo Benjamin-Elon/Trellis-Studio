@@ -1,3 +1,4 @@
+import { readBounded, LIMITS } from './trellis-input-policy.js'; // NEW
 /** Managed project retirement and authenticated departure over the existing shared folder. */ // NEW
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
@@ -20,10 +21,10 @@ export function createProjectTransport(context) { // NEW
     } // NEW
     async function readState(canvas, filename = canvas.diagramPath) { // NEW
         if (filename === canvas.diagramPath && !canvas.localRemoved) await collaborationStore(canvas).refresh(); // CHANGE
-        const xml = await fs.readFile(filename, 'utf8'); return { ...inspectDiagram(xml), baseXml: xml }; // CHANGE
+        const xml = await readBounded(filename, LIMITS.diagram) /* CHANGE: cap actual document bytes. */; return { ...inspectDiagram(xml), baseXml: xml }; // CHANGE
     } // NEW
     async function saveRoster(canvas, state, actorId) { // NEW
-        const baseXml = await fs.readFile(canvas.diagramPath, 'utf8'); // NEW
+        const baseXml = await readBounded(canvas.diagramPath, LIMITS.diagram) /* CHANGE: cap actual document bytes. */; // NEW
         if (state.baseXml !== baseXml) throw new Error('The project changed while its access update was being prepared. Its files were preserved; retry after synchronization.'); // NEW
         for (const cell of state.cells) if (cell.node.hasAttribute('trellis_users_json')) cell.node.setAttribute('trellis_users_json', JSON.stringify(state.store)); // NEW
         const xml = state.document.serialize(); // NEW
@@ -39,7 +40,8 @@ export function createProjectTransport(context) { // NEW
     async function projectActions(input) { // NEW
         await initialize(); const canvas = known(input.shareId); // NEW
         if (!canvas || canvas.localRemoved || !await fs.stat(canvas.diagramPath).then(s => s.isFile()).catch(() => false)) return { available: false, canDelete: false, canLeave: false, successors: [] }; // NEW
-        const state = await readState(canvas), user = linked(state, input.userId, input.identityId), users = activeUsers(state); // NEW
+        const snapshot = await collaborationStore(canvas).snapshot(), state = inspectDiagram(snapshot.xml); // CHANGE: membership queries need verified state, not projection writes or presentation metadata.
+        const user = linked(state, input.userId, input.identityId), users = activeUsers(state); // CHANGE: current authorization is still checked on every query.
         if (users.length === 1) return { available: true, canDelete: !!user.admin, canLeave: false, successors: [], pendingInvitationCount: (state.store.invites || []).filter(i => i.status === 'pending').length }; // NEW
         let connections; // NEW
         try { await start(); connections = (await api('system/connections')).connections; if (!connections) throw new Error('No connection telemetry.'); } // NEW
@@ -73,7 +75,9 @@ export function createProjectTransport(context) { // NEW
             await persist(); if (context.runtimeReady() && !canvas.localRemoved) await configureCanvas(canvas); emit(); return { ok: true }; // NEW
         } // NEW
         if (canvas.retirementComplete === input.operation && ['purged', 'left'].includes(input.operation)) return { ok: true }; // NEW
-        const filename = canvas.localRemoved ? path.join(target, canvas.filename) : canvas.diagramPath; // NEW
+        const retainedFilename = path.join(target, canvas.filename); // CHANGE
+        const retainedPresent = canvas.localRemoved && await fs.stat(retainedFilename).then(stat => stat.isFile()).catch(() => false); // CHANGE: localRemoved fences the project before the filesystem move and does not prove that move succeeded.
+        const filename = retainedPresent ? retainedFilename : canvas.diagramPath; // CHANGE: a retry must authorize the actual source and report the copy it successfully retains.
         const present = await fs.stat(filename).then(s => s.isFile()).catch(() => false); // NEW
         if (input.operation !== 'left' && present) { // NEW
             const state = await readState(canvas, filename), user = linked(state, input.userId, input.identityId); // NEW

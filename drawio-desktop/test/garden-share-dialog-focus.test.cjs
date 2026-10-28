@@ -20,6 +20,7 @@ function createFixture(t, users = {}) { // CHANGE: exercise the production invit
     const timers = [];
     const context = vm.createContext({
         document: dom.window.document,
+        graph: dom.window.document.getElementById('graph'), // CHANGE: production Create Email also reads the optional Quickstart context.
         window: dom.window,
         TRELLIS_DIALOG_Z: 2000000000,
         setTimeout(callback) { timers.push(callback); },

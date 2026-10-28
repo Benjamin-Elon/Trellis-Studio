@@ -63,7 +63,7 @@ export function createLifecycleCoordinator(options) { // NEW
                 windows.push(...options.getWindows().filter(live)); // NEW
                 const approvals = await approve(windows); // NEW
                 if (!approvals) return false; // NEW
-                // Discard failures still leave services running and are reported to the user. // NEW
+                // Blocking close failures leave services running; document-draft cleanup warnings are handled by the adapter. // CHANGE
                 for (const [window, approval] of approvals) if (live(window)) await options.discard(window, approval); // NEW
                 state = 'stopping services'; options.onState?.(state, reason); // NEW
                 await options.stop({ deadline: Date.now() + 10000 }); // NEW

@@ -118,7 +118,48 @@
             const gardens = previews ? await gardenPreviews() : lastWork?.diagramId === users().getDiagramKey(false) && lastWork.workerId === worker.id ? lastWork.gardens : []; // CHANGE: a different garden's cached preview cannot enter this worker package.
             return p.validateWork({ schema: 1, kind: 'field-work', packageId: root.crypto.randomUUID(), diagramId: users().getDiagramKey(false), workerId: worker.id, exportedAt: Date.now(), tasks, gardens, acknowledgments: parse(attr(metadata(), ACKS), []) });
         }
-        /** Render the whole permitted garden with the production exporter; keep task/team subtrees out of the image. */ // CHANGE
+        /** Copy only permitted canonical cells; codec copying retains field IDs without invoking the user-paste identity reset. */ // CHANGE
+        function copyGarden(drawing) { // CHANGE
+            const encode = () => { // CHANGE: canonical() must remain synchronous so authored geometry is restored before yielding.
+                const doc = mxUtils.createXmlDocument(), node = doc.createElement('root'), codec = new mxCodec(doc); doc.appendChild(node); // CHANGE
+                for (const cell of drawing) codec.encodeCell(cell, node, false); // CHANGE
+                const included = new Set(drawing); // CHANGE
+                for (const cell of drawing.slice(1)) for (let parent = cell.parent; parent && parent !== drawing[0] && !included.has(parent); parent = parent.parent) { // CHANGE
+                    const carrier = new mxCell(null, parent.geometry?.clone(), 'fillColor=none;strokeColor=none;'); carrier.id = parent.id; carrier.vertex = true; carrier.parent = parent.parent; carrier.collapsed = parent.collapsed; // CHANGE: an explicitly readable child retains its position without copying its denied ancestor's value or styling.
+                    codec.encodeCell(carrier, node, false); included.add(parent); // CHANGE
+                } // CHANGE
+                const gardenCell = node.firstChild.nodeName === 'mxCell' ? node.firstChild : node.firstChild.getElementsByTagName('mxCell')[0]; gardenCell.removeAttribute('parent'); // CHANGE: the garden becomes the isolated root and must not resolve a live layer reference.
+                return doc; // CHANGE
+            }; // CHANGE
+            const doc = graph.__trellisLocalView ? graph.__trellisLocalView.canonical(encode) : encode(); // CHANGE
+            const decoder = new mxCodec(doc), copies = []; // CHANGE
+            for (const node of Array.from(doc.documentElement.childNodes)) if (node.nodeType === 1) copies.push(decoder.decodeCell(node)); // CHANGE
+            for (const cell of copies) { // CHANGE: expand only the detached copy, including authored folded containers.
+                if (cell.collapsed && cell.geometry?.alternateBounds) { cell.geometry = cell.geometry.clone(); cell.geometry.swap(); } // CHANGE
+                cell.collapsed = false; cell.visible = true; // CHANGE
+            } // CHANGE
+            return drawing.map(cell => decoder.getObject(cell.id)); // CHANGE: only authorized cells participate in export bounds, selection and regions.
+        } // CHANGE
+        /** Use the production graph/exporter in a disposable host without changing the live view or selection. */ // CHANGE
+        function renderGarden(drawing) { // CHANGE
+            const copies = copyGarden(drawing), host = document.createElement('div'); let render; // CHANGE
+            host.style.cssText = 'position:absolute;left:-100000px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none;'; // CHANGE
+            document.body.appendChild(host); // CHANGE
+            try { // CHANGE
+                render = new Graph(host); // CHANGE: standard exporter behavior without editor plugin view hooks.
+                const stylesheet = new mxStylesheet(); // CHANGE: export may temporarily adjust styles, so do not share mutable style objects.
+                stylesheet.styles = Object.fromEntries(Object.entries(graph.getStylesheet().styles).map(([name, style]) => [name, { ...style }])); render.setStylesheet(stylesheet); // CHANGE
+                render.setEnabled(false); render.setHtmlLabels(graph.isHtmlLabels()); // CHANGE
+                render.getModel().add(render.getDefaultParent(), copies[0]); render.view.validate(); render.setSelectionCells(copies); // CHANGE: production SVG selection bounds belong only to the isolated graph.
+                const bounds = render.getBoundingBox(copies), scale = render.view.scale; // CHANGE
+                if (!bounds) throw new Error('The garden preview has no drawable bounds.'); // CHANGE
+                const offsetX = Math.floor(-bounds.x / scale), offsetY = Math.floor(-bounds.y / scale); // CHANGE
+                const regions = copies.slice(1).filter(cell => cell.vertex && attr(cell, ID_ATTR)).map(cell => render.view.getState(cell)).filter(Boolean).map(state => ({ id: attr(state.cell, ID_ATTR), kind: gardenObjectKind(state.cell), x: state.x / scale + offsetX, y: state.y / scale + offsetY, width: state.width / scale, height: state.height / scale, rotation: Number(state.shape?.getShapeRotation?.() || 0) % 360, label: attr(state.cell, 'label') || attr(state.cell, 'plant_name'), details: { plant: attr(state.cell, 'plant_name'), variety: attr(state.cell, 'variety_name'), notes: attr(state.cell, 'notes') } })); // CHANGE
+                const svg = render.getSvg('#ffffff', 1, 0, false, false, true, true, render.createSvgImageExport(), '_blank', false, false, 'light', null, copies, true, true); // CHANGE
+                return { svg, regions }; // CHANGE
+            } finally { try { render?.destroy(); } finally { host.remove(); } } // CHANGE: failures must release graph listeners and DOM resources too.
+        } // CHANGE
+        /** Render all permitted gardens independently of city filtering, folding, zoom and personal layout. */ // CHANGE
         async function gardenPreviews() {
             const gardens = [];
             for (const garden of cells().filter(cell => attr(cell, 'garden_module') === '1' && attr(cell, ID_ATTR) && readable(cell))) { // CHANGE
@@ -131,29 +172,16 @@
                 walk(garden);
                 const permittedVertices = new Set([garden, ...descendants.filter(cell => cell.vertex)]); // NEW
                 const drawing = [garden, ...descendants.filter(cell => !cell.edge || ((!cell.source || permittedVertices.has(cell.source)) && (!cell.target || permittedVertices.has(cell.target))))]; // CHANGE: unrelated endpoints must not leak through an otherwise readable connector.
-                const states = drawing.map(cell => graph.view.getState(cell)).filter(Boolean); // CHANGE
-                if (!states.length) continue;
-                const exporter = graph.createSvgImageExport(); // CHANGE: retain production shape/text export behavior.
-                const permitted = new Set(drawing); // CHANGE
-                const visitStates = exporter.visitStatesRecursive; // NEW
-                exporter.visitStatesRecursive = function(state, canvas, visitor) { // CHANGE: filter before the production exporter adds secondary labels or enumeration decorations.
-                    return visitStates.call(this, state, canvas, (candidate, target) => { if (permitted.has(candidate.cell)) visitor(candidate, target); }); // CHANGE
-                }; // CHANGE
-                const originalSelection = graph.getSelectionCells, originalCss = graph.useCssTransforms; let svg, regions; // CHANGE
-                try { // NEW: use exactly the production export bounds and rounding for location coordinates.
-                    if (originalCss) { graph.useCssTransforms = false; graph.view.revalidate(); graph.sizeDidChange(); } // NEW
-                    graph.getSelectionCells = () => drawing; // CHANGE: bounds cover the whole garden without changing the editor's selected task.
-                    const bounds = graph.getBoundingBox(drawing), scale = graph.view.scale; // CHANGE
-                    const offsetX = Math.floor(-bounds.x / scale), offsetY = Math.floor(-bounds.y / scale); // NEW
-                    regions = descendants.filter(cell => cell.vertex && attr(cell, ID_ATTR)).map(cell => graph.view.getState(cell)).filter(Boolean).map(state => ({ id: attr(state.cell, ID_ATTR), kind: gardenObjectKind(state.cell), x: state.x / scale + offsetX, y: state.y / scale + offsetY, width: state.width / scale, height: state.height / scale, rotation: Number(state.shape?.getShapeRotation?.() || 0) % 360, label: attr(state.cell, 'label') || attr(state.cell, 'plant_name'), details: { plant: attr(state.cell, 'plant_name'), variety: attr(state.cell, 'variety_name'), notes: attr(state.cell, 'notes') } })); // CHANGE: selection frames follow the production planting-group transform.
-                    svg = graph.getSvg('#ffffff', 1, 0, false, false, true, true, exporter, '_blank', false, false, 'light', null, drawing, true, true); // CHANGE
-                } finally { // NEW
-                    graph.getSelectionCells = originalSelection; // NEW
-                    if (originalCss) { graph.useCssTransforms = originalCss; graph.view.revalidate(); graph.sizeDidChange(); } // NEW
-                } // NEW
+                const { svg, regions } = renderGarden(drawing); // CHANGE
                 const svgWidth = parseFloat(svg.getAttribute('width')), svgHeight = parseFloat(svg.getAttribute('height')); // CHANGE: production SVG dimensions include the px unit.
                 if (!(svgWidth > 0 && svgHeight > 0)) throw new Error('The garden preview has no drawable bounds.'); // NEW
                 const canvas = await new Promise((resolve, reject) => ui.editor.convertImages(svg, converted => {
+                    try { // CHANGE: generated theme variables are not permitted in a passive embedded SVG.
+                        for (const element of [converted, ...Array.from(converted.getElementsByTagName('*'))]) { // CHANGE
+                            if (element.style) for (const property of Array.from(element.style)) { const value = element.style.getPropertyValue(property); if (value.includes('light-dark(')) element.style.setProperty(property, mxUtils.getLightDarkColor(value, null, null, true).light); } // CHANGE: reuse the production color parser and freeze the requested light export theme.
+                        } // CHANGE
+                        root.TrellisContentPolicy?.cleanExport(converted); root.TrellisContentPolicy?.validateSvg(converted); // CHANGE: fail explicitly rather than publishing the policy's placeholder as a garden.
+                    } catch (error) { reject(error); return; } // CHANGE
                     const image = new Image(); image.onload = () => { try { const output = document.createElement('canvas'); const scale = Math.min(1, 2048 / Math.max(svgWidth, svgHeight)); output.width = Math.ceil(svgWidth * scale); output.height = Math.ceil(svgHeight * scale); output.getContext('2d').drawImage(image, 0, 0, output.width, output.height); resolve(output); } catch (error) { reject(error); } };
                     image.onerror = () => reject(new Error('Could not render the garden preview.'));
                     image.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(mxUtils.getXml(converted))));

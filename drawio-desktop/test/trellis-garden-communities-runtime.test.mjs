@@ -11,15 +11,16 @@ import { createGardenLibraryService } from '../src/main/trellis-garden-library-s
 import { createSyncthingService } from '../src/main/trellis-syncthing-service.js'; // NEW
 import { createGardenCommunityService } from '../src/main/trellis-garden-community-service.js'; // NEW
 import { inspectDiagram } from '../src/main/trellis-share-protocol.js'; // NEW
+import { cleanupRuntimeServices, runtimeOperation, waitForRuntime as eventually } from './helpers/runtime-lifecycle.mjs'; // CHANGE
 
 test('real peers deliver an offline request and approve it after directory membership ends', { skip: process.env.TRELLIS_SYNCTHING_RUNTIME_TEST !== '1', timeout: 240000 }, async t => { // NEW
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-community-runtime-')), project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), addresses = new Map(), services = []; // NEW
-    t.after(async () => { const stopped = await Promise.allSettled(services.map(service => service.stop())), failures = stopped.filter(result => result.status === 'rejected'); if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Could not stop every runtime-test service in ' + root); await fs.rm(root, { recursive: true, force: true }); }); // CHANGE: attempt every owned cleanup even when one daemon fails to stop.
+    t.after(() => cleanupRuntimeServices(services, root)); // CHANGE
     async function client(name) { // NEW
         const base = path.join(root, name), transports = new Map(); // NEW
         async function transportFactory(identityId, profileRoot) { // NEW
             if (!transports.has(identityId)) { // NEW
-                const service = createSyncthingService({ profilePath: path.join(profileRoot, 'transport'), userDataPath: profileRoot, documentsPath: base, canvasesRoot: path.join(base, 'gardens', identityId), binaryRoot: path.join(project, 'vendor', 'syncthing'), setStartup: async () => {}, onListening: ({ deviceId, port }) => addresses.set(deviceId, ['tcp://127.0.0.1:' + port]), deviceAddresses: deviceId => addresses.get(deviceId) || ['dynamic'] }); // NEW
+                const service = createSyncthingService({ profilePath: path.join(profileRoot, 'transport'), userDataPath: profileRoot, documentsPath: base, canvasesRoot: path.join(base, 'gardens', identityId), binaryRoot: path.join(project, 'vendor', 'syncthing'), setStartup: async () => {}, onLifecycle: entry => t.diagnostic('DAEMON_LIFECYCLE: ' + JSON.stringify(entry)), onListening: ({ deviceId, port }) => addresses.set(deviceId, ['tcp://127.0.0.1:' + port]), deviceAddresses: deviceId => addresses.get(deviceId) || ['dynamic'] }); // NEW
                 transports.set(identityId, service); services.push(service); // NEW
             } // NEW
             return transports.get(identityId); // NEW
@@ -36,27 +37,23 @@ test('real peers deliver an offline request and approve it after directory membe
         async function garden(name) { const created = await library.create({ name }); await edit(created, state => { state.cells.find(c => c.id === '1').node.setAttribute('garden_module', '1'); }); return created; } // NEW
         return { identities, library, communities, identityId, daemon, edit, garden }; // NEW
     } // NEW
-    async function eventually(label, check, timeout = 60000) { // NEW
-        const deadline = Date.now() + timeout; let error; // NEW
-        while (Date.now() < deadline) { try { if (await check()) return; } catch (failure) { error = failure; } await new Promise(resolve => setTimeout(resolve, 400)); } // NEW
-        throw new Error(label + ': ' + (error?.message || 'did not converge')); // NEW
-    } // NEW
-    const alice = await client('Alice'), bob = await client('Bob'), entry = await alice.garden('Entry'), target = await alice.garden('Target'), userId = crypto.randomUUID(); // NEW
+    const alice = await runtimeOperation('create Alice', () => client('Alice')), bob = await runtimeOperation('create Bob', () => client('Bob')); // CHANGE
+    const entry = await runtimeOperation('create entry garden', () => alice.garden('Entry')), target = await runtimeOperation('create target garden', () => alice.garden('Target')), userId = crypto.randomUUID(); // CHANGE
     await alice.edit(entry, state => { state.store.users.push({ id: userId, name: 'Bob', email: 'bob@example.org', portableIdentityId: bob.identityId, admin: false, disabled: false }); state.cells.find(c => c.id === '1').node.setAttribute('trellis_access_user_ids_json', JSON.stringify([userId])); }); // NEW
-    const invitation = await alice.daemon.createDeviceInvite('runtime', { shareId: entry.entry.shareId, userId }), joined = await bob.daemon.joinCanvas({ block: invitation.block }); // NEW
-    await alice.daemon.requestMembership('runtime', { shareId: entry.entry.shareId, operation: 'approve', reply: joined.reply }); // NEW
+    const invitation = await runtimeOperation('create device invite', () => alice.daemon.createDeviceInvite('runtime', { shareId: entry.entry.shareId, userId })), joined = await runtimeOperation('join entry garden', () => bob.daemon.joinCanvas({ block: invitation.block })); // CHANGE
+    await runtimeOperation('approve entry membership', () => alice.daemon.requestMembership('runtime', { shareId: entry.entry.shareId, operation: 'approve', reply: joined.reply })); // CHANGE
     await eventually('Entry garden download', async () => { await bob.daemon.poll(); return (await bob.daemon.listCanvases()).some(c => c.shareId === entry.entry.shareId && c.available && !c.pending); }); // NEW
     await bob.library.importCurrent({ path: joined.diagramPath, diagramId: entry.entry.diagramId, userId }); // NEW
-    const community = await alice.communities.create({ diagramId: entry.entry.diagramId, name: 'Runtime community' }); await alice.communities.addGarden({ communityId: community.communityId, diagramId: target.entry.diagramId }); // NEW
+    const community = await runtimeOperation('create community', () => alice.communities.create({ diagramId: entry.entry.diagramId, name: 'Runtime community' })); await runtimeOperation('add target garden', () => alice.communities.addGarden({ communityId: community.communityId, diagramId: target.entry.diagramId })); // CHANGE
     await eventually('Community discovery', async () => { await alice.communities.refresh(alice.identityId); await bob.communities.refresh(bob.identityId); return (await bob.communities.list()).communities[0]?.gardens.length === 2; }); // NEW
     assert.equal((await bob.daemon.listCanvases()).length, 1); await alice.daemon.stop(); // NEW
-    const request = await bob.communities.requestAccess({ communityId: community.communityId, diagramId: target.entry.diagramId, preset: 'visitor', note: 'Queued while the manager is offline' }); assert.equal(request.status, 'queued'); // NEW
+    const request = await runtimeOperation('queue offline access request', () => bob.communities.requestAccess({ communityId: community.communityId, diagramId: target.entry.diagramId, preset: 'visitor', note: 'Queued while the manager is offline' })); assert.equal(request.status, 'queued'); // CHANGE
     await alice.daemon.start(); // NEW
     await eventually('Offline request delivery', async () => { await alice.communities.refresh(alice.identityId); return (await alice.communities.listRequests()).requests.some(r => r.id === request.id && r.canDecide); }); // NEW
-    await alice.communities.detachGarden({ communityId: community.communityId, diagramId: entry.entry.diagramId }); // NEW
+    await runtimeOperation('detach entry directory', () => alice.communities.detachGarden({ communityId: community.communityId, diagramId: entry.entry.diagramId })); // CHANGE
     await eventually('Directory membership loss', async () => { await bob.daemon.poll(); await bob.communities.refresh(bob.identityId); return (await bob.communities.list()).communities.length === 0; }); // NEW
     assert.equal((await bob.communities.listRequests()).requests[0].id, request.id); // NEW
-    const incoming = (await alice.communities.listRequests()).requests.find(r => r.id === request.id); await alice.communities.decideAccess({ requestId: request.id, approved: true, preset: 'visitor', scopes: incoming.scopes }); // NEW
+    const incoming = (await alice.communities.listRequests()).requests.find(r => r.id === request.id); await runtimeOperation('approve private access', () => alice.communities.decideAccess({ requestId: request.id, approved: true, preset: 'visitor', scopes: incoming.scopes })); // CHANGE
     await eventually('Private response after directory exit', async () => { await alice.communities.refresh(alice.identityId); await bob.communities.refresh(bob.identityId); return (await bob.communities.listRequests()).requests.some(r => r.id === request.id && r.status === 'approved'); }); // NEW
     assert.ok((await bob.library.list()).gardens.some(g => g.diagramId === target.entry.diagramId && !g.available)); assert.equal((await bob.daemon.listCanvases()).length, 1); // NEW
     assert.equal((await bob.communities.list()).communities[0]?.id, community.communityId); // NEW

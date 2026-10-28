@@ -54,6 +54,7 @@
         }
     }
     function validate(store, manifestId = store?.current) {
+        root.TrellisContentPolicy?.jsonValue(store); // NEW: frozen-cache hits cannot bypass structure limits.
         if (Object.isFrozen(store) && validated.get(store)?.has(manifestId)) return store; // NEW: only deeply frozen snapshots can use validation caching.
         assert(store?.version === 1 && object(store.revisions) && object(store.manifests) && object(store.bindings), 'Unsupported or missing garden references.');
         schemaValid(store.schema);
@@ -246,9 +247,12 @@
         return { version: 1, id: id(), author, source: clone(source), target: clone(target), note: String(note).slice(0, 10000), schema: clone(candidate.schema), changes }; // CHANGE: dependencies are immutable proposal items, visible to the receiving owner.
     }
     function validateProposal(value) {
+        root.TrellisContentPolicy?.jsonValue(value); root.TrellisContentPolicy?.textLimit(JSON.stringify(value), root.TrellisContentPolicy.LIMITS.metadata); // NEW: each exchange is bounded independently of its containing document.
         assert(value?.version === 1 && typeof value.id === 'string' && typeof value.author === 'string' && object(value.source) && object(value.target) && Array.isArray(value.changes) && value.changes.length > 0, 'Malformed reference proposal.');
+        assert(!root.TrellisContentPolicy || root.TrellisContentPolicy.isSafeIdentifier(value.id), 'Invalid reference proposal identity.'); // NEW
         schemaValid(value.schema); const entities = new Set();
         for (const item of value.changes) {
+            assert(!root.TrellisContentPolicy || root.TrellisContentPolicy.isSafeIdentifier(item.entityId) && root.TrellisContentPolicy.isSafeIdentifier(item.candidate?.id), 'Invalid reference item identity.'); // NEW
             assert(typeof item.entityId === 'string' && !entities.has(item.entityId) && item.candidate?.entityId === item.entityId && object(item.candidate.data) && typeof item.candidate.retired === 'boolean', 'Malformed proposal item.'); entities.add(item.entityId);
             assert(!item.base || item.base.entityId === item.entityId && item.base.kind === item.candidate.kind, 'Proposal base identity mismatch.');
         }
@@ -338,7 +342,7 @@
         if (!dates.length || dates.some(date => !/^\d{4}-\d{2}-\d{2}$/.test(date) || new Date(date + 'T00:00:00Z').toISOString().slice(0, 10) !== date)) return { ok: false, reason: 'The planting start date is missing or ambiguous.' };
         return dates.some(date => date <= today) ? { ok: false, reason: 'The planting start date has arrived.' } : { ok: true };
     }
-    function parse(value, fallback) { return value ? JSON.parse(value) : fallback; } // NEW
+    function parse(value, fallback) { return value ? (root.TrellisContentPolicy ? root.TrellisContentPolicy.json(value, root.TrellisContentPolicy.LIMITS.diagram) : JSON.parse(value)) : fallback; } // CHANGE: embedded reference stores and message logs share the complete document budget. // NEW
     function logValid(log) { // NEW
         assert(log?.version === 1 && Array.isArray(log.requests) && Array.isArray(log.decisions), 'Invalid reference message log.'); // NEW
         const ids = new Set(); for (const request of log.requests) { validateProposal(request); assert(!ids.has(request.id), 'Duplicate reference request.'); ids.add(request.id); } // NEW

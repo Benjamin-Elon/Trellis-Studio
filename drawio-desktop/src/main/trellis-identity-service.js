@@ -1,3 +1,4 @@
+import { listBounded, readJson, parseJson, LIMITS } from './trellis-input-policy.js'; // NEW
 /** Main-process identity owner: protected credentials, signed events and pairing. // NEW */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -14,7 +15,7 @@ async function atomic(filename, value) {
     try { await fs.writeFile(temporary, JSON.stringify(value), { mode: 0o600 }); await fs.rename(temporary, filename); }
     finally { await fs.rm(temporary, { force: true }); }
 }
-async function json(filename) { return JSON.parse(await fs.readFile(filename, 'utf8')); }
+async function json(filename, budget) { return readJson(filename, LIMITS.metadata, budget); } // CHANGE: trust inputs are bounded before crypto work.
 
 /** Services are injected so identity tests never launch a daemon or touch user files. // CHANGE
  * protectSession/unprotectSession wrap strings with device-local OS protection and may be asynchronous. // NEW
@@ -53,8 +54,9 @@ export function createIdentityService(options) {
         const entry = index.find(item => item.id === identityId);
         if (!entry) throw new Error('Identity is not installed on this device.');
         const directory = path.join(metadataRoot(identityId), 'events');
-        const names = await fs.readdir(directory);
-        const records = await Promise.all(names.filter(name => /^[A-Za-z0-9_-]+\.json$/.test(name)).map(name => json(path.join(directory, name))));
+        const names = await listBounded(directory);
+        const sorted = names.filter(name => /^[A-Za-z0-9_-]+\.json$/.test(name)), records = [], budget = { used: 0, maximum: LIMITS.replay }; // CHANGE
+        for (let offset = 0; offset < sorted.length; offset += 32) { const batch = await Promise.allSettled(sorted.slice(offset, offset + 32).map(name => json(path.join(directory, name), budget))); const failed = batch.find(entry => entry.status === 'rejected'); if (failed) throw failed.reason; records.push(...batch.map(entry => entry.value)); } // NEW: await every handle before leaving a failed batch.
         const result = await protocol.reduceEvents(records, identityId);
         if (await protocol.fingerprint(result.genesis) !== entry.genesisHash) throw new Error('Identity trust anchor changed.');
         return result;
@@ -127,7 +129,7 @@ export function createIdentityService(options) {
         try { // NEW
             const envelope = await json(rememberedPath); // NEW
             if (envelope.schema !== 1 || typeof envelope.secrets !== 'string') throw new Error('Invalid remembered session.'); // NEW
-            const saved = JSON.parse(await options.unprotectSession(envelope.secrets)); // NEW
+            const saved = parseJson(await options.unprotectSession(envelope.secrets)); // NEW
             if (saved.schema !== 1 || !Array.isArray(saved.passwordHeads) || typeof saved.vaultKey !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(saved.vaultKey)) throw new Error('Invalid remembered credentials.'); // NEW
             const current = await state(validId(saved.identityId)); // NEW: verifies the installed trust anchor and signed event history.
             const entry = index.find(item => item.id === saved.identityId); // NEW
@@ -268,7 +270,7 @@ export function createIdentityService(options) {
             if (p.expiresAt <= now()) throw new Error('Setup package has expired.');
             const pending = await json(path.join(root, 'requests', p.requestId + '.json'));
             if (pending.request.device.id !== p.targetDeviceId) throw new Error('Setup targets another device.');
-            const secrets = JSON.parse(options.unprotectPending(pending.secrets));
+            const secrets = parseJson(options.unprotectPending(pending.secrets));
             const shared = await protocol.sharedKey(secrets.exchange, p.exchangeKey);
             let content;
             try { content = await protocol.open(p.envelope, shared, p.requestId + ':' + p.targetDeviceId); }

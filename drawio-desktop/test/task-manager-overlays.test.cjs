@@ -1596,6 +1596,26 @@ test("direct task replacement focuses generated cards by default", () => {
     assert.equal(h.lastScrollCell, created);
 });
 
+test('generated task replacement retains the original creator across stable task identities', () => { // NEW
+    const h = makeHarness(), group = new TestCell('attribution-source', makeValue(h.document, { tiler_group: '1', linkedTo: h.stagedCard.id }), new TestGeometry(0, 0, 120, 80), 'tiler_group=1;'); // NEW
+    h.addCell(h.root, group); // NEW
+    for (const [key, value] of Object.entries({ linkedTo: group.id, scheduler_task_key: 'water::0', createdByUserId: 'alice', createdAt: '1700000000000', lastEditedByUserId: 'alice', lastEditedAt: '1700000000000' })) setAttr(h.stagedCard, key, value); // NEW
+    h.window.Trellis = { users: { getCurrentUser: () => ({ id: 'bob', name: 'Bob' }) } }; // NEW
+    const result = h.runtimeHooks.replaceTasks(group.id, [{ title: 'Updated generated watering', startISO: '2026-07-22', endISO: '2026-07-22', scheduler_task_key: 'water::0' }], { focusCreated: false }); // NEW
+    const replacement = h.model.getCell(result[0].cellId); // NEW
+    assert.notEqual(replacement.id, h.stagedCard.id); assert.equal(attr(replacement, 'createdByUserId'), 'alice'); assert.equal(attr(replacement, 'createdAt'), '1700000000000'); // NEW
+    assert.equal(attr(replacement, 'lastEditedByUserId'), 'bob'); assert.ok(Number(attr(replacement, 'lastEditedAt')) > 1700000000000); // NEW
+}); // NEW
+
+test('unchanged generated task replacement retains object identity and attribution', () => { // NEW
+    const h = makeHarness(), group = new TestCell('noop-source', makeValue(h.document, { tiler_group: '1' }), new TestGeometry(0, 0, 120, 80), 'tiler_group=1;'); // NEW
+    h.addCell(h.root, group); const tasks = [{ title: 'Water', startISO: '2026-07-22', endISO: '2026-07-22', scheduler_task_key: 'water::0' }]; // NEW
+    const first = h.runtimeHooks.replaceTasks(group.id, tasks, { focusCreated: false }), card = h.model.getCell(first[0].cellId); // NEW
+    setAttr(card, 'createdAt', '1700000000000'); setAttr(card, 'createdByUserId', 'alice'); const before = card.value.outerHTML; // NEW
+    const second = h.runtimeHooks.replaceTasks(group.id, tasks, { focusCreated: false }); // NEW
+    assert.equal(second[0].cellId, card.id); assert.equal(h.model.getCell(card.id), card); assert.equal(card.value.outerHTML, before); // NEW
+}); // NEW
+
 test("legacy tasksCreated event still performs standalone replacement", async () => {
     const h = makeHarness();
     const group = new TestCell("legacy-schedule-group", makeValue(h.document, { tiler_group: "1" }), new TestGeometry(0, 0, 120, 80), "tiler_group=1;");

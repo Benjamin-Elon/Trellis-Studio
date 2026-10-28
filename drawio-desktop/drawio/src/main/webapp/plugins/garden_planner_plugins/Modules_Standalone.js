@@ -564,9 +564,9 @@ Draw.loadPlugin(function (ui) {
     function plainCellLabel(cell, fallback) {
         const raw = getValueAttr(cell, "label") || (typeof (cell && cell.value) === "string" ? cell.value : "");
         if (document && document.createElement) {
-            const holder = document.createElement("div");
-            holder.innerHTML = raw;
-            const text = String(holder.textContent || "").replace(/\s+/g, " ").trim();
+            const holder = document.createElement("template"); // CHANGE: parse in an inert template.
+            holder.innerHTML = raw; // CHANGE
+            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(raw) : holder.content.textContent || "").replace(/\s+/g, " ").trim();
             if (text) return text;
         }
         const stripped = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -1152,9 +1152,9 @@ Draw.loadPlugin(function (ui) {
         const value = cell.value;
         const raw = value && value.getAttribute ? (value.getAttribute("label") || "") : (value == null ? "" : String(value));
         if (document && document.createElement) {
-            const holder = document.createElement("div");
-            holder.innerHTML = raw;
-            return String(holder.textContent || "").replace(/\s+/g, " ").trim();
+            const holder = document.createElement("template"); // CHANGE: detached div images are active; template content is inert.
+            holder.innerHTML = raw; // CHANGE
+            return String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(raw) : holder.content.textContent || "").replace(/\s+/g, " ").trim();
         }
         return String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
     }
@@ -1282,6 +1282,14 @@ Draw.loadPlugin(function (ui) {
 
     function syncRoleCardSummary(roleCard) {
         if (!isRoleCardV2(roleCard)) return false;
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'role-summary:' + roleCard.id, // NEW
+          title: 'Role summary', // NEW
+          cells: () => [roleCard], // NEW
+          retry: () => syncRoleCardSummary(model.getCell(roleCard.id)), // NEW
+          deferredValue: false // NEW
+        }, () => syncRoleCardSummary(roleCard)); // NEW
         normalizeRoleAvatarImageStyle(getRoleAvatar(roleCard)); // NEW
         const name = roleFieldDisplayValue(roleCard, "role_name", "Unnamed person");
         const title = roleFieldDisplayValue(roleCard, "role_title", "Unspecified role");
@@ -1458,6 +1466,14 @@ Draw.loadPlugin(function (ui) {
     }
 
     function autosizeTeamSections(sections) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'team-layout:' + (sections || []).map(cell => cell.id).join(','), // NEW
+          title: 'Team section layout', // NEW
+          cells: () => sections || [], // NEW
+          retry: () => autosizeTeamSections((sections || []).map(cell => model.getCell(cell.id)).filter(Boolean)), // NEW
+          deferredValue: [] // NEW
+        }, () => autosizeTeamSections(sections)); // NEW
         const touched = []; // NEW
         (sections || []).forEach(function (section) { if (enforceTeamSectionMinimum(section)) touched.push(section); }); // CHANGE
         if (touched.length) enforceTeamSectionMarginsFor(touched, { manageUpdate: false }); // NEW
@@ -1886,6 +1902,12 @@ Draw.loadPlugin(function (ui) {
                 layout.border = 5;
                 layout.marginLeft = 5;
                 layout.marginRight = 5;
+                const execute = layout.execute; // NEW: native layout-manager callbacks retain presentation provenance.
+                layout.execute = function (parent) { // NEW
+                    const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+                    if (!context) return execute.apply(this, arguments); // NEW
+                    return context.run('derived-presentation', { id: 'role-layout:' + parent.id, title: 'Role layout', cells: () => [parent], retry: () => { const current = model.getCell(parent.id); if (current) return graph.layoutManager.getLayout(current)?.execute(current); } }, () => execute.call(this, parent)); // NEW
+                }; // NEW
                 return layout;
             }
         }
@@ -2643,7 +2665,18 @@ Draw.loadPlugin(function (ui) {
     }
 
     function ensureGardenTeamModule(gardenCell, opts) {
-        if (!isGardenModule(gardenCell)) return null;
+        if (!isGardenModule(gardenCell)) return null; // CHANGE: retain the existing input guard before automation preflight.
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+          id: 'garden-team:' + gardenCell.id, // NEW
+          title: 'Garden Team module', // NEW
+          cells: () => [gardenCell, findExistingCompanionTeam(gardenCell)], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(gardenCell.id); // NEW
+            if (current) return ensureGardenTeamModule(current); // NEW
+          }, // NEW
+          deferredValue: null // NEW
+        }, () => ensureGardenTeamModule(gardenCell, opts)); // NEW: companion creation is generated content; the originating garden edit retains its own hold.
         const o = opts || {};
         let team = findExistingCompanionTeam(gardenCell);
         const manageUpdate = !o.insideUpdate;
@@ -2669,7 +2702,18 @@ Draw.loadPlugin(function (ui) {
     }
 
     function ensureGardenTaskModule(gardenCell, opts) {
-        if (!isGardenModule(gardenCell)) return null;
+        if (!isGardenModule(gardenCell)) return null; // CHANGE: invalid input remains a no-op.
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+          id: 'garden-tasks:' + gardenCell.id, // NEW
+          title: 'Garden Task module', // NEW
+          cells: () => [gardenCell, findExistingCompanionTeam(gardenCell), findExistingCompanionTask(gardenCell)], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(gardenCell.id); // NEW
+            if (current) return ensureGardenTaskModule(current); // NEW
+          }, // NEW
+          deferredValue: null // NEW
+        }, () => ensureGardenTaskModule(gardenCell, opts)); // NEW
         const o = opts || {};
         let task = findExistingCompanionTask(gardenCell);
         const manageUpdate = !o.insideUpdate;
@@ -2708,7 +2752,18 @@ Draw.loadPlugin(function (ui) {
 
     /** Companion links are written only after the new module contains a usable Main Roadmap. */ // NEW
     function ensureGardenRoadmapModule(gardenCell, insideRoadmapCommand) { // CHANGE
-        if (!isGardenModule(gardenCell) || !roadmapApiReady()) return null; // NEW
+        if (!isGardenModule(gardenCell) || !roadmapApiReady()) return null; // CHANGE: check availability before inspecting dependencies.
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+          id: 'garden-roadmap:' + gardenCell.id, // NEW
+          title: 'Garden Roadmap module', // NEW
+          cells: () => [gardenCell, findExistingCompanionRoadmap(gardenCell)], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(gardenCell.id); // NEW
+            if (current) return ensureGardenRoadmapModule(current); // NEW
+          }, // NEW
+          deferredValue: null // NEW
+        }, () => ensureGardenRoadmapModule(gardenCell, insideRoadmapCommand)); // NEW
         const roadmapApi = graph.__trellisRoadmapManager; // NEW
         if (!insideRoadmapCommand && roadmapApi.runModelCommand) return roadmapApi.runModelCommand(() => ensureGardenRoadmapModule(gardenCell, true)); // NEW: companion access and links share failure rollback.
         const userApi = graph.__trellisUsers; // NEW
@@ -2810,7 +2865,9 @@ Draw.loadPlugin(function (ui) {
     function autoSeedNewBlankDiagram(evt) { // NEW
         const shouldSeed = !!(evt && evt.getProperty && evt.getProperty("trellisNewBlankDiagram")); // NEW
         if (!shouldSeed || !canAutoSeedNewBlankDiagram()) return; // NEW
-        createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context) context.scope('generated-content', () => createModuleAtPoint({ x: 30, y: 40 }, 'garden')); // CHANGE: automatic starter content is attributed without an activity hold.
+        else createModuleAtPoint({ x: 30, y: 40 }, 'garden'); // NEW
     } // NEW
 
     function installNewBlankDiagramSeeder() { // NEW

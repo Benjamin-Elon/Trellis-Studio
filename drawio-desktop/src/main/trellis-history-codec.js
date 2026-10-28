@@ -1,3 +1,4 @@
+import { LIMITS, REVISION, textLimit } from './trellis-input-policy.js'; // NEW
 /** Whole-document history codec. Storage dependencies are separate from narrative ancestry. */ // NEW
 import { XMLSerializer } from '@xmldom/xmldom';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
@@ -25,7 +26,7 @@ function normalizeNode(node) {
 
 /** One canonical uncompressed mxfile/model is the verification boundary for every revision. */ // NEW
 export function normalizeDocument(xml) {
-    if (normalizedCache.has(xml)) return normalizedCache.get(xml); // NEW
+    textLimit(xml); if (normalizedCache.has(REVISION + ':' + xml)) return normalizedCache.get(REVISION + ':' + xml); // NEW
     const document = diagramDocument(xml);
     for (const page of document.pages) {
         page.compressed = false;
@@ -35,13 +36,13 @@ export function normalizeDocument(xml) {
     if (outer.documentElement.nodeName === 'mxfile') for (const name of transientFileAttributes) outer.documentElement.removeAttribute(name);
     const result = serializer.serializeToString(normalizeNode(outer.documentElement));
     objects(result); // Validate stable page/object identities using the existing collaboration index. // NEW
-    remember(normalizedCache, result, result); return remember(normalizedCache, xml, result); // NEW
+    remember(normalizedCache, REVISION + ':' + result, result); return remember(normalizedCache, REVISION + ':' + xml, result); // NEW
 }
 
 /** Separate the document envelope, complete objects and their exact sibling order. */ // NEW
 function indexDocument(xml) {
     const normalized = normalizeDocument(xml); // NEW
-    if (indexCache.has(normalized)) return indexCache.get(normalized); // NEW
+    if (indexCache.has(REVISION + ':' + normalized)) return indexCache.get(REVISION + ':' + normalized); // NEW
     const index = objects(normalized), document = diagramDocument(normalized); // NEW
     const order = {};
     for (const page of document.pages) {
@@ -50,7 +51,7 @@ function indexDocument(xml) {
         order[pageId] = [...index.values()].filter(item => item.pageId === pageId).map(item => item.key);
         while (root.firstChild) root.removeChild(root.firstChild);
     }
-    return remember(indexCache, normalized, { normalized, envelope: document.serialize(), order, index }); // NEW
+    return remember(indexCache, REVISION + ':' + normalized, { normalized, envelope: document.serialize(), order, index }); // NEW
 }
 
 export function createDocumentDelta(beforeXml, afterXml) {
@@ -96,7 +97,7 @@ export function applyDocumentDelta(beforeXml, delta) {
 }
 
 export const encodePayload = value => deflateRawSync(Buffer.from(typeof value === 'string' ? value : canonical(value), 'utf8')); // NEW
-export const decodePayload = bytes => inflateRawSync(Buffer.from(bytes), { maxOutputLength: 128 * 1024 * 1024 }).toString('utf8'); // NEW
+export const decodePayload = bytes => inflateRawSync(Buffer.from(bytes), { maxOutputLength: LIMITS.diagram }).toString('utf8'); // NEW
 
 /** Choose bounded independent snapshots; verify every candidate delta before persisting it. */ // NEW
 export function encodeRevision(xml, base = null, forceFull = false) {

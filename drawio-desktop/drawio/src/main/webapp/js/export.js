@@ -2,9 +2,7 @@
  * Copyright (c) 2020-2025, JGraph Holdings Ltd
  * Copyright (c) 2020-2025, draw.io AG
  */
-var mxIsElectron = navigator.userAgent != null &&
-	navigator.userAgent.toLowerCase().indexOf(' electron/') > -1 && 
-	navigator.userAgent.indexOf(' draw.io/') > -1;
+var mxIsElectron = typeof window.electron?.registerMsgListener === 'function'; // CHANGE: use the existing preload bridge across product names.
 var GOOGLE_APPS_MAX_AREA = 25000000;
 var GOOGLE_SHEET_MAX_AREA = 1000000; // The maximum number of pixels is 1 million.
 var shadowBlocker = null;
@@ -470,6 +468,7 @@ function render(data)
 									svgRoot.setAttribute('content', getFileXml());
 								}
 
+								window.TrellisContentPolicy?.cleanExport(svgRoot); // NEW: generated font CSS cannot reintroduce remote export dependencies.
 								electron.sendMessage('svg-data',
 									Graph.xmlDeclaration + '\n' +
 									((editable) ? Graph.svgFileComment + '\n' : '') +

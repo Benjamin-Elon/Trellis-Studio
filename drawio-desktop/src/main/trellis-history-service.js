@@ -1,3 +1,4 @@
+import { LIMITS, parseJson, validateJson } from './trellis-input-policy.js'; // NEW
 /** Transactional owner of revision history; never writes diagram files or external databases. */ // NEW
 import fs from 'node:fs';
 import path from 'node:path';
@@ -58,7 +59,7 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
         else if (record.kind === 'delta') {
             const base = record.base_id && row(record.base_id);
             if (!base || base.diagram_id !== record.diagram_id || base.generation !== record.generation) throw new Error('History dependency is missing or belongs to another document.');
-            xml = applyDocumentDelta(readRevision(record.base_id, visiting), JSON.parse(decodePayload(record.payload)));
+            xml = applyDocumentDelta(readRevision(record.base_id, visiting), parseJson(decodePayload(record.payload), LIMITS.diagram));
         } else throw new Error('Unsupported history record format.');
         visiting.delete(id);
         if (digest(xml) !== record.hash) throw new Error('History content checksum failed; the current diagram was not changed.');
@@ -198,6 +199,7 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
         if (retired(revision.diagramHistoryId, entry.generation, id)) return false;
         if (row(id)) { if (row(id).hash !== data.hash || row(id).diagram_id !== revision.diagramHistoryId) throw new Error('History revision identity collision.'); return true; }
         if (!['full', 'delta'].includes(data.kind) || !Number.isInteger(data.depth) || data.depth < 0 || data.depth > 30 || !Number.isFinite(data.deltaBytes) || data.deltaBytes < 0 || !Number.isFinite(data.fullBytes) || data.fullBytes < 1 || !Number.isFinite(revision.timestamp) || typeof data.payload !== 'string' || data.payload.length > 180 * 1024 * 1024 || data.kind === 'full' && data.depth !== 0) throw new Error('Malformed shared history record.'); // CHANGE
+        validateJson(data); if (typeof data.payload !== 'string' || data.payload.length > Math.ceil(LIMITS.history * 4 / 3)) throw new Error('History input exceeds its limit.'); // NEW
         const payload = Buffer.from(data.payload, 'base64');
         transaction(() => {
             insert(revision, { ...data, payload, contentHash: data.hash }, entry.generation, data.baseRevisionId, 'pending');

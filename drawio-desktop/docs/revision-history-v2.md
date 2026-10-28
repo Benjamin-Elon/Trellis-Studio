@@ -5,6 +5,12 @@ Trellis records the complete diagram, including all pages, after edits settle fo
 `trellis_database/Trellis_history.sqlite`. Diagram files, assets, reference
 databases, collaboration journals and recovery copies are separate resources.
 
+Shared canvases record accepted project state even while displayed objects remain
+stale. [Explicit refresh](explicit-refresh.md) updates private remembered objects
+without an editing undo or shared edit. Folding is personal view state. History
+restores remain authorized shared edits with freshness and hold checks; other
+windows receive pending changes. <!-- CHANGE -->
+
 ## Records and reconstruction
 
 `trellis-history-codec.js` indexes persisted objects through the collaboration

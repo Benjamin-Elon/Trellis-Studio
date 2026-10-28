@@ -44,7 +44,7 @@ async function fixture(t, options = {}) { // CHANGE
 /** Preserve the historical on-disk registration and ordinary XML while seeding an isolated profile. */ // CHANGE
 async function seedOldLibrary({ identityId, profilePath, canvasesRoot }, options = {}) { // CHANGE
     const shareId = options.shareId || 'old-share', diagramId = options.diagramId || 'old-diagram', workerId = 'old-worker', folderPath = path.join(canvasesRoot, shareId); // CHANGE
-    const record = { shareId, diagramId, folderId: 'trellis-' + shareId, folderPath, diagramPath: path.join(folderPath, 'Old.drawio'), filename: 'Old.drawio', label: 'Retained garden', localRemoved: !!options.missing }; // CHANGE
+    const record = { shareId, diagramId, folderId: (options.version === 2 ? 'trellis-v2-' : 'trellis-') + shareId, folderPath, diagramPath: path.join(folderPath, 'Old.drawio'), filename: 'Old.drawio', label: 'Retained garden', localRemoved: !!options.missing }; // CHANGE: v2 fixtures use their historical folder identifier.
     if (options.version !== undefined) record.protocolVersion = options.version; // CHANGE
     const store = JSON.stringify({ usersEnabled: true, users: [{ id: workerId, name: 'Alice', admin: true, portableIdentityId: identityId }], invites: [] }).replace(/"/g, '&quot;'); // CHANGE
     const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="' + diagramId + '" trellis_users_json="' + store + '"><mxCell parent="0"/></object></root></mxGraphModel>'; // CHANGE
@@ -53,40 +53,59 @@ async function seedOldLibrary({ identityId, profilePath, canvasesRoot }, options
     return { record, xml, workerId }; // CHANGE
 } // CHANGE
 
-for (const version of [undefined, 1]) test('old library protocol ' + version + ' stays visible locally while new project creation and maintenance continue', async t => { // CHANGE
-    let old; const f = await fixture(t, { seedTransport: async paths => { old = await seedOldLibrary(paths, { version }); } }); // CHANGE
+for (const version of [undefined, 1, 2]) test('old library protocol ' + version + ' stays hidden across reload and restart while its data and current projects remain intact', async t => { // CHANGE
+    let old; const f = await fixture(t, { seedTransport: async paths => { old ||= await seedOldLibrary(paths, { version }); } }); // CHANGE: restarting the transport must read existing data without reseeding it.
     const identityId = f.identities.session().identityId; // CHANGE
     const entry = { name: 'Old signed name', diagramId: old.record.diagramId, shareId: old.record.shareId, workerId: old.workerId, ownerIdentityId: identityId }; // CHANGE
     if (version !== undefined) entry.protocolVersion = version; // CHANGE
     const record = await f.identities.signAction('garden-record', { entry }), directory = path.join(f.identities.metadataRoot(identityId), 'catalog'); // CHANGE
     await fs.mkdir(directory, { recursive: true }); await fs.writeFile(path.join(directory, record.payload.id + '.json'), JSON.stringify(record)); // CHANGE
-    const before = f.logs.length, result = await f.library.list(), [local] = result.gardens; // CHANGE
-    assert.equal(result.errors.length, 0); assert.equal(local.name, entry.name); assert.equal(local.localOnly, true); assert.equal(local.managed, false); assert.equal(local.state, 'localOnly'); assert.equal(local.path, old.record.diagramPath); // CHANGE
-    assert.equal(local.canRename, false); assert.equal(local.canEditSuffix, false); assert.equal(f.logs.length, before); // CHANGE
+    const retained = [['assets/retained.png', 'retained asset'], ['.trellis/history/snapshot.xml', old.xml], ['recovery/retained.drawio', old.xml]]; // CHANGE
+    for (const [relative, contents] of retained) { const filename = path.join(old.record.folderPath, relative); await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename, contents); } // CHANGE
+    const before = f.logs.length, result = await f.library.list(); // CHANGE
+    assert.equal(result.errors.length, 0); assert.deepEqual(result.gardens, []); assert.equal(f.logs.length, before); // CHANGE
+    assert.deepEqual((await f.library.list({ diagramId: entry.diagramId })).gardens, []); // CHANGE: targeted reloads must also hide old catalog entries.
     assert.equal((await f.library.catalog(identityId)).length, 0); // CHANGE
     await f.library.processDownloads(identityId); assert.equal(f.logs.length, before); // CHANGE
     await assert.rejects(f.library.download({ diagramId: entry.diagramId }), /Sharing is disabled/); // CHANGE
     await assert.rejects(f.library.rename({ diagramId: entry.diagramId, name: 'Changed' }), /Sharing is disabled/); // CHANGE
     await assert.rejects(f.library.duplicate({ diagramId: entry.diagramId }), /Sharing is disabled/); // CHANGE
-    for (const name of ['New private', 'New shared', 'New community']) assert.equal((await f.library.create({ name })).entry.protocolVersion, 2); // CHANGE
+    const created = []; for (const name of ['New private', 'New shared', 'New community']) { const project = await f.library.create({ name }); assert.equal(project.entry.protocolVersion, 3); created.push(project.entry.diagramId); } // CHANGE
+    assert.deepEqual((await f.library.list()).gardens.map(garden => garden.diagramId).sort(), created.sort()); // CHANGE
+    await (await f.identities.transport(identityId)).stop(); f.services.delete(identityId); // CHANGE: recreate identity, transport and library services against the same on-disk profile.
+    const restartedIdentities = createIdentityService({ root: path.join(f.root, 'identities'), transportFactory: f.makeTransport, adoptTransport: async () => {}, protectPending: text => text, unprotectPending: text => text }); // CHANGE
+    await restartedIdentities.unlock({ identityId, password: 'library-password' }); // CHANGE
+    const restartedLibrary = createGardenLibraryService({ identities: restartedIdentities, legacyService: f.legacyService }); // CHANGE
+    const restarted = (await restartedLibrary.list()).gardens; assert.deepEqual(restarted.map(garden => garden.diagramId).sort(), created); assert.ok(restarted.every(garden => garden.available)); // CHANGE
     const saved = JSON.parse(await fs.readFile(path.join(f.identities.identityRoot(identityId), 'transport', 'canvases.json'), 'utf8')); // CHANGE
     assert.deepEqual(saved.find(item => item.shareId === old.record.shareId), old.record); assert.equal(await fs.readFile(old.record.diagramPath, 'utf8'), old.xml); // CHANGE
+    for (const [relative, contents] of retained) assert.equal(await fs.readFile(path.join(old.record.folderPath, relative), 'utf8'), contents); // CHANGE
+    assert.equal(await fs.readFile(path.join(directory, record.payload.id + '.json'), 'utf8'), JSON.stringify(record)); // CHANGE
 }); // CHANGE
 
-test('available old registrations without a catalog entry are listed and missing old copies stay hidden', async t => { // CHANGE
-    let old; const f = await fixture(t, { seedTransport: async paths => { old = await seedOldLibrary(paths); } }); // CHANGE
-    const listed = await f.library.list(); assert.equal(listed.gardens.length, 1); assert.equal(listed.gardens[0].localOnly, true); // CHANGE
+for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' registrations without a catalog stay hidden whether available or missing', async t => { // CHANGE
+    let old; const f = await fixture(t, { seedTransport: async paths => { old = await seedOldLibrary(paths, { version }); } }); // CHANGE
+    const listed = await f.library.list(); assert.deepEqual(listed.gardens, []); assert.equal(listed.errors.length, 0); assert.equal(await fs.readFile(old.record.diagramPath, 'utf8'), old.xml); // CHANGE
     await fs.unlink(old.record.diagramPath); assert.equal((await f.library.list()).gardens.length, 0); // CHANGE
     const filename = path.join(f.identities.identityRoot(f.identities.session().identityId), 'transport', 'canvases.json'); // CHANGE
     assert.deepEqual(JSON.parse(await fs.readFile(filename, 'utf8')), [old.record]); // CHANGE
 }); // CHANGE
 
-test('application-wide old files remain visible without enrolling them into the current identity transport', async t => { // CHANGE
-    let old; const f = await fixture(t, { seedTransport: async paths => { if (paths.identityId === 'legacy') old = await seedOldLibrary(paths); }, listLegacyLocalCanvases: async () => (await (await f.legacyService()).listCanvases()).filter(item => item.localOnly) }); // CHANGE
-    const [local] = (await f.library.list()).gardens; assert.equal(local.path, old.record.diagramPath); assert.equal(local.localOnly, true); // CHANGE
+test('application-wide old files stay hidden without scanning or enrolling them into the current identity transport', async t => { // CHANGE
+    let old, scans = 0; const f = await fixture(t, { seedTransport: async paths => { if (paths.identityId === 'legacy') old = await seedOldLibrary(paths); }, listLegacyLocalCanvases: async () => { scans++; return (await (await f.legacyService()).listCanvases()).filter(item => item.localOnly); } }); // CHANGE
+    await f.legacyService(); assert.deepEqual((await f.library.list()).gardens, []); assert.equal(scans, 0); // CHANGE
     const current = await f.identities.transport(f.identities.session().identityId); assert.equal((await current.listCanvases()).length, 0); // CHANGE
-    assert.equal((await f.library.list()).gardens.length, 1); // CHANGE
+    assert.deepEqual((await f.library.list()).gardens, []); assert.equal(await fs.readFile(old.record.diagramPath, 'utf8'), old.xml); // CHANGE
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(f.root, 'legacy', 'transport', 'canvases.json'), 'utf8')), [old.record]); // CHANGE
 }); // CHANGE
+
+test('a current catalog descriptor cannot expose an old local registration', async t => { // NEW
+    let old; const f = await fixture(t, { seedTransport: async paths => { old = await seedOldLibrary(paths, { version: 2 }); } }); // NEW
+    const identityId = f.identities.session().identityId, entry = { name: 'Old registration', diagramId: old.record.diagramId, shareId: old.record.shareId, workerId: old.workerId, ownerIdentityId: identityId, protocolVersion: 3 }; // NEW
+    const record = await f.identities.signAction('garden-record', { entry }), directory = path.join(f.identities.metadataRoot(identityId), 'catalog'); // NEW
+    await fs.mkdir(directory, { recursive: true }); await fs.writeFile(path.join(directory, record.payload.id + '.json'), JSON.stringify(record)); // NEW
+    const result = await f.library.list(); assert.deepEqual(result.gardens, []); assert.equal(result.errors.length, 0); assert.equal(await fs.readFile(old.record.diagramPath, 'utf8'), old.xml); // NEW
+}); // NEW
 
 /** Write fixtures through the signed v2 journal rather than changing its disposable projection. */ // NEW
 async function saveProject(f, created, xml) { // NEW
@@ -103,7 +122,7 @@ test('dialog listing benchmark reports cold warm and long-history work', { skip:
     const counts = { reads: 0, writes: 0, historyReads: 0, registryScans: 0, naming: 0, verification: 0, namingMs: 0, verificationMs: 0 }; // NEW
     for (const [object, key, counter] of [[fs, 'readFile', 'reads'], [fs, 'writeFile', 'writes'], [daemon, 'listCanvases', 'registryScans'], [daemon, 'setProjectNaming', 'naming'], [f.identities, 'state', 'verification']]) { // NEW
         const original = object[key]; t.mock.method(object, key, async function(...args) { // NEW
-            counts[counter]++; if (key === 'readFile' && String(args[0]).replaceAll('\\', '/').includes('/collaboration-v2/records/')) counts.historyReads++; // CHANGE
+            counts[counter]++; if (key === 'readFile' && String(args[0]).replaceAll('\\', '/').includes('/collaboration-v3/records/')) counts.historyReads++; // CHANGE
             const start = performance.now(); try { return await original.apply(this, args); } finally { if (counter === 'naming' || counter === 'verification') counts[counter + 'Ms'] += performance.now() - start; } // NEW
         }); // NEW
     } // NEW
@@ -121,7 +140,7 @@ test('listing batches trust and registry reads without journal replay or filesys
     const daemon = await f.identities.transport(f.identities.session().identityId), list = daemon.listCanvases, state = f.identities.state, read = fs.readFile; let scans = 0, trust = 0, journals = 0; // NEW
     t.mock.method(daemon, 'listCanvases', async (...args) => { scans++; return list(...args); }); // NEW
     t.mock.method(f.identities, 'state', async (...args) => { trust++; return state(...args); }); // NEW
-    t.mock.method(fs, 'readFile', async (...args) => { if (String(args[0]).includes('collaboration-v2')) journals++; return read(...args); }); // NEW
+    t.mock.method(fs, 'readFile', async (...args) => { if (String(args[0]).includes('collaboration-v3')) journals++; return read(...args); }); // NEW
     for (const [object, key] of [[daemon, 'setProjectNaming'], [fs, 'writeFile'], [fs, 'rename']]) t.mock.method(object, key, () => { throw new Error('Listing performed maintenance: ' + key); }); // NEW
     const result = await f.library.list(); assert.equal(result.gardens.length, 2); assert.ok(result.gardens.find(garden => garden.diagramId === first.entry.diagramId).canRename); // NEW
     assert.equal(scans, 1); assert.equal(trust, 1); assert.equal(journals, 0); t.mock.restoreAll(); // NEW
@@ -142,7 +161,7 @@ test('library reference proposals use the signed journal, correct page and ident
 }); // NEW
 test('shared names and personal filenames preserve identity while suffixes stay outside shared descriptors', async t => { // NEW
     const f = await fixture(t), created = await f.library.create({ name: 'Community/Garden' }), id = created.entry.diagramId; // NEW
-    assert.equal(path.basename(created.path), 'Community-Garden.drawio'); assert.equal(created.entry.protocolVersion, 2); // NEW
+    assert.equal(path.basename(created.path), 'Community-Garden.drawio'); assert.equal(created.entry.protocolVersion, 3); // NEW
     const personalized = await f.library.setSuffix({ diagramId: id, suffix: 'Volunteer: west' }); // NEW
     assert.equal(personalized.name, 'Community/Garden - Volunteer: west'); assert.equal(personalized.filename, 'Community-Garden - Volunteer- west.drawio'); // NEW
     const service = await f.identities.transport(f.identities.session().identityId), descriptor = await service.libraryDescriptor(created.entry.shareId); // NEW
@@ -159,7 +178,8 @@ test('shared names and personal filenames preserve identity while suffixes stay 
 test('forged rename actor fields cannot elevate a regular identity-linked member', async t => { // NEW
     const f = await fixture(t), created = await f.library.create({ name: 'Protected' }), state = inspectDiagram(await fs.readFile(created.path, 'utf8')); // NEW
     state.store.users[0].admin = false; state.store.users.push({ id: 'other-admin', admin: true }); // NEW
-    for (const cell of state.cells) if (cell.node.hasAttribute('trellis_users_json')) { cell.node.setAttribute('trellis_users_json', JSON.stringify(state.store)); cell.node.setAttribute('trellis_access_open', '1'); } // NEW
+    for (const cell of state.cells) if (cell.node.hasAttribute('trellis_users_json')) cell.node.setAttribute('trellis_users_json', JSON.stringify(state.store)); // CHANGE
+    const document = state.document.pages[0].doc, module = document.createElement('object'), cell = document.createElement('mxCell'); module.setAttribute('id', 'accessible-garden'); module.setAttribute('garden_module', '1'); module.setAttribute('trellis_access_open', '1'); cell.setAttribute('parent', '1'); module.appendChild(cell); document.getElementsByTagName('root')[0].appendChild(module); // NEW: access belongs to a real scope, not the metadata layer.
     await saveProject(f, created, state.document.serialize()); // NEW
     await assert.rejects(f.library.rename({ diagramId: created.entry.diagramId, name: 'Forged', userId: 'other-admin', identityId: 'other' }), /administrator/); // NEW
     const personalized = await f.library.setSuffix({ diagramId: created.entry.diagramId, suffix: 'Gardener' }); assert.equal(personalized.projectName, 'Protected'); assert.equal(personalized.canRename, false); // NEW
@@ -273,13 +293,13 @@ test('reference cities are signed, persist across controller recreation, and rea
 test('signed project descriptors with unsupported protocols are isolated from valid library entries', async t => { // CHANGE
     const f = await fixture(t), created = await f.library.create({ name: 'Current project' }); // CHANGE
     const directory = path.join(f.identities.metadataRoot(f.identities.session().identityId), 'catalog'); // CHANGE
-    for (const version of [undefined, 1, 3]) { // CHANGE
+    for (const version of [undefined, 1, 2, 4]) { // CHANGE
         const entry = { ...created.entry, diagramId: 'unsupported-' + version, shareId: 'unsupported-' + version, protocolVersion: version }; // CHANGE
         if (version === undefined) delete entry.protocolVersion; // CHANGE: omitted wire fields must also be omitted before signing.
         const record = await f.identities.signAction('garden-record', { entry }); // CHANGE
         await fs.writeFile(path.join(directory, record.payload.id + '.json'), JSON.stringify(record)); // CHANGE
     } // CHANGE
-    const result = await f.library.list(); assert.equal(result.gardens.length, 1); assert.equal(result.gardens[0].diagramId, created.entry.diagramId); assert.equal(result.errors.length, 1); // CHANGE: recognized old metadata is retained for local display, not reported as a protocol failure.
+    const result = await f.library.list(); assert.equal(result.gardens.length, 1); assert.equal(result.gardens[0].diagramId, created.entry.diagramId); assert.equal(result.errors.length, 1); // CHANGE: recognized old metadata stays hidden without being reported as a protocol failure.
     assert.equal((await f.library.getEntry(created.entry.diagramId)).diagramId, created.entry.diagramId); // CHANGE: old or future records for other projects cannot block a current project.
     await assert.rejects(f.library.getEntry('unsupported-1'), /Sharing is disabled/); // CHANGE
 }); // CHANGE
@@ -301,7 +321,7 @@ test('signed location snapshots survive a missing city catalog and revoked proje
     const module = document.createElement('object'), cell = document.createElement('mxCell'); module.setAttribute('id', 'garden'); module.setAttribute('garden_module', '1'); module.setAttribute('city_id', 'city'); cell.setAttribute('parent', '1'); module.appendChild(cell); document.getElementsByTagName('root')[0].appendChild(module); // NEW
     await saveProject(f, created, parsed.document.serialize()); await f.library.setReferenceCity({ cityId: 'city' }); assert.equal((await f.library.list()).gardens[0].distanceKm, 0); // NEW
     catalog = []; const cached = (await f.library.list()).gardens[0]; assert.equal(cached.moduleCities[0].name, 'Known city'); assert.equal(cached.metadataStale, true); assert.equal(cached.distanceKm, 0); // NEW
-    parsed.store.users[0].disabled = true; document.getElementsByTagName('object')[0].setAttribute('trellis_users_json', JSON.stringify(parsed.store)); await saveProject(f, created, parsed.document.serialize()); // NEW
+    parsed.store.users[0].disabled = true; parsed.store.users.push({ id: 'replacement-admin', admin: true }); document.getElementsByTagName('object')[0].setAttribute('trellis_users_json', JSON.stringify(parsed.store)); await saveProject(f, created, parsed.document.serialize()); // NEW
     assert.equal((await f.library.list()).gardens.length, 0); // NEW
 }); // NEW
 
@@ -363,6 +383,7 @@ test('a project without a download can enter Trash and restore its unavailable l
 
 test('stale sole-user metadata cannot delete another member’s project', async t => { // NEW
     const f = await fixture(t), created = await f.library.create({ name: 'Membership changed' }); // NEW
+    assert.equal((await f.library.actions({ diagramId: created.entry.diagramId })).canDelete, true); // NEW: warm the dialog's eligibility read before membership changes.
     const parsed = inspectDiagram(await fs.readFile(created.path, 'utf8')); parsed.store.users.push({ id: 'other', admin: true }); // NEW
     for (const cell of parsed.cells) if (cell.node.hasAttribute('trellis_users_json')) cell.node.setAttribute('trellis_users_json', JSON.stringify(parsed.store)); // NEW
     await saveProject(f, created, parsed.document.serialize()); // NEW

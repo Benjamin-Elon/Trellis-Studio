@@ -1,7 +1,11 @@
 <!-- NEW: integration contract, operational behavior, and release acceptance checklist. -->
 # Trellis Managed Canvas Sharing
 
-Object collaboration v2 is the only supported sharing protocol. Signed object changes, editing holds, recovery, and verification commands are documented in [Object collaboration over Syncthing](collaboration-v2.md). Registrations are classified individually: current shares synchronize, recognized old diagrams open locally, and unsupported or unsafe entries are diagnosed without blocking other projects. Legacy folders are removed from the daemon configuration while it is paused; there is no conversion tool. <!-- CHANGE -->
+Shared canvases use [explicit refresh](explicit-refresh.md): background transport,
+verification and projection saving continue, while incoming canvas content waits
+for review. Permissions and editing holds remain current. <!-- CHANGE -->
+
+New projects use protocol 3 with [independent activity and background saving](background-saving-v3.md). Version 2 collaboration is unsupported; available old diagrams and recovery data remain local without conversion. Registrations are classified individually: current shares synchronize, recognized old diagrams open locally, and unsupported or unsafe entries are diagnosed without blocking other projects. Legacy folders are removed from the daemon configuration while it is paused. <!-- CHANGE -->
 
 ## Close, Quit, and background ownership <!-- NEW -->
 

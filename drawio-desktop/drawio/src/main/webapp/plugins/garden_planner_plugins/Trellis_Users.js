@@ -11,6 +11,7 @@ Draw.loadPlugin(function (ui) {
     graph.__trellisUsersInstalled = true;
 
     const model = graph.getModel();
+    const editContext = window.TrellisEditContext?.install(ui); // NEW: capture provenance before model observers and generators run.
 
     const ATTR_STORE = "trellis_users_json";
     const ATTR_OWNER = "trellis_owner_user_id";
@@ -89,6 +90,7 @@ Draw.loadPlugin(function (ui) {
 
     let currentUserId = "";
     let authenticatedUserId = ""; // NEW: remembered logins alone cannot link a portable identity.
+    let pendingIdentityJoin = null; // NEW: retain proven invitation authentication while its atomic account save awaits the native policy update.
     let panel = null;
     let statusNode = null;
     let peopleFilterNode = null;
@@ -174,13 +176,22 @@ Draw.loadPlugin(function (ui) {
         this.cell.value = next;
     };
 
+    function sharedPolicy() { // NEW: never use a previous document's policy during native file-loaded listener dispatch.
+        const cell = metadataCell(), id = cell?.getAttribute?.(ATTR_HISTORY_ID) || cell?.getAttribute?.(ATTR_REMEMBER_DIAGRAM_ID);
+        return !graph[INTERNAL_FLAG] && graph.__trellisSharedPolicy?.diagramId === id ? graph.__trellisSharedPolicy : null;
+    }
     function getAttr(cell, key) {
+        if (PROTECTED_ATTRS.has(key) && key !== ATTR_STORE && sharedPolicy()) { // CHANGE
+            const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '';
+            const cells = sharedPolicy().cells, live = cells.get(JSON.stringify([page, String(cell?.id)])) || cells.get(JSON.stringify(['', String(cell?.id)])); // CHANGE
+            if (live) return live.attributes[key] ?? null;
+        } // NEW
         return cell && typeof cell.getAttribute === "function" ? cell.getAttribute(key) : null;
     }
 
     function setAttr(cell, key, value) {
         if (!cell || !key) return;
-        const node = ensureXmlValue(cell);
+        const source = ensureXmlValue(cell), node = source && source.cloneNode(true); // CHANGE: retain the real prior XML value for policy validation and native undo.
         if (!node) return;
         if (value == null || value === "") node.removeAttribute(key);
         else node.setAttribute(key, String(value));
@@ -307,10 +318,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     function readStore() {
+        if (sharedPolicy()) return normalizeStore(sharedPolicy().store); // CHANGE
         return normalizeStore(parseJson(getAttr(metadataCell(), ATTR_STORE), null));
     }
 
     function writeStore(store) {
+        const previousInternal = graph[INTERNAL_FLAG]; // NEW: preserve an enclosing permission command transaction.
         graph[INTERNAL_FLAG] = true;
         model.beginUpdate();
         try {
@@ -318,7 +331,7 @@ Draw.loadPlugin(function (ui) {
             setAttr(metadataCell(), ATTR_STORE, JSON.stringify(normalized));
         } finally {
             model.endUpdate();
-            graph[INTERNAL_FLAG] = false;
+            graph[INTERNAL_FLAG] = previousInternal; // CHANGE
         }
         updateToolbarButton();
         refreshPanel();
@@ -388,9 +401,9 @@ Draw.loadPlugin(function (ui) {
         return readStore().users.map(publicUser);
     }
 
-    function publicInvite(invite) {
+    function publicInvite(invite, at = nowMs()) { // CHANGE: the host captures time; the policy receives it explicitly.
         if (!invite) return null;
-        const expired = invite.status === "pending" && nowMs() > Number(invite.expiresAt || 0);
+        const expired = window.TrellisPermissionCore.invitationStatus(invite, at) === "expired"; // CHANGE
         return {
             id: invite.id,
             email: invite.email,
@@ -556,9 +569,9 @@ Draw.loadPlugin(function (ui) {
         return store.users.find(function (user) { return user.id === id && !user.disabled; }) || store.pendingUsers.find(function (user) { return user.id === id && !user.disabled; }) || null;
     }
 
-    function listPendingInvites() {
-        const store = expireInvites(readStore());
-        return store.invites.filter(function (invite) { return invite.status === "pending" && canManageInvite(invite); }).map(publicInvite);
+    function listPendingInvites(at = nowMs()) { // CHANGE: optional evaluation time preserves the existing API.
+        const store = readStore(); // CHANGE: listing never persists expiry or changes grants.
+        return store.invites.filter(function (invite) { return window.TrellisPermissionCore.invitationStatus(invite, at) === "pending" && canManageInvite(invite); }).map(invite => publicInvite(invite, at)); // CHANGE: filtering and projection use the same evaluation time.
     }
 
     function localStore() {
@@ -733,7 +746,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     function currentUser() {
-        return userById(currentUserId);
+        const user = userById(currentUserId); if (user) return user; // CHANGE
+        const pending = pendingIdentityJoin, store = readStore(); // NEW
+        if (!pending || currentUserId !== pending.user.id || authenticatedUserId !== currentUserId || pending.diagramKey !== getDiagramLoginKey(false) || store.users.some(entry => entry.id === currentUserId)) return null; // NEW
+        const invitation = store.invites.find(invite => invite.id === pending.inviteId && invite.pendingUserId === currentUserId); // NEW
+        return invitation?.status === 'pending' && invitation.expiresAt > nowMs() ? pending.user : null; // NEW: current shared grants and native approval still control this proven account's access.
     }
 
     function isLoggedIn() {
@@ -754,19 +771,15 @@ Draw.loadPlugin(function (ui) {
         return (store || readStore()).users.filter(function (user) { return user.admin && !user.disabled; });
     }
 
-    function expireInvites(store) {
-        const source = normalizeStore(store);
-        let changed = false;
-        source.invites.forEach(function (invite) {
-            if (invite.status === "pending" && nowMs() > invite.expiresAt) {
-                invite.status = "expired";
-                removeGrantsForUser(invite.pendingUserId, invite.scopeCellIds);
-                changed = true;
-            }
-        });
-        if (changed) writeStore(source);
-        return source;
-    }
+    /** Persistent expiry cleanup belongs to authorized invitation commands, never listing or permission queries. */ // NEW
+    function expireInvites(store) { // CHANGE
+        const source = normalizeStore(store), at = nowMs(); // CHANGE
+        const expired = source.invites.filter(invite => window.TrellisPermissionCore.invitationStatus(invite, at) === 'expired' && invite.status === 'pending' && canManageInvite(invite)); // CHANGE
+        if (!expired.length) return source; // CHANGE
+        const previousInternal = graph[INTERNAL_FLAG]; graph[INTERNAL_FLAG] = true; model.beginUpdate(); // NEW
+        try { for (const invite of expired) { invite.status = 'expired'; removeGrantsForUser(invite.pendingUserId, invite.scopeCellIds); } writeStore(source); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = previousInternal; } // CHANGE
+        return source; // CHANGE
+    } // CHANGE
 
     function emailExists(store, email) {
         const clean = normalizeEmail(email);
@@ -802,7 +815,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function finalizePublicAuthMutation(message, hadAuthGate) {
-        if (hadAuthGate) closeAuthOverlay(true);
+        if (hadAuthGate || graphAuthBlocked && isLoggedIn()) closeAuthOverlay(true); // CHANGE: successful guided authentication also restores a gate whose overlay the guide replaced.
         refreshPanel();
         updateToolbarButton();
         if (!hadAuthGate && message) showStatus(message);
@@ -893,6 +906,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function logout() {
+        pendingIdentityJoin = null; // NEW
         currentUserId = "";
         authenticatedUserId = ""; // NEW
         forgetRememberedLogin();
@@ -1026,11 +1040,10 @@ Draw.loadPlugin(function (ui) {
         return Array.from(new Set(teams.map(teamSectionIdForRead).filter(Boolean))); // NEW
     }
 
-    function activeAccessTeamIdsForUser(userId) {
-        const ids = new Set(); // NEW
-        roleCardsForUser(userId).forEach(function (roleCard) { activeAccessTeamIdsForRoleCard(roleCard).forEach(function (id) { ids.add(id); }); }); // NEW
-        return ids; // NEW
-    }
+    function activeAccessTeamIdsForUser(userId) { // CHANGE
+        if (sharedPolicy()) return new Set(sharedPolicy().teams[userId] || []); // CHANGE
+        return new Set(window.TrellisPermissionCore.activeTeams(permissionQuerySnapshot(null), userId)); // CHANGE
+    } // CHANGE
 
     function hasLink(cell, id) {
         const target = String(id || "");
@@ -1079,9 +1092,9 @@ Draw.loadPlugin(function (ui) {
     function cellDisplayLabel(cell, fallback) {
         const raw = getAttr(cell, "label") || (typeof (cell && cell.value) === "string" ? cell.value : "");
         if (document && document.createElement) {
-            const holder = document.createElement("div");
-            holder.innerHTML = raw;
-            const text = String(holder.textContent || "").replace(/\s+/g, " ").trim();
+            const holder = document.createElement("template"); // CHANGE: parse in an inert template.
+            holder.innerHTML = raw; // CHANGE
+            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(raw) : holder.content.textContent || "").replace(/\s+/g, " ").trim();
             if (text) return text;
         }
         const text = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -1146,26 +1159,17 @@ Draw.loadPlugin(function (ui) {
         const teamIds = activeAccessTeamIdsForUser(userId); // NEW
         let best = null; // NEW
         grantsFromAttr(cell).forEach(function (grant) { // NEW
-            const userMatch = grant.subjectType === "user" && grant.userId === userId; // NEW
-            const teamMatch = grant.subjectType === "team" && teamIds.has(grant.teamId) && isActiveTeamSection(teamSectionForId(grant.teamId)); // NEW
+            const userMatch = grant.subjectType === "user" && grant.userId === userId && !grant.derived; // CHANGE: mirrors do not grant access. // NEW
+            const teamMatch = grant.subjectType === "team" && teamIds.has(grant.teamId) && (sharedPolicy() || isActiveTeamSection(teamSectionForId(grant.teamId))); // CHANGE
             if (!userMatch && !teamMatch) return; // NEW
             if (!best || presetRank(grant.preset) > presetRank(best.preset)) best = grant; // NEW
         }); // NEW
         return best; // NEW
     }
 
-    function directCapabilitiesForCell(cell, userId) {
-        const caps = new Set();
-        const teamIds = activeAccessTeamIdsForUser(userId); // NEW
-        let cursor = cell;
-        while (cursor) {
-            grantsFromAttr(cursor).forEach(function (grant) {
-                if ((grant.subjectType === "user" && grant.userId === userId) || (grant.subjectType === "team" && teamIds.has(grant.teamId) && isActiveTeamSection(teamSectionForId(grant.teamId)))) grant.capabilities.forEach(function (capability) { caps.add(capability); }); // CHANGE
-            });
-            cursor = parentOf(cursor);
-        }
-        return caps;
-    }
+    function directCapabilitiesForCell(cell, userId) { // CHANGE
+        try { const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)); return new Set(window.TrellisPermissionCore.directCapabilities(snapshot, userId, permissionFacts(cell).key)); } catch (_) { return new Set(); } // CHANGE
+    } // CHANGE
 
     function roleCardsForUser(userId) {
         const matches = [];
@@ -1458,23 +1462,94 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
-    function effectiveCapabilitiesForCell(cell, userId) {
-        const user = userId ? userById(userId) : currentUser();
-        const caps = new Set();
-        if (!isEnabled()) DOMAIN_CAPABILITIES.forEach(function (capability) { caps.add(capability); });
-        if (user && user.admin) DOMAIN_CAPABILITIES.forEach(function (capability) { caps.add(capability); });
-        if (user && isOwnerOfNearestAccessScope(cell, user.id)) DOMAIN_CAPABILITIES.forEach(function (capability) { caps.add(capability); });
-        if (user) directCapabilitiesForCell(cell, user.id).forEach(function (capability) { caps.add(capability); });
-        return normalizeCapabilityList(Array.from(caps));
-    }
+    /** Preserve XML value children so attribute-identical replacements cannot escape validation. */ // NEW
+    function permissionValueContent(value) { // NEW
+        function content(node) { // NEW
+            if (node.nodeType !== 1) return node.nodeValue; // NEW
+            return { // NEW
+                name: node.nodeName, // NEW
+                attributes: Object.fromEntries(Array.from(node.attributes).map(attribute => [attribute.name, attribute.value])), // NEW
+                children: Array.from(node.childNodes).filter(child => child.nodeType === 1 || child.nodeType === 3 && child.nodeValue.trim()).map(content) // NEW
+            }; // NEW
+        } // NEW
+        return Array.from(value?.childNodes || []).filter(node => node.nodeType === 1 || node.nodeType === 3 && node.nodeValue.trim()).map(content); // NEW
+    } // NEW
 
-    function hasCapability(cell, capability) {
-        const user = currentUser();
-        if (!isEnabled()) return true;
-        if (!user || !cell) return false;
-        if (user.admin || isOwnerOfNearestAccessScope(cell, user.id)) return true;
-        return effectiveCapabilitiesForCell(cell, user.id).indexOf(capability) >= 0;
-    }
+    /** Capture plain graph facts; native changes are reversed only in private copies. */ // NEW
+    function permissionFacts(cell) { // NEW
+        const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
+        const id = String(cellStableId(cell)), keyFor = value => value ? JSON.stringify([pageId, String(cellStableId(value))]) : null; // NEW
+        const attributes = cell?.value?.nodeType === 1 ? Object.fromEntries(Array.from(cell.value.attributes).map(attribute => [attribute.name, attribute.value])) : { label: typeof cell?.value === 'string' ? cell.value : '' }; // NEW
+        const parent = model.getParent ? model.getParent(cell) : cell.parent; // NEW
+        const geometry = cell.geometry || cell.getGeometry?.(); // NEW
+        return { key: keyFor(cell), id, pageId, parent: keyFor(parent), root: cell === model.getRoot(), layer: cell === graph.getDefaultParent(), attributes, valueContent: permissionValueContent(cell?.value), style: getStyle(cell), vertex: !!(cell.isVertex ? cell.isVertex() : cell.vertex), edge: !!(cell.isEdge ? cell.isEdge() : cell.edge), geometry: geometry ? JSON.stringify(geometry) : '', source: String(cellStableId(cell.source) || ''), target: String(cellStableId(cell.target) || ''), collapsed: cell.collapsed ? '1' : '', visible: cell.visible === false ? '0' : '' }; // NEW
+    } // NEW
+
+    /** The accepted policy is independent of the represented canvas; no internal flag selects its authority. */ // NEW
+    function permissionSnapshotFor(changes, previous, includeDetached = false) { // CHANGE // NEW
+        const core = window.TrellisPermissionCore, cells = new Map(), extras = new Map(); // NEW
+        traverseCells(model.getRoot(), cell => { const fact = permissionFacts(cell); if (fact.root || fact.parent) cells.set(fact.key, fact); }); // CHANGE
+        for (const change of changes || []) { const cell = cellFromChange(change); if (cell) traverseCells(cell, item => { const fact = permissionFacts(item); extras.set(fact.key, fact); }); } // NEW
+        if (includeDetached) for (const [key, fact] of extras) if (!cells.has(key)) cells.set(key, fact); // NEW
+        if (previous) for (const change of [...(changes || [])].reverse()) { // NEW
+            const cell = cellFromChange(change); if (!cell) continue; // NEW
+            const key = permissionFacts(cell).key, fact = cells.get(key) || extras.get(key), name = change.constructor?.name; if (!fact) continue; // NEW
+            const old = { ...fact, attributes: { ...fact.attributes } }; // NEW
+            if (name === 'mxChildChange') { // NEW
+                if (!change.previous) { cells.delete(key); continue; } // NEW
+                old.parent = permissionFacts(change.previous).key; // NEW
+                traverseCells(cell, item => { const child = permissionFacts(item); if (!cells.has(child.key)) cells.set(child.key, child); }); // NEW
+            } else if (name === 'mxValueChange') { old.attributes = change.previous?.nodeType === 1 ? Object.fromEntries(Array.from(change.previous.attributes).map(attribute => [attribute.name, attribute.value])) : { label: typeof change.previous === 'string' ? change.previous : '' }; old.valueContent = permissionValueContent(change.previous); } // CHANGE: reverse every part of the XML value.
+            else if (name === 'mxCellAttributeChange') { const attribute = change.attribute || change.key; if (change.previous == null) delete old.attributes[attribute]; else old.attributes[attribute] = String(change.previous); } // NEW
+            else if (name === 'mxStyleChange') old.style = change.previous || ''; // NEW
+            else if (name === 'mxGeometryChange') old.geometry = change.previous ? JSON.stringify(change.previous) : ''; // NEW
+            else if (name === 'mxTerminalChange') old[change.source ? 'source' : 'target'] = String(cellStableId(change.previous) || ''); // NEW
+            else if (name === 'mxCollapseChange') old.collapsed = change.previous ? '1' : ''; // NEW
+            else if (name === 'mxVisibleChange') old.visible = change.previous === false ? '0' : ''; // NEW
+            cells.set(key, old); // NEW
+        } // NEW
+        const metadata = [...cells.values()].find(cell => cell.attributes[ATTR_STORE]); // NEW
+        const store = metadata ? parseJson(metadata.attributes[ATTR_STORE], {}) : { usersEnabled: false, users: [] }; // NEW
+        for (const cell of cells.values()) { const attributes = { ...cell.attributes }; delete attributes[ATTR_STORE]; cells.set(cell.key, { ...cell, attributes }); } // NEW
+        const provisional = pendingIdentityJoin && currentUser()?.id === pendingIdentityJoin.user.id ? [pendingIdentityJoin.user] : []; // NEW
+        return core.snapshot({ store, cells: [...cells.values()], provisionalUsers: provisional }); // NEW
+    } // NEW
+
+    /** Ordinary queries project only the target ancestry, task sources and team membership facts. */ // NEW
+    function permissionQuerySnapshot(cell) { // NEW
+        const cells = new Map(), add = target => { const seen = new Set(); for (let current = target; current && !seen.has(current); current = model.getParent(current)) { seen.add(current); const fact = permissionFacts(current); cells.set(fact.key, fact); } }; // NEW
+        add(cell); // NEW
+        for (const id of String(cell?.getAttribute?.('linkedTo') || '').split(',').filter(Boolean)) add(model.getCell(id)); // NEW
+        for (const member of allCellsMatching(candidate => isRoleCard(candidate) || getAttr(candidate, 'role_card') === '1' || isTeamSection(candidate))) { const fact = permissionFacts(member); cells.set(fact.key, fact); } // NEW
+        return window.TrellisPermissionCore.snapshot({ store: readStore(), cells: [...cells.values()], provisionalUsers: pendingIdentityJoin && currentUser()?.id === pendingIdentityJoin.user.id ? [pendingIdentityJoin.user] : [] }); // NEW
+    } // NEW
+
+    let acceptedPolicySource = null, acceptedPolicySnapshot = null, acceptedProvisional = null; // NEW
+    function acceptedPermissionSnapshot(fallback) { // NEW
+        const metadata = metadataCell(), id = metadata?.getAttribute?.(ATTR_HISTORY_ID) || metadata?.getAttribute?.(ATTR_REMEMBER_DIAGRAM_ID), policy = graph.__trellisSharedPolicy; // NEW
+        if (!policy || policy.diagramId !== id) return typeof fallback === 'function' ? fallback() : fallback; // CHANGE
+        if (acceptedPolicySource === policy && acceptedProvisional === pendingIdentityJoin) return acceptedPolicySnapshot; // NEW // NEW
+        const cells = [...policy.cells.values()].filter(cell => cell.key && cell.attributes); // NEW
+        const snapshot = window.TrellisPermissionCore.snapshot({ store: policy.store, cells, memberships: policy.teams, provisionalUsers: pendingIdentityJoin && currentUser()?.id === pendingIdentityJoin.user.id ? [pendingIdentityJoin.user] : [] }); // CHANGE
+        acceptedPolicySource = policy; acceptedProvisional = pendingIdentityJoin; acceptedPolicySnapshot = snapshot; return snapshot; // NEW // NEW
+    } // NEW
+
+    let permissionOperation = null; // NEW: reuse one captured policy throughout a native transaction.
+    function permissionDecision(action, cell) { // NEW
+        try { // NEW
+            const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)), actor = currentUser(); // NEW
+            return window.TrellisPermissionCore.authorize(snapshot, actor?.id || '', action, cell ? permissionFacts(cell).key : null, nowMs()); // NEW
+        } catch (_) { return { allowed: false, reason: 'Invalid permission data.' }; } // NEW
+    } // NEW
+
+    function effectiveCapabilitiesForCell(cell, userId) { // CHANGE
+        try { const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)); return window.TrellisPermissionCore.effectiveCapabilities(snapshot, userId || currentUser()?.id || '', permissionFacts(cell).key, nowMs()); } catch (_) { return []; } // CHANGE
+    } // CHANGE
+
+    function hasCapability(cell, capability) { // CHANGE
+        if (!isEnabled()) return true; // CHANGE
+        return !!cell && effectiveCapabilitiesForCell(cell).includes(capability); // CHANGE: ownership and grants share one policy implementation.
+    } // CHANGE
 
     function grantUserToScopes(userId, scopeCellIds, grantOptions) {
         const source = grantOptions || {};
@@ -1627,6 +1702,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     function parentOf(cell) {
+        if (cell && sharedPolicy()) { // CHANGE
+            const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '';
+            const cells = sharedPolicy().cells, live = cells.get(JSON.stringify([page, String(cell.id)])) || cells.get(JSON.stringify(['', String(cell.id)])); // CHANGE
+            if (live && 'parent' in live) return model.getCell(live.parent);
+        } // NEW
         return cell && model.getParent ? model.getParent(cell) : null;
     }
 
@@ -1676,46 +1756,22 @@ Draw.loadPlugin(function (ui) {
         return !!(cell && isModuleCell(cell) && user && (user.admin || getAttr(cell, ATTR_OWNER) === user.id));
     }
 
-    function canEditCell(cell) {
-        if (!isEnabled()) return true;
-        const user = currentUser();
-        if (!user || !cell || cell === model.getRoot()) return false;
-        if (user.admin) return true;
-        if (canClaimUnownedModule(cell, user.id)) return true;
-        if (canClaimUnownedModule(nearestUnownedModuleAncestor(cell), user.id)) return true;
-        if (isOwnerOfNearestScope(cell, user.id)) return true;
-        if (isTaskCard(cell)) return canEditTaskDetails(cell);
-        const planting = nearestPlanting(cell);
-        if (planting) return canManagePlanting(planting);
-        return hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT);
-    }
+    function canEditCell(cell) { // CHANGE
+        if (graph.__trellisSharing?.isPendingCell?.(cell)) return false; // CHANGE: freshness is operational eligibility, outside the pure permission policy.
+        return permissionDecision('edit', cell).allowed; // CHANGE
+    } // CHANGE
 
-    /** Circle budgets are garden policy: general content managers cannot change them. */ // NEW
-    function canConfigurePlantCircleLimits(cell) { // NEW
-        if (!isEnabled()) return true; // NEW
-        const user = currentUser(); // NEW
-        return !!user && isGardenModule(cell) && (user.admin || getAttr(cell, ATTR_OWNER) === user.id); // NEW
-    } // NEW
+    function canConfigurePlantCircleLimits(cell) { // CHANGE
+        return permissionDecision('configureCircleLimits', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canAddCell(parent) {
-        if (!isEnabled()) return true;
-        const user = currentUser();
-        if (!user) return false;
-        if (user.admin) return true;
-        if (!parent || parent === model.getRoot() || parent === graph.getDefaultParent()) return true;
-        if (canClaimUnownedModule(parent, user.id)) return true;
-        return isOwnerOfNearestScope(parent, user.id) || hasCapability(parent, CAP_MANAGE_SCOPE_CONTENT);
-    }
+    function canAddCell(cell) { // CHANGE
+        return permissionDecision('add', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canDeleteCell(cell) {
-        if (!isEnabled()) return true;
-        const user = currentUser();
-        if (!user || !cell || cell === model.getRoot() || cell === graph.getDefaultParent()) return false;
-        if (isModuleCell(cell)) return canDeleteModuleBoundary(cell, user);
-        if (user.admin) return true;
-        if (canClaimUnownedModule(nearestUnownedModuleAncestor(parentOf(cell)), user.id)) return true;
-        return isOwnerOfNearestScope(cell, user.id) || canManagePlanting(cell) || hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT);
-    }
+    function canDeleteCell(cell) { // CHANGE
+        return permissionDecision('delete', cell).allowed; // CHANGE
+    } // CHANGE
 
     function canDeleteFromPreviousParent(cell, previousParent) {
         if (!isEnabled()) return true;
@@ -1729,75 +1785,37 @@ Draw.loadPlugin(function (ui) {
         return !!(previousParent && (isOwnerOfNearestScope(previousParent, user.id) || hasCapability(previousParent, CAP_MANAGE_SCOPE_CONTENT)));
     }
 
-    function canMoveCell(cell) {
-        if (!isEnabled()) return true;
-        const user = currentUser();
-        if (!user || !cell || cell === model.getRoot() || cell === graph.getDefaultParent()) return false;
-        if (user.admin) return true;
-        if (canClaimUnownedModule(cell, user.id)) return true;
-        if (canClaimUnownedModule(nearestUnownedModuleAncestor(cell), user.id)) return true;
-        if (isOwnerOfNearestScope(cell, user.id)) return true;
-        if (isTaskCard(cell)) return canMoveTask(cell);
-        if (nearestPlanting(cell)) return canManagePlanting(cell);
-        return hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT);
-    }
+    function canMoveCell(cell) { // CHANGE
+        return permissionDecision('move', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canCreatePlanting(parent) {
-        if (!isEnabled()) return true;
-        const user = currentUser();
-        if (!user || !parent) return false;
-        if (user.admin || isOwnerOfNearestScope(parent, user.id)) return true;
-        const bed = nearestGardenBed(parent);
-        const scope = bed || parent;
-        return hasCapability(scope, CAP_CREATE_PLANTINGS);
-    }
+    function canCreatePlanting(cell) { // CHANGE
+        return permissionDecision('createPlanting', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canManagePlanting(cell) {
-        if (!isEnabled()) return true;
-        const user = currentUser();
-        const planting = nearestPlanting(cell);
-        if (!user || !planting) return false;
-        if (user.admin || isOwnerOfNearestScope(planting, user.id)) return true;
-        if (hasCapability(planting, CAP_MANAGE_SCOPE_CONTENT)) return true;
-        return getAttr(planting, ATTR_OWNER) === user.id && hasCapability(planting, CAP_MANAGE_OWN_PLANTINGS);
-    }
+    function canManagePlanting(cell) { // CHANGE
+        return permissionDecision('managePlanting', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canMoveTask(cell) {
-        if (!isEnabled()) return true;
-        const user = currentUser();
-        if (!user || !cell) return false;
-        if (user.admin || isOwnerOfNearestScope(cell, user.id) || hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT)) return true;
-        const board = nearestTaskBoard(cell);
-        return !!board && hasCapability(board, CAP_MOVE_TASKS) && userCanWorkOwnTask(cell, user.id);
-    }
+    function canMoveTask(cell) { // CHANGE
+        return permissionDecision('moveTask', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canEditTaskDetails(cell) {
-        if (!isEnabled()) return true;
-        const user = currentUser();
-        if (!user || !cell) return false;
-        if (user.admin || isOwnerOfNearestScope(cell, user.id) || hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT)) return true;
-        const board = nearestTaskBoard(cell);
-        return !!board && hasCapability(board, CAP_EDIT_TASK_DETAILS) && userCanWorkOwnTask(cell, user.id);
-    }
+    function canEditTaskDetails(cell) { // CHANGE
+        return permissionDecision('editTaskDetails', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canManageAccess(cell) {
-        if (!isEnabled()) return false;
-        const user = currentUser();
-        if (!user || !cell || cell === model.getRoot()) return false;
-        if (user.admin) return true;
-        return isOwnerOfNearestAccessScope(cell, user.id) || hasCapability(cell, CAP_MANAGE_ACCESS);
-    }
+    function canManageAccess(cell) { // CHANGE
+        return permissionDecision('manageAccess', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canManageScopeGrants(cell) {
-        return !!eligibleScopeType(cell) && canManageAccess(cell);
-    }
+    function canManageScopeGrants(cell) { // CHANGE
+        return permissionDecision('manageScopeGrants', cell).allowed; // CHANGE
+    } // CHANGE
 
-    function canTransferOwnership(cell) {
-        if (!isEnabled()) return false;
-        const user = currentUser();
-        if (!user || !cell || cell === model.getRoot()) return false;
-        return user.admin || isOwnerOfNearestAccessScope(cell, user.id);
-    }
+    function canTransferOwnership(cell) { // CHANGE
+        return permissionDecision('transferOwnership', cell).allowed; // CHANGE
+    } // CHANGE
 
     function eligibleScopeType(cell) {
         if (!cell || cell === model.getRoot() || cell === graph.getDefaultParent()) return "";
@@ -2308,10 +2326,10 @@ Draw.loadPlugin(function (ui) {
         const lines = [
             "You have been invited to collaborate on a Trellis garden canvas.",
             "",
-            "1. In Trellis OS, choose Join Shared Canvas and paste the invitation block below.", // CHANGE
+            "1. On the Trellis OS Home screen, choose Join a garden project and paste this invitation email.", // CHANGE
             "2. Send the prepared device reply to the sender and wait for an admin to approve it.", // CHANGE
-            "3. Open the synced diagram in Trellis OS.", // CHANGE: Trellis OS branding.
-            "4. In People & Access, choose Accept Invite and enter your email, invite code, display name, and PIN.",
+            "3. Return to Pending invitations in Garden Projects and choose Open project when ready.", // CHANGE: Trellis OS branding.
+            "4. The guide accepts the invitation and adds the project to your Trellis identity. No separate project PIN is needed for new collaborators.", // CHANGE
             "",
             "Trellis invite code: " + code,
             "Invite expires: " + new Date(invite.expiresAt).toLocaleString(),
@@ -2366,7 +2384,7 @@ Draw.loadPlugin(function (ui) {
         return { ok: true, invite: publicInvite(invite), code, emailDraft };
     }
 
-    function acceptInviteState(options) {
+    function acceptInviteState(options, portableIdentityId) { // CHANGE: identity joins link before the account is first persisted.
         const source = options || {};
         const email = normalizeEmail(source.email);
         const name = String(source.name || "").trim();
@@ -2376,22 +2394,21 @@ Draw.loadPlugin(function (ui) {
         const store = expireInvites(readStore());
         const invite = store.invites.find(function (entry) { return entry.status === "pending" && normalizeEmail(entry.email) === email; });
         if (!invite) return { ok: false, reason: "No active invite matches that email." };
-        if (nowMs() > invite.expiresAt) return { ok: false, reason: "That invite has expired." };
+        if (nowMs() >= invite.expiresAt) return { ok: false, reason: "That invite has expired." };
         if (invite.codeHash !== hashInviteCode(code, invite.codeSalt)) return { ok: false, reason: "Invite code is incorrect." };
         if (store.users.some(function (user) { return user.name.toLowerCase() === name.toLowerCase(); })) return { ok: false, reason: "A user with that name already exists." };
         const pending = store.pendingUsers.find(function (entry) { return entry.id === invite.pendingUserId; });
         if (!pending) return { ok: false, reason: "Invite user record is missing." };
         const salt = makeId(PIN_SALT_PREFIX);
         const user = { id: pending.id, name, email, pinSalt: salt, pinHash: hashPin(pin, salt), admin: false, disabled: false, createdAt: nowMs() };
+        if (portableIdentityId) user.portableIdentityId = portableIdentityId; // NEW
         store.users.push(user);
         store.pendingUsers = store.pendingUsers.filter(function (entry) { return entry.id !== pending.id; });
         invite.status = "accepted";
-        writeStore(store);
-        currentUserId = user.id;
-        authenticatedUserId = user.id; // NEW: accepted invitations prove this user's access.
-        graph[INTERNAL_FLAG] = true;
-        model.beginUpdate();
-        try { ensureGardenRoleCardsForUser(user.id); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; }
+        const previousActor = currentUserId, previousAuthentication = authenticatedUserId, previousInternal = graph[INTERNAL_FLAG]; // NEW
+        currentUserId = user.id; authenticatedUserId = user.id; // CHANGE: capture the proven invite actor before publishing its atomic setup.
+        graph[INTERNAL_FLAG] = true; model.beginUpdate(); // CHANGE
+        try { writeStore(store); ensureGardenRoleCardsForUser(user.id); } catch (error) { currentUserId = previousActor; authenticatedUserId = previousAuthentication; throw error; } finally { model.endUpdate(); graph[INTERNAL_FLAG] = previousInternal; } // CHANGE
         return { ok: true, user: publicUser(user) };
     }
 
@@ -2402,6 +2419,30 @@ Draw.loadPlugin(function (ui) {
         return result;
     }
 
+    /** Complete only the invitation's account under the current proven portable login. */ // NEW
+    async function finishIdentityJoin(options) { // NEW
+        const source = options || {}, diagramKey = getDiagramLoginKey(false); // NEW
+        const session = await window.trellisIdentity?.getSession(); // NEW
+        if (!session || session.identityId !== source.identityId || source.generation !== undefined && session.generation !== source.generation || diagramKey !== getDiagramLoginKey(false)) return { ok: false, reason: 'The identity or project changed. Reopen the join guide.' }; // CHANGE
+        closeAuthOverlay(false); // NEW: the guide supplies authentication while graph access remains blocked until proof succeeds.
+        const store = readStore(), existing = store.users.find(user => user.id === source.userId); // NEW
+        if (!existing && pendingIdentityJoin?.identityId === session.identityId && pendingIdentityJoin.user.id === source.userId && currentUser()?.id === source.userId) return { ok: true, user: publicUser(pendingIdentityJoin.user) }; // NEW: retry the same accepted account without generating another credential.
+        if (existing) { // NEW
+            if (existing.disabled) return { ok: false, reason: 'This project account is disabled. Contact an administrator.' }; // NEW
+            if (existing.portableIdentityId && existing.portableIdentityId !== session.identityId) return { ok: false, reason: 'This project account is linked to a different identity. Connect that identity before joining.' }; // NEW
+            if (existing.portableIdentityId === session.identityId) { const result = await restorePortableLogin(); return result.ok && result.user.id === source.userId ? result : { ok: false, reason: 'The linked project account could not be restored.' }; } // NEW
+            if (!source.pin) return { ok: false, needsPin: true, reason: 'Enter your existing project PIN once to link this account to your identity.' }; // NEW
+            const logged = login(existing.name, source.pin); if (!logged.ok) return logged; // NEW
+            return linkPortableIdentity(); // NEW
+        } // NEW
+        if (!store.invites.some(invite => invite.pendingUserId === source.userId && normalizeEmail(invite.email) === normalizeEmail(source.email) && invite.status === 'pending')) return { ok: false, reason: 'No active invitation matches this project account. Ask the sender for a new invitation.' }; // NEW
+        const random = new Uint8Array(32); window.crypto.getRandomValues(random); // NEW
+        const pin = Array.from(random, value => value.toString(16).padStart(2, '0')).join(''); // NEW
+        const result = acceptInviteState({ email: source.email, code: source.code, name: source.displayName, pin }, session.identityId); // NEW
+        if (result.ok) pendingIdentityJoin = { user: result.user, identityId: session.identityId, diagramKey, inviteId: store.invites.find(invite => invite.pendingUserId === source.userId)?.id }; // NEW
+        if (result.ok) finalizePublicAuthMutation('Invitation accepted.', !!authOverlay); // NEW
+        return result; // NEW
+    } // NEW
     function canManageInvite(invite) {
         const actor = currentUser();
         if (!actor || !invite) return false;
@@ -2625,10 +2666,13 @@ Draw.loadPlugin(function (ui) {
     }
 
     function stampAcceptedActorMetadata(edit, changes) {
+        if (graph.__trellisSharingApplying || graph.__trellisLocalViewChanging || graph.__ccHistoryRestoring) return; // NEW: permission validation still runs, but replay preserves historical attribution.
         const sourceChanges = (changes || []).slice();
+        const initialized = new Set(sourceChanges.filter(change => change.constructor?.name === 'mxChildChange' && currentParentOfChange(change) && !previousParentOfChange(change)).map(cellFromChange)); // NEW
         const stamped = new Set();
         sourceChanges.forEach(function (change) {
             if (!change || change.__trellisUsersActorStamp) return;
+            if (editContext && !editContext.isContentChange(change)) return; // NEW: presentation maintenance and unchanged writes cannot claim authorship.
             const name = change && change.constructor && change.constructor.name;
             const cell = cellFromChange(change);
             if (!cell) return;
@@ -2636,7 +2680,11 @@ Draw.loadPlugin(function (ui) {
             [cell, currentParentOfChange(change), previousParentOfChange(change)].forEach(function (moduleCell) {
                 if (!isUnownedModuleCell(moduleCell)) return;
                 const moduleKey = cellStableId(moduleCell) + ":createdOwner";
-                if (!stamped.has(moduleKey)) { stampCreatedOwner(moduleCell, edit); stamped.add(moduleKey); }
+                if (!stamped.has(moduleKey)) { // CHANGE: claiming an older unowned module cannot establish its unknown historical creator.
+                    if (initialized.has(moduleCell)) stampCreatedOwner(moduleCell, edit); // NEW
+                    else stampActorIntoEdit(edit, moduleCell, 'owner', { owner: true }); // NEW
+                    stamped.add(moduleKey); // NEW
+                } // NEW
             });
             if (name === "mxChildChange" && currentParentOfChange(change) && !previousParentOfChange(change) && isTilerGroup(cell)) {
                 const key = keyBase + ":createdOwner";
@@ -2644,6 +2692,7 @@ Draw.loadPlugin(function (ui) {
                 return;
             }
             if (isActorStampableEditChange(change)) {
+                if (initialized.has(cell) && editContext?.kindOf(change) === 'generated-content') return; // NEW: generated initialization retains creation/replacement attribution instead of masquerading as a later edit.
                 const key = keyBase + ":edited";
                 if (!stamped.has(key)) { stampActorIntoEdit(edit, cell, "edited"); stamped.add(key); }
             }
@@ -2922,28 +2971,33 @@ Draw.loadPlugin(function (ui) {
         if (graph.refresh) graph.refresh();
     }
 
-    function inspectModelChange(_sender, evt) {
-        if (graph[INTERNAL_FLAG] || graph[REJECT_FLAG]) return;
-        if ((ui && ui.openingFile) || graphXmlLoading > 0) return;
-        const edit = evt && evt.getProperty && evt.getProperty("edit");
-        if (edit && (edit.undone || edit.redone)) return;
-        const changes = edit && edit.changes || [];
-        if (!changes.length) return;
-        if (!isEnabled()) { // CHANGE: disabled Users must not permit anonymous comment mutations through native model commands.
-            if (changes.some(change => !commentChangeAllowed(change))) rejectEdit(edit, 'Enable Trellis users and log in before changing comments.', { cell: cellFromChange(changes.find(change => !commentChangeAllowed(change))) }); // CHANGE
-            return; // CHANGE
-        } // CHANGE
-        if (!isLoggedIn()) { rejectEdit(edit, "Log in before editing this diagram.", { action: "login" }); return; }
-        const permissionContext = editPermissionContext(changes);
-        for (let i = 0; i < changes.length; i++) {
-            if (!changeAllowed(changes[i], permissionContext)) {
-                logDeniedChange(changes[i], i);
-                rejectEdit(edit, "Change rejected by Trellis user permissions.", { cell: cellFromChange(changes[i]) });
-                return;
-            }
-        }
-        stampAcceptedActorMetadata(edit, changes);
-    }
+    /** Delegate only actual reference-field changes already accepted by the existing domain guard. */ // NEW
+    function referencePermissionEffects(changes) { // NEW
+        const reference = window.TrellisReferenceCore, guard = graph.__trellisReferences; if (!reference || !guard) return new Set(); // NEW
+        const fields = new Set([reference.ATTR, reference.PROPOSALS, ...reference.CATALOGS]); // NEW
+        return new Set(changes.filter(change => { const names = changedAttributeNames(change); return names.length && names.every(name => fields.has(name)) && guard.changeAllowed(change, {}) === true; }).map(change => permissionFacts(cellFromChange(change)).key)); // NEW
+    } // NEW
+
+    /** Validate one native transaction against captured prior authority, then retain the existing stamping/undo mechanics. */ // NEW
+    function inspectModelChange(_sender, evt) { // CHANGE
+        if (graph[REJECT_FLAG] || (ui && ui.openingFile) || graphXmlLoading > 0) return; // CHANGE
+        const edit = evt?.getProperty?.('edit'); if (edit && (edit.undone || edit.redone)) return; // CHANGE
+        const changes = edit?.changes || []; if (!changes.length) return; // CHANGE
+        try { // CHANGE
+            const before = permissionSnapshotFor(changes, true), after = permissionSnapshotFor(changes, false); // CHANGE
+            permissionOperation = acceptedPermissionSnapshot(window.TrellisPermissionCore.snapshot({ store: after.store, cells: Object.values({ ...before.cells, ...after.cells }), provisionalUsers: after.provisionalUsers })); // CHANGE: native heuristics can inspect newly created and just-removed objects.
+            const priorPolicy = acceptedPermissionSnapshot(before); // NEW
+            if (!graph[INTERNAL_FLAG] && isEnabled()) { // CHANGE: internal commands skip native heuristics, never the shared validator.
+                if (!isLoggedIn()) { rejectEdit(edit, 'Log in before editing this diagram.', { action: 'login' }); return; } // CHANGE
+                const context = editPermissionContext(changes); // CHANGE
+                for (let i = 0; i < changes.length; i++) if (!changeAllowed(changes[i], context)) { logDeniedChange(changes[i], i); rejectEdit(edit, 'Change rejected by Trellis user permissions.', { cell: cellFromChange(changes[i]) }); return; } // CHANGE
+            } // CHANGE
+            const referenceEffects = referencePermissionEffects(changes); // NEW
+            const result = window.TrellisPermissionCore.validateTransition(before, after, currentUserId, nowMs(), { policy: priorPolicy, referenceChangeAllowed: (old, next, names) => { const core = window.TrellisReferenceCore; return referenceEffects.has(old.key) && !!(old.attributes[core.ATTR] || next.attributes[core.ATTR] || old.attributes[core.PROPOSALS] || next.attributes[core.PROPOSALS]) && names.every(name => [core.ATTR, core.PROPOSALS, ...core.CATALOGS].includes(name)); }, commentsChangeAllowed: (a, b, actor, at) => window.TrellisDetailsCore?.commentsChangeAllowed(a, b, actor, at) || false }); // NEW
+            if (!result.allowed) { rejectEdit(edit, result.reason, { cell: cellFromChange(changes[0]) }); return; } // NEW
+            if (!graph[INTERNAL_FLAG]) stampAcceptedActorMetadata(edit, changes); // CHANGE
+        } catch (_) { rejectEdit(edit, 'Invalid permission data.', { cell: cellFromChange(changes[0]) }); } finally { permissionOperation = null; } // NEW
+    } // CHANGE
 
     function makeButton(label, onClick, variant, tooltip) { // CHANGE: explicit help describes permission and account consequences.
         const button = document.createElement("button");
@@ -3233,7 +3287,7 @@ Draw.loadPlugin(function (ui) {
         appendInviteDeliveryHelp(shell.box); // NEW
         const actions = document.createElement("div"); // NEW
         actions.style.cssText = "display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;"; // NEW
-        let draft = null, busy = false; // NEW: retries reuse the complete prepared draft and original invite result.
+        let draft = null, busy = false, copying = false; // NEW: retries reuse the complete prepared draft and original invite result.
         const retry = makeButton("Retry Email", deliver, "open", "Retry delivery of this invitation without changing its code."); // NEW
         const copy = makeButton("Copy Invitation", copyInvitation, "add", "Copy the recipient, subject, and complete invitation to paste into an email."); // NEW
         const done = makeButton("Done", function () { closeAccessDialog(shell.overlay); }, "close", "Close this view and keep the invitation pending."); // NEW
@@ -3249,11 +3303,24 @@ Draw.loadPlugin(function (ui) {
             if (busy || !shell.overlay.isConnected) return; // NEW
             if (document.activeElement === retry) preview.focus(); // NEW: disabling a focused native button otherwise moves keyboard input outside the dialog.
             busy = true; retry.disabled = true; copy.disabled = true; // NEW
+            const started = Date.now(); let stage = 'queued'; // NEW
+            function progress(value) { // NEW
+                stage = value; // NEW
+                if (!shell.overlay.isConnected) return; // NEW
+                const seconds = Math.floor((Date.now() - started) / 1000); // NEW
+                const slow = seconds >= 5 ? ' Taking longer than usual (' + seconds + ' seconds). Still working.' : ''; // NEW
+                status.textContent = stage.charAt(0).toUpperCase() + stage.slice(1) + '…' + slow; // NEW
+            } // NEW
+            const slowTimer = window.setInterval(() => { if (!shell.overlay.isConnected) window.clearInterval(slowTimer); else if (Date.now() - started >= 5000) progress(stage); }, 1000); // NEW
             try { // NEW
+                if (draft) { // NEW: a retained message must still refer to an active, unchanged invitation.
+                    try { await window.Trellis?.sharing?.validateInvite?.(result); } catch (err) { draft = null; preview.value = ''; throw err; } // NEW
+                    if (!shell.overlay.isConnected) return; // NEW
+                } // NEW
                 if (!draft) { // NEW
                     status.textContent = "Preparing the complete invitation…"; // NEW
                     const sharing = window.Trellis && window.Trellis.sharing; // NEW
-                    const prepared = sharing ? await sharing.prepareInvite(result) : result.emailDraft; // NEW: preserve legacy delivery without the sharing plugin.
+                    const prepared = sharing ? await sharing.prepareInvite(result, { onProgress: progress }) : result.emailDraft; // NEW: preserve legacy delivery without the sharing plugin.
                     if (!shell.overlay.isConnected) return; // NEW
                     if (!prepared || !prepared.to || !prepared.body) throw new Error("The complete invitation could not be prepared. Choose Retry Email."); // NEW
                     draft = prepared; // NEW: retain its full setup block without regenerating the invite code.
@@ -3261,24 +3328,26 @@ Draw.loadPlugin(function (ui) {
                 } // NEW
                 const bridge = window.trellisShare; // NEW
                 if (!bridge || typeof bridge.openEmailDraft !== "function") throw new Error("Email bridge unavailable. Use Copy Invitation to send this invitation manually."); // NEW
-                status.textContent = "Requesting an email draft…"; // NEW
+                progress("requesting email"); copy.disabled = false; // CHANGE: copying remains available while the external handler is pending.
                 const launched = await bridge.openEmailDraft(draft); // NEW
                 if (!shell.overlay.isConnected) return; // NEW
                 status.textContent = launched && launched.ok === true ? "Email request handed to your mail app. Review and send the draft there." : ((launched && launched.reason) || "Your mail app could not be opened. See Email didn’t open? or use Copy Invitation."); // NEW
             } catch (err) { // NEW
                 if (shell.overlay.isConnected) status.textContent = (err && err.message ? err.message : "Email delivery failed.") + (draft ? " See Email didn’t open? or use Copy Invitation." : " Choose Retry Email to prepare the same invitation again."); // NEW
             } finally { // NEW
-                busy = false; // NEW
-                if (shell.overlay.isConnected) { retry.disabled = false; copy.disabled = !draft; } // NEW
+                window.clearInterval(slowTimer); busy = false; // CHANGE
+                if (shell.overlay.isConnected) { retry.disabled = false; copy.disabled = copying || !draft; } // NEW
             } // NEW
         } // NEW
 
         /** Keep selectable text available when the browser denies clipboard access. */ // NEW
         async function copyInvitation() { // NEW
-            if (busy || !draft || !shell.overlay.isConnected) return; // NEW
+            if (copying || !draft || !shell.overlay.isConnected) return; // NEW
             if (document.activeElement === copy) preview.focus(); // NEW: keep Escape and copy shortcuts inside the dialog while buttons are disabled.
-            busy = true; retry.disabled = true; copy.disabled = true; // NEW
+            copying = true; copy.disabled = true; // CHANGE
             try { // NEW
+                try { await window.Trellis?.sharing?.validateInvite?.(result); } catch (err) { draft = null; preview.value = ''; status.textContent = err.message; return; } // NEW
+                if (!shell.overlay.isConnected) return; // NEW
                 await window.navigator.clipboard.writeText(preview.value); // NEW
                 if (shell.overlay.isConnected) status.textContent = "Invitation copied. Paste it into a new email, review it, and send it."; // NEW
             } catch (_) { // NEW
@@ -3287,8 +3356,8 @@ Draw.loadPlugin(function (ui) {
                     status.textContent = "Automatic copy was unavailable. The complete invitation is selected; press Ctrl+C (Command+C on Mac), then paste it into a new email."; // NEW
                 } // NEW
             } finally { // NEW
-                busy = false; // NEW
-                if (shell.overlay.isConnected) { retry.disabled = false; copy.disabled = false; } // NEW
+                copying = false; // CHANGE
+                if (shell.overlay.isConnected) { retry.disabled = busy; copy.disabled = !draft; } // NEW
             } // NEW
         } // NEW
     } // NEW
@@ -5101,7 +5170,7 @@ Draw.loadPlugin(function (ui) {
         isEnabled,
         getCurrentUser: function () { return publicUser(currentUser()); },
         revalidateCurrentSession: function () { // NEW: preserve a valid session across trusted remote reloads.
-            if (currentUserId && !userById(currentUserId)) { currentUserId = ""; forgetRememberedLogin(); }
+            if (currentUserId && !currentUser()) { currentUserId = ""; forgetRememberedLogin(); } // CHANGE: an invitation proven in this window remains authenticated until its saved account reaches shared policy.
             updateToolbarButton();
             applyAuthGateIfNeeded();
             if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent("trellisUsersSessionChanged"));
@@ -5124,7 +5193,7 @@ Draw.loadPlugin(function (ui) {
         login,
         logout,
         getDiagramKey, // NEW: public non-test access to the diagram-scoped local preference key.
-        restorePortableLogin, linkPortableIdentity, // NEW: narrow identity orchestration alongside existing Users policy.
+        restorePortableLogin, linkPortableIdentity, finishIdentityJoin, // CHANGE: guided joins reuse Users validation and authentication proof.
         showAuthDialog,
         rememberLogin,
         forgetRememberedLogin,

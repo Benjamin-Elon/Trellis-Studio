@@ -2918,6 +2918,16 @@ Draw.loadPlugin(function (ui) {
     }
 
     function reflowAssemblyParts(assembly) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'irrigation-layout:' + assembly.id, // NEW
+          title: 'Irrigation layout', // NEW
+          cells: () => [assembly], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(assembly.id); // NEW
+            if (current) return reflowAssemblyParts(current); // NEW
+          } // NEW
+        }, () => reflowAssemblyParts(assembly)); // NEW
         assemblyPartCells(assembly).forEach(function (cell, index) {
             setGeometry(cell, { y: assemblyPartY(index) }); // CHANGE
         });
@@ -4079,6 +4089,20 @@ Draw.loadPlugin(function (ui) {
     }
 
     function commitStagedPath(moduleCell, stagedPath) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+          id: 'irrigation-path:' + stagedPath.id, // NEW
+          title: 'Generate irrigation path', // NEW
+          cells: () => [moduleCell], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(moduleCell.id); // NEW
+            if (current) return commitStagedPath(current, stagedPath); // NEW
+          }, // NEW
+          deferredValue: { // NEW
+            ...stagedPath, // NEW
+            blockingErrors: ['Path generation deferred while an object is being edited.'] // NEW
+          } // NEW
+        }, () => commitStagedPath(moduleCell, stagedPath)); // NEW: hydraulic validation and geometry are recomputed inside the existing commit path.
         const catalog = IrrigationCatalog.read(moduleCell);
         const path = Object.assign({}, stagedPath);
         const previous = readPaths(moduleCell).find(function (existing) { return existing.id === path.id; }) || {};
@@ -4142,6 +4166,14 @@ Draw.loadPlugin(function (ui) {
     }
 
     function commitBedTemplate(moduleCell, pathId, bedCell, template) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+            id: 'irrigation-template:' + pathId, title: 'Generate bed irrigation template', cells: () => [moduleCell, bedCell], // NEW
+            retry: () => { // NEW: retain chosen parts/rows as intent, but regenerate dimensions and catalog-derived values.
+                const currentModule = model.getCell(moduleCell.id), currentBed = model.getCell(bedCell.id); // NEW
+                if (currentModule && currentBed) return commitBedTemplate(currentModule, pathId, currentBed, template); // NEW
+            }, deferredValue: null // NEW
+        }, () => commitBedTemplate(moduleCell, pathId, bedCell, template)); // NEW
         if (activeIrrigationEditDepth === 0) return runIrrigationEdit("commitBedTemplate", function () { return commitBedTemplate(moduleCell, pathId, bedCell, template); });
         const linkedBedCell = isAssembly(bedCell) && assemblyType(bedCell) === "bed" ? bedCellForAssembly(moduleCell, bedCell) : bedCell;
         const bedAssembly = isAssembly(bedCell) && assemblyType(bedCell) === "bed" ? bedCell : resolveBedTemplateAssembly(moduleCell, bedCell);
@@ -4263,6 +4295,16 @@ Draw.loadPlugin(function (ui) {
     }
 
     function reflowBedTemplateLayout(moduleCell, bedAssembly) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'bed-template-layout:' + bedAssembly.id, // NEW
+          title: 'Bed irrigation layout', // NEW
+          cells: () => [bedAssembly], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(bedAssembly.id); // NEW
+            if (current) return reflowBedTemplateLayout(moduleCell, current); // NEW
+          } // NEW
+        }, () => reflowBedTemplateLayout(moduleCell, bedAssembly)); // NEW
         const bedCell = bedCellForAssembly(moduleCell, bedAssembly);
         const record = readBedAssemblyTemplateRecord(moduleCell, bedAssembly);
         if (!record) return;
@@ -4310,6 +4352,17 @@ Draw.loadPlugin(function (ui) {
     }
 
     function syncLinkedBedAssemblyToBed(moduleCell, assembly, bedCell, opts) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'bed-assembly:' + assembly.id, // NEW
+          title: 'Bed assembly layout', // NEW
+          cells: () => [assembly, bedCell], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(assembly.id), // NEW
+              bed = model.getCell(bedCell.id); // NEW
+            if (current && bed) return syncLinkedBedAssemblyToBed(moduleCell, current, bed); // NEW
+          } // NEW
+        }, () => syncLinkedBedAssemblyToBed(moduleCell, assembly, bedCell, opts)); // NEW
         if (!isBedAssembly(assembly)) return false;
         const linkedBed = bedCell || bedCellForAssembly(moduleCell, assembly);
         if (!linkedBed) return false;
@@ -5169,6 +5222,16 @@ Draw.loadPlugin(function (ui) {
     }
 
     function persistReportSummary(moduleCell, summary) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'irrigation-summary:' + moduleCell.id, // NEW
+          title: 'Irrigation summary', // NEW
+          cells: () => [moduleCell], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(moduleCell.id); // NEW
+            if (current) return persistReportSummary(current, buildReportSummary(current)); // NEW
+          } // NEW
+        }, () => persistReportSummary(moduleCell, summary)); // NEW
         GraphStore.writeJsonAttr(moduleCell, ATTRS.REPORT_JSON, { version: PLUGIN_VERSION, summary });
         GraphStore.writeJsonAttr(moduleCell, ATTRS.DASHBOARD_JSON, summary);
         return summary;

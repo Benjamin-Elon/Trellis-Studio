@@ -950,9 +950,9 @@ Draw.loadPlugin(function (ui) {
     function plainTextLabel(raw, fallback) {
         const value = String(raw == null ? "" : raw);
         if (document && document.createElement) {
-            const holder = document.createElement("div");
-            holder.innerHTML = value;
-            const text = String(holder.textContent || "").replace(/\s+/g, " ").trim();
+            const holder = document.createElement("template"); // CHANGE: parse in an inert template.
+            holder.innerHTML = value; // CHANGE
+            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(value) : holder.content.textContent || "").replace(/\s+/g, " ").trim();
             if (text) return text;
         }
         const stripped = value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();

@@ -1659,7 +1659,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const value = cell.value;
         const raw = value && value.getAttribute ? (value.getAttribute('label') || '') : (value == null ? '' : String(value));
         const holder = document && document.createElement ? document.createElement('div') : null;
-        if (holder) { holder.innerHTML = raw; return String(holder.textContent || '').replace(/\s+/g, ' ').trim(); }
+        if (holder) { const template = document.createElement('template'); template.innerHTML = raw; return String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(raw) : template.content.textContent || '').replace(/\s+/g, ' ').trim(); } // CHANGE: inert extraction.
         return String(raw).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     }
 
@@ -3217,7 +3217,18 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     // -------------------- Card label rendering --------------------
     function refreshCardLabel(card, suppressRefresh) {
-        if (getAttr(card, 'kanban_card') !== '1') return;
+        if (getAttr(card, 'kanban_card') !== '1') return; // CHANGE: preserve the existing non-card/null guard before preflight.
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'task-label:' + card.id, // NEW
+          title: 'Task label', // NEW
+          cells: () => [card], // NEW
+          retry: () => { // NEW
+            const current = model.getCell(card.id); // NEW
+            if (current) return refreshCardLabel(current, false); // NEW
+          }, // NEW
+          deferredValue: false // NEW
+        }, () => refreshCardLabel(card, suppressRefresh)); // NEW: cached badge/label rendering is not a content edit.
         const title = mxUtils.htmlEntities(getAttr(card, 'title') || 'Task');
         const parent = model.getParent(card);
         const laneKey = parent ? getAttr(parent, 'lane_key') : null;
@@ -3379,11 +3390,20 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     // -------------------- Task creation and card commands --------------------
     function createTasks(tasks, targetGroupId, opts) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+          id: 'generated-tasks:' + targetGroupId, // NEW
+          title: 'Generate tasks', // NEW
+          cells: () => taskAutomationCells(targetGroupId), // NEW
+          retry: () => window.USL.scheduler.retryGeneratedTasks(model.getCell(targetGroupId)), // NEW
+          deferredValue: [] // NEW
+        }, () => createTasks(tasks, targetGroupId, opts)); // NEW
         if (!Array.isArray(tasks) || tasks.length === 0) return [];
 
         const reflow = !opts || opts.reflow !== false;
         const assignmentIdsByTaskKey = opts && opts.assignmentIdsByTaskKey;
         const instructionOverridesByTaskKey = opts && opts.instructionOverridesByTaskKey; // CHANGE
+        const attributionByTaskKey = opts && opts.attributionByTaskKey; // NEW
         const insideUpdate = !!(opts && opts.insideUpdate);
         const focusCreated = !opts || opts.focusCreated !== false; // NEW: scheduler saves can create cards without stealing graph focus
 
@@ -3420,6 +3440,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 if (typeof t.instructions === 'string') setAttrNoUndo(card, 'task_instructions', t.instructions); // CHANGE
                 if (t.instructionProvenance) setAttrNoUndo(card, 'task_instruction_provenance_json', JSON.stringify(t.instructionProvenance)); // CHANGE
                 const schedulerTaskKey = String(schedulerAttrs.scheduler_task_key || '');
+                if (attributionByTaskKey?.has(schedulerTaskKey)) context?.recreated.add(card); // NEW: an older logical task with unknown creation time must keep that time unknown.
+                for (const [key, value] of Object.entries(attributionByTaskKey?.get(schedulerTaskKey) || {})) setAttrNoUndo(card, key, value); // NEW: recreation retains an unambiguous logical task's original creator.
                 if (instructionOverridesByTaskKey && instructionOverridesByTaskKey.has(schedulerTaskKey)) setAttrNoUndo(card, TASK_INSTRUCTION_OVERRIDE_ATTR, instructionOverridesByTaskKey.get(schedulerTaskKey)); // CHANGE
                 const preservedAssignees = schedulerTaskKey && assignmentIdsByTaskKey && assignmentIdsByTaskKey.get ? assignmentIdsByTaskKey.get(schedulerTaskKey) : null;
                 if (preservedAssignees && preservedAssignees.length) setAttrNoUndo(card, TASK_ASSIGNEE_ROLE_IDS_ATTR, serializeTaskAssigneeRoleIds(preservedAssignees), true);
@@ -3541,17 +3563,51 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return { group: grp, records };
     }
 
+    /** A source, its linked tasks, and affected boards form one conservative dependency group. */ // NEW
+    function taskAutomationCells(targetGroupId) { // NEW
+        const source = buildDifferentialTaskSyncRecords(targetGroupId);
+        if (!source) return [];
+        const garden = findGardenModuleAncestor(source.group); // NEW: newly generated tasks can reflow an existing board even when the source has no old tasks.
+        return [source.group, ...source.records.map(record => record.card), ...new Set([...source.records.map(record => findBoardAncestor(record.card)), ...(garden ? listBoardsForGarden(garden) : [])].filter(Boolean))]; // CHANGE
+    }
+
+    /** Preserve facts only across unique stable occurrence identities; ambiguous replacements are new objects. */ // NEW
+    function replacementTaskAttribution(records, tasks) { // NEW
+        const result = new Map(), actor = window.Trellis?.users?.getCurrentUser?.();
+        for (const task of tasks) {
+            const key = String(task.scheduler_task_key || task.schedulerTaskKey || '');
+            const matches = records.filter(record => record.schedulerTaskKey === key);
+            if (!key || matches.length !== 1 || tasks.filter(item => String(item.scheduler_task_key || item.schedulerTaskKey || '') === key).length !== 1) continue;
+            const source = matches[0].source, attrs = {};
+            for (const name of ['createdAt', 'createdByUserId', 'lastEditedAt', 'lastEditedByUserId']) { const value = readAttributeValue(source, name); if (value) attrs[name] = value; }
+            if (generatedTaskAttributesDiffer(source, task)) { attrs.lastEditedAt = String(Date.now()); if (actor) attrs.lastEditedByUserId = actor.id; }
+            result.set(key, attrs);
+        }
+        return result;
+    }
+
     function replaceTasksPreservingAssignments(targetGroupId, tasks, opts) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+          id: 'generated-tasks:' + targetGroupId, // NEW
+          title: 'Replace generated tasks', // NEW
+          cells: () => taskAutomationCells(targetGroupId), // NEW
+          retry: () => window.USL.scheduler.retryGeneratedTasks(model.getCell(targetGroupId)), // NEW
+          deferredValue: [] // NEW
+        }, () => replaceTasksPreservingAssignments(targetGroupId, tasks, opts)); // NEW
         const normalizedTasks = Array.isArray(tasks) ? tasks : [];
         const options = opts || {};
         const operation = function () {
             const source = buildDifferentialTaskSyncRecords(targetGroupId);
+            const diff = source && planDifferentialTaskSync(source.records, normalizedTasks); // NEW
+            if (diff && !diff.legacyReplace && !diff.creates.length && !diff.updates.length && !diff.removes.length && !diff.missing.length) return source.records.map(record => ({ cellId: record.card.id, title: getAttr(record.card, 'title') })); // NEW: no-op regeneration must not recreate objects or advance attribution.
+            const attributionByTaskKey = replacementTaskAttribution(source?.records || [], normalizedTasks); // NEW
             const preservation = planTaskAssignmentReplacement(source && source.records, normalizedTasks);
             const assignmentIdsByTaskKey = new Map(preservation.preserved.map(entry => [entry.key, entry.roleIds]));
             const instructionOverridesByTaskKey = new Map(preservation.preserved.filter(entry => entry.instructionOverride != null).map(entry => [entry.key, entry.instructionOverride])); // CHANGE
             const preserveCardIds = new Set(preservation.retainMissing.map(record => String(record.card && (record.card.id || (record.card.getId && record.card.getId())) || '')));
             removeTasksLinkedOnlyTo(targetGroupId, { reflow: !normalizedTasks.length, preserveCardIds, insideUpdate: !!options.insideUpdate });
-            return normalizedTasks.length ? createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey, instructionOverridesByTaskKey, insideUpdate: !!options.insideUpdate, focusCreated: options.focusCreated !== false }) : []; // CHANGE
+            return normalizedTasks.length ? createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey, instructionOverridesByTaskKey, attributionByTaskKey, insideUpdate: !!options.insideUpdate, focusCreated: options.focusCreated !== false }) : []; // CHANGE
         };
         if (options.insideUpdate) return operation();
         return runTrellisHistoryTransaction({ category: "Tasks", action: "replace", origin: "Garden_Task_Manager", title: "Replace linked tasks", affectedCellIds: [targetGroupId].filter(Boolean) }, operation);
@@ -3588,6 +3644,14 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     function applyDifferentialTaskSync(opts) {
         opts = opts || {};
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+          id: 'generated-tasks:' + opts.targetGroupId, // NEW
+          title: 'Synchronize generated tasks', // NEW
+          cells: () => taskAutomationCells(opts.targetGroupId), // NEW
+          retry: () => window.USL.scheduler.retryGeneratedTasks(model.getCell(opts.targetGroupId)), // NEW
+          deferredValue: [] // NEW
+        }, () => applyDifferentialTaskSync(opts)); // NEW
         const targetGroupId = opts.targetGroupId;
         const tasks = Array.isArray(opts.tasks) ? opts.tasks : []; // CHANGE: the sync command owns its input guard and does not depend on an undefined global normalizer
         const insideUpdate = !!opts.insideUpdate;
@@ -4145,6 +4209,15 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     function reflowBoard(board, opts) { // NEW: scoped reflow orchestrator behind scanAndReflowBoard compatibility API
         if (!board) return;
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'board-reflow:' + board.id, // NEW
+          title: 'Task board layout', // NEW
+          cells: () => [board], // NEW
+          retry: () => reflowBoard(model.getCell(board.id), { // NEW
+            skipPurge: true // NEW
+          }) // NEW
+        }, () => reflowBoard(board, opts)); // NEW
 
         ensureBoardPlanningDefaults(board);
         reconcileSelectedBacklog(board); // NEW: removed and transferred cells never become accidental new members.
@@ -5129,7 +5202,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     function boardDisplayName(board) {
         const raw = getAttr(board, 'label') || (typeof (board && board.value) === 'string' ? board.value : '') || 'Kanban';
         const holder = document && document.createElement ? document.createElement('div') : null;
-        if (holder) { holder.innerHTML = raw; return String(holder.textContent || '').replace(/\s+/g, ' ').trim() || 'Kanban'; }
+        if (holder) { const template = document.createElement('template'); template.innerHTML = raw; return String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(raw) : template.content.textContent || '').replace(/\s+/g, ' ').trim() || 'Kanban'; } // CHANGE
         return String(raw || 'Kanban').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || 'Kanban';
     }
 
@@ -6175,6 +6248,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     window.USL = window.USL || {};
     window.USL.tasks = Object.assign({}, window.USL.tasks, {
+        automationCellsForSource: taskAutomationCells, // NEW: read-only dependency closure lets callers preflight before mutating the schedule source.
         applySchedulerTaskReplacement: taskCommands.applySchedulerTaskReplacement
     });
 
@@ -6381,9 +6455,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     function plainModuleLabelFallback(cell, fallback) {
         const raw = getAttr(cell, 'label') || (typeof (cell && cell.value) === 'string' ? cell.value : '');
         if (document && document.createElement) {
-            const holder = document.createElement('div');
-            holder.innerHTML = raw;
-            const text = String(holder.textContent || '').replace(/\s+/g, ' ').trim();
+            const holder = document.createElement('template'); // CHANGE: parse in an inert template.
+            holder.innerHTML = raw; // CHANGE
+            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(raw) : holder.content.textContent || '').replace(/\s+/g, ' ').trim();
             if (text) return text;
         }
         const stripped = String(raw || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();

@@ -285,6 +285,7 @@ test('production Trellis Users permits owned bed transforms and blocks restricte
     const h = fixture(); // CHANGE
     try { // CHANGE
         h.window.Draw.loadPlugin = callback => callback({ editor: { graph: h.graph, undoManager: h.undoManager }, actions: { get: () => null, addAction: () => ({}) }, hideDialog() {} }); // CHANGE
+        h.window.eval(fs.readFileSync(path.join(root, 'drawio/src/main/webapp/js/trellis-permission-core.js'), 'utf8')); // NEW
         h.window.eval(fs.readFileSync(path.join(root, 'drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_Users.js'), 'utf8')); // CHANGE
         const users = h.window.Trellis.users; assert.equal(users.enableUsers('Alice', '1234').ok, true); users.stampCreatedOwner(h.moduleCell); // CHANGE
         const before = world(h.group); h.graph.moveCells([h.bed], 50, 20); close(world(h.group).x, before.x + 50, 'owned x'); // CHANGE

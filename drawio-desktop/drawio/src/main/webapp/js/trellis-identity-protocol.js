@@ -11,8 +11,12 @@
     const b64 = value => { let s = ''; for (const b of new Uint8Array(value)) s += String.fromCharCode(b); return btoa(s); };
     const un64 = value => Uint8Array.from(atob(value), ch => ch.charCodeAt(0));
     function canonical(value) {
-        if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
-        if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
+        root.TrellisContentPolicy?.jsonValue(value); // NEW
+        return encode(value); // NEW
+    } // NEW
+    function encode(value) { // NEW
+        if (Array.isArray(value)) return '[' + value.map(encode).join(',') + ']';
+        if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + encode(value[key])).join(',') + '}';
         return JSON.stringify(value);
     }
     async function fingerprint(value) {
@@ -34,13 +38,16 @@
     }
     /** Authenticate contextual identifiers as well as the encrypted content. */
     async function seal(value, rawKey, context) {
+        root.TrellisContentPolicy?.jsonValue(value); const text = JSON.stringify(value); root.TrellisContentPolicy?.textLimit(text, root.TrellisContentPolicy.LIMITS.metadata); // NEW
         const iv = root.crypto.getRandomValues(new Uint8Array(12));
         const key = await subtle().importKey('raw', rawKey, 'AES-GCM', false, ['encrypt']);
-        return { iv: b64(iv), data: b64(await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: bytes(context) }, key, bytes(JSON.stringify(value)))) };
+        return { iv: b64(iv), data: b64(await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: bytes(context) }, key, bytes(text))) };
     }
     async function open(envelope, rawKey, context) {
+        if (!envelope || typeof envelope.iv !== 'string' || envelope.iv.length !== 16 || typeof envelope.data !== 'string') throw new Error('Invalid encrypted metadata envelope.'); // NEW
+        root.TrellisContentPolicy?.textLimit(envelope.data, Math.ceil(root.TrellisContentPolicy.LIMITS.metadata * 4 / 3) + 24); // NEW
         const key = await subtle().importKey('raw', rawKey, 'AES-GCM', false, ['decrypt']);
-        return JSON.parse(decoder.decode(await subtle().decrypt({ name: 'AES-GCM', iv: un64(envelope.iv), additionalData: bytes(context) }, key, un64(envelope.data))));
+        const text = decoder.decode(await subtle().decrypt({ name: 'AES-GCM', iv: un64(envelope.iv), additionalData: bytes(context) }, key, un64(envelope.data))); return root.TrellisContentPolicy ? root.TrellisContentPolicy.json(text) : JSON.parse(text); // CHANGE: authenticate first, then validate plaintext depth, keys and bytes.
     }
     async function passwordKey(password, salt, iterations) {
         if (typeof password !== 'string' || !password.length || password.length > 1024) throw new Error('Enter a password of at most 1024 characters.');

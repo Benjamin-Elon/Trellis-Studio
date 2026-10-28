@@ -26,7 +26,7 @@ async function fixture(t, options = {}) { // NEW
 }
 
 test('reset is durable, rejects replay, deletes legacy exports and preserves live content and journals', async t => {
-    const f = await fixture(t), legacy = path.join(f.canvas.folderPath, '.trellis', 'history'), journal = path.join(f.canvas.folderPath, '.trellis', 'collaboration-v2');
+    const f = await fixture(t), legacy = path.join(f.canvas.folderPath, '.trellis', 'history'), journal = path.join(f.canvas.folderPath, '.trellis', 'collaboration-v3');
     await fs.mkdir(legacy, { recursive: true }); await fs.writeFile(path.join(legacy, 'old.json'), 'old'); await fs.mkdir(journal); await fs.writeFile(path.join(journal, 'genesis.json'), 'keep');
     const result = await f.transport.importAll();
     assert.equal(await fs.readFile(f.canvas.diagramPath, 'utf8'), xml()); assert.equal(await fs.readFile(path.join(journal, 'genesis.json'), 'utf8'), 'keep');

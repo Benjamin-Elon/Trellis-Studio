@@ -1,3 +1,4 @@
+window.TrellisContentPolicy?.install(); // NEW: also protects the shipped compiled runtime before App.main.
 // Trellis changes: desktop plugin filtering, duplicate file-watch prevention, and developer-build update gating. // CHANGE
 /**
  * Copyright (c) 2020-2025, JGraph Holdings Ltd
@@ -403,9 +404,10 @@ mxStencilRegistry.allowEval = false;
 		/** Await the existing filesystem/IndexedDB mechanics instead of their fire-and-forget wrappers. */ // NEW
 		async function discard() { // NEW
 			const file = snapshot.file; if (!snapshot.modified || !file) return; // NEW
+			await file.__trellisDiscardCheckpoint?.(); // NEW: explicit discard removes the current private session checkpoint too.
 			if (file.fileObject?.draftFileName) { // CHANGE
 				await requestSync({ action: 'deleteFile', file: file.fileObject.draftFileName }); // NEW
-				if (await requestSync({ action: 'checkFileExists', pathParts: [file.fileObject.draftFileName] })) throw new Error('Draft removal was declined by the filesystem safety check.'); // NEW: the existing deletion guard may retain a file without throwing.
+				if ((await requestSync({ action: 'checkFileExists', pathParts: [file.fileObject.draftFileName] })).exists) throw new Error('Draft removal was declined by the filesystem safety check.'); // CHANGE: the IPC response is an object, including when the draft no longer exists.
 			} // NEW
 			else if (file.draftId != null) { // NEW
 				const id = file.draftId; await new Promise((resolve, reject) => ui.removeDatabaseItem('.draft_' + id, resolve, reject)); file.usedDraftId = id; file.draftId = null; // NEW
@@ -418,10 +420,17 @@ mxStencilRegistry.allowEval = false;
 			try { // NEW
 				if (payload.phase === 'seal' || payload.phase === 'discard') { // NEW
 					reply.snapshotValid = matches(payload.snapshotId); // NEW
-					if (reply.snapshotValid) { seal(); await ui.editor.graph.__trellisReferences?.flushDrafts(); if (payload.phase === 'discard') await discard(); } // CHANGE: finish private unsent reference work before the renderer closes.
+					if (reply.snapshotValid) { // CHANGE
+						seal(); await ui.editor.graph.__trellisReferences?.flushDrafts(); // CHANGE: reference persistence failures still block closing.
+						if (payload.phase === 'discard') { // CHANGE
+							try { await discard(); } // CHANGE: document-draft cleanup is best effort after approval.
+							catch (error) { reply.draftCleanupWarning = error?.message || String(error); } // NEW: retained drafts remain available to the existing recovery flow.
+						} // NEW
+					} // NEW
 				} else { // NEW
 					const file = ui.getCurrentFile(); if (file && ui.editor.graph.isEditing()) ui.editor.graph.stopEditing(); // NEW
 					await ui.editor.graph.__trellisReferences?.flushDrafts(); // NEW
+					if (payload.phase === 'prepare' || payload.phase == null) await file?.__trellisCheckpoint?.(); // CHANGE: both closing and the legacy logout handshake preserve private work before changing identity.
 					reply.isModified = !!file?.isModified(); reply.draftPath = EditorUi.enableDrafts && file?.fileObject ? file.fileObject.draftFileName : null; // NEW
 					if (payload.phase === 'prepare') { release(); snapshot = { ...capture(), id: String(++sequence) }; reply.snapshotId = snapshot.id; } // NEW
 				} // NEW
@@ -2220,7 +2229,7 @@ mxStencilRegistry.allowEval = false;
 	{
 		var graph = editorUi.editor.graph;
 		
-		if (format == 'xml' || format == 'svg')
+		if (format == 'xml') // CHANGE: visual SVG exports use the verified asset projection too.
 		{
 			return origExportFile.apply(this, arguments);
 		}

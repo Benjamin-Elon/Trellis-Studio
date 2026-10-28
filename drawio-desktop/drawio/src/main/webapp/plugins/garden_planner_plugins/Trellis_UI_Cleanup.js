@@ -232,6 +232,7 @@
 })();
 
 Draw.loadPlugin(function (ui) {
+    window.TrellisLocalView?.install(ui); // NEW: folding is local even when collaboration is disabled.
     /** Native XML values already contain encoded data; avoid a failed DOM-constructor codec probe for every cell. */ // CHANGE
     function installXmlNodeEncoding() { // CHANGE
         if (typeof mxCodec === 'undefined' || typeof mxCodecRegistry === 'undefined') return; // CHANGE

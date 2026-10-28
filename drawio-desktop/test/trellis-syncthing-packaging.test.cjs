@@ -114,9 +114,13 @@ test('Electron file filter allows managed images only and always blocks private 
     assert.ok(callback);
     const calls = [];
     const uri = relative => pathToFileURL(path.join(os.tmpdir(), relative)).href; // NEW
-    const filter = vm.runInNewContext(source.slice(callback.start, callback.end), { console: { log() {} }, path, fileURLToPath, app: { getPath: () => os.tmpdir() }, codeUrl: uri('app') + '/', pluginsCodeUrl: uri('plugins') + '/', isPluginsEnabled: () => true, assertSharingFileAccess: async filename => { if (filename.endsWith('secret')) throw new Error('Private'); }, identityTransports: new Map(), sharingService: { isManagedAssetRequest: async (caller, url) => { calls.push([caller, url]); return url.endsWith('managed.png'); } } }); // CHANGE: the production callback now consults identity transports too.
+    const filter = vm.runInNewContext(source.slice(callback.start, callback.end), { console: { log() {} }, path, fileURLToPath, app: { getPath: () => os.tmpdir() }, codeUrl: uri('app') + '/', pluginsCodeUrl: uri('plugins') + '/', isPluginsEnabled: () => true, assetBroker: { authorize: (caller, url, type) => caller === 7 && type === 'image' && url === 'trellis-asset://token/assets/managed.png' }, assertSharingFileAccess: async filename => { if (filename.endsWith('secret')) throw new Error('Private'); }, identityTransports: new Map(), sharingService: { isManagedAssetRequest: async (caller, url) => { calls.push([caller, url]); return url.endsWith('managed.png'); } } }); // CHANGE: the production callback now consults identity transports too.
     const check = async (url, type = 'image') => { let result; await filter({ url, resourceType: type, webContentsId: 7 }, value => { result = value; }); return !!result.cancel; };
-    assert.equal(await check(uri('shared/managed.png')), false);
+    assert.equal(await check(uri('shared/managed.png')), true); // CHANGE: raw file serving is no longer an asset exception.
+    assert.equal(await check('https://example.test/image.png'), true); // NEW
+    assert.equal(await check('http://127.0.0.1/image.png'), true); // NEW
+    assert.equal(await check('trellis-asset://token/assets/managed.png'), false); // NEW
+    assert.equal(await check('trellis-asset://token/assets/managed.png', 'xhr'), true); // NEW
     assert.equal(await check(uri('shared/managed.png'), 'script'), true);
     assert.equal(await check(uri('shared/managed.png'), 'xhr'), true);
     assert.equal(await check(uri('outside/other.png')), true);

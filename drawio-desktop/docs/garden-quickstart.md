@@ -12,7 +12,7 @@ The checklist displays its garden and planning year. Changing them explicitly pr
 
 ## Guidance and recovery
 
-The diagram has a movable, collapsible card. Drag its heading or focus the heading and use arrow keys. Within a workflow, the card becomes a compact guide inside that workflow's container. **Back/Next** advance explanations without writing field values or bypassing native validation.
+The diagram has a movable, collapsible card. Use the move handle beside **Quickstart**, styled like module drag handles. Drag it or focus it and use arrow keys. Release saves the bounded position for the current user. Escape, window blur, or interruption cancels a drag and restores its starting position. Routine refreshes preserve manual placement; a new guidance target may move the card to avoid covering that control. <!-- NEW --> Within a workflow, the card becomes a compact, docked guide inside that workflow's container and hides its drag handle. <!-- NEW --> **Back/Next** advance explanations without writing field values or bypassing native validation.
 
 Layout always checks the intended garden selection. Without it, the guide highlights the garden and says **Select [garden name] to show its layout controls**. It does not silently select another garden. Missing settings, hidden or disabled controls, active modes, read-only access, delayed controls, and unavailable features have explicit prerequisite or retry instructions.
 
@@ -43,8 +43,10 @@ Device-local preferences use `trellis.quickstart.v1:<identity>`. Portable identi
 Focused tests:
 
 ```powershell
-node --test test/garden-quickstart.test.cjs test/trellis-garden-home.test.cjs test/trellis-startup-defaults.test.cjs
+node --test test/garden-quickstart.test.cjs test/quickstart-drag-electron.test.cjs test/trellis-garden-home.test.cjs test/trellis-startup-defaults.test.cjs
 ```
+
+The focused Electron check uses native mouse and keyboard input with the real graph and Quickstart plugin, verifying movement, refresh stability, cancellation, docking, position restoration, narrow windows, and unchanged graph contents and selection. It writes `.test-artifacts/quickstart-drag-electron.png`. <!-- NEW -->
 
 Production Electron smoke, using a temporary profile and test-only project:
 
@@ -53,4 +55,4 @@ $env:TRELLIS_QUICKSTART_SMOKE = '1'
 node scripts/run-production-smoke.cjs
 ```
 
-The smoke covers actual plugin loading, the selection prerequisite, keyboard movement, a narrow viewport, Projects highlighting and project preselection, draft retention, repeated offers on reopening, suppression, and manual reopening. It writes screenshots and results under `.test-artifacts/garden-home-production/<process-id>`. Surrounding Year Planner, allocation, irrigation, references/settings, dashboard, and sharing regressions cover the reused native workflows.
+The smoke covers actual plugin loading, the selection prerequisite, actual mouse dragging without graph changes, keyboard movement, saved position restoration, a narrow viewport, Projects highlighting and project preselection, draft retention, repeated offers on reopening, suppression, and manual reopening. It writes screenshots and results under `.test-artifacts/garden-home-production/<process-id>`. Surrounding Year Planner, allocation, irrigation, references/settings, dashboard, and sharing regressions cover the reused native workflows.

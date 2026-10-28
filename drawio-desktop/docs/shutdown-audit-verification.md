@@ -2,7 +2,7 @@
 
 The reported `Object has been destroyed` exception is repaired: closed-window cleanup uses the renderer ID captured at creation, releases every window context, and never reads the destroyed window's `webContents` getter. Window IPC replies and deferred load/logout callbacks are bounded and owned by their sender. Hidden-window queries also use their requesting window instead of requiring native focus. <!-- NEW -->
 
-Quit now checks every document before removing drafts or stopping services. Cancel preserves the active session. Approved snapshots remain local to the renderer and are checked again before discard; input, remote reload, field processing, and delayed draft writes are held while closing. Draft deletion must finish successfully, including confirming that a filesystem safety guard did not retain the file. <!-- NEW -->
+Quit checks every document before removing drafts or stopping services. Cancel preserves the active session. Approved snapshots remain local to the renderer and are checked again before discard; input, remote reload, field processing, and delayed draft writes are held while closing. Document-draft cleanup is best effort after approval: filesystem existence checks read the response's `exists` property, and filesystem, IndexedDB, or private checkpoint cleanup failures are logged as warnings while closing continues without another dialog. A retained draft remains eligible for the existing recovery prompt when its document is opened again; cleanup failure does not guarantee that a usable draft exists. Snapshot-validation, reference-draft persistence, and renderer communication failures retain their existing close protections. <!-- CHANGE -->
 
 Configured legacy shares and installed, non-revoked identities determine background eligibility. Locked identities continue syncing. Tray controls cover both transport kinds, retired folders do not block Resume All, and missing or partially created tray controls lead to the agreed explanation and Quit. Native macOS behavior without configured syncing is preserved. <!-- NEW -->
 
@@ -10,6 +10,7 @@ Transport stops share one operation and the application's ten-second graceful de
 
 ## Completed checks <!-- NEW -->
 
+- Close-cleanup follow-up (2026-10-27): **40 focused tests passed**, plus **4 existing native lifecycle tests** and **1 new native retained-draft recovery test**. The regression fixture uses the production file-existence response; cleanup warnings allow approved Close/Quit, IndexedDB failure retains recovery IDs, and blocking errors still stop closing. The recovery test uses real temporary files and the production recovery dialog without touching installed profiles. <!-- NEW -->
 - Focused lifecycle, renderer, watcher, sharing, packaging, identity, library, and field tests: **108 passed**, no failures. Report: `test-results/shutdown-focused/latest.md`. <!-- NEW -->
 - Native Windows lifecycle: **3 passed**, covering window close, explicit/timer Quit, immediate profile reuse, second-instance rejection, and overlapping isolated profiles. <!-- NEW -->
 - Real bundled Syncthing: **3 passed** in a sequential run, covering identity generation/API startup/stop, paired identity catalog/download transfer, and a three-device mesh. <!-- NEW -->

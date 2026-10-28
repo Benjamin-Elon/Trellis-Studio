@@ -3,19 +3,40 @@
  * reject it. All replicas replay the same signed causal records from genesis. // NEW */
 import { XMLSerializer } from '@xmldom/xmldom'; // NEW
 import { validateProjectNameChange } from './trellis-project-naming.js'; // NEW
-import { validateReferenceChanges } from './trellis-reference-policy.js'; // NEW
-import { diagramDocument, inspectDiagram, parseXml, digest, canonical, activeAccessTeams } from './trellis-share-protocol.js'; // NEW
-export const COLLABORATION_VERSION = 2; // NEW
+import { diagramDocument, inspectDiagram, parseXml, digest, canonical } from './trellis-share-protocol.js'; // CHANGE
+import { permissions, permissionSnapshot, validatePermissionChanges } from './trellis-permission-policy.js'; // NEW
+import { saveCache } from './trellis-save-cache.js';
+import { REVISION, LIMITS, textLimit, fail } from './trellis-input-policy.js'; // NEW // NEW
+export const COLLABORATION_VERSION = 3; // NEW
 export const HOLD_MS = 300000; // NEW
+export const REQUEST_GRACE_MS = 300000; // NEW: request deadlines do not depend on idle activity.
+export const PRESENCE_MS = 300000; // NEW: viewing presence still expires.
+export const CLOCK_SKEW_MS = 300000; // NEW: peer clock validation is independent of hold lifetime.
 export const HANDOFF_MS = 30000; // NEW
 const serialize = node => new XMLSerializer().serializeToString(node); // NEW
 const objectKey = (page, id) => JSON.stringify([page, id]); // NEW
 const attrs = node => Object.fromEntries(Array.from(node.attributes || []).map(a => [a.name, a.value])); // NEW
+/** DOM and Map values are caller-owned; cached indexes never escape through a mutable reference. */ // NEW
+function copyObjects(index) { // CHANGE
+    const documents = new Map(); // NEW: preserve page identity, parents and ownerDocument without exposing cached DOM.
+    return new Map([...index].map(([key, cell]) => { // CHANGE
+        const original = cell.node.ownerDocument; // NEW
+        if (!documents.has(original)) { // NEW
+            const document = original.cloneNode(true), root = document.getElementsByTagName('root')[0]; // NEW
+            documents.set(original, new Map(Array.from(root.childNodes).filter(node => node.nodeType === 1).map(node => [node.getAttribute('id') || node.getElementsByTagName('mxCell')[0]?.getAttribute('id'), node]))); // NEW
+        } // NEW
+        const node = documents.get(original).get(cell.id), model = node.nodeName === 'mxCell' ? node : node.getElementsByTagName('mxCell')[0]; // NEW
+        return [key, { ...cell, node, model }]; // NEW
+    })); // CHANGE
+} // CHANGE
 function normalized(node) { // NEW
     return node.nodeType === 1 ? { name: node.nodeName, attrs: attrs(node), children: Array.from(node.childNodes).filter(n => n.nodeType === 1 || n.nodeType === 3 && n.nodeValue.trim()).map(normalized) } : node.nodeValue; // NEW
 } // NEW
 /** Index all model cells, including metadata and edges, using stable page identities. */ // NEW
 export function objects(xml) { // NEW
+    textLimit(xml); // NEW: enforce input limits even on cached indexes.
+    const cacheKey = saveCache.stats().limitBytes ? 'objects:' + REVISION + ':' + digest(xml) : null, cached = cacheKey && saveCache.get(cacheKey); // NEW
+    if (cached && cached.xml === xml) return copyObjects(cached.index); // NEW
     const document = diagramDocument(xml), result = new Map(); // NEW
     for (const page of document.pages) { // NEW
         const pageId = page.container?.getAttribute('id') || ''; // NEW
@@ -29,6 +50,7 @@ export function objects(xml) { // NEW
             result.set(key, { key, pageId, id, node, model, xml: serialize(node), hash: digest(canonical(normalized(node))), parent: model.getAttribute('parent'), label: node.getAttribute('label') || node.getAttribute('value') || id }); // NEW
         } // NEW
     } // NEW
+    if (cacheKey) saveCache.set(cacheKey, { xml, index: copyObjects(result) }, xml.length * 10 + result.size * 512); // CHANGE: account for retained XML, serialized cells, DOM values and per-cell structures.
     return result; // NEW
 } // NEW
 /** A planting's generated circles share its lock; structural operations include dependents. */ // NEW
@@ -41,7 +63,7 @@ export function logicalKey(index, key) { // NEW
     } // NEW
     return planting || key; // NEW
 } // NEW
-function envelope(xml) { // NEW
+export function envelope(xml) { // CHANGE: refresh reviews reuse the existing signed page/model structure semantics.
     const document = diagramDocument(xml); // NEW
     const localView = new Set(['dx', 'dy', 'grid', 'gridSize', 'guides', 'tooltips', 'connect', 'arrows']); // NEW
     return canonical(document.pages.map(page => ({ id: page.container?.getAttribute('id') || '', page: attrs(page.container || {}), model: Object.fromEntries(Object.entries(attrs(page.doc.documentElement)).filter(([key]) => !localView.has(key))) }))); // NEW: local viewport/preferences cannot force an unrelated project-wide edit.
@@ -66,6 +88,25 @@ function structuralDependents(index, cell) { // NEW
     } // NEW
     return [...index.values()].filter(item => item.pageId === cell.pageId && (dependent.has(item.id) || dependent.has(item.model.getAttribute('source')) || dependent.has(item.model.getAttribute('target')) || String(item.node.getAttribute('linkedTo') || '').split(',').some(id => dependent.has(id.trim())))); // NEW
 } // NEW
+/** Reuse the journal's dependency calculation for a single incoming object without rebuilding complete diagrams. */ // NEW
+export function targetsForChange(before, after, key) { // NEW
+    const a = before.get(key), b = after.get(key), targets = new Set(); // NEW
+    if (!a && !b) return []; // NEW
+    for (const target of targetsForObject(before, a ? key : objectKey(b.pageId, b.parent))) targets.add(target); // NEW
+    if (b) for (const target of targetsForObject(after, key)) if (before.has(target)) targets.add(target); // NEW
+    if (!a || !b || a.parent !== b.parent || serialize(a.model.getElementsByTagName('mxGeometry')[0] || a.model) !== serialize(b.model.getElementsByTagName('mxGeometry')[0] || b.model)) { // NEW
+        if (a?.parent && before.get(objectKey(a.pageId, a.parent))?.model.getAttribute('vertex') === '1') targets.add(logicalKey(before, objectKey(a.pageId, a.parent))); // NEW
+        if (b?.parent && after.get(objectKey(b.pageId, b.parent))?.model.getAttribute('vertex') === '1') targets.add(logicalKey(after, objectKey(b.pageId, b.parent))); // NEW
+        for (const item of structuralDependents(before, a)) for (const target of targetsForObject(before, item.key)) targets.add(target); // NEW
+    } // NEW
+    for (const item of [a, b].filter(Boolean)) for (const endpoint of ['source', 'target']) { // NEW
+        const id = item.model.getAttribute(endpoint); if (id) targets.add(logicalKey(after.has(objectKey(item.pageId, id)) ? after : before, objectKey(item.pageId, id))); // NEW
+    } // NEW
+    if (a?.node.getAttribute('linkedTo') !== b?.node.getAttribute('linkedTo')) for (const item of [a, b].filter(Boolean)) for (const id of String(item.node.getAttribute('linkedTo') || '').split(',').map(id => id.trim()).filter(Boolean)) { const linkedKey = objectKey(item.pageId, id); if (before.has(linkedKey)) targets.add(logicalKey(before, linkedKey)); } // NEW
+    return [...targets]; // NEW
+} // NEW
+/** Compute the existing canonical node hash without changing signed wire identities. */ // NEW
+export function objectContentHash(xml) { return digest(canonical(normalized(parseXml(xml).documentElement))); } // NEW
 export function diffObjects(beforeXml, afterXml) { // NEW
     const before = objects(beforeXml), after = objects(afterXml); // NEW
     if (envelope(beforeXml) !== envelope(afterXml)) return { changes: [{ key: '*', before: digest(beforeXml), xml: afterXml }], targets: ['*', ...new Set([...before.keys(), ...after.keys()].map(k => logicalKey(after.has(k) ? after : before, k)))] }; // NEW
@@ -74,80 +115,44 @@ export function diffObjects(beforeXml, afterXml) { // NEW
         const a = before.get(key), b = after.get(key); // NEW
         if (a?.hash === b?.hash) continue; // NEW
         changes.push({ key, before: a?.hash || null, xml: b?.xml || null }); // NEW
-        for (const target of targetsForObject(before, a ? key : objectKey(b.pageId, b.parent))) targets.add(target); // NEW
-        if (b) for (const target of targetsForObject(after, key)) if (before.has(target)) targets.add(target); // NEW: new objects inherit their existing parent's hold rather than requiring a nonexistent base identity.
-        if (!a || !b || a.parent !== b.parent || serialize(a.model.getElementsByTagName('mxGeometry')[0] || a.model) !== serialize(b.model.getElementsByTagName('mxGeometry')[0] || b.model)) { // NEW
-            if (a?.parent && before.get(objectKey(a.pageId, a.parent))?.model.getAttribute('vertex') === '1') targets.add(logicalKey(before, objectKey(a.pageId, a.parent))); // NEW
-            if (b?.parent && after.get(objectKey(b.pageId, b.parent))?.model.getAttribute('vertex') === '1') targets.add(logicalKey(after, objectKey(b.pageId, b.parent))); // NEW
-            for (const item of structuralDependents(before, a)) for (const target of targetsForObject(before, item.key)) targets.add(target); // NEW
-        } // NEW
-        for (const item of [a, b].filter(Boolean)) for (const endpoint of ['source', 'target']) { // NEW
-            const id = item.model.getAttribute(endpoint); if (id) targets.add(logicalKey(after.has(objectKey(item.pageId, id)) ? after : before, objectKey(item.pageId, id))); // NEW
-        } // NEW
-        if (a?.node.getAttribute('linkedTo') !== b?.node.getAttribute('linkedTo')) for (const item of [a, b].filter(Boolean)) for (const id of String(item.node.getAttribute('linkedTo') || '').split(',').map(id => id.trim()).filter(Boolean)) { const linkedKey = objectKey(item.pageId, id); if (before.has(linkedKey)) targets.add(logicalKey(before, linkedKey)); } // NEW
+        for (const target of targetsForChange(before, after, key)) targets.add(target); // CHANGE: one dependency definition serves both editing and refreshing.
     } // NEW
     return { changes, targets: [...targets].sort() }; // NEW
 } // NEW
+/** Rebuild only the local draft, closing rollback over dependencies and native action boundaries. */ // NEW
+export function revertDraftChanges(baseXml, draftXml, targets, actions = []) { // NEW
+    const delta = diffObjects(baseXml, draftXml), before = objects(baseXml), after = objects(draftXml); // NEW
+    const affected = new Set(targets), removed = new Set(); // NEW
+    const dependencies = new Map(delta.changes.map(change => [change.key, change.key === '*' ? ['*'] : targetsForChange(before, after, change.key)])); // NEW
+    let expanded = true; // NEW
+    while (expanded) { // NEW
+        expanded = false; // NEW
+        for (const change of delta.changes) { // NEW
+            if (removed.has(change.key) || !affected.has('*') && change.key !== '*' && !affected.has(change.key) && !dependencies.get(change.key).some(key => affected.has(key))) continue; // NEW
+            removed.add(change.key); affected.add(change.key); for (const key of dependencies.get(change.key)) affected.add(key); expanded = true; // NEW
+        } // NEW
+        for (const keys of actions) if (keys.some(key => removed.has(key))) for (const key of keys) if (!affected.has(key)) { affected.add(key); expanded = true; } // NEW
+    } // NEW
+    const kept = delta.changes.filter(change => !removed.has(change.key)); // NEW
+    return { xml: kept.length ? applyChanges(baseXml, kept) : baseXml, discardedKeys: [...removed], targets: [...affected] }; // NEW
+} // NEW
 /** Authority is derived from saved Users policy, never a caller-supplied rank. */ // NEW
 export function authorityFor(xml, key, userId, context = {}) { // CHANGE
-    if (context.xml !== xml) { const state = inspectDiagram(xml); context.xml = xml; context.state = state; context.index = null; } // CHANGE: publish cached policy only after successful parsing; invalid XML cannot reuse previously authorized state.
-    const state = context.state, user = (state.store.users || []).find(u => u.id === userId && !u.disabled); // CHANGE
-    const pending = (state.store.invites || []).find(i => i.pendingUserId === userId && i.status === 'pending'); // NEW
-    if (!user && !pending) return 0; if (user?.admin) return 4; if (key === '*') return 0; // NEW
-    const index = context.index || (context.index = objects(xml)); let cell = index.get(key), ownerSeen = false, manager = false, editor = false, unowned = false; const visited = new Set(); // CHANGE
-    const teamIds = activeAccessTeams(state, userId); // NEW
-    while (cell && !visited.has(cell.key)) { // NEW
-        visited.add(cell.key); const node = cell.node; // NEW
-        const owner = node.getAttribute('trellis_owner_user_id'); // NEW
-        unowned ||= !owner && (['garden_module', 'team_module', 'task_module'].some(name => node.getAttribute(name) === '1') || /(?:^|;)module=1(?:;|$)/.test(cell.model.getAttribute('style'))); // NEW: Users permits an active user to claim an unowned module.
-        if (owner && !ownerSeen) { ownerSeen = true; if (owner === userId) return 3; } // NEW
-        let grants = []; try { grants = JSON.parse(node.getAttribute('trellis_access_grants_json') || '[]'); } catch (_) { return 0; } // NEW
-        const caps = grants.filter(g => g.userId === userId || g.subjectType === 'team' && teamIds.has(g.teamId)).flatMap(g => g.capabilities || []); // NEW
-        manager ||= caps.includes('manage_scope_content'); // NEW
-        editor ||= caps.some(c => ['create_plantings', 'manage_own_plantings', 'move_tasks', 'edit_task_details'].includes(c)); // NEW
-        cell = index.get(objectKey(cell.pageId, cell.parent)); // NEW
-    } // NEW
-    const target = index.get(key); // NEW
-    return manager ? 2 : editor || unowned || target && target.model.getAttribute('vertex') !== '1' && target.model.getAttribute('edge') !== '1' ? 1 : 0; // NEW
-} // NEW
-function canManageAccess(xml, key, userId) { // NEW
-    if (authorityFor(xml, key, userId) >= 3) return true; // NEW
-    const state = inspectDiagram(xml), teams = activeAccessTeams(state, userId), index = objects(xml), visited = new Set(); // NEW
-    for (let cell = index.get(key); cell && !visited.has(cell.key); cell = index.get(objectKey(cell.pageId, cell.parent))) { // NEW
-        visited.add(cell.key); let grants = []; try { grants = JSON.parse(cell.node.getAttribute('trellis_access_grants_json') || '[]'); } catch (_) { return false; } // NEW
-        if (grants.some(g => (g.userId === userId || g.subjectType === 'team' && teams.has(g.teamId)) && g.capabilities?.includes('manage_access'))) return true; // NEW
-    } // NEW
-    return false; // NEW
-} // NEW
+    if (context.xml !== xml) { const state = inspectDiagram(xml), snapshot = permissionSnapshot(state); context.xml = xml; context.state = state; context.policy = snapshot; } // CHANGE
+    return permissions.authority(context.policy, userId, key, context.at ?? 0); // CHANGE: coordination rank is never sufficient permission for a content operation.
+} // CHANGE
+
 /** Preserve existing invitation acceptance and scope-owner invitations without opening roster edits. */ // NEW
-export function rosterChangeAllowed(before, after, actor, xml, at) { // NEW
-    if (before.users?.some(u => u.id === actor && u.admin && !u.disabled)) return true; // NEW
-    const accountFields = new Set(['users', 'pendingUsers', 'invites', 'accessRequests', 'accessMessages']); // NEW
-    if (canonical(Object.fromEntries(Object.entries(before).filter(([key]) => !accountFields.has(key)))) !== canonical(Object.fromEntries(Object.entries(after).filter(([key]) => !accountFields.has(key))))) return false; // NEW: invitation acceptance cannot disable Users or alter unrelated roster policy.
-    const invited = before.invites?.find(i => i.pendingUserId === actor && i.status === 'pending' && i.expiresAt > at); // NEW
-    if (invited) { // NEW
-        const added = after.users?.find(u => u.id === actor); // NEW
-        return !!added && !added.admin && !added.disabled && added.email === invited.email && canonical(after.users.filter(u => u.id !== actor)) === canonical(before.users || []) && canonical(after.pendingUsers || []) === canonical((before.pendingUsers || []).filter(u => u.id !== actor)) && canonical((after.invites || []).filter(i => i.id !== invited.id)) === canonical((before.invites || []).filter(i => i.id !== invited.id)) && after.invites.some(i => i.id === invited.id && i.status === 'accepted' && i.pendingUserId === actor && i.codeHash === invited.codeHash); // NEW
-    } // NEW
-    if (canonical(before.users || []) !== canonical(after.users || []) || before.usersEnabled !== after.usersEnabled) return false; // NEW
-    const index = objects(xml), beforeInvites = new Map((before.invites || []).map(i => [i.id, i])); // NEW
-    const changed = (after.invites || []).filter(i => canonical(beforeInvites.get(i.id) || null) !== canonical(i)); // NEW
-    if ((before.invites || []).some(i => !(after.invites || []).some(next => next.id === i.id))) return false; // NEW
-    if (changed.some(i => { const old = beforeInvites.get(i.id); if (old && old.expiresAt <= at && i.status === 'expired') return false; return i.createdBy !== (old?.createdBy || actor) || !(i.scopeCellIds || []).length || [...(i.scopeCellIds || []), ...(old?.scopeCellIds || [])].some(id => ![...index.values()].some(c => c.id === id && canManageAccess(xml, c.key, actor))); })) return false; // NEW
-    const allowedPending = new Set(changed.map(i => i.pendingUserId)); // NEW
-    if (canonical((before.pendingUsers || []).filter(u => !allowedPending.has(u.id))) !== canonical((after.pendingUsers || []).filter(u => !allowedPending.has(u.id)))) return false; // NEW
-    for (const field of ['accessRequests', 'accessMessages']) { // NEW
-        const old = new Map((before[field] || []).map(i => [i.id, i])); // NEW
-        for (const item of after[field] || []) { const previous = old.get(item.id); if (canonical(previous || null) !== canonical(item) && item.requesterUserId !== actor && ![...index.values()].some(c => c.id === item.scopeCellId && authorityFor(xml, c.key, actor) >= 3)) return false; } // NEW
-        if ((before[field] || []).some(i => !(after[field] || []).some(next => next.id === i.id) && i.requesterUserId !== actor)) return false; // NEW
-    } // NEW
-    return true; // NEW
-} // NEW
+export function rosterChangeAllowed(before, after, actor, xml, at) { // CHANGE
+    const policy = permissionSnapshot(inspectDiagram(xml)); // CHANGE
+    return permissions.rosterChangeAllowed({ ...policy, store: before }, { ...policy, store: after }, actor, at); // CHANGE
+} // CHANGE
+
 /** Existing Users validates its generated role/profile setup; signed devices attest that action. */ // NEW
-export function invitationAcceptance(beforeXml, afterXml, actor, at) { // NEW
-    const before = inspectDiagram(beforeXml).store, after = inspectDiagram(afterXml).store; // NEW
-    return !!before.invites?.some(i => i.pendingUserId === actor && i.status === 'pending' && i.expiresAt > at) && !before.users?.some(u => u.id === actor) && !!after.users?.some(u => u.id === actor && !u.admin && !u.disabled) && rosterChangeAllowed(before, after, actor, beforeXml, at); // NEW
-} // NEW
+export function invitationAcceptance(beforeXml, afterXml, actor, at) { // CHANGE
+    return permissions.invitationAcceptance(permissionSnapshot(inspectDiagram(beforeXml)), permissionSnapshot(inspectDiagram(afterXml)), actor, at); // CHANGE
+} // CHANGE
+
 function claimAuthorityFor(xml, claim, key, resolveAuthority) { // CHANGE
     const rank = resolveAuthority(xml, key, claim.userId); if (rank || !claim.usersPolicyAction || !claim.policyChanges) return rank; // CHANGE
     try { return invitationAcceptance(xml, applyChanges(xml, claim.policyChanges), claim.userId, claim.at) ? 1 : 0; } catch (_) { return 0; } // NEW: an accepted/revoked invite cannot keep granting bootstrap authority.
@@ -183,7 +188,8 @@ const stableCompare = (a, b) => a < b ? -1 : a > b ? 1 : 0; // NEW: identifiers 
 export const recordOrder = (a, b) => a.clock - b.clock || stableCompare(a.deviceId, b.deviceId) || stableCompare(a.id, b.id); // NEW
 const sameActor = (a, b) => a.deviceId === b.deviceId && a.sessionId === b.sessionId && a.userId === b.userId; // NEW: a peer cannot borrow another computer's session ID.
 /** Missing predecessors stay pending; malformed clocks and causal cycles cannot execute. */ // NEW
-export function causalRecords(records) { // NEW
+export function causalRecords(records) {
+    if (!Array.isArray(records) || records.length > LIMITS.records || new Set(records.map(r => r.id)).size !== records.length) fail('REPLAY_LIMIT', 'Invalid or excessive collaboration records.'); // NEW // NEW
     const map = new Map(records.map(r => [r.id, r])), ordered = [], pending = new Set(map.keys()); // NEW
     let progressed = true; // NEW
     while (progressed) { // NEW
@@ -198,7 +204,8 @@ export function causalRecords(records) { // NEW
     return { ordered, pending: [...pending] }; // NEW
 } // NEW
 /** Replay ownership and proposals; concurrent claim priority also fences earlier losing edits. */ // NEW
-export function replay(genesisXml, records, time = Date.now()) { // NEW
+export function replay(genesisXml, records, time = Date.now()) { // CHANGE: retain signed claim, permission and dependent-object validation for protocol 3 commits.
+    objects(genesisXml); // NEW: even an empty journal must validate its complete genesis before returning it. // NEW
     let eligibleEdits = new Set(records.filter(r => r.kind === 'edit').map(r => r.id)); // NEW
     const seen = new Set(); // NEW
     for (let pass = 0; pass <= eligibleEdits.size + records.length + 1; pass++) { // NEW
@@ -212,11 +219,11 @@ export function replay(genesisXml, records, time = Date.now()) { // NEW
 } // NEW
 /** Exclude rejected policy changes from claim ranks, then repeat until acceptance settles. */ // NEW
 function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
-    let authorityXml = null; const authorityRanks = new Map(), authorityContext = {}; // CHANGE: cache only within this replay and only while policy/content is identical.
+    let authorityXml = null, authorityAt = time; const authorityRanks = new Map(), authorityContext = {}; // CHANGE: cache only within this replay and only while policy/content is identical.
     const resolveAuthority = (xml, key, userId) => { // CHANGE
         if (authorityXml !== xml) { authorityXml = xml; authorityRanks.clear(); } // CHANGE: accepted policy changes must invalidate every cached rank.
-        const query = JSON.stringify([key, userId]); // CHANGE
-        if (!authorityRanks.has(query)) authorityRanks.set(query, authorityFor(xml, key, userId, authorityContext)); // CHANGE
+        const query = JSON.stringify([key, userId, authorityContext.state?.store.users?.some(user => user.id === userId) ? 0 : authorityAt]); // CHANGE
+        if (!authorityRanks.has(query)) { authorityContext.at = authorityAt; authorityRanks.set(query, authorityFor(xml, key, userId, authorityContext)); } // CHANGE
         return authorityRanks.get(query); // CHANGE
     }; // CHANGE
     const claimAuthority = (xml, claim, key) => claimAuthorityFor(xml, claim, key, resolveAuthority); // CHANGE: repeated hold expiry checks need no repeated XML parsing.
@@ -228,18 +235,19 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
     } // NEW
     const lost = new Set(), claimRanks = new Map(), allowedRequests = new Set(); let contextXml = genesisXml; // NEW
     for (const r of ordered) { // NEW
+        authorityAt = r.at; // NEW: historical permission decisions use the signed record time.
         if (r.kind === 'claim') claimRanks.set(r.id, new Map((r.targets || []).map(key => [key, claimAuthority(contextXml, r, key)]))); // NEW
         if (r.kind === 'request' && r.claimIds?.some(id => claims.get(id)?.targets.some(key => resolveAuthority(contextXml, key, r.userId) > 0))) allowedRequests.add(r.id); // CHANGE: authority is checked when the request was made, preserving its deadline after later revocation.
-        if (r.kind === 'edit' && eligibleEdits.has(r.id)) try { const next = applyChanges(contextXml, r.changes); validateReferenceChanges(contextXml, next, r.userId, r.at); const setup = r.claimIds?.some(id => claims.get(id)?.usersPolicyAction) && invitationAcceptance(contextXml, next, r.userId, r.at); if ((setup || r.targets?.every(key => resolveAuthority(contextXml, key, r.userId) > 0)) && rosterChangeAllowed(inspectDiagram(contextXml).store, inspectDiagram(next).store, r.userId, contextXml, r.at)) contextXml = next; } catch (_) {} // CHANGE: derive authority only from accepted policy, never from rejected proposals or claimed ranks.
+        if (r.kind === 'edit' && eligibleEdits.has(r.id)) try { const next = applyChanges(contextXml, r.changes); if (!validatePermissionChanges(contextXml, next, r.userId, r.at).allowed) continue; const setup = r.claimIds?.some(id => claims.get(id)?.usersPolicyAction) && invitationAcceptance(contextXml, next, r.userId, r.at); if ((setup || r.targets?.every(key => resolveAuthority(contextXml, key, r.userId) > 0)) && rosterChangeAllowed(inspectDiagram(contextXml).store, inspectDiagram(next).store, r.userId, contextXml, r.at)) contextXml = next; } catch (_) {} // CHANGE: derive authority only from accepted policy, never from rejected proposals or claimed ranks.
     } // NEW
     const rank = (claim, key) => claimRanks.get(claim.id)?.get(key) || 0; // NEW
-    const activeUntil = new Map([...claims.values()].map(c => [c.id, c.at + HOLD_MS])), stoppedAt = new Map([...claims.values()].filter(c => c.retiredAt).map(c => [c.id, c.retiredAt])); // NEW
+    const activeUntil = new Map([...claims.values()].map(c => [c.id, c.holdPolicy === 'request' ? Infinity : c.at + HOLD_MS])), stoppedAt = new Map([...claims.values()].filter(c => c.retiredAt).map(c => [c.id, c.retiredAt])); // NEW
     for (const r of ordered) { // NEW
         if (r.kind === 'activity' || r.kind === 'edit' && eligibleEdits.has(r.id)) for (const id of r.claimIds || []) { // NEW
             const claim = claims.get(id); // NEW
             if (claim && sameActor(claim, r) && ancestors.get(r.id).has(id) && r.at < Math.min(activeUntil.get(id), stoppedAt.get(id) || Infinity)) activeUntil.set(id, Math.max(activeUntil.get(id), r.at + HOLD_MS)); // NEW: delayed stale activity cannot resurrect an abandoned hold.
         } // NEW
-        if (r.kind === 'request' && allowedRequests.has(r.id)) for (const id of r.claimIds || []) stoppedAt.set(id, Math.min(stoppedAt.get(id) || Infinity, r.at + HOLD_MS)); // NEW
+        if (r.kind === 'request' && allowedRequests.has(r.id)) for (const id of r.claimIds || []) stoppedAt.set(id, Math.min(stoppedAt.get(id) || Infinity, r.at + REQUEST_GRACE_MS)); // CHANGE
         if (r.kind === 'release') for (const c of claims.values()) if (sameActor(c, r) && ancestors.get(r.id).has(c.id) && (!r.targets || c.targets.some(k => r.targets.includes(k)))) stoppedAt.set(c.id, Math.min(stoppedAt.get(c.id) || Infinity, r.at)); // NEW
     } // NEW
     const endOf = claim => Math.min(activeUntil.get(claim.id), stoppedAt.get(claim.id) || Infinity); // NEW
@@ -250,8 +258,9 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
     } // NEW
     let xml = genesisXml; const holds = new Map(), reservations = new Map(), presence = new Map(), accepted = [], deadlines = new Map(), waiters = new Map(); // NEW
     for (const r of ordered) { // NEW
+        authorityAt = r.at; // NEW: validate against authority at this signed event.
         if (!Number.isFinite(r.at) || !r.sessionId || !r.userId) { rejected.push({ id: r.id, reason: 'Invalid session record.' }); continue; } // NEW
-        const expire = t => { for (const [key, hold] of holds) { const deadline = Math.min(hold.activeAt + HOLD_MS, deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity); if (t >= deadline || claimAuthority(xml, claims.get(hold.claimId), key) < 1) release(key, hold, deadline); } }; // NEW: a late record cannot restart the handoff cooldown.
+        const expire = t => { for (const [key, hold] of holds) { const deadline = Math.min((claims.get(hold.claimId)?.holdPolicy === 'request' ? Infinity : hold.activeAt + HOLD_MS), deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity); if (t >= deadline || claimAuthority(xml, claims.get(hold.claimId), key) < 1) release(key, hold, deadline); } }; // NEW: a late record cannot restart the handoff cooldown.
         const release = (key, hold, at) => { // NEW
             holds.delete(key); const candidates = (waiters.get(hold.claimId) || []).filter(w => !w.cancelled && resolveAuthority(xml, key, w.userId) > 0).sort((a, b) => resolveAuthority(xml, key, b.userId) - resolveAuthority(xml, key, a.userId) || recordOrder(a, b)); // CHANGE
             if (candidates.length) reservations.set(key, { deviceId: candidates[0].deviceId, sessionId: candidates[0].sessionId, userId: candidates[0].userId, previousSession: hold.sessionId, until: at + HANDOFF_MS }); // NEW
@@ -261,7 +270,7 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
         if (r.kind === 'request') { // NEW
             for (const claimId of r.claimIds || []) { // NEW
                 const hold = [...holds.values()].find(h => h.claimId === claimId); if (!hold || sameActor(hold, r) || resolveAuthority(xml, hold.key, r.userId) < 1) continue; // CHANGE: imported release requests must respect the same existing access policy as local requests.
-                if (!deadlines.has(claimId)) deadlines.set(claimId, r.at + HOLD_MS); // NEW
+                if (!deadlines.has(claimId)) deadlines.set(claimId, r.at + REQUEST_GRACE_MS); // NEW
                 const queue = waiters.get(claimId) || []; if (!queue.some(q => sameActor(q, r))) queue.push({ ...r }); waiters.set(claimId, queue); // NEW
             } // NEW
             continue; // NEW
@@ -288,33 +297,27 @@ function replayOnce(genesisXml, records, time, eligibleEdits) { // NEW
                 if (!Array.isArray(r.targets) || !r.targets.length || r.targets.some(key => !holds.has(key) || !sameActor(holds.get(key), r) || !r.claimIds?.includes(holds.get(key)?.claimId) || !accountSetup && resolveAuthority(xml, key, r.userId) < 1)) throw new Error('The editing hold expired or another editor has priority.'); // CHANGE
                 const required = diffObjects(xml, proposed).targets; // NEW
                 if (required.some(key => !r.targets.includes(key))) throw new Error('The group edit did not acquire every dependent object.'); // NEW
+                const permission = validatePermissionChanges(xml, proposed, r.userId, r.at); if (!permission.allowed) throw new Error(permission.reason); // NEW: actual effects receive action-specific authorization before becoming authority for later records.
                 validateProjectNameChange(xml, proposed, r.userId); // NEW: applies even to invitation acceptance and metadata removal.
-                validateReferenceChanges(xml, proposed, r.userId, r.at); // CHANGE: evaluate planting dates at the signed transaction time, including during replay.
                 const before = inspectDiagram(xml), after = inspectDiagram(proposed); // NEW
                 if (canonical(before.store) !== canonical(after.store) && !rosterChangeAllowed(before.store, after.store, r.userId, xml, r.at)) throw new Error('The roster change is not an authorized invitation or account action.'); // NEW
-                if (!accountSetup) validateProtectedChanges(xml, proposed, r.userId); // NEW: keep the existing validated Users bootstrap for generated role bindings.
                 xml = proposed; accepted.push(r.id); for (const key of r.targets) holds.get(key).activeAt = r.at; // NEW
             } catch (err) { rejected.push({ id: r.id, reason: err.message }); } // NEW
         } // NEW
     } // NEW
-    for (const [key, hold] of [...holds]) if (time >= Math.min(hold.activeAt + HOLD_MS, deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity) || claimAuthority(xml, claims.get(hold.claimId), key) < 1) { // NEW
-        holds.delete(key); const deadline = Math.min(hold.activeAt + HOLD_MS, deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity); // NEW
+    authorityAt = time; // NEW: final live projections use the caller's explicit current time.
+    for (const [key, hold] of [...holds]) if (time >= Math.min((claims.get(hold.claimId)?.holdPolicy === 'request' ? Infinity : hold.activeAt + HOLD_MS), deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity) || claimAuthority(xml, claims.get(hold.claimId), key) < 1) { // NEW
+        holds.delete(key); const deadline = Math.min((claims.get(hold.claimId)?.holdPolicy === 'request' ? Infinity : hold.activeAt + HOLD_MS), deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity); // NEW
         const queue = (waiters.get(hold.claimId) || []).filter(w => !w.cancelled && resolveAuthority(xml, key, w.userId) > 0).sort((a, b) => resolveAuthority(xml, key, b.userId) - resolveAuthority(xml, key, a.userId) || recordOrder(a, b)); // CHANGE
         if (queue.length && time < deadline + HANDOFF_MS) reservations.set(key, { deviceId: queue[0].deviceId, sessionId: queue[0].sessionId, userId: queue[0].userId, previousSession: hold.sessionId, until: deadline + HANDOFF_MS }); // NEW
     } // NEW
-    return { xml, accepted, rejected, pending, holds: [...holds.values()].map(h => ({ ...h, requested: deadlines.has(h.claimId), expiresAt: Math.min(h.activeAt + HOLD_MS, deadlines.get(h.claimId) || Infinity) })), reservations: [...reservations].filter(([, r]) => time < r.until).map(([key, r]) => ({ key, ...r })), presence: [...presence.values()].filter(p => time < p.at + HOLD_MS) }; // NEW
-} // NEW
-/** Preserve Users' grant-management and self-claim exceptions at the replay boundary. */ // NEW
-function validateProtectedChanges(beforeXml, afterXml, userId) { // NEW
-    const before = objects(beforeXml), after = objects(afterXml), authorityContext = {}; // CHANGE
-    for (const [key, old] of before) { // NEW
-        const next = after.get(key); if (!next) continue; // CHANGE
-        const original = attrs(old.node), updated = attrs(next.node); // NEW
-        const changed = [...new Set([...Object.keys(original), ...Object.keys(updated)])].filter(name => /^trellis_(owner|access|role|team|garden_team)/.test(name) && original[name] !== updated[name]); // NEW
-        if (!changed.length || authorityFor(beforeXml, key, userId, authorityContext) >= 3) continue; // CHANGE: unrelated cell values require no protected-field authorization or repeated whole-document parsing.
-        if (changed.every(name => ['trellis_access_user_ids_json', 'trellis_access_grants_json', 'trellis_access_open'].includes(name)) && canManageAccess(beforeXml, key, userId)) continue; // NEW
-        const module = ['garden_module', 'team_module', 'task_module'].some(name => old.node.getAttribute(name) === '1') || /(?:^|;)module=1(?:;|$)/.test(old.model.getAttribute('style')); // NEW
-        if (changed.length === 1 && changed[0] === 'trellis_owner_user_id' && module && !original.trellis_owner_user_id && updated.trellis_owner_user_id === userId) continue; // NEW
-        throw new Error('Ownership and access need owner or admin review.'); // NEW
-    } // NEW
+    let nextChangeAt = Infinity; // NEW: only these final time projections depend on the caller's current clock.
+    for (const hold of holds.values()) nextChangeAt = Math.min(nextChangeAt, claims.get(hold.claimId)?.holdPolicy === 'request' ? Infinity : hold.activeAt + HOLD_MS, deadlines.get(hold.claimId) || Infinity, claims.get(hold.claimId)?.retiredAt || Infinity); // NEW
+    for (const reservation of reservations.values()) if (reservation.until > time) nextChangeAt = Math.min(nextChangeAt, reservation.until); // NEW
+    for (const viewer of presence.values()) if (viewer.at + PRESENCE_MS > time) nextChangeAt = Math.min(nextChangeAt, viewer.at + PRESENCE_MS); // NEW
+    return { xml, accepted, rejected, pending, nextChangeAt, holds: [...holds.values()].map(h => { // CHANGE: nextChangeAt is internal replay metadata, never a persisted or renderer policy field.
+        const expiresAt = Math.min(claims.get(h.claimId)?.holdPolicy === 'request' ? Infinity : h.activeAt + HOLD_MS, deadlines.get(h.claimId) || Infinity); // NEW
+        const requesters = (waiters.get(h.claimId) || []).filter(w => !w.cancelled).map(w => ({ userId: w.userId, sessionId: w.sessionId, deviceId: w.deviceId })); // NEW
+        return { ...h, holdPolicy: claims.get(h.claimId)?.holdPolicy || 'idle', requested: deadlines.has(h.claimId), requesters, expiresAt: Number.isFinite(expiresAt) ? expiresAt : null }; // NEW
+    }), reservations: [...reservations].filter(([, r]) => time < r.until).map(([key, r]) => ({ key, ...r })), presence: [...presence.values()].filter(p => time < p.at + PRESENCE_MS) }; // CHANGE
 } // NEW

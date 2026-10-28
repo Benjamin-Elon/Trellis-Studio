@@ -2,7 +2,7 @@
 
 Trellis keeps at most two clusters expanded on a page. A cluster contains modules connected by module-level `linkedTo` IDs or Garden companion IDs, in either direction. Nested modules share their outer module's cluster. Content links and missing destinations do not connect clusters. A standalone module is one cluster. <!-- NEW -->
 
-Modules keep independent folding controls. Any expanded member, including a nested module, occupies the cluster's slot. Opening another cluster folds every expanded member of the least recently used cluster using native folding, preserving alternate bounds and joining the expansion's undo command. Selection, explicit expansion, and starting an edit update recency. Batch expansion keeps the first two distinct requested clusters. Startup keeps the focused cluster and the first other expanded cluster in document order. <!-- NEW -->
+Modules keep independent folding controls. Any expanded member, including a nested module, occupies the cluster's slot. Opening another cluster folds every expanded member of the least recently used cluster using native folding. Folding and its generated geometry are personal view state outside editing undo. Selection, explicit expansion, and starting an edit update recency. Batch expansion keeps the first two distinct requested clusters. Startup keeps the focused cluster and the first other expanded cluster in document order. <!-- CHANGE -->
 
 The garden picker remains available while a garden is selected. Its city dropdown offers All cities, stored city identities with geographic labels, and No city. Duplicate display labels include their city IDs. City choice and the last garden per city are local to the diagram, page, and user. Search includes eligible gardens outside the rendered subset; the picker creates at most 100 result rows at once. <!-- NEW -->
 
@@ -20,7 +20,7 @@ The shared controller is `graph.__trellisModules.clusters`. It indexes module me
 
 ## Persistence and exports <!-- NEW -->
 
-Rendering exclusion does not remove model cells or rewrite their visibility, links, or contents. Document saves retain the entire page. Native folding is saved and participates in existing shared-document and undo behavior. Current-view image/PDF exports use a filtered model snapshot, and printing uses the current view. An image with embedded XML contains that exported subset; save the diagram normally to retain all contents. <!-- NEW -->
+Rendering exclusion does not remove model cells or rewrite their visibility, links, or contents. Saves retain the entire page using authored geometry. Folding preferences are private to the user/device, including local-only diagrams; refresh and restore reapply them. Deliberate geometry edits still persist. See [explicit refresh](explicit-refresh.md). Current-view image/PDF exports use a filtered model snapshot, and printing uses the current view. An image with embedded XML contains that subset; save the diagram normally to retain all contents. <!-- CHANGE -->
 
 ## Limits and verification <!-- NEW -->
 

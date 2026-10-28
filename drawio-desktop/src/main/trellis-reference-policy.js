@@ -35,7 +35,7 @@ export function referenceEditor(state, cell, actor) {
         seen.add(current);
         if (current.node.getAttribute('trellis_owner_user_id') === actor) return true;
         const grants = JSON.parse(current.node.getAttribute('trellis_access_grants_json') || '[]');
-        if (grants.some(grant => (grant.userId === actor || grant.subjectType === 'team' && teams.has(grant.teamId)) && grant.capabilities?.some(cap => ['create_plantings', 'manage_own_plantings', 'move_tasks', 'edit_task_details', 'manage_scope_content'].includes(cap)))) return true;
+        if (grants.some(grant => !grant.derived && (grant.userId === actor || grant.subjectType === 'team' && teams.has(grant.teamId)) && grant.capabilities?.some(cap => ['create_plantings', 'manage_own_plantings', 'move_tasks', 'edit_task_details', 'manage_scope_content'].includes(cap)))) return true;
     }
     return false;
 }

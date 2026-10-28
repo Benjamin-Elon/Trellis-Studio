@@ -1,7 +1,9 @@
 // NEW: Pure parsing and integrity rules shared by the desktop sharing service and tests.
 import crypto from 'node:crypto';
+import '../../drawio/src/main/webapp/js/trellis-permission-core.js'; // NEW
 import zlib from 'node:zlib';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
+import { policy, LIMITS, parseJson, validateJson, textLimit } from './trellis-input-policy.js'; // NEW
 
 export const SHARE_SCHEMA = 1;
 export const SYNCTHING_VERSION = '2.1.6';
@@ -15,49 +17,49 @@ export function inviteFingerprint(code, salt) {
     return (hash >>> 0).toString(16);
 }
 export function safeId(value) {
-    if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(value)) throw new Error('Invalid sharing identifier.');
+    if (!policy.isSafeIdentifier(value) || !/^[a-zA-Z0-9_-]{1,160}$/.test(value)) throw new Error('Invalid sharing identifier.');
     return value;
 }
-export function canonical(value) {
-    if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
-    if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
-    return JSON.stringify(value);
+export function canonical(value) { // CHANGE: bound structure once before recursive signature encoding.
+    validateJson(value); // NEW
+    const encode = item => Array.isArray(item) ? '[' + item.map(encode).join(',') + ']' : item && typeof item === 'object' ? '{' + Object.keys(item).sort().map(key => JSON.stringify(key) + ':' + encode(item[key])).join(',') + '}' : JSON.stringify(item); // NEW
+    return encode(value); // NEW
 }
 export function signRecord(payload, privateKey) {
     return { payload, signature: crypto.sign(null, Buffer.from(canonical(payload)), privateKey).toString('base64') };
 }
 export function verifyRecord(record, publicKey) {
-    try { return !!record && crypto.verify(null, Buffer.from(canonical(record.payload)), publicKey, Buffer.from(record.signature, 'base64')); }
+    try { if (!record || !record.payload || typeof record.payload !== 'object' || Array.isArray(record.payload) || typeof record.signature !== 'string' || record.signature.length > 256) return false; return crypto.verify(null, Buffer.from(canonical(record.payload)), publicKey, Buffer.from(record.signature, 'base64')); }
     catch (_) { return false; }
 }
 export function parseXml(xml) {
-    if (typeof xml !== 'string' || xml.length > 128 * 1024 * 1024 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('Invalid diagram XML.');
+    try { textLimit(xml); } catch (_) { throw Object.assign(new Error('Invalid diagram XML: size limit.'), { code: 'INPUT_LIMIT' }); } // CHANGE
+    policy.xmlText(xml); // CHANGE
     let invalid = false;
     const doc = new DOMParser({ errorHandler: { warning() { invalid = true; }, error() { invalid = true; }, fatalError() { invalid = true; } } }).parseFromString(xml, 'text/xml');
     if (invalid || !doc.documentElement) throw new Error('Invalid diagram XML.');
-    return doc;
+    policy.validateNode(doc.documentElement, false); return doc; // CHANGE
 }
 const serialize = node => new XMLSerializer().serializeToString(node);
 /** Decode every page, retaining the original compressed/uncompressed representation. */
-export function diagramDocument(xml) {
+export function diagramDocument(xml, maximum = LIMITS.diagram) { // CHANGE: consumers may impose a smaller aggregate budget.
+    maximum = Math.min(LIMITS.diagram, maximum);
     const outer = parseXml(xml);
-    const pages = [];
-    if (outer.documentElement.nodeName === 'mxGraphModel') pages.push({ doc: outer, container: null });
+    const pages = []; let decodedBytes = 0; // CHANGE
+    const accept = page => { const text = serialize(page.doc.documentElement); decodedBytes += Buffer.byteLength(text); if (decodedBytes > maximum) policy.fail('INPUT_LIMIT', 'Decoded diagram exceeds its total byte limit.'); policy.validateModel(page.doc.documentElement); pages.push(page); }; // NEW
+    if (outer.documentElement.nodeName === 'mxGraphModel') accept({ doc: outer, container: null });
     else if (outer.documentElement.nodeName === 'mxfile') {
         for (const page of Array.from(outer.getElementsByTagName('diagram'))) {
             const model = Array.from(page.childNodes).find(node => node.nodeType === 1 && node.nodeName === 'mxGraphModel');
-            if (model) pages.push({ doc: parseXml(serialize(model)), container: page, compressed: false });
+            if (model) accept({ doc: parseXml(serialize(model)), container: page, compressed: false });
             else {
-                const raw = zlib.inflateRawSync(Buffer.from(page.textContent.trim(), 'base64'), { maxOutputLength: 128 * 1024 * 1024 }).toString();
-                pages.push({ doc: parseXml(decodeURIComponent(raw)), container: page, compressed: true });
+                const raw = zlib.inflateRawSync(Buffer.from(page.textContent.trim(), 'base64'), { maxOutputLength: Math.max(1, (maximum - decodedBytes) * 3) }).toString();
+                accept({ doc: parseXml(decodeURIComponent(raw)), container: page, compressed: true });
             }
         }
     }
     if (!pages.length) throw new Error('Only XML .drawio canvases can be shared.');
-    if (pages.length > 1) { // NEW: permission restoration cannot safely match ambiguous page identities.
-        const pageIds = pages.map(page => page.container.getAttribute('id'));
-        if (pageIds.some(id => !id) || new Set(pageIds).size !== pageIds.length) throw new Error('Shared multi-page canvases require unique page identifiers.');
-    }
+    policy.validatePageIds(pages.map(page => page.container?.getAttribute('id'))); // CHANGE: reject names inherited by native page dictionaries too.
     return {
         pages,
         serialize() {
@@ -74,7 +76,7 @@ export function diagramDocument(xml) {
 function jsonAttr(node, key, fallback) {
     const raw = node.getAttribute(key);
     if (!raw) return fallback;
-    try { return JSON.parse(raw); } catch (_) { throw new Error('Invalid canvas permission metadata.'); }
+    try { return parseJson(raw, LIMITS.diagram); } catch (_) { throw new Error('Invalid canvas permission metadata.'); }
 }
 export function inspectDiagram(xml) {
     const document = diagramDocument(xml);
@@ -92,6 +94,7 @@ export function inspectDiagram(xml) {
         }
     }
     const store = stores[0] || { users: [], pendingUsers: [], invites: [] };
+    for (const field of ['users', 'pendingUsers', 'invites']) if (store[field] !== undefined) { if (!Array.isArray(store[field])) policy.fail('INVALID_SCHEMA', 'Invalid canvas user store.'); const ids = new Set(); for (const item of store[field]) { if (!item || typeof (item.id || (field === 'invites' && item.pendingUserId)) !== 'string' || ids.has(item.id || item.pendingUserId)) policy.fail('INVALID_SCHEMA', 'Invalid or duplicate user-store identity.'); ids.add(item.id || item.pendingUserId); } } // NEW
     if (stores.some(entry => canonical(entry) !== canonical(store))) throw new Error('Canvas pages contain conflicting user stores.');
     return { document, store, cells };
 }
@@ -99,13 +102,11 @@ export function activeAdmin(state, userId) {
     return (state.store.users || []).find(user => user.id === userId && user.admin && !user.disabled);
 }
 /** Resolve active access teams from the same role cards and reciprocal links used by Users. */ // NEW
-export function activeAccessTeams(state, userId) { // NEW
-    const flag = (cell, name) => cell.node.getAttribute(name) === '1' || new RegExp('(?:^|;)' + name + '=1(?:;|$)').test(cell.node.getElementsByTagName('mxCell')[0]?.getAttribute('style') || cell.node.getAttribute('style')); // NEW
-    const teams = state.cells.filter(cell => flag(cell, 'trellis_team_section') && cell.node.getAttribute('trellis_team_archived') !== '1' && cell.node.getAttribute('trellis_team_unassigned') !== '1'); // NEW
-    const links = cell => String(cell.node.getAttribute('linkedTo') || '').split(',').map(id => id.trim()); // NEW
-    const roles = state.cells.filter(cell => cell.node.getAttribute('trellis_role_user_id') === userId && cell.node.getAttribute('trellis_role_inactive') !== '1'); // NEW
-    return new Set(teams.filter(team => roles.some(role => role.node.ownerDocument === team.node.ownerDocument && (role.parentId === team.id || links(role).includes(team.id) && links(team).includes(role.id)))).map(team => team.node.getAttribute('trellis_team_id') || team.id)); // NEW
-} // NEW
+export function activeAccessTeams(state, userId) { // CHANGE
+    const pageIds = new Map(state.document.pages.map(page => [page.doc, page.container?.getAttribute('id') || ''])); // NEW
+    const cells = state.cells.map(cell => { const pageId = pageIds.get(cell.node.ownerDocument), model = cell.node.nodeName === 'mxCell' ? cell.node : cell.node.getElementsByTagName('mxCell')[0]; return { key: JSON.stringify([pageId, cell.id]), id: cell.id, pageId, parent: cell.parentId ? JSON.stringify([pageId, cell.parentId]) : null, style: model.getAttribute('style') || '', attributes: Object.fromEntries(['trellis_team_section', 'trellis_team_id', 'trellis_team_archived', 'trellis_team_unassigned', 'trellis_role_user_id', 'trellis_role_inactive', 'role_card', 'linkedTo'].map(name => [name, cell.node.getAttribute(name)])) }; }); // NEW
+    return new Set(globalThis.TrellisPermissionCore.activeTeams({ cells: Object.fromEntries(cells.map(cell => [cell.key, cell])) }, userId)); // CHANGE
+} // CHANGE
 export function hasCanvasAccess(state, userId, now = Date.now()) {
     const user = (state.store.users || []).find(entry => entry.id === userId && !entry.disabled);
     const invite = (state.store.invites || []).find(entry => entry.pendingUserId === userId && entry.status === 'pending' && entry.expiresAt > now);
@@ -120,7 +121,7 @@ export function hasCanvasAccess(state, userId, now = Date.now()) {
             if (node.getAttribute('trellis_owner_user_id') === userId) return true;
             if (user && node.getAttribute('trellis_access_open') === '1') return true;
             if (jsonAttr(node, 'trellis_access_user_ids_json', []).includes(userId)) return true;
-            if (jsonAttr(node, 'trellis_access_grants_json', []).some(grant => (grant.userId === userId || grant.subjectType === 'team' && teamIds.has(grant.teamId)) && (grant.capabilities || []).length)) return true; // CHANGE
+            if (jsonAttr(node, 'trellis_access_grants_json', []).some(grant => !grant.derived && (grant.userId === userId || grant.subjectType === 'team' && teamIds.has(grant.teamId)) && (grant.preset === 'visitor' || grant.preset === 'viewer' || (grant.capabilities || []).length))) return true; // CHANGE: Visitor grants provide read access without editing capabilities.
         }
         return false;
     });
@@ -135,8 +136,8 @@ export function decodeBlock(kind, text) {
     const end = `-----END TRELLIS ${kind}-----`; // CHANGE
     const raw = text.slice(text.indexOf(start) + start.length, text.indexOf(end)).trim();
     if (!text.includes(start) || !text.includes(end) || !/^[A-Za-z0-9+/=\s]+$/.test(raw)) throw new Error('Paste the complete Trellis sharing block.');
-    const result = JSON.parse(Buffer.from(raw, 'base64').toString());
-    if (result.schema !== 2 || result.protocolVersion !== 2) throw new Error('Unsupported Trellis sharing protocol. Only version 2 invitations and replies are supported.'); // CHANGE
+    const result = parseJson(Buffer.from(raw, 'base64').toString(), LIMITS.invitation); // CHANGE
+    if (result.schema !== 2 || result.protocolVersion !== 3) throw new Error('Unsupported Trellis sharing protocol. Only version 3 invitations and replies are supported.'); // CHANGE
     safeId(result.shareId);
     safeId(result.diagramId);
     if (typeof result.deviceId !== 'string' || !/^[A-Z2-7-]{63}$/.test(result.deviceId)) throw new Error('Invalid Syncthing device ID.');

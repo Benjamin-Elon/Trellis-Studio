@@ -155,11 +155,19 @@ contextBridge.exposeInMainWorld('trellisShare', {
 	joinCanvas: payload => sharingRequest('joinCanvas', payload), // NEW
 	requestMembership: payload => sharingRequest('requestMembership', payload), // NEW
 	collaborationAction: payload => sharingRequest('collaborationAction', payload), // NEW: file-bound object coordination.
+	activityAction: payload => sharingRequest('activityAction', payload), // NEW: independent signed status messages.
+	recoveryAction: payload => sharingRequest('recoveryAction', payload), // NEW: private checkpoints never wait for content replay.
+	onActivity(listener) { // NEW
+		if (typeof listener !== 'function') throw new Error('An activity listener is required.'); // NEW
+		const receive = (_event, snapshot) => listener(snapshot); // NEW
+		ipcRenderer.on('trellisShareActivity', receive); // NEW
+		return () => ipcRenderer.removeListener('trellisShareActivity', receive); // NEW
+	}, // NEW
 	listRequests: payload => sharingRequest('listRequests', payload), // NEW
 	getStatus: () => sharingRequest('getStatus', {}), // NEW
 	setPaused: payload => sharingRequest('setPaused', payload), // NEW
 	saveRecoveryCopy: payload => sharingRequest('saveRecoveryCopy', payload), // NEW
-	openAsset: payload => sharingRequest('openAsset', payload), // NEW
+	saveAsset: payload => sharingRequest('saveAsset', payload), // NEW
 	exportHistory: payload => sharingRequest('exportHistory', payload), // NEW
 	importHistory: payload => sharingRequest('importHistory', payload), // NEW
 	historyStorage: payload => sharingRequest('historyStorage', payload), // NEW
@@ -216,6 +224,14 @@ contextBridge.exposeInMainWorld('trellisIdentity', { // NEW
 	onStatus(listener) { const receive = (_event, data) => listener(data); ipcRenderer.on('trellisIdentityStatus', receive); return () => ipcRenderer.removeListener('trellisIdentityStatus', receive); },
 	onLocked(listener) { const receive = () => listener(); ipcRenderer.on('trellisIdentityLocked', receive); return () => ipcRenderer.removeListener('trellisIdentityLocked', receive); }
 });
+contextBridge.exposeInMainWorld('trellisGardenJoin', { // NEW
+	preview: payload => identityRequest('trellisGardenJoin', 'preview', payload), // NEW
+	start: payload => identityRequest('trellisGardenJoin', 'start', payload), // NEW
+	list: payload => identityRequest('trellisGardenJoin', 'list', payload), // NEW
+	resume: payload => identityRequest('trellisGardenJoin', 'resume', payload), // NEW
+	prepare: payload => identityRequest('trellisGardenJoin', 'prepare', payload), // NEW
+	complete: payload => identityRequest('trellisGardenJoin', 'complete', payload) // NEW
+}); // NEW
 contextBridge.exposeInMainWorld('trellisGardenCommunities', { // NEW
 	list: payload => identityRequest('trellisGardenCommunities', 'list', payload), // CHANGE: narrow optional browsing scope.
 	create: payload => identityRequest('trellisGardenCommunities', 'create', payload), // NEW

@@ -5,6 +5,7 @@ import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
 import os from 'node:os'; // NEW
 import { projectLifecycle, moveRetained, readOptional } from '../src/main/trellis-project-trash.js'; // NEW
+import { createProjectTransport } from '../src/main/trellis-project-transport.js'; // CHANGE
 const record = (id, operation, parents = [], target) => ({ payload: { kind: 'garden-lifecycle', diagramId: 'garden', id, operation, parents, target } }); // NEW
 
 test('causal lifecycle replay ignores delivery order and concurrent deletion wins over restoration', () => { // NEW
@@ -29,6 +30,23 @@ async function fixture(t) { // NEW
     t.after(() => fs.rm(root, { recursive: true, force: true })); // NEW
     return { root, source: path.join(root, 'source'), destination: path.join(root, 'retained'), journal: path.join(root, 'journal.json') }; // NEW
 } // NEW
+
+test('a locked Trash move retries the actual source, rechecks membership and reports its retained copy', async t => { // CHANGE
+    const f = await fixture(t), user = { id: 'owner', admin: true, portableIdentityId: 'identity' }; // CHANGE
+    const xmlFor = users => '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_users_json="' + JSON.stringify({ usersEnabled: true, users, invites: [] }).replace(/"/g, '&quot;') + '"><mxCell parent="0"/></object></root></mxGraphModel>'; // CHANGE
+    const xml = xmlFor([user]), canvas = { shareId: 'retry-share', filename: 'Garden.drawio', folderPath: f.source, diagramPath: path.join(f.source, 'Garden.drawio') }; // CHANGE
+    await fs.mkdir(f.source); await fs.writeFile(canvas.diagramPath, xml); // CHANGE
+    const journal = { refresh: async () => {}, runExclusive: operation => operation() }; // CHANGE: filesystem and authorization stay real; this test has no journal projection writes.
+    const transport = createProjectTransport({ initialize: async () => {}, registry: () => [canvas], profile: f.root, now: Date.now, validateManaged() {}, persist: async () => {}, detach: async () => {}, emit() {}, collaborationStore: () => journal }); // CHANGE
+    const input = { shareId: canvas.shareId, userId: user.id, identityId: 'identity', operation: 'trashed', recordId: 'retry-record' }, rename = fs.rename; let locked = true; // CHANGE
+    t.mock.method(fs, 'rename', async (source, destination) => { if (source === f.source && locked) { locked = false; throw Object.assign(new Error('Folder still open'), { code: 'EBUSY' }); } return rename(source, destination); }); // CHANGE
+    await assert.rejects(transport.applyProjectLifecycle(input), { code: 'EBUSY' }); assert.equal(canvas.localRemoved, true); // CHANGE
+    const changed = xmlFor([user, { id: 'other', admin: true }]); await fs.writeFile(canvas.diagramPath, changed); // CHANGE
+    await assert.rejects(transport.applyProjectLifecycle(input), /Membership changed/); assert.equal(await fs.readFile(canvas.diagramPath, 'utf8'), changed); // CHANGE: retry must not skip authorization just because localRemoved was persisted before the failed move.
+    await fs.writeFile(canvas.diagramPath, xml); const result = await transport.applyProjectLifecycle(input); // CHANGE
+    assert.equal(result.reason, ''); assert.equal(await fs.readFile(path.join(f.root, 'project-trash', canvas.shareId, canvas.filename), 'utf8'), xml); // CHANGE
+    await assert.rejects(fs.access(canvas.diagramPath), { code: 'ENOENT' }); assert.equal((await transport.applyProjectLifecycle(input)).reason, ''); // CHANGE
+}); // CHANGE
 
 test('a move retains the full folder and resumes after a completed rename without its final journal write', async t => { // NEW
     const f = await fixture(t); await fs.mkdir(f.source); await fs.writeFile(path.join(f.source, 'Garden.drawio'), 'diagram'); await fs.mkdir(path.join(f.source, 'assets')); await fs.writeFile(path.join(f.source, 'assets', 'image.png'), 'asset'); // NEW

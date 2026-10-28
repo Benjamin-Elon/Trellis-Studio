@@ -2565,6 +2565,20 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
             const defaults = await refreshAllocationDefaults(state, true); // CHANGE: a warning dialog or companion validation may outlive an earlier readiness check.
             if (!defaults?.complete || state.closed || state.draft !== draft || state.spacingPending || state.spacingValid === false) return; // CHANGE
+            const editContext = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+            if (editContext && editContext.run('generated-content', { // NEW: creation, companion adjustments and generated tasks are one dependency group.
+                id: 'allocate-create:' + cellId(draft.bed), title: 'Create allocated planting', // NEW
+                cells: () => [draft.bed, ...(tasks.automationCellsForSource?.(cellId(draft.bed)) || []), ...(draft.companionLayout?.rows || []).map(row => row.cell).filter(Boolean)], // NEW
+                retry: async () => { // NEW: refresh occupancy and scheduling before presenting another review.
+                    if (state.closed || !state.draft) throw new Error('Reopen Allocate to prepare a current planting proposal.'); // NEW
+                    const originalDraft = state.draft, author = window.Trellis?.users?.getCurrentUser?.()?.id; // NEW
+                    state.occupancy = tiler.listPlantingFootprints(state.moduleCell, { includeUndatedOccupancy: true }); // NEW
+                    const fresh = await recomputeDraftForSameBed(state, state.draft); // NEW
+                    if (state.closed || state.draft !== originalDraft || model.getCell(cellId(state.moduleCell)) !== state.moduleCell || author !== window.Trellis?.users?.getCurrentUser?.()?.id) throw new Error('The allocation, document or user changed. Prepare a new preview.'); // NEW
+                    if (!fresh.ok) throw new Error(fresh.reason || 'The planting no longer fits this bed.'); // NEW
+                    setDraft(state, fresh); return openAllocationSchedulerAndPreview(state, fresh); // NEW
+                }, deferredValue: false // NEW
+            }, () => true) === false) return; // NEW: no source or task mutation occurs before successful preflight.
             state.committing = true; // CHANGE: graph notifications cannot replace a draft during its commit.
             const selectionBeforeCommit = graph.getSelectionCells ? graph.getSelectionCells().slice() : [graph.getSelectionCell?.()].filter(Boolean); // CHANGE: provisional creation selects a group that may later be rolled back.
             state.noticeMessage = ""; // CHANGE: an editor's preview notice must not survive successful creation.

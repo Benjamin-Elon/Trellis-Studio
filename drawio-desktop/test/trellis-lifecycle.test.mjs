@@ -51,8 +51,8 @@ test('Cancel after snapshot invalidation still performs no destructive work', as
     assert.equal(await f.coordinator.requestQuit(), false); // NEW
     assert.ok(f.events.every(event => event[0] === 'release')); // NEW
 }); // NEW
-test('draft removal failure releases preparation and keeps transports running', async () => { // NEW
-    const f = fixture({ discard: async () => { throw new Error('Disk failure'); } }); // NEW
+test('blocking close failure releases preparation and keeps transports running', async () => { // CHANGE
+    const f = fixture({ discard: async () => { throw new Error('Reference drafts unavailable'); } }); // CHANGE
     assert.equal(await f.coordinator.requestQuit(), false); assert.equal(f.coordinator.state, 'running'); // NEW
     assert.equal(f.events.some(event => event[0] === 'stop'), false); assert.ok(f.windows.every(win => !win.destroyed)); // NEW
 }); // NEW

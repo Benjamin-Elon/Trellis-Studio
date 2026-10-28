@@ -8,6 +8,7 @@ const { loadPlantTilerMxGraph } = require('./helpers/plant-tiler-mxgraph-harness
 function loadSummaryPermissions() { // NEW
     const h = loadPlantTilerMxGraph(); // NEW
     h.window.Draw.loadPlugin = callback => callback({ editor: { graph: h.graph, undoManager: h.undoManager }, actions: { get: () => null, addAction: () => ({}) }, hideDialog() {} }); // NEW
+    h.window.eval(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/js/trellis-permission-core.js'), 'utf8')); // NEW
     h.window.eval(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_Users.js'), 'utf8')); // NEW
     h.users = h.window.Trellis.users; // NEW
     assert.equal(h.users.enableUsers('Alice', '1234').ok, true); // NEW

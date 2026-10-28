@@ -18,10 +18,11 @@ app.whenReady().then(async () => { // NEW
         await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<!doctype html><body style="margin:0;background:#edf3e8;font-family:Arial"><div style="padding:18px;background:white;border-bottom:1px solid #ccc">Community garden · Trellis</div><div id="graph" tabindex="0" style="position:relative;height:720px"><div style="position:absolute;left:50px;top:50px;width:240px;height:160px;background:#d9e9c5;border:1px solid #54823b;padding:10px">Planting A</div></div></body>')); // NEW
         const cleanup = fs.readFileSync(path.join(project, 'drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8'); // NEW
         const plugin = fs.readFileSync(path.join(project, 'drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_Syncthing.js'), 'utf8'); // NEW
+        const baselinePlugin = 'window.__trellisLiveUpdatesForBenchmark=true;\n' + plugin; // NEW: retain the existing live-path comparison; the explicit fixture exercises the new default against a real journal.
         const setupResult = await win.webContents.executeJavaScript(` (() => { try { // NEW
             window.calls = []; window.editorEvents = 0;
             const xml = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
-            const info = { managed: true, ok: true, protocolVersion: 2, shareId: 'garden', diagramId: 'diagram', diagramPath: 'C:/test/Garden.drawio', folderLabel: 'Community garden', deviceId: 'local' };
+            const info = { managed: true, ok: true, protocolVersion: 3, shareId: 'garden', diagramId: 'diagram', diagramPath: 'C:/test/Garden.drawio', folderLabel: 'Community garden', deviceId: 'local' };
             const state = { ...info, state: 'upToDate', connectedCollaborators: 1, collaborators: [{id:'alice', name:'Alice'}], collaboration: { holds:[{key:JSON.stringify(['','planting']), userId:'alice', name:'Alice', sessionId:'remote', expiresAt:Date.now()+300000}], presence:[], recoveries:[] } };
             const file = { data:xml, fileObject:{path:info.diagramPath}, getTitle:()=> 'Community garden.drawio', isModified:()=>false, setModified(){}, save(_r,done){done();}, fileSaved(_x,_d,done){done();} };
             const graph = {container:document.getElementById('graph'), getDefaultParent:()=>({getAttribute:()=> 'diagram'}), getModel:()=>({getCell:id=>id==='planting'? {id,label:'Planting A',getAttribute:k=>k==='label'?'Planting A':null}:null}), view:{getState:()=>({x:50,y:50,width:240,height:160})}, getSelectionCells:()=>[], refresh(){}};
@@ -30,7 +31,7 @@ app.whenReady().then(async () => { // NEW
             window.ui={editor:{graph,setStatus(){},addListener(){}},getCurrentFile:()=>file,getFileData:()=>xml,watchFile:async()=>{},menus:{get:()=>null},actions:{addAction:()=>({})}};
             window.Draw={loadPlugin:fn=>fn(window.ui)};
             ${cleanup.slice(0, cleanup.indexOf('Draw.loadPlugin'))}
-            ${plugin}
+            ${baselinePlugin}
             window.Trellis.sharing.showSharingDialog(); return null; } catch (error) { return error.stack; } })()
         `); if (setupResult) throw new Error(setupResult); // NEW
         await new Promise(resolve => setTimeout(resolve, 120)); // NEW
@@ -38,6 +39,7 @@ app.whenReady().then(async () => { // NEW
         fs.writeFileSync(path.join(output, 'overview.png'), (await win.webContents.capturePage()).toPNG()); // NEW
         await click(win, 'Approve a computer'); // NEW
         await win.webContents.executeJavaScript("['mousedown','mouseup','click','keydown','keypress','keyup'].forEach(type=>document.addEventListener(type,e=>{window.editorEvents++;e.preventDefault();document.getElementById('graph').focus();})); document.querySelector('textarea').focus();"); // NEW
+        win.webContents.focus(); // NEW: hidden native fixtures must explicitly focus their web contents before keyboard injection.
         for (const character of 'approval-reply') win.webContents.sendInputEvent({ type: 'char', keyCode: character }); // NEW
         await new Promise(resolve => setTimeout(resolve, 50)); // NEW
         const typed = await win.webContents.executeJavaScript("({value:document.querySelector('textarea').value,editorEvents:window.editorEvents,focused:document.activeElement===document.querySelector('textarea')})"); // NEW
@@ -64,14 +66,14 @@ app.whenReady().then(async () => { // NEW
             const serialize = () => mxUtils.getXml(new mxCodec().encode(graph.model));
             graph.model.addListener(mxEvent.CHANGE,()=>window.modified=true);
             window.currentFile = {data:serialize(), fileObject:{path:'C:/test/Live.drawio'},getTitle:()=> 'Live.drawio',isModified:()=>window.modified,setModified:x=>window.modified=x,save(_r,done){window.rawSaves++;done();},fileSaved(_x,_d,done){done();}};
-            window.liveInfo = {ok:true,managed:true,protocolVersion:2,shareId:'live',diagramId:'live',diagramPath:currentFile.fileObject.path};
+            window.liveInfo = {ok:true,managed:true,protocolVersion:3,shareId:'live',diagramId:'live',diagramPath:currentFile.fileObject.path};
             window.holds = [];
             window.Trellis = {users:{getCurrentUser:()=>({id:'admin'}),isAdmin:()=>true,listUsers:()=>[]}};
             window.trellisShare = {setContext:async()=>{},getStatus:async()=>({canvases:[{...liveInfo,state:'upToDate',connectedCollaborators:0}]}),getSyncthingShareInfo:async()=>liveInfo,importHistory:async()=>({entries:[]}),onStatus:()=>{},collaborationAction:async payload=>{window.calls.push(payload);if(payload.kind==='claim'){await new Promise(r=>setTimeout(r,40));window.holds=[{key:JSON.stringify(['','planting']),sessionId:'local',userId:'admin',name:'Admin',expiresAt:Date.now()+300000}];}if(payload.kind==='release')window.holds=[];if(payload.kind==='save')window.persisted=payload.xml;return{ok:true,xml:payload.xml||serialize(),collaboration:{sessionId:'local',holds:window.holds,presence:[],reservations:[],recoveries:[]}};}};
             window.electron = {request:(_args,done)=>done({mtimeMs:1})};
             window.ui = {editor:{graph,autosave:false,addListener(){},setStatus(){}},getCurrentFile:()=>currentFile,getFileData:serialize,watchFile:async()=>{},actions:{addAction:()=>({})},menus:{get:()=>null},setFileData:xml=>new mxCodec(mxUtils.parseXml(xml)).decode(mxUtils.parseXml(xml).documentElement,graph.model)};
             window.Draw={loadPlugin:fn=>fn(ui)};
-            ${plugin}
+            ${baselinePlugin}
             void 0;
         `); // NEW
         await new Promise(resolve => setTimeout(resolve, 80)); // NEW

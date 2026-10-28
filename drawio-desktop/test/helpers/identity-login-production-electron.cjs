@@ -1,3 +1,4 @@
+require('../../src/main/trellis-asset-scheme.cjs'); // NEW: production protocol privileges must precede app readiness.
 /** Real main/preload/Home persistence checks; all files and credentials belong to an isolated test profile. */ // NEW
 const assert = require('node:assert/strict'); // NEW
 const fs = require('node:fs'); // NEW

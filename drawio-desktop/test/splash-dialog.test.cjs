@@ -122,7 +122,9 @@ function loadSplashDialog(options = {}) {
         }
     };
 
-    vm.runInNewContext(fs.readFileSync(dialogsPath, "utf8"), context, { filename: dialogsPath });
+    const sourcePath = options.bundled ? bundledPath : dialogsPath, source = fs.readFileSync(sourcePath, 'utf8'); // CHANGE
+    const dialogCode = options.bundled ? 'var SplashDialog = ' + source.match(/SplashDialog\s*=\s*(function\(editorUi\)[\s\S]*?this\.container = div;\s*\})/)[1] + ';' : source; // CHANGE: execute the shipped splash constructor without unrelated bundle startup.
+    vm.runInNewContext(dialogCode, context, { filename: sourcePath }); // CHANGE
     const editorUi = {
         mode: context.App.MODE_DEVICE,
         addLanguageMenu(root) {
@@ -699,7 +701,7 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.match(dialogSource, /Diagram options will be ready shortly/);
     assert.match(dialogSource, /createTrellisLicenseSupportLayout/);
     assert.match(dialogSource, /trellisCommunityObligationItalicText/);
-    assert.match(dialogSource, /Explore & Support My Projects/);
+    assert.match(dialogSource, /Explore and Support Trellis/); // CHANGE
     assert.match(dialogSource, /https:\/\/patreon\.com\/Benjamin980/);
     assert.doesNotMatch(dialogSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance|Support on Patreon|Support: Patreon/);
     assert.match(appSource, /showDialog\(dlg\.container, 700, 630[\s\S]*true, null, null, true/);
@@ -721,11 +723,25 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.match(bundledSource, /Diagram options will be ready shortly/);
     assert.match(bundledSource, /createTrellisLicenseSupportLayout/);
     assert.match(bundledSource, /trellisCommunityObligationItalicText/);
-    assert.match(bundledSource, /Explore & Support My Projects/);
+    assert.match(bundledSource, /Explore and Support Trellis/); // CHANGE
     assert.match(bundledSource, /https:\/\/patreon\.com\/Benjamin980/);
     assert.doesNotMatch(bundledSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance|Support on Patreon|Support: Patreon/);
     assert.match(bundledSource, /showDialog\(dlg\.container,700,630[\s\S]*true,null,null,true/); // CHANGE: regenerated splash preserves backdrop protection.
 });
+
+for (const bundled of [false, true]) test('three-button Home preserves icons and support routing across repeated decoration in ' + (bundled ? 'the shipped bundle' : 'source'), async () => { // NEW
+    const { dom, dialog, context, editorUi } = loadSplashDialog({ bundled, savedRecord: makeSavedRecord() }); // NEW
+    const window = context.window; window.trellisIdentity = { getSession: async () => null, onStatus() {}, onLocked() {} }; window.trellisGardenLibrary = {}; window.trellisGardenJoin = {}; // NEW
+    editorUi.showSplash = () => {}; editorUi.getCurrentFile = () => null; editorUi.actions.addAction = (_id, funct) => ({ funct }); // NEW
+    vm.runInNewContext(fs.readFileSync(path.join(projectRoot, 'drawio/src/main/webapp/js/trellis-garden-home.js'), 'utf8'), context); // NEW
+    dom.window.document.body.append(dialog.container); const support = findButton(dialog.container, 'Explore and Support Trellis'), opened = []; window.open = (...args) => opened.push(args); // NEW
+    for (let index = 0; index < 3; index++) { window.TrellisGardenHome.attachSplash(dialog, editorUi); support.click(); } // NEW
+    const actions = [...dialog.container.querySelectorAll('.trellis-splash-actions button')]; // NEW
+    assert.deepEqual(actions.map(node => node.textContent), ['Create or Open a Garden Project', 'Join a Garden Project', 'Explore and Support Trellis']); // NEW
+    assert.ok(actions[0].classList.contains('trellis-primary-action')); assert.equal(actions[0].querySelectorAll('.trellis-splash-icon').length, 1); assert.equal(support.querySelectorAll('.trellis-splash-icon').length, 1); // NEW
+    assert.deepEqual(opened, Array.from({ length: 3 }, () => [support.getAttribute('data-trellis-url'), '_blank'])); assert.match(opened[0][0], /^https:\/\/patreon\.com\/Benjamin980\?/); // NEW
+    await new Promise(resolve => setImmediate(resolve)); dom.window.close(); // NEW
+}); // NEW
 
 test("Trellis splash enhancement adds the branded shell, saved-state structure, and actions without the Help row", () => {
     const { dom, dialog, getHelpCalls } = loadSplashDialog({
@@ -734,7 +750,7 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
         languageControl: true
     });
     const createButton = findButton(dialog.container, "Create New Garden");
-    const supportButton = findButton(dialog.container, "Explore & Support My Projects");
+    const supportButton = findButton(dialog.container, "Explore and Support Trellis"); // CHANGE
     const openButton = findButton(dialog.container, "Open Existing Garden");
     const helpButton = findButton(dialog.container, "Help");
 

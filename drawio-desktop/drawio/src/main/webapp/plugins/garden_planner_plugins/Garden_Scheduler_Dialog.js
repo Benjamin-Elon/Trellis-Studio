@@ -9303,6 +9303,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const allocationOptionalLifecycle = allocationSaveLifecycle.checked; // CHANGE
         let allocationLifecycleForced = false, allocationTaskDefaultForced = false; // CHANGE: mandatory saves cannot erase separate optional checkbox intent during method refits.
         let scheduleSavePending = false; // CHANGE: every scheduler workflow rejects duplicate submissions until its save settles.
+        let collaborationEditor = null; // NEW: existing planting edits participate in timed handoff and private recovery.
         const allocationSaveGrowthStage = makeCheckbox(false); allocationSaveGrowthStage.setAttribute('data-allocation-save-grown-for', '1'); // CHANGE
         const allocationRequiredSummary = document.createElement('div'); allocationRequiredSummary.setAttribute('data-allocation-required-summary', '1'); allocationRequiredSummary.setAttribute('aria-live', 'polite'); // CHANGE
         const allocationRequiredNotes = {}; // CHANGE: note elements stay mounted while readiness changes.
@@ -12110,11 +12111,13 @@ function createScheduler(ui, referenceScope = null) { // NEW
 
         applySharedButtonStyle(previewBtn, 'neutral');
 
-        const okBtn = mxUtils.button('Save', async () => {
-            if (scheduleSavePending || allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE: queued clicks cannot start another save or reuse a closed dialog.
+        async function submitSchedule() { // CHANGE: one save operation is shared by the editor button and handoff popup.
+            if (scheduleSavePending || allocationDialogClosed || !tabsContainer.isConnected) return false; // CHANGE
             scheduleSavePending = true; okBtn.disabled = true; previewBtn.disabled = true; // CHANGE: lock before the first await in every workflow.
             const allocationVersion = allocationFitVersion; // CHANGE: reject edits or cancellation while submission is resolving inputs.
             try {
+                if (collaborationEditor) await collaborationEditor.acquire(); // NEW
+                if (allocationDialogClosed || !tabsContainer.isConnected) return false; // NEW
                 if (allocationDraftContext && (allocationFitPending || allocationFitError)) throw new Error(allocationFitError || 'Allocation recalculation is still running.'); // CHANGE: never accept stale fit data.
                 syncStateFromControls();
                 requireSelectedScheduleDate();
@@ -12300,16 +12303,18 @@ function createScheduler(ui, referenceScope = null) { // NEW
                     if (createdDerivedCell) removeDerivedSiblingIfPresent(ui?.editor?.graph, createdDerivedCell);
                     throw saveError;
                 }
-                allocationDialogClosed = true; ui.hideDialog(); // CHANGE: invalidate queued work before the host removes this dialog.
+                allocationDialogClosed = true; ui.hideDialog(); return true; // CHANGE: a handoff releases only after the existing apply operation succeeds.
             } catch (e) {
                 if (allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE: stale continuations cannot write errors into a closed or replaced dialog.
                 clearScheduleWarningState();
                 if (allocationRequiredMode && !allocationDialogClosed) { allocationRequiredSummary.textContent += ' Save failed: ' + e.message; allocationRequiredSummary.setAttribute('role', 'alert'); } // CHANGE: save failures remain visible from Tasks as well as Schedule.
                 showErrorInline('Scheduling error: ' + e.message);
+                return false; // NEW
             } finally { // CHANGE
                 scheduleSavePending = false; if (!allocationDialogClosed && tabsContainer.isConnected) { okBtn.disabled = !!allocationDraftContext && (allocationFitPending || !!allocationFitError); previewBtn.disabled = okBtn.disabled; } // CHANGE: failed saves remain retryable; closed dialogs stay inactive.
             }
-        });
+        } // CHANGE
+        const okBtn = mxUtils.button('Save', () => { submitSchedule(); }); // NEW
         okBtn.title = allocationDraftContext ? 'Preview the allocation planting with these schedule settings before creating it.' : 'Save this planting schedule and apply its task rules.'; // CHANGE: explicit action tooltip.
 
         applySharedButtonStyle(okBtn, 'add');
@@ -13706,7 +13711,23 @@ function createScheduler(ui, referenceScope = null) { // NEW
             if (allocationDraftContext.isCurrent && !allocationDraftContext.isCurrent()) { allocationDraftContext.onCancel(); return; } // CHANGE: stale async initialization must never open a dialog.
         } // CHANGE
 
-        ui.showDialog(tabsContainer, 1120, 720, true, true, () => { allocationDialogClosed = true; if (allocationDraftContext) allocationDraftContext.onCancel(); }); // CHANGE: close/Escape also invalidates pending lifecycle fits.
+        if (!allocationDraftContext && isTilerGroup(cell)) { // NEW: recover planting editors only; other scheduler workflows keep their existing behavior.
+            const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
+            tabsContainer.dataset.trellisCollaborativeEditor = 'planting'; // NEW
+            collaborationEditor = window.Trellis?.sharing?.registerEditor?.({ // NEW
+                kind: 'planting', targets: [JSON.stringify([pageId, String(cell.id)])], // NEW
+                capture() { // NEW
+                    syncStateFromControls(); // NEW
+                    const controls = [...tabsContainer.querySelectorAll('input,textarea,select')].filter(field => !['password', 'file'].includes(field.type)).map((field, index) => ({ index, id: field.id, name: field.name, type: field.type, value: field.value, checked: field.checked })); // NEW
+                    return { pageId, objectId: String(cell.id), formState: JSON.parse(JSON.stringify(formState)), taskRules: JSON.parse(JSON.stringify(taskRules)), controls }; // NEW
+                }, // NEW
+                save: submitSchedule, // NEW
+                discard() { allocationDialogClosed = true; collaborationEditor?.dispose(); } // NEW
+            }); // NEW
+            const touch = event => { if (!allocationDialogClosed && event.target.matches('input,textarea,select,[contenteditable="true"]')) collaborationEditor?.touch(); }; // NEW
+            tabsContainer.addEventListener('input', touch); tabsContainer.addEventListener('change', touch); // NEW
+        } // NEW
+        ui.showDialog(tabsContainer, 1120, 720, true, true, () => { allocationDialogClosed = true; collaborationEditor?.dispose(true); if (allocationDraftContext) allocationDraftContext.onCancel(); }); // CHANGE
         elevateTrellisDialog(ui);
         if (allocationRequiredMode) { // CHANGE
             const key = allocationDraftContext.focusMissingDefault || allocationRequiredStatus.missing?.[0]; // CHANGE
@@ -15709,6 +15730,9 @@ function createScheduler(ui, referenceScope = null) { // NEW
 
         const applyGraphPatch = async () => {
             if (options.isCurrent && !options.isCurrent()) throw new Error('Scheduler closed before the schedule could be saved.'); // CHANGE
+            const editContext = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+            const dependencies = () => [cell, ...(window.USL.tasks?.automationCellsForSource?.(cell?.id) || Object.values(model.cells || {}).filter(item => String(item.getAttribute?.('linkedTo') || '').split(',').map(id => id.trim()).includes(String(cell?.id))))]; // CHANGE: include boards whose reflow is part of task generation.
+            if (editContext && editContext.run('manual', { id: 'schedule-save:' + cell?.id, title: 'Schedule and generated tasks', cells: dependencies, manualSources: [cell], retry: () => window.USL.scheduler.openScheduleDialog(ui, model.getCell(cell.id)), deferredValue: false }, () => true) === false) throw new Error('Schedule and task updates deferred while an editor is working on a related object. Your schedule entries remain in this editor.'); // CHANGE: allow this editor's source hold, but reject before any source/task dependency can be partially applied.
             return runTrellisHistoryTransaction({ category: "Garden scheduling", action: "saveSchedule", origin: "Garden_Scheduler_Dialog", title: "Save schedule and generated tasks", affectedCellIds: [cell && cell.id].filter(Boolean), tags: ["Tasks"] }, function () {
                 model.beginUpdate();
                 const creationEdit = model.currentEdit, creationStart = creationEdit?.changes?.length || 0; // CHANGE: failed target/task creation is reversed before publication to Undo history.
@@ -17896,6 +17920,44 @@ function createScheduler(ui, referenceScope = null) { // NEW
         normalizeCompanionLayoutTemplate
     };
 
+    /** Recompile from saved source attributes, shared by reference reconciliation and explicit automation retries. */ // NEW
+    async function compileSavedPlanting(cell, before) { // NEW
+        const model = graph.getModel(), garden = findGardenModuleAncestor(model, cell), plantId = Number(before.plant_id); // NEW
+        const plant = await resolveEffectivePlant(plantId, before.variety_id || null); if (!plant) throw new Error('The selected planting crop is unavailable.'); // NEW
+        const stage = await resolveGrowthStageForPlanCrop(plantId, before.growth_stage_key || DEFAULT_GROWTH_STAGE_KEY); if (!stage.ok) throw new Error(stage.reason); // NEW
+        const startISO = before.sow_date || before.lifespan_start, year = Number(before.season_start_year || String(startISO).slice(0, 4)); // NEW
+        if (!startISO || !Number.isInteger(year)) throw new Error('The saved schedule start is missing.'); // NEW
+        const bed = resolveScheduleBedContext(cell), context = await buildScheduleContextFromForm({ // NEW
+            plantId, varietyId: before.variety_id || null, cityId: before.city_id || garden?.getAttribute('city_id'), cityName: before.city_name || garden?.getAttribute('city_name'), // NEW
+            methodCategoryId: before.method_category_id, methodId: before.method_id, startISO, seasonStartYear: year, seasonEndISO: before.lifespan_end || '', // NEW
+            growthStage: stage.stage, harvestWindowDays: plant.harvest_window_days, minYieldMultiplier: 0, // NEW
+            transplantDaysOverrideEnabled: before.days_transplant != null && before.days_transplant !== '', transplantDaysOverrideValue: before.days_transplant, bedProfile: bed.profile, bedProfileSource: bed.source // NEW
+        }, plant, { climateModelModuleCell: garden, bedProfile: bed.profile, bedProfileSource: bed.source }); // NEW
+        requireNoBlockingScheduleQualityDiagnostics(context.inputs); // NEW
+        const result = computeScheduleResult(context.inputs); // NEW
+        if (result.kind !== 'perennial' && !result.schedule?.length) throw new Error('The references cannot produce a feasible schedule for this planting.'); // NEW
+        const template = (await resolveTaskTemplate({ cell, plantId, varietyId: before.variety_id || null, methodId: context.inputs.methodId })).template; // NEW
+        const tasks = await buildTasksForPlan({ method: context.inputs.methodId, plant: context.plant, schedule: result.schedule, timelines: result.timelines, taskTemplate: template, plantId, varietyId: before.variety_id || null, varietyName: before.variety_name || '', methodCategoryId: context.inputs.methodCategoryId, methodId: context.inputs.methodId }); // NEW
+        const patch = buildScheduleAttributePatch(context.inputs, result, { taskTemplateJson: template ? JSON.stringify(template) : '', transplantDaysOverrideEnabled: before.days_transplant != null && before.days_transplant !== '', effectiveTransplantDays: before.days_transplant }); // NEW
+        return { tasks, patch }; // NEW
+    } // NEW
+
+    /** Retry intentionally recompiles; a deferred task array is never retained for replay. */ // NEW
+    async function retryGeneratedTasks(cell) { // NEW
+        if (!cell) throw new Error('The source planting no longer exists.'); // NEW
+        const model = graph.getModel(); // CHANGE: the public scheduler facade selects this planting's pinned reference context.
+        const fingerprint = () => { // CHANGE: include the current bed/garden inputs and geometry used by asynchronous compilation.
+            const ancestors = new Set(); for (let current = cell; current; current = model.getParent(current)) ancestors.add(current); // NEW
+            return Object.values(model.cells || {}).filter(item => ancestors.has(item) || String(item.getAttribute?.('linkedTo') || '').split(',').map(id => id.trim()).includes(String(cell.id))).map(item => [item.id, item.value?.outerHTML || item.value, model.getParent(item)?.id, model.getGeometry(item)]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))); // NEW
+        }; // NEW
+        const original = JSON.stringify(fingerprint()), author = window.Trellis?.users?.getCurrentUser?.()?.id; // NEW
+        const before = Object.fromEntries(Array.from(cell.value?.attributes || []).map(attr => [attr.name, attr.value])); // NEW
+        const { tasks } = await compileSavedPlanting(cell, before); // NEW
+        if (model.getCell(cell.id) !== cell || JSON.stringify(fingerprint()) !== original || author !== window.Trellis?.users?.getCurrentUser?.()?.id) throw new Error('The source, tasks or user changed during recalculation. Retry again.'); // NEW
+        referenceScope?.guard(); // NEW
+        return window.USL.tasks.applySchedulerTaskReplacement({ mode: 'sync', targetGroupId: cell.id, tasks }, { focusCreated: false }); // NEW: the normal generated-task preflight runs again immediately before mutation.
+    } // NEW
+
     /** Prepare an existing planting with the same scheduler and task compiler used by Save. // NEW
      * Keep its occupied rectangle fixed: a reference update cannot move neighboring plantings. */ // NEW
     async function prepareReferenceRecalculation(cell) { // NEW
@@ -17906,23 +17968,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const taskFingerprint = () => C.canonical(Object.values(model.cells || {}).filter(item => String(item.getAttribute?.('linkedTo') || '').split(',').map(id => id.trim()).includes(String(cell.id))).map(item => [item.id, Array.from(item.value?.attributes || []).map(attr => [attr.name, attr.value])]).sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'en'))); // CHANGE
         const originalTasks = taskFingerprint(); // CHANGE: capture linked work before asynchronous preparation begins.
         if (!rectangle) throw new Error('The planting geometry is unavailable.'); // NEW
-        const parent = model.getParent(cell), garden = findGardenModuleAncestor(model, cell), plantId = Number(before.plant_id); // NEW
-        const plant = await resolveEffectivePlant(plantId, before.variety_id || null); if (!plant) throw new Error('The selected planting crop is unavailable.'); // NEW
-        const stage = await resolveGrowthStageForPlanCrop(plantId, before.growth_stage_key || DEFAULT_GROWTH_STAGE_KEY); if (!stage.ok) throw new Error(stage.reason); // NEW
-        const startISO = before.sow_date || before.lifespan_start, year = Number(before.season_start_year || String(startISO).slice(0, 4)); // NEW
-        if (!startISO || !Number.isInteger(year)) throw new Error('The saved schedule start is missing.'); // NEW
-        const bed = resolveScheduleBedContext(cell), context = await buildScheduleContextFromForm({ // NEW
-            plantId, varietyId: before.variety_id || null, cityId: before.city_id || garden?.getAttribute('city_id'), cityName: before.city_name || garden?.getAttribute('city_name'), // NEW
-            methodCategoryId: before.method_category_id, methodId: before.method_id, startISO, seasonStartYear: year, seasonEndISO: before.lifespan_end || '', // NEW
-            growthStage: stage.stage, harvestWindowDays: plant.harvest_window_days, minYieldMultiplier: 0, // NEW
-            transplantDaysOverrideEnabled: before.days_transplant != null && before.days_transplant !== '', transplantDaysOverrideValue: before.days_transplant, bedProfile: bed.profile, bedProfileSource: bed.source // CHANGE
-        }, plant, { climateModelModuleCell: garden, bedProfile: bed.profile, bedProfileSource: bed.source }); // NEW
-        requireNoBlockingScheduleQualityDiagnostics(context.inputs); // NEW
-        const result = computeScheduleResult(context.inputs); // NEW
-        if (result.kind !== 'perennial' && !result.schedule?.length) throw new Error('The new references cannot produce a feasible schedule for this planting.'); // NEW
-        const template = (await resolveTaskTemplate({ cell, plantId, varietyId: before.variety_id || null, methodId: context.inputs.methodId })).template; // NEW
-        const tasks = await buildTasksForPlan({ method: context.inputs.methodId, plant: context.plant, schedule: result.schedule, timelines: result.timelines, taskTemplate: template, plantId, varietyId: before.variety_id || null, varietyName: before.variety_name || '', methodCategoryId: context.inputs.methodCategoryId, methodId: context.inputs.methodId }); // NEW
-        const patch = buildScheduleAttributePatch(context.inputs, result, { taskTemplateJson: template ? JSON.stringify(template) : '', transplantDaysOverrideEnabled: before.days_transplant != null && before.days_transplant !== '', effectiveTransplantDays: before.days_transplant }); // NEW
+        const parent = model.getParent(cell), { tasks, patch } = await compileSavedPlanting(cell, before); // CHANGE
         const taskCommand = window.USL?.tasks?.applySchedulerTaskReplacement, tiler = window.USL?.tiler; // NEW
         if (typeof taskCommand !== 'function' || typeof tiler?.retileGroup !== 'function') throw new Error('Task reconciliation or planting layout is unavailable.'); // NEW
         function check() { // NEW
@@ -17978,7 +18024,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
 
     window.USL = window.USL || {};
     const schedulerApi = { // NEW
-        openPlantEditorDialog, prepareReferenceRecalculation, // CHANGE
+        openPlantEditorDialog, prepareReferenceRecalculation, retryGeneratedTasks, // CHANGE
         referenceDefaults: { climatePolicy: { ...DEFAULT_CLIMATE_MODEL_POLICY } }, // NEW
         resolvePlantGrowthContext, invalidateGrowthContexts, // NEW: read-only context service for the planting renderer.
         openScheduleDialog: (ui, cell) => openScheduleDialog(ui, cell),
@@ -18784,7 +18830,7 @@ Draw.loadPlugin(function (ui) { // NEW
         if (entries.size > 12) { const oldest = entries.keys().next().value; entries.get(oldest).referenceContext.release().catch(() => {}); entries.delete(oldest); } return api; // NEW
     } // NEW
     function target(name, args) { // NEW
-        if (['resolvePlantGrowthContext', 'resolveCityForModule'].includes(name)) return args[0]; // NEW
+        if (['resolvePlantGrowthContext', 'resolveCityForModule', 'retryGeneratedTasks'].includes(name)) return args[0]; // CHANGE
         if (['openScheduleDialog', 'openBedScheduleDialog', 'openDerivedScheduleDialog', 'openSetPlantDialog'].includes(name)) return args[1]; // NEW
         const input = args.find(value => value && typeof value === 'object' && (value.referenceCell || value.moduleCell || value.gardenModuleCell || value.sourceCell)); // NEW
         return input?.referenceCell || input?.moduleCell || input?.gardenModuleCell || input?.sourceCell || graph.__trellisReferences?.activeGarden(); // NEW

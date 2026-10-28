@@ -16,18 +16,30 @@ function productionFunction(filename, name, context) { // NEW
 } // NEW
 function fixture() { // NEW
     const listeners = new Map(), replies = [], deletes = [], inputs = new Map(); // NEW
-    let xml = '<graph/>', current, failure = null, fileExists = true, retainDraft = false; // CHANGE
+    let xml = '<graph/>', current, failure = null, failureAction = null, fileExists = true, retainDraft = false; // CHANGE
+    const checkFileExists = productionFunction('src/main/electron.js', 'checkFileExists', { path, fs: { existsSync: () => fileExists } }); // NEW: exercise the production IPC response contract.
     const win = { addEventListener: (type, callback) => inputs.set(type, callback), removeEventListener: type => inputs.delete(type) }; // NEW
     const file = { fileObject: { draftFileName: '/isolated/draft.drawio' }, modified: true, isModified() { return this.modified; }, saveDraft() {}, removeDraft: async () => {} }; current = file; // NEW
     const ui = { getCurrentFile: () => current, getXmlFileData: () => xml, editor: { graph: { isEditing: () => false } }, removeDatabaseItem: (_key, resolve, reject) => failure ? reject(failure) : resolve(), handleFileChange() {} }; // NEW
     const install = productionFunction('drawio/src/main/webapp/js/diagramly/ElectronApp.js', 'installTrellisClosePreparation', { // NEW
         window: win, document: { createElement: () => ({ style: {}, remove() {} }), body: { appendChild() {} } }, // NEW
         electron: { registerMsgListener: (name, callback) => listeners.set(name, callback), sendMessage: (_name, reply) => replies.push(reply) }, // NEW
-        mxUtils: { getXml: node => node }, EditorUi: { enableDrafts: true }, requestSync: async input => { if (failure) throw failure; if (input.action === 'checkFileExists') return fileExists; deletes.push(input.file); if (!retainDraft) fileExists = false; } // CHANGE
+        mxUtils: { getXml: node => node }, EditorUi: { enableDrafts: true }, requestSync: async input => { if (failure && (!failureAction || failureAction === input.action)) throw failure; if (input.action === 'checkFileExists') return checkFileExists(input.pathParts); deletes.push(input.file); if (!retainDraft) fileExists = false; } // CHANGE
     }); install(ui); // NEW
-    return { file, win, inputs, deletes, ui, replies, setXml: value => { xml = value; }, setFile: value => { current = value; }, fail: value => { failure = value; }, retainDraft: () => { retainDraft = true; }, // CHANGE
+    return { file, win, inputs, deletes, ui, replies, setXml: value => { xml = value; }, setFile: value => { current = value; }, fail: (value, action = null) => { failure = value; failureAction = action; }, retainDraft: () => { retainDraft = true; }, // CHANGE
         async request(phase, snapshotId) { await listeners.get('isModified')({ phase, snapshotId, uniqueId: String(replies.length) }); return replies.at(-1); } }; // NEW
 } // NEW
+test('close and legacy logout queries wait for private checkpoints and report failures', async () => { // NEW
+    for (const phase of ['prepare', undefined]) { // NEW
+        const f = fixture(); let complete, replied = false; f.file.__trellisCheckpoint = () => new Promise(resolve => { complete = resolve; }); // NEW
+        const pending = f.request(phase).then(reply => { replied = true; return reply; }); await Promise.resolve(); await Promise.resolve(); assert.equal(replied, false); complete(); assert.equal((await pending).error, undefined); // NEW
+        f.file.__trellisCheckpoint = async () => { throw new Error('Checkpoint disk full'); }; assert.equal((await f.request(phase)).error, 'Checkpoint disk full'); assert.equal(f.file.modified, true); // NEW
+    } // NEW
+}); // NEW
+test('identity locking stops before discarding or locking when checkpoint preservation fails', async () => { // NEW
+    let locked = false; const lock = productionFunction('src/main/electron.js', 'lockIdentitySafely', { windowsRegistry: [{ isDestroyed: () => false }], closeRequestSequence: 0, ipcMain: {}, validateSender() {}, requestWindowReply: async () => ({ error: 'Checkpoint disk full' }), getIdentityService: async () => ({ lock: async () => { locked = true; } }) }); // NEW
+    await assert.rejects(lock(), /Cannot preserve.*Checkpoint disk full/); assert.equal(locked, false); // NEW
+}); // NEW
 /** Run the desktop save methods themselves so native cancellation cannot leave navigation pending. */ // NEW
 function desktopSaveFixture(editable = true) { // NEW
     const source = fs.readFileSync(path.join(root, 'drawio/src/main/webapp/js/diagramly/ElectronApp.js'), 'utf8'), methods = new Map(); // NEW
@@ -98,7 +110,8 @@ test('approved snapshot stays local, seals input, and defers draft removal until
     assert.equal(Object.hasOwn(approval, 'xml'), false); assert.equal(f.deletes.length, 0); // NEW
     assert.equal((await f.request('seal', approval.snapshotId)).snapshotValid, true); // NEW
     assert.equal(f.win.__trellisClosing, true); assert.equal(f.inputs.size, 5); assert.notEqual(f.file.saveDraft, originalWriter); // NEW
-    await f.request('discard', approval.snapshotId); assert.deepEqual(f.deletes, ['/isolated/draft.drawio']); // NEW
+    const reply = await f.request('discard', approval.snapshotId); assert.deepEqual(f.deletes, ['/isolated/draft.drawio']); // CHANGE
+    assert.equal(reply.snapshotValid, true); assert.equal(reply.error, undefined); assert.equal(reply.draftCleanupWarning, undefined); // NEW
 }); // NEW
 test('Cancel restores input and the draft writer without deleting a draft', async () => { // NEW
     const f = fixture(), writer = f.file.saveDraft, approval = await f.request('prepare'); // NEW
@@ -112,19 +125,66 @@ test('edits, replacement documents, and saves invalidate an approved snapshot', 
         await f.request('discard', approval.snapshotId); assert.equal(f.deletes.length, 0); // NEW
     } // NEW
 }); // NEW
-test('discard failure is returned with correlation rather than claiming success', async () => { // NEW
-    const f = fixture(), approval = await f.request('prepare'); f.fail(new Error('Disk unavailable')); // NEW
-    const reply = await f.request('discard', approval.snapshotId); assert.equal(reply.error, 'Disk unavailable'); assert.ok(reply.uniqueId); // NEW
-}); // NEW
-test('a deletion safety guard that retains the draft is reported as failed removal', async () => { // NEW
+test('deletion and existence-check failures return correlated cleanup warnings', async () => { // CHANGE
+    for (const action of ['deleteFile', 'checkFileExists']) { // NEW
+        const f = fixture(), approval = await f.request('prepare'); f.fail(new Error('Disk unavailable'), action); // CHANGE
+        const reply = await f.request('discard', approval.snapshotId); // CHANGE
+        assert.equal(reply.error, undefined); assert.equal(reply.draftCleanupWarning, 'Disk unavailable'); assert.equal(reply.snapshotValid, true); assert.ok(reply.uniqueId); // NEW
+    } // NEW
+}); // CHANGE
+test('a deletion safety guard that retains the draft returns a cleanup warning', async () => { // CHANGE
     const f = fixture(), approval = await f.request('prepare'); f.retainDraft(); // NEW
-    assert.match((await f.request('discard', approval.snapshotId)).error, /filesystem safety check/); assert.equal(f.file.modified, true); // NEW
+    const reply = await f.request('discard', approval.snapshotId); // NEW
+    assert.equal(reply.error, undefined); assert.match(reply.draftCleanupWarning, /filesystem safety check/); assert.equal(f.file.modified, true); // CHANGE
 }); // NEW
 test('IndexedDB draft removal waits for transaction completion and preserves IDs on failure', async () => { // NEW
     const f = fixture(); f.file.fileObject = null; f.file.draftId = 'sample'; // NEW
     const approval = await f.request('prepare'); f.fail(new Error('Transaction aborted')); // NEW
-    assert.match((await f.request('discard', approval.snapshotId)).error, /aborted/); assert.equal(f.file.draftId, 'sample'); // NEW
-    f.fail(null); await f.request('discard', approval.snapshotId); assert.equal(f.file.draftId, null); assert.equal(f.file.usedDraftId, 'sample'); // NEW
+    const reply = await f.request('discard', approval.snapshotId); // NEW
+    assert.equal(reply.error, undefined); assert.match(reply.draftCleanupWarning, /aborted/); assert.equal(f.file.draftId, 'sample'); assert.equal(f.file.usedDraftId, undefined); // CHANGE
+    f.fail(null); let completeTransaction, completed = false; // CHANGE
+    f.ui.removeDatabaseItem = (_key, resolve) => { completeTransaction = resolve; }; // NEW
+    const pending = f.request('discard', approval.snapshotId).then(result => { completed = true; return result; }); // NEW
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(completed, false); assert.equal(f.file.draftId, 'sample'); // NEW
+    completeTransaction(); const success = await pending; // NEW
+    assert.equal(success.error, undefined); assert.equal(success.draftCleanupWarning, undefined); assert.equal(f.file.draftId, null); assert.equal(f.file.usedDraftId, 'sample'); // CHANGE
+}); // NEW
+test('reference draft flush failures stay blocking during seal and discard', async () => { // NEW
+    for (const phase of ['seal', 'discard']) { // NEW
+        const f = fixture(), approval = await f.request('prepare'); // NEW
+        f.ui.editor.graph.__trellisReferences = { flushDrafts: async () => { throw new Error('Reference drafts unavailable'); } }; // NEW
+        const reply = await f.request(phase, approval.snapshotId); // NEW
+        assert.equal(reply.error, 'Reference drafts unavailable'); assert.equal(reply.draftCleanupWarning, undefined); assert.equal(f.deletes.length, 0); // NEW
+    } // NEW
+}); // NEW
+test('private checkpoint cleanup failure returns a warning without claiming draft removal', async () => { // NEW
+    const f = fixture(), approval = await f.request('prepare'); // NEW
+    f.file.__trellisDiscardCheckpoint = async () => { throw new Error('Checkpoint cleanup unavailable'); }; // NEW
+    const reply = await f.request('discard', approval.snapshotId); // NEW
+    assert.equal(reply.error, undefined); assert.equal(reply.draftCleanupWarning, 'Checkpoint cleanup unavailable'); assert.equal(f.deletes.length, 0); // NEW
+}); // NEW
+test('production close adapter logs cleanup warnings and completes window close and Quit', async () => { // NEW
+    const { createLifecycleCoordinator } = await import('../src/main/trellis-lifecycle.js'); // NEW
+    for (const action of ['close', 'quit']) { // NEW
+        const f = fixture(), events = []; let destroyed = false; f.retainDraft(); // NEW
+        const win = { isDestroyed: () => destroyed }, destroy = async () => { destroyed = true; events.push('destroy'); }; // NEW
+        const context = { closeReply: async (_win, phase, approval) => f.request(phase, approval?.snapshotId), dialog: { showMessageBoxSync: () => 1 }, log: { warn: (...args) => events.push(args.join(' ')) } }; // NEW
+        const discard = productionFunction('src/main/electron.js', 'discardWindowDraft', context); // NEW
+        const coordinator = createLifecycleCoordinator({ getWindows: () => [win], // NEW
+            prepare: productionFunction('src/main/electron.js', 'prepareWindowClose', context), validate: productionFunction('src/main/electron.js', 'validateWindowClose', context), // NEW
+            release: () => f.request('cancel'), discard, commit: async (_win, approval) => { await discard(win, approval); await destroy(); }, // NEW
+            destroy, stop: async () => { events.push('stop'); }, exit: async () => { events.push('exit'); }, onError: error => assert.fail(error.stack) }); // NEW
+        assert.equal(await (action === 'close' ? coordinator.requestClose(win) : coordinator.requestQuit()), true); // NEW
+        assert.equal(destroyed, true); assert.match(events[0], /draft may remain.*filesystem safety check/i); // NEW
+        assert.deepEqual(events.slice(1), action === 'close' ? ['destroy'] : ['stop', 'destroy', 'exit']); // NEW
+    } // NEW
+}); // NEW
+test('production close adapter still rejects blocking errors, invalid snapshots and unanswered requests', async () => { // NEW
+    for (const response of [{ error: 'Reference drafts unavailable', snapshotValid: true, draftCleanupWarning: 'Cleanup unavailable' }, { snapshotValid: false, draftCleanupWarning: 'Cleanup unavailable' }, new Error('Renderer unavailable')]) { // NEW
+        const warnings = [], discard = productionFunction('src/main/electron.js', 'discardWindowDraft', { // NEW
+            closeReply: async () => { if (response instanceof Error) throw response; return response; }, log: { warn: (...args) => warnings.push(args) } }); // NEW
+        await assert.rejects(discard({ isDestroyed: () => false }, {}), /Reference drafts unavailable|document changed|Renderer unavailable/); assert.equal(warnings.length, 0); // NEW
+    } // NEW
 }); // NEW
 test('clean and empty startup documents complete without draft deletion', async () => { // NEW
     for (const empty of [false, true]) { // NEW

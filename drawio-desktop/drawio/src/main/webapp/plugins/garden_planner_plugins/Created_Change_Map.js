@@ -11,7 +11,7 @@
  *
  * Persistent attributes on each cell:
  * - createdAt      : epoch ms (write-once on insert if missing)
- * - lastEditedAt   : epoch ms (only for user-selected edits during a short input window)
+ * - lastEditedAt   : epoch ms (actual content edits; shared with object attribution) // CHANGE
  * - origStyle      : persisted original style string (write-once on first map apply; removed on restore)
  */
 
@@ -23,6 +23,8 @@ Draw.loadPlugin(function (ui) {
   graph.__ccMapInstalled = true;
 
   const model = graph.getModel();
+  const editContext = window.TrellisEditContext?.install(ui); // NEW: classify individual changes after the existing graph/install guards.
+  window.TrellisObjectAttribution?.install(ui); // NEW: standalone diagrams expose the same read-only facts as shared diagrams.
 
   // -------------------- Config --------------------
 
@@ -88,7 +90,6 @@ Draw.loadPlugin(function (ui) {
 
 
   // Input window for "user action" gating
-  const USER_ACTION_WINDOW_MS = 1000;
 
   // List size for click-to-navigate
   const NAV_LIST_MAX = 200;
@@ -172,10 +173,6 @@ Draw.loadPlugin(function (ui) {
   }
 
 
-  // User action gating state
-  graph.__ccUserActionActive = false;
-  graph.__ccUserActionUntil = 0;
-  graph.__ccUserActionSelIds = new Set();
 
   // -------------------- Small utilities --------------------
 
@@ -209,7 +206,7 @@ Draw.loadPlugin(function (ui) {
     const raw = getAttrStr(cell, key);
     if (raw == null) return null;
     const n = Number(raw);
-    return Number.isFinite(n) ? n : null;
+    return Number.isFinite(n) && n > 0 && Number.isFinite(new Date(n).getTime()) ? n : null; // CHANGE: invalid timestamps remain unknown in both the map and badges.
   }
 
   function ensureXmlValue(cell) {
@@ -606,6 +603,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   function restoreActivePageXml(xml) {
+    if (graph.__trellisLocalView && !graph.__trellisLocalView.isApplying()) return graph.__trellisLocalView.apply(() => restoreActivePageXml(xml)); // NEW: local history restores retain personal folds and replace authored geometry.
     if (typeof graph.__trellisHistoryTestRestore === 'function') {
       graph.__trellisHistoryTestRestore(xml);
       return;
@@ -705,7 +703,10 @@ Draw.loadPlugin(function (ui) {
       if (!bridge || typeof bridge.request !== 'function') { store.warning = 'History storage is unavailable in this environment.'; return store; }
       const token = store.token;
       try {
-        const result = await request('initialize', { xml: serializeActivePageXml(), metadata: actorMetadata({}) }); // CHANGE
+        const sharing = graph.__trellisSharing; // NEW
+        const xml = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // NEW
+        if (!xml) throw new Error('The accepted shared project is unavailable.'); // NEW
+        const result = await request('initialize', { xml, metadata: actorMetadata({}) }); // CHANGE
         if (token !== store.token) return store;
         store.generation = result.generation; store.ready = true; store.warning = '';
         graph.__ccHistoryStorage = result.statistics; await refreshStatistics(); refreshStorageDisplay(); // CHANGE
@@ -811,7 +812,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function recordModelChange(edit, capturedMetadata) {
-      if (graph.__ccMapInternalChange || graph.__ccHistoryRestoring) return;
+      if (graph.__ccMapInternalChange || graph.__ccHistoryRestoring || graph.__trellisLocalViewChanging || graph.__trellisSharingApplying) return; // CHANGE
       const active = capturedMetadata || activeTransactionMetadata();
       mergePending(active || { category: 'Diagram', action: 'change', origin: 'drawio', title: inferTitleFromEdit(edit) }, edit);
     }
@@ -858,7 +859,9 @@ Draw.loadPlugin(function (ui) {
       recording = true;
       const recordGeneration = generation; // NEW
       try {
-        const xml = serializeActivePageXml();
+        const sharing = graph.__trellisSharing; // NEW
+        const xml = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // CHANGE: shared history never records a mixed stale/current view.
+        if (!xml) return null; // NEW: never substitute a stale view after an accepted-state read failure.
         const hash = hashString(xml);
         if (!force && latestHash === hash && !meta.checkpoint) return latestEntry; // CHANGE
         const diagramId = getDiagramHistoryId();
@@ -940,7 +943,9 @@ Draw.loadPlugin(function (ui) {
         try {
           const snapshot = await store.loadSnapshot(latest.snapshot_id);
           latestXml = decompressSnapshotXml(snapshot);
-          latestHash = hashString(serializeActivePageXml()); // NEW
+          const sharing = graph.__trellisSharing; // NEW
+          const current = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // CHANGE
+          latestHash = current ? hashString(current) : null;
         } catch (e) { latestXml = null; }
         await refreshHistoryRevisions();
         return;
@@ -964,7 +969,9 @@ Draw.loadPlugin(function (ui) {
       settleTimer = null;
       while (recording) await new Promise(resolve => setTimeout(resolve, 10));
       await recordStableRevision(false);
-      return latestHash === hashString(serializeActivePageXml()) ? latestEntry : null;
+      const sharing = graph.__trellisSharing; // NEW
+      const xml = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // NEW
+      return xml && latestHash === hashString(xml) ? latestEntry : null; // CHANGE
     }
     async function captureBeforeRestore() { // NEW
       const currentGeneration = generation;
@@ -985,6 +992,19 @@ Draw.loadPlugin(function (ui) {
       if (settleTimer) clearTimeout(settleTimer);
       settleTimer = null;
       pending = null;
+      const sharing = graph.__trellisSharing; // NEW
+      if (sharing?.isExplicitRefresh?.()) { // NEW: displayed objects may omit already accepted shared history.
+        const currentGeneration = generation;
+        latestHash = null; latestXml = null; latestRevisionId = null; latestEntry = null;
+        sharing.historyXml().then(async xml => {
+          if (!xml || generation !== currentGeneration) return;
+          const revision = await historyStore.adoptBaseline(xml);
+          if (generation !== currentGeneration) return;
+          latestXml = xml; latestHash = hashString(xml); latestRevisionId = revision?.id || null;
+          if (revision) { graph.__ccAdoptedHistoryId = revision.id; graph.__ccAdoptedHistoryXml = xml; }
+        }).catch(error => { if (generation === currentGeneration) { graph.__ccHistoryWarning = error.message; updateHistoryUI(); } });
+        return false;
+      }
       latestXml = serializeActivePageXml();
       latestHash = hashString(latestXml);
       const capturedXml = latestXml, currentGeneration = generation; // NEW
@@ -1046,65 +1066,41 @@ Draw.loadPlugin(function (ui) {
 
   // -------------------- Timestamp stamping --------------------
 
+  function stampTimeIntoEdit(cell, key, timestamp, edit) { // NEW: timestamps undo together with the content and actor stamps.
+    const before = cell.value && cell.value.cloneNode ? cell.value.cloneNode(true) : cell.value;
+    const node = cell.value && cell.value.cloneNode ? cell.value.cloneNode(true) : mxUtils.createXmlDocument().createElement('object');
+    if (!cell.value?.cloneNode && cell.value != null) node.setAttribute('label', String(cell.value));
+    node.setAttribute(key, String(timestamp)); cell.value = node;
+    if (edit && Array.isArray(edit.changes)) {
+      const change = { cell, previous: before, __trellisUsersActorStamp: true, execute() { const next = this.cell.value; this.cell.value = this.previous; this.previous = next; } };
+      if (typeof edit.add === 'function') edit.add(change); else edit.changes.push(change);
+    }
+  }
+
   function stampCreatedIfMissing(cell, tNow, edit) {
-    if (!shouldStyleCell(cell)) return;
-    if (getAttrMs(cell, ATTR_CREATED) == null) { setAttrMs(cell, ATTR_CREATED, tNow); stampActor(cell, 'created', edit); }
+    if (!shouldStyleCell(cell) || editContext?.recreated.has(cell)) return; // CHANGE
+    if (getAttrMs(cell, ATTR_CREATED) == null) { stampTimeIntoEdit(cell, ATTR_CREATED, tNow, edit); stampActor(cell, 'created', edit); } // CHANGE
   }
 
   function stampEdited(cell, tNow, edit) {
     if (!shouldStyleCell(cell)) return;
-    setAttrMs(cell, ATTR_EDITED, tNow);
+    stampTimeIntoEdit(cell, ATTR_EDITED, tNow, edit); // CHANGE
     stampActor(cell, 'edited', edit);
   }
 
-  function snapshotSelectionIds() {
-    const sel = (graph.getSelectionCells && graph.getSelectionCells()) || [];
-    const ids = new Set();
-    for (let i = 0; i < sel.length; i++) {
-      const c = sel[i];
-      if (c && c.id) ids.add(c.id);
-    }
-    return ids;
-  }
-
-  function beginUserActionWindow() {
-    graph.__ccUserActionActive = true;
-    graph.__ccUserActionUntil = nowMs() + USER_ACTION_WINDOW_MS;
-
-    // Snapshot after selection has had a chance to update from the click.               
-    setTimeout(function () {
-      graph.__ccUserActionSelIds = snapshotSelectionIds();
-    }, 0);
-  }
-
-
-  function endUserActionWindowIfExpired() {
-    if (!graph.__ccUserActionActive) return;
-    if (nowMs() > graph.__ccUserActionUntil) {
-      graph.__ccUserActionActive = false;
-      graph.__ccUserActionSelIds = new Set();
-    }
-  }
-
-  function stampEditedFromSelectedIntersection(edit) {
-    endUserActionWindowIfExpired();
-    if (!graph.__ccUserActionActive) return false;
-
-    const selIds = graph.__ccUserActionSelIds;
-    if (!selIds || selIds.size === 0) return false;
-
+  function stampEditedContent(edit) { // CHANGE: actual content changes count even when no object is selected.
     const changes = (edit && edit.changes) || [];
+    const inserted = new Set(changes.filter(change => change.constructor?.name === 'mxChildChange' && change.parent && !change.previous).map(change => change.child || change.cell)); // NEW
     const touched = new Map();
     const tNow = nowMs();
     let did = false;
 
     for (let i = 0; i < changes.length; i++) {
       const ch = changes[i];
-      if (!isDirectEditChange(ch)) continue;
-
-      const cell = ch.cell || ch.child || null;
+      if (ch.__trellisUsersActorStamp || (editContext ? !editContext.isContentChange(ch) : !isDirectEditChange(ch))) continue; // CHANGE
+      const raw = ch.cell || ch.child || null, cell = editContext?.logicalCell(raw) || raw; // CHANGE
       if (!cell || !cell.id) continue;
-      if (!selIds.has(cell.id)) continue;                                                 // (selection intersection)
+      if (inserted.has(cell)) continue; // NEW: creation is the initial last-edit fallback, not a separate content edit.
       if (!shouldStyleCell(cell)) continue;
       if (shouldIgnoreBecauseInTilerGroup(cell)) continue;
 
@@ -1116,7 +1112,6 @@ Draw.loadPlugin(function (ui) {
     model.beginUpdate();
     try {
       for (const cell of touched.values()) {
-        stampCreatedIfMissing(cell, tNow, edit);
         stampEdited(cell, tNow, edit);
         did = true;
       }
@@ -1128,6 +1123,7 @@ Draw.loadPlugin(function (ui) {
   }
 
   function stampCreatedOnInsert(edit) {
+    if (edit.undone || edit.redone) return false; // NEW: reattachment during Undo/Redo retains original facts.
     const changes = (edit && edit.changes) || [];
     const tNow = nowMs();
     let did = false;
@@ -1136,6 +1132,7 @@ Draw.loadPlugin(function (ui) {
     try {
       for (let i = 0; i < changes.length; i++) {
         const ch = changes[i];
+        if (ch.__trellisUsersActorStamp || (editContext && ['derived-presentation', 'attribution'].includes(editContext.kindOf(ch)))) continue; // NEW
         const name = ch && ch.constructor && ch.constructor.name;
         if (name !== 'mxChildChange') continue;
 
@@ -1149,8 +1146,8 @@ Draw.loadPlugin(function (ui) {
         const isAttach = (ch.parent != null);
         if (!isAttach) continue;
 
-        if (getAttrMs(child, ATTR_CREATED) == null) {
-          setAttrMs(child, ATTR_CREATED, tNow);
+        if (!editContext?.recreated.has(child) && getAttrMs(child, ATTR_CREATED) == null) { // CHANGE
+          stampTimeIntoEdit(child, ATTR_CREATED, tNow, edit); // CHANGE
           stampActor(child, 'created', edit);
           did = true;
         }
@@ -1162,14 +1159,6 @@ Draw.loadPlugin(function (ui) {
     return did;
   }
 
-  // Input hooks (keep tight to reduce false positives)
-  if (graph.container) {
-    graph.container.addEventListener('mousedown', beginUserActionWindow, true);
-    graph.container.addEventListener('mouseup', beginUserActionWindow, true);
-    graph.container.addEventListener('touchstart', beginUserActionWindow, true);
-    graph.container.addEventListener('touchend', beginUserActionWindow, true);
-  }
-
   window.addEventListener('resize', function () {
     if (!panel) return;
     if (!isPanelVisible()) return;                                         // NEW (avoid 0x0 rect when hidden)
@@ -1177,7 +1166,6 @@ Draw.loadPlugin(function (ui) {
   }, true);
 
 
-  document.addEventListener('keydown', beginUserActionWindow, true);
 
   // -------------------- origStyle persist/restore --------------------
 
@@ -1309,7 +1297,8 @@ Draw.loadPlugin(function (ui) {
     const key = actorKey(mode);
     const fallbackKey = mode === MODE_CHANGE ? ATTR_CREATED_BY : '';
     return (cells || []).filter(function (cell) {
-      return getAttrStr(cell, key) === userId || (!!fallbackKey && getAttrStr(cell, fallbackKey) === userId);
+      const actor = getAttrStr(cell, key) || (fallbackKey && getAttrStr(cell, fallbackKey)); // CHANGE: creation is a fallback only when last-editor attribution is absent.
+      return actor === userId; // NEW
     });
   }
 
@@ -2539,7 +2528,7 @@ Draw.loadPlugin(function (ui) {
         if (shouldIgnoreBecauseInTilerGroup(c)) continue;
 
         ensureXmlValue(c);
-        if (getAttrMs(c, ATTR_CREATED) == null) {
+        if (!editContext?.recreated.has(c) && getAttrMs(c, ATTR_CREATED) == null) { // CHANGE
           setAttrMs(c, ATTR_CREATED, tNow);
           stampActor(c, 'created');
           did = true;
@@ -2575,16 +2564,17 @@ Draw.loadPlugin(function (ui) {
 
   model.addListener(mxEvent.CHANGE, function (sender, evt) {
     if (graph.__trellisSharingApplying) return; // NEW: incoming saved diagrams retain original actor attribution.
-    if (graph.__ccMapInternalChange) return;
+    if (graph.__ccMapInternalChange || graph.__trellisLocalViewChanging || graph.__ccHistoryRestoring || ui.openingFile || editContext?.current()?.kind === 'attribution') return; // CHANGE
     if (graph.__trellisUsersRejecting || graph.__trellisUsersInternalChange) return;
 
     const edit = evt && evt.getProperty && evt.getProperty('edit');
     if (!edit || !edit.changes) return;
     if (edit.__trellisUsersRejected) return;
     const capturedMetadata = historyRecorder.captureActiveTransactionMetadata();
-    const createdStamped = stampCreatedOnInsert(edit);
-    const editedStamped = stampEditedFromSelectedIntersection(edit);
+    const createdStamped = stampCreatedOnInsert(edit); // CHANGE: replay is excluded inside the shared insertion stamper.
+    const editedStamped = !edit.undone && !edit.redone && stampEditedContent(edit); // CHANGE: Undo/Redo restores stored attribution rather than creating a new edit time.
     if (createdStamped || editedStamped) scheduleRefreshIfEnabled();
+    graph.__trellisObjectAttribution?.render(); // NEW: publish facts after both timestamps and actor IDs have settled.
 
     Promise.resolve().then(function () {
       if (graph.__ccMapInternalChange) return;
@@ -2661,7 +2651,7 @@ Draw.loadPlugin(function (ui) {
           if (shouldIgnoreBecauseInTilerGroup(c)) continue;
 
           ensureXmlValue(c);
-          if (getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); }
+          if (!editContext?.recreated.has(c) && getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); } // CHANGE
         }
       }
 
@@ -2703,7 +2693,7 @@ Draw.loadPlugin(function (ui) {
           if (shouldIgnoreBecauseInTilerGroup(c)) continue;
 
           ensureXmlValue(c);
-          if (getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); }
+          if (!editContext?.recreated.has(c) && getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); } // CHANGE
         }
       }
 

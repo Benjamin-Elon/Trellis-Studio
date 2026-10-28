@@ -86,6 +86,7 @@
         ui.pickFile = () => showProjects(ui, { focus: 'open' }); // CHANGE: ordinary Open always reaches the library, including an empty library.
         const home = ui.actions.addAction('trellisHome', () => ui.showSplash(true)); home.label = 'Trellis Home';
         const projects = ui.actions.addAction('trellisGardenProjects', () => showProjects(ui)); projects.label = 'Garden Projects'; // NEW
+        if (root.trellisGardenJoin) { const join = ui.actions.addAction('trellisJoinGardenProject', () => showProjects(ui, { focus: 'join' })); join.label = 'Join a garden project'; } // NEW
         const add = ui.actions.addAction('trellisAddToGardenLibrary', () => importCurrent(ui).catch(error => ui.handleError(error))); add.label = 'Add current project to Garden Projects'; // CHANGE
         if (ui.menus?.get('file')) {
             const menu = ui.menus.get('file'), original = menu.funct;
@@ -98,12 +99,16 @@
             if (changed && !value.session) { state.mode = 'idle'; state.reminder = null; } // CHANGE
             if (projectLoginKey(state.session) !== projectLoginKey(value.session)) { activateProjectSnapshot(state, value.session); // CHANGE
                  state.confirmation?.invalidate(); state.mode = 'idle'; state.showIdentity = false; state.referenceKey = null; drawProjects(ui, state); } // CHANGE
+            const previousIdentity = state.session?.identityId; // NEW
             state.session = value.session; state.sessionVersion = (state.sessionVersion || 0) + 1; updateSplashStatuses(state); // CHANGE
+            if (previousIdentity && previousIdentity !== value.session?.identityId) state.resetJoinGuide?.(); // NEW
+            state.updateJoinIdentity?.(); refreshPendingJoins(ui, state); // NEW
             updateProjectSections(state); // NEW: identity changes reset temporary search folds before asynchronous refreshes.
             if (changed) state.libraryIdentityId = value.session?.identityId; // NEW
             if (changed && state.mode === 'idle' && state.panel?.isConnected) await renderIdentity(ui, state).catch(error => { state.projectsStatus.textContent = error.message; }); // CHANGE
             if (changed && state.projectsRoot?.isConnected) refreshProjects(ui, state, { reopen: true }); // CHANGE
         });
+        root.trellisShare?.onStatus?.(() => { if (state.projectsRoot?.isConnected || [...state.splashStatuses].some(node => node.isConnected)) refreshPendingJoins(ui, state); }); // NEW: transport progress updates invitations without refreshing project snapshots.
         root.trellisIdentity.onLocked(() => {
             state.confirmation?.invalidate(); // CHANGE: retire the prompt before closing its underlying library.
             const wasProjects = !!state.projectsRoot?.isConnected; // NEW
@@ -366,9 +371,130 @@
         if (node) { node.setAttribute('data-trellis-quickstart', request.target); node.scrollIntoView?.({ block: 'nearest' }); }
     }
 
+    /** Keep invitation progress independent of project filters and preserve form drafts during transport updates. */ // NEW
+    async function refreshPendingJoins(ui, state) { // NEW
+        if (!root.trellisGardenJoin) return; // NEW
+        const key = projectLoginKey(state.session); // NEW
+        if (state.joinRead?.key === key) return state.joinRead.promise; // NEW
+        if (state.joinOwner !== key) { state.joinOwner = key; state.pendingJoins = []; state.joinDetails?.replaceChildren(); } // NEW
+        if (!state.session) { state.drawPendingJoins?.(); updateSplashStatuses(state); return; } // NEW
+        const work = { key }; state.joinRead = work; // NEW
+        work.promise = (async () => { // NEW
+            try { // NEW
+                const result = await root.trellisGardenJoin.list({ identityId: state.session.identityId, generation: state.session.generation }); // NEW
+                if (key !== projectLoginKey(state.session)) return; // NEW
+                state.pendingJoins = result.requests; state.joinListError = result.errors?.join(' ') || ''; state.drawPendingJoins?.(); updateSplashStatuses(state); // NEW
+                state.updateJoinProgress?.(); // NEW
+            } catch (error) { if (key === projectLoginKey(state.session)) { state.joinListError = error.message; state.drawPendingJoins?.(); } } // NEW
+            finally { if (state.joinRead === work) state.joinRead = null; } // NEW
+        })(); // NEW
+        return work.promise; // NEW
+    } // NEW
+    /** The browser owns the guide; identity fields continue to use the existing account forms. */ // NEW
+    function mountJoinGuide(ui, state, host, options) { // NEW
+        if (!root.trellisGardenJoin) return; // NEW
+        const owner = state.projectsRoot, guide = element('section', null, 'trellis-join-guide'), editor = element('div'), pending = element('section'); // NEW
+        guide.setAttribute('aria-label', 'Join a garden project'); pending.setAttribute('aria-label', 'Pending invitations'); // NEW
+        const heading = element('h3', 'Join a garden project'), message = element('p'), details = element('div'), list = element('div'); // NEW
+        message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite'); state.joinDetails = details; // NEW
+        const label = element('label', 'Paste your invitation email'), text = element('textarea'); text.rows = 6; text.maxLength = 65536; text.setAttribute('aria-label', 'Paste your invitation email'); label.append(text); // NEW
+        text.style.cssText = 'display:block;width:100%;box-sizing:border-box;resize:vertical;'; // NEW
+        const previewHost = element('div'), identityHint = element('p'), name = input('Display name'), sender = input('Sender email (optional)', 'email'); // NEW
+        name.control.maxLength = 160; let preview = null, selected = null, busy = false; // NEW
+        const alive = () => owner.isConnected && state.projectsRoot === owner; // NEW
+        const auth = () => ({ identityId: state.session?.identityId, generation: state.session?.generation }); // NEW
+        function action(title, operation, variant = 'open') { // NEW
+            const control = button(title, async () => { // NEW
+                if (busy) return; busy = true; control.disabled = true; const login = projectLoginKey(state.session); // NEW
+                const valid = () => alive() && login === projectLoginKey(state.session); // NEW
+                try { await operation(valid); } catch (error) { if (valid()) { message.textContent = error.message; message.setAttribute('role', 'alert'); } } // NEW
+                finally { busy = false; if (control.isConnected) control.disabled = false; state.updateJoinIdentity?.(); } // NEW
+            }, variant); return control; // NEW
+        } // NEW
+        const submit = action('Join project', async valid => { // NEW
+            if (!state.session || !preview) return; // NEW
+            const request = await root.trellisGardenJoin.start({ ...auth(), text: text.value, displayName: name.control.value, senderEmail: sender.control.value }); // NEW
+            if (!valid()) return; text.value = ''; preview = null; previewHost.replaceChildren(); selected = request; drawRequest(); await refreshPendingJoins(ui, state); // NEW
+        }, 'add'); // NEW
+        state.updateJoinIdentity = () => { // NEW
+            if (!alive()) return; // NEW
+            identityHint.textContent = state.session ? 'Join using ' + state.session.username + '. This project will be added to your Garden Projects library.' : 'Log in, create an identity, or connect your existing identity using the account controls above to keep this project in your library.'; // NEW
+            submit.disabled = busy || !preview || !state.session; if (!name.control.value && state.session) name.control.value = state.session.username; // NEW
+        }; // NEW
+        const inspect = action('Continue', async valid => { // NEW
+            const result = await root.trellisGardenJoin.preview({ text: text.value }); if (!valid()) return; preview = result; // NEW
+            previewHost.replaceChildren(element('strong', result.label), element('p', 'Invited email: ' + result.email), element('p', 'Expires: ' + new Date(result.expiresAt).toLocaleString()), element('p', result.deviceSetup ? 'Add this computer to your existing project account.' : 'Join as a new collaborator. No separate project PIN is needed.')); // NEW
+            sender.control.value = result.senderEmail || ''; name.wrap.hidden = result.deviceSetup; previewHost.append(identityHint, name.wrap, sender.wrap, submit); // NEW
+            state.updateJoinIdentity(); if (!state.session) { state.showIdentity = true; state.panel.hidden = false; } // NEW
+        }); // NEW
+        text.addEventListener('input', () => { preview = null; previewHost.replaceChildren(); inspect.disabled = !text.value.trim(); }); inspect.disabled = true; // NEW
+        const progressLabel = request => ({ waiting: 'Waiting for approval', downloading: 'Downloading', ready: 'Ready to open', expired: 'Invitation expired', revoked: 'Access removed', complete: 'Joined' })[request.state] || 'Checking invitation'; // NEW
+        async function selectRequest(request, valid = alive) { // NEW
+            selected = request; editor.hidden = false; details.replaceChildren(element('p', 'Checking invitation…')); // NEW
+            const resumed = await root.trellisGardenJoin.resume({ ...auth(), id: request.id }); if (!valid()) return; selected = resumed; drawRequest(); // NEW
+        } // NEW
+        /** Open through the validated native lifecycle; closing the old guide is expected during this navigation. */ // NEW
+        async function finishRequest(request, valid, pin = '', displayName) { // CHANGE
+            const login = projectLoginKey(state.session), sameLogin = () => login === projectLoginKey(state.session); // NEW
+            const samePath = String(ui.getCurrentFile()?.fileObject?.path || '').replace(/\\/g, '/').toLowerCase() === String(request.path).replace(/\\/g, '/').toLowerCase(); // NEW
+            if (!samePath && !await openPath(ui, request.path, { isActive: valid })) return; // CHANGE: retries preserve an accepted but not yet saved account.
+            const opened = ui.getCurrentFile(); if (!sameLogin()) return; // NEW
+            showProjects(ui, { focus: 'join' }); const nextOwner = state.projectsRoot; // NEW
+            const active = () => nextOwner?.isConnected && state.projectsRoot === nextOwner && sameLogin() && ui.getCurrentFile() === opened; // NEW
+            const ready = await root.trellisGardenJoin.prepare({ ...auth(), id: request.id }); if (!active()) return; // NEW
+            for (let attempt = 0; attempt < 60 && active() && !root.Trellis?.users?.finishIdentityJoin; attempt++) await new Promise(resolve => root.setTimeout(resolve, 100)); // NEW
+            if (!active()) return; // NEW
+            if (!root.Trellis?.users?.finishIdentityJoin) throw new Error('Project access controls are still loading. Resume this invitation to retry.'); // NEW
+            const completion = { ...ready, pin, ...(displayName ? { displayName } : {}) }, sharing = root.Trellis.sharing; // NEW
+            const result = await (sharing?.finishIdentityJoin ? sharing.finishIdentityJoin(completion) : root.Trellis.users.finishIdentityJoin(completion)); if (!active()) return; // CHANGE
+            if (!result.ok) { state.showJoinCompletion?.(request, result); return; } // NEW
+            if (!sharing?.finishIdentityJoin) { await sharing?.refresh?.(); if (!active()) return; await new Promise((resolve, reject) => opened.save(false, resolve, reject, null, null, () => reject(new Error('Saving was cancelled. Resume this invitation to finish.')))); if (!active()) return; } // CHANGE: older sharing builds retain the existing save fallback.
+            await root.trellisGardenJoin.complete({ ...auth(), id: request.id }); if (!active()) return; // NEW
+            ui.hideDialog(); // NEW: a successful explicit Open enters the linked project.
+        } // NEW
+        function drawRequest() { // NEW
+            if (!alive() || !selected) return; const request = selected; details.replaceChildren(element('h4', request.label), element('p', progressLabel(request)), element('p', 'Invited email: ' + request.email)); // NEW
+            message.textContent = ''; if (request.reason) details.append(element('p', request.reason)); if (request.warning) details.append(element('p', request.warning)); // NEW
+            if (request.reply && request.state === 'waiting') { // NEW
+                details.append(element('p', 'Send this approval reply to the sender. Keep Trellis running to receive approval and download; you can close this guide and resume from Pending invitations.')); // NEW
+                const replyLabel = element('label', 'Approval reply'), reply = element('textarea'); reply.rows = 4; reply.readOnly = true; reply.value = request.reply; reply.style.width = '100%'; replyLabel.append(reply); details.append(replyLabel); // NEW
+                details.append(action('Copy approval reply', async () => { try { await root.navigator.clipboard.writeText(request.reply); message.textContent = 'Copied. Paste the reply into a message to the sender.'; } catch (_) { reply.focus(); reply.select(); throw new Error('Copy was unavailable. The reply is selected; use your copy shortcut.'); } })); // NEW
+                const address = input('Sender email', 'email'); address.control.value = request.senderEmail || ''; details.append(address.wrap); // NEW
+                details.append(action('Open reply email', async valid => { if (!address.control.value || !address.control.checkValidity()) throw new Error('Enter the sender’s email, or use Copy approval reply.'); const result = await root.trellisShare.openEmailDraft({ to: address.control.value, subject: 'Trellis garden project approval', body: 'Please approve this computer for the garden project.\n\n' + request.reply }); if (!valid()) return; if (!result.ok) throw new Error(result.reason); message.textContent = 'Email draft requested. Review and send it in your email app. If it did not open, copy the reply instead.'; })); // NEW
+            } // NEW
+            if (request.state === 'ready' || request.state === 'complete') details.append(action('Open project', async valid => { try { await finishRequest(request, valid); } catch (error) { if (state.projectsRoot?.isConnected) state.showJoinCompletion?.(request, { reason: error.message }); } })); // NEW
+            if (!['expired', 'revoked', 'complete'].includes(request.state)) details.append(action('Check progress', valid => selectRequest(request, valid), 'neutral')); // NEW
+            if (['expired', 'revoked'].includes(request.state)) details.append(element('p', 'Ask the sender for a fresh invitation, then paste it above.')); // NEW
+        } // NEW
+        state.showJoinCompletion = (request, result) => { // NEW
+            if (!alive()) return; editor.hidden = false; selected = request; drawRequest(); message.textContent = result.reason || 'Resume the invitation to finish.'; message.setAttribute('role', 'alert'); // NEW
+            const display = input('Display name'); display.control.value = request.displayName || state.session?.username || ''; // NEW
+            const pin = input('Existing project PIN', 'password'); pin.control.autocomplete = 'off'; if (result.needsPin) details.append(pin.wrap); else if (/name/i.test(result.reason || '')) details.append(display.wrap); // NEW
+            details.append(action('Retry finishing join', async valid => { // NEW
+                try { await finishRequest(request, valid, pin.control.value, display.wrap.isConnected ? display.control.value : undefined); } finally { pin.control.value = ''; } // CHANGE
+            })); // NEW
+        }; // NEW
+        state.updateJoinProgress = () => { // NEW
+            if (!alive() || !selected) return; const latest = state.pendingJoins?.find(request => request.id === selected.id); // NEW
+            if (latest && (latest.state !== selected.state || latest.reason !== selected.reason || latest.path !== selected.path || latest.label !== selected.label)) { selected = { ...selected, ...latest }; drawRequest(); } // CHANGE: projection renames refresh the Open target without depending on a state transition.
+        }; // NEW
+        state.drawPendingJoins = () => { // NEW
+            if (!alive()) return; list.replaceChildren(); const requests = state.pendingJoins || []; pending.hidden = !requests.length && !state.joinListError; // NEW
+            if (state.joinListError) list.append(element('p', state.joinListError)); // NEW
+            for (const request of requests) { const row = element('div', null, 'trellis-home-row'); row.append(element('strong', request.label), element('span', progressLabel(request)), action('Resume invitation', valid => selectRequest(request, valid))); list.append(row); } // NEW
+        }; // NEW
+        editor.append(heading, element('p', 'Paste the full invitation email or its Trellis invitation block. The sender must approve this computer before the project downloads.'), label, inspect, previewHost, message, details); editor.hidden = options.focus !== 'join'; // NEW
+        pending.append(element('h3', 'Pending invitations'), list); guide.append(button('Join a garden project', () => { editor.hidden = false; text.focus(); }, 'add'), editor, pending); host.append(guide); // NEW
+        state.openJoinGuide = () => { if (alive()) { editor.hidden = false; text.focus(); } }; // NEW
+        state.resetJoinGuide = () => { if (alive()) { text.value = ''; preview = null; selected = null; previewHost.replaceChildren(); details.replaceChildren(); message.textContent = ''; inspect.disabled = true; } }; // NEW
+        for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'click', 'dblclick', 'keypress', 'keyup']) guide.addEventListener(type, event => event.stopPropagation()); // NEW: preserve native field defaults without triggering editor shortcuts.
+        guide.addEventListener('keydown', event => { if (event.key !== 'Escape') event.stopPropagation(); }); // NEW
+        state.updateJoinIdentity(); state.drawPendingJoins(); refreshPendingJoins(ui, state); // NEW
+        if (options.focus === 'join') root.setTimeout(() => { if (alive()) text.focus(); }, 0); // NEW
+    } // NEW
     function showProjects(ui, options = {}) { // NEW
         const state = install(ui); if (!state) return; state.quickstartUi = ui; // NEW
-        if (state.projectsRoot?.isConnected) { applyProjectHighlight(state, options); return; } // NEW: retain focused fields and private drafts. // NEW
+        if (state.projectsRoot?.isConnected) { if (options.focus === 'join') state.openJoinGuide?.(); applyProjectHighlight(state, options); return; } // CHANGE
         const splashVisible = !!document.querySelector('.trellis-splash-root'), fromSplash = splashVisible || !ui.getCurrentFile(); // CHANGE
         if (splashVisible) ui.hideDialog(); // CHANGE
         state.focus = options.focus || 'open'; state.mode = 'idle'; state.opening = true; // NEW
@@ -389,6 +515,7 @@
         updateNavigation(); // CHANGE
         state.projectsRoot = panel; state.panel = identity; state.referenceHost = reference; state.projectsStatus = status; // NEW
         state.referenceKey = null; // NEW
+        mountJoinGuide(ui, state, body, options); // NEW
         state.libraryProjects ||= []; state.localProjects ||= []; state.creationButtons = []; state.renderedRows = {}; state.projectRowNodes = new Map(); state.sectionLoads ||= {}; state.projectLoadHeaders = {}; // CHANGE
         state.projectSectionToggles = {}; state.projectSectionLabels = {}; state.projectSectionCounts = {}; // CHANGE
         for (const kind of root.trellisGardenCommunities ? ['communities', 'shared', 'private'] : ['shared', 'private']) { // CHANGE
@@ -432,7 +559,8 @@
         for (const node of state.splashStatuses) { // NEW
             if (!node.isConnected && node.__trellisWasConnected) { state.splashStatuses.delete(node); continue; } // CHANGE: constructor-time splash nodes are still detached.
             node.__trellisWasConnected = node.__trellisWasConnected || node.isConnected; // NEW
-            node.textContent = state.session ? 'Logged in as ' + state.session.username : 'Not logged in'; // NEW
+            const count = state.joinOwner === projectLoginKey(state.session) ? state.pendingJoins?.length || 0 : 0; // NEW
+            node.textContent = (state.session ? 'Logged in as ' + state.session.username : 'Not logged in') + (count ? ' · ' + count + (count === 1 ? ' pending invitation' : ' pending invitations') : ''); // CHANGE
         } // NEW
     } // NEW
     async function browseLocalFiles(ui, state) { // NEW
@@ -873,7 +1001,7 @@
             try { // CHANGE
                 if (login !== projectLoginKey(state.session)) return; // CHANGE: a stale editor cannot act under another login.
                 if (ui.getCurrentFile()?.fileObject?.path === project.path) await root.Trellis?.sharing?.settleObjectEdits?.({ release: true }); // NEW
-                if (login !== projectLoginKey(state.session)) return; await root.trellisGardenLibrary.rename({ diagramId: project.diagramId, name }); if (login === projectLoginKey(state.session)) await refreshProjects(ui, state, { only: ['library'], diagramId: project.diagramId }); // CHANGE
+                if (login !== projectLoginKey(state.session)) return; await root.trellisGardenLibrary.rename({ diagramId: project.diagramId, name }); if (login === projectLoginKey(state.session)) { await root.Trellis?.sharing?.adoptOwnProjectName?.(project.diagramId); await refreshProjects(ui, state, { only: ['library'], diagramId: project.diagramId }); } // CHANGE: only the originating window adopts its already accepted rename immediately.
             } // NEW
             catch (error) { ui.handleError(error); } // NEW
         }, 'Project name', name => !!name.trim()); // NEW
@@ -1179,13 +1307,14 @@
             } else state.accountHost.append(button('Login', () => { state.showIdentity = true; panel.hidden = false; if (data.identities.length) [...row.querySelectorAll('button')].find(control => control.textContent === 'Log in')?.click(); else row.querySelector('button')?.focus(); }, 'open')); // NEW
             panel.hidden = !state.showIdentity && state.mode === 'idle' && !state.reminder && !state.persistenceWarning && !state.session?.passwordConflict; // NEW
         } // NEW
+        state.updateJoinIdentity?.(); refreshPendingJoins(ui, state); // NEW
         state.libraryIdentityId = state.session?.identityId; // CHANGE
         refreshProjects(ui, state, { reopen: true }); // CHANGE
         if (state.session && state.reminder) reminder(); // NEW: background status refreshes retain the explicit copy action.
     }
-    /** Splash retains its actions and displays identity status; forms belong to Garden Projects. */ // NEW
+    /** Combine library entry points only when the desktop bridge is available; retain base splash fallbacks. */ // CHANGE
     function attachSplash(splash, ui) { // NEW
-        if (!root.trellisIdentity || !splash.isTrellisLicenseWizardComplete?.()) return; // NEW
+        if (!root.trellisIdentity || !root.trellisGardenLibrary || !splash.isTrellisLicenseWizardComplete?.()) return; // CHANGE
         const state = install(ui), center = splash.container.querySelector('.trellis-splash-center'); // NEW
         if (!center) return; // NEW
         let status = center.querySelector('.trellis-splash-login-status'); // NEW
@@ -1195,17 +1324,22 @@
             if (license) license.after(status); else center.append(status); // NEW
             state.splashStatuses.add(status); // NEW
             const version = state.sessionVersion || 0; // CHANGE
-            root.trellisIdentity.getSession().then(session => { if (version !== (state.sessionVersion || 0) || !status.isConnected) return; state.session = session; updateSplashStatuses(state); }).catch(() => { status.textContent = 'Login status unavailable'; }); // CHANGE
+            root.trellisIdentity.getSession().then(session => { if (version !== (state.sessionVersion || 0) || !status.isConnected) return; state.session = session; updateSplashStatuses(state); refreshPendingJoins(ui, state); }).catch(() => { status.textContent = 'Login status unavailable'; }); // CHANGE
         } // NEW
         updateSplashStatuses(state); // NEW
         splash.container.classList.add('trellis-splash-project-launcher'); // NEW
-        for (const action of splash.container.querySelectorAll('.trellis-splash-actions button')) { // NEW
-            const focus = action.textContent.includes('Create New Garden') ? 'create' : action.textContent.includes('Open Existing Garden') ? 'open' : null; // NEW
-            if (!focus || action.hasAttribute('data-project-launcher')) continue; // NEW
-            action.setAttribute('data-project-launcher', focus); // NEW
-            const text = [...action.childNodes].find(node => node.nodeType === 3); // NEW
-            if (text) text.textContent = focus === 'create' ? 'Create New Garden Project' : 'Open Existing Garden Project'; // NEW
-            action.addEventListener('click', event => { event.preventDefault(); event.stopImmediatePropagation(); showProjects(ui, { focus }); }, true); // NEW
+        const actions = splash.container.querySelector('.trellis-splash-actions'); // NEW
+        const launcher = actions?.querySelector('[data-project-launcher="open"]') || [...(actions?.querySelectorAll('button') || [])].find(node => node.textContent.includes('Create New Garden')); // CHANGE: reuse the decorated green button and its icon.
+        if (launcher && !launcher.hasAttribute('data-project-launcher')) { // CHANGE
+            launcher.setAttribute('data-project-launcher', 'open'); // CHANGE: normal library focus supports both creation and browsing.
+            const text = [...launcher.childNodes].find(node => node.nodeType === 3); // CHANGE
+            if (text) text.textContent = 'Create or Open a Garden Project'; // CHANGE: preserve the existing decorative icon.
+            launcher.addEventListener('click', event => { event.preventDefault(); event.stopImmediatePropagation(); showProjects(ui); }, true); // CHANGE: suppress the base New handler; bind only once.
+        } // CHANGE
+        if (launcher) [...actions.querySelectorAll('button')].find(node => node !== launcher && node.textContent.includes('Open Existing Garden'))?.remove(); // CHANGE
+        if (root.trellisGardenJoin && actions && !actions.querySelector('[data-join-project]')) { // NEW
+            const join = button('Join a Garden Project', () => showProjects(ui, { focus: 'join' }), 'add'); join.className = 'geBigButton trellis-button-join'; join.dataset.joinProject = ''; join.style.cssText = 'width:340px;max-width:100%;padding:10px;margin-bottom:8px;font-size:18px;'; // CHANGE: title case applies only to the Home action.
+            if (launcher) launcher.after(join); else actions.prepend(join); // CHANGE
         } // NEW
     } // NEW
     root.TrellisGardenHome = { attachSplash, install, openPath, importCurrent, saveJson, chooseJson, showProjects, distanceBand }; // CHANGE

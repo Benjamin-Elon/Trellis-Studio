@@ -1,0 +1,23 @@
+# Local test suites
+
+`npm test` discovers the top-level `test/*.test.cjs` and `test/*.test.mjs` files. Ordinary files use Node's normal parallel execution. Electron files run next with file concurrency one. Daemon integration and save-stress files run last with file concurrency one. Lanes are awaited in order, and failures in one lane do not prevent later lanes from running. <!-- CHANGE -->
+
+Explicit Node paths, globs and filters are forwarded intact and run in a single serial lane. For example: `npm run test:plugins -- --test-name-pattern="spacing" ./test/regular-spacing-preview.test.cjs`. A filter without explicit paths applies to default discovery. Reports combine lane summaries without losing earlier failures, process errors, skipped tests or missing reporter output. <!-- CHANGE -->
+
+Structured reports preserve native and transported Error messages, stacks and nested causes, including circular cause chains. Duration reports sort the measured times; integration tests verify the recorded values rather than assuming that a nominally quick fixture must remain faster under system load. <!-- CHANGE -->
+
+`npm run test:full` enables all opt-in local tests and then runs Python seed tests, Android host JavaScript tests, Android JVM tests, the compiled native-engine ownership harness, and the production Home smoke. Use `npm run test:full -- --out-dir .test-artifacts/acceptance` to choose the report directory. Each suite has its own log and exit status; Node test counts are never combined with Python counts or native scenario counts. <!-- CHANGE -->
+
+The full command requires Node dependencies, Python and its existing seed dependencies, the bundled Syncthing binary, an Android SDK and JDK, and the cached Gradle dependencies. `JAVA_HOME`, `ANDROID_HOME` and `PYTHON` may select local tools. JVM tests run offline against the existing project Gradle cache with tasks forced to execute; their build supplies the classes used by the ownership harness. No physical Android device or store deployment is involved. <!-- CHANGE -->
+
+`summary.json` and `summary.md` record the independent suite results. `source-before.json` and `source-after.json` hash tracked and untracked implementation/configuration inputs, excluding generated dependencies, builds and results. Changed inputs invalidate an otherwise passing run and produce a nonzero exit. This detects concurrent editing but cannot prevent it or identify which version an individual test observed. <!-- CHANGE -->
+
+Native tests use temporary profiles and owned child handles. Shutdown diagnostics include phase timestamps, process IDs, generation, kill acceptance and observed exit/close. A successful kill request alone is never a successful shutdown. Runtime cleanup attempts every service, retains profiles after an unconfirmed exit, and retries transient Windows deletion locks only after confirmed shutdown. Preserved profiles and their paths are evidence for investigation. <!-- CHANGE -->
+
+Paired lifecycle checks wait for physical retirement after both Trash commands before requesting permanent deletion. A failed move may already have fenced the local project, so retry authorization checks the file's actual location. A successful retry must preserve the retained file and report it accurately; neither the purge guard nor the move journal's collision and fingerprint checks are relaxed. <!-- CHANGE -->
+
+Serial lanes coordinate one invocation only; simultaneous test commands or other applications can still compete for native resources. A passing rerun does not establish the unique cause of an earlier intermittent failure. Tests keep their operation deadlines and failures; there are no new quarantines or skips. <!-- CHANGE -->
+
+The collaboration regression also covers a model-event batch with no net shared content change, such as an edit followed immediately by Undo or a viewport-only change. A supplied unchanged document succeeds without acquiring holds or writing journal records; a target-only claim with no selected object still fails. This prevents asynchronous claim rejection from undoing an already completed local command batch. <!-- CHANGE -->
+
+Field previews render permitted garden content from a canonical, disposable graph, independent of local folds, city visibility and zoom. Task/team subtrees and denied content stay out of its model; connectors with denied endpoints are excluded. Rendering preserves field identities and releases the graph/host on failure. Generated light/dark colors are resolved to light colors before the existing passive-SVG validation; unsupported SVG content fails explicitly rather than publishing an “Image unavailable” placeholder. The package schema is unchanged. <!-- CHANGE -->

@@ -318,7 +318,7 @@ test('directory replay and cached browsing remain bounded for 100 gardens and 30
     await fs.writeFile(path.join(base, 'records', 'corrupt.json'), '{'); await fs.mkdir(path.join(base, 'records', 'directory.json')); // NEW
     assert.equal((await f.communities.list()).communities[0].gardens.length, 100); const browsing = performance.now(); // NEW
     for (let i = 0; i < 5; i++) assert.equal((await f.communities.list()).communities[0].gardens.length, 100); // NEW
-    const average = (performance.now() - browsing) / 5; assert.ok(average < 1000, 'Cached browsing exceeded its one-second regression bound.'); t.diagnostic('Cached listing average: ' + average.toFixed(0) + ' ms'); // NEW
+    const average = (performance.now() - browsing) / 5; t.diagnostic('Validated cached listing average: ' + average.toFixed(0) + ' ms'); assert.ok(average < 1000, 'Cached browsing exceeded its one-second regression bound.'); t.diagnostic('Cached listing average: ' + average.toFixed(0) + ' ms'); // NEW
     const configured = performance.now(), devices = [...result.members].map((_, i) => 'benchmark-device-' + i), channel = { kind: 'community', id: created.communityId, directory: base, devices }; // NEW
     await f.daemon.configureMetadataChannel(channel); const puts = f.logs.filter(l => l.endpoint === 'config' && l.method === 'PUT').length; // NEW
     await f.daemon.configureMetadataChannel(channel); assert.equal(f.logs.filter(l => l.endpoint === 'config' && l.method === 'PUT').length, puts); // NEW

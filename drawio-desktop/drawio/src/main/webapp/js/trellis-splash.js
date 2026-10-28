@@ -405,10 +405,10 @@
 		for (var i = 0; i < buttons.length; i++) {
 			buttons[i].setAttribute('type', 'button');
 
-			if (buttons[i].textContent.indexOf('Explore & Support My Projects') >= 0) {
+			if (buttons[i].textContent.indexOf('Explore and Support Trellis') >= 0) { // CHANGE: match the Home support label.
 				addClass(buttons[i], 'trellis-support-action');
 				prependButtonIcon(buttons[i], 'support');
-			} else if (buttons[i].textContent.indexOf('Create New Garden') >= 0) {
+			} else if (buttons[i].textContent.indexOf('Create New Garden') >= 0 || buttons[i].getAttribute('data-project-launcher') == 'open') { // CHANGE: retain primary decoration after combining Create/Open.
 				addClass(buttons[i], 'trellis-primary-action');
 				addClass(buttons[i], 'trellis-button-add');
 				addClass(buttons[i], 'trellis-button-filled');

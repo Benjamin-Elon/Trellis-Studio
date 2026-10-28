@@ -6,7 +6,7 @@
     function mount(options) { // CHANGE
         const { entry, toolbar, core } = options, userId = entry.user; // CHANGE
         const storageKey = 'trellis.comments.draft.v1:' + options.identity.key; // CHANGE
-        let destroyed = false, composing = false, pending = false, unresolvedExpanded = true, resolvedExpanded = false, retentionTimer = null, fingerprint = '', storageError = '', commandError = ''; // CHANGE
+        let destroyed = false, discarded = false, composing = false, pending = false, unresolvedExpanded = true, resolvedExpanded = false, retentionTimer = null, fingerprint = '', storageError = '', commandError = ''; // CHANGE
         let saved = privateDrafts.get(storageKey); // CHANGE
         if (!saved) { // CHANGE
             saved = { active: 'new', drafts: {} }; // CHANGE
@@ -182,8 +182,9 @@
         loadDraft(); refresh(); // CHANGE
         const hasDraft = () => !!core.normalizeHtml(editor.innerHTML) || Object.values(saved.drafts).some(value => value && (value.html || value.alertChosen)); // CHANGE
         return { element: container, refresh, focus: () => editor.focus(), hasDraft, needsUnloadWarning: () => hasDraft() && (!!storageError || composing), // CHANGE
+            discard() { discarded = true; saved = { active: 'new', drafts: {} }; editor.innerHTML = ''; privateDrafts.delete(storageKey); if (options.identity.persistent) root.localStorage.removeItem(storageKey); }, // NEW: explicit hold rejection discards unapplied entries rather than retaining them on close.
             persist() { capture(); persist(); }, // CHANGE
-            destroy() { capture(); persist(); destroyed = true; if (retentionTimer !== null) root.clearTimeout(retentionTimer); if (options.ui.getActiveRichTextTarget() === target) toolbar.deactivate(); target.dispose(); } }; // CHANGE
+            destroy() { if (!discarded) { capture(); persist(); } destroyed = true; if (retentionTimer !== null) root.clearTimeout(retentionTimer); if (options.ui.getActiveRichTextTarget() === target) toolbar.deactivate(); target.dispose(); } }; // CHANGE
     } // CHANGE
     /** Discover private work when reselecting an object with no posted content, without adding diagram metadata. */ // CHANGE
     function hasDraft(identity) { // CHANGE

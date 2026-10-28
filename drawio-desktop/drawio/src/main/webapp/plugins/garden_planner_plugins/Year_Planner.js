@@ -4383,6 +4383,21 @@ Draw.loadPlugin(function (ui) {
             let refreshTimer = null;
             let pendingRefreshOptions = null;
             let editorRefs = {};
+            session.holdLost = false; // NEW
+            const plannerPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
+            const plannerHold = window.Trellis?.sharing?.registerEditor?.({ // NEW
+                kind: 'year-planner', targets: [JSON.stringify([plannerPage, cellStableId(moduleCell)])], // NEW
+                capture: () => ({ pageId: plannerPage, objectId: cellStableId(moduleCell), year: currentYear, plan: PlanSchema.serializeForPersistence(plan), fields: [...card.querySelectorAll('[data-year-plan-field]')].map(field => ({ field: field.dataset.yearPlanField, value: field.value, checked: field.checked })) }), // CHANGE
+                save: () => saveCurrent(false), // NEW
+                discard() { session.holdLost = true; if (refreshTimer) clearTimeout(refreshTimer); if (SessionController.isActive(session)) SessionController.close(); } // NEW
+            }); // NEW
+            session.disposers.push(() => plannerHold?.dispose(!session.holdLost)); // NEW
+            /** Only shared editors need an asynchronous claim; standalone planner behavior stays synchronous. */ // NEW
+            function withPlannerHold(operation) { // NEW
+                if (session.holdLost || !SessionController.isActive(session)) return false; // NEW
+                if (!plannerHold || !window.Trellis?.sharing?.getInfo?.()?.managed) return operation(); // NEW
+                return plannerHold.acquire().then(() => { if (!session.holdLost && SessionController.isActive(session)) return operation(); return false; }).catch(error => { if (SessionController.isActive(session)) { state.extraDiagnostics = [error.message]; renderFooter(); } return false; }); // NEW
+            } // NEW
             let demandRefs = {};
             let csaRefs = {};
             let chartHitModel = null;
@@ -7101,6 +7116,7 @@ Draw.loadPlugin(function (ui) {
             }
 
             function debounceRefresh(renderOptions) {
+                if (session.holdLost) return; if (state.baselineSnapshot && YearPlanDashboard.isDirty(state, plan)) plannerHold?.touch(); // NEW
                 if (renderOptions) pendingRefreshOptions = { ...(pendingRefreshOptions || {}), ...renderOptions };
                 if (refreshTimer) clearTimeout(refreshTimer);
                 refreshTimer = setTimeout(() => {
@@ -7788,12 +7804,14 @@ Draw.loadPlugin(function (ui) {
             }
 
             function refreshDerived(beforeDateRanges, renderOptions) {
+                if (session.holdLost || !SessionController.isActive(session)) return; // NEW
                 const options = renderOptions || {};
                 if (((plan && plan.crops) || []).length && state.saveValidationErrors.length) state.saveValidationErrors = []; // CHANGE: clear save-only empty-plan errors as soon as the plan has a crop.
                 const beforeRecalculation = captureDateRangeSnapshot();
                 PlanSchema.clearUnavailableQuantityUnits(plan); // CHANGE: package edits immediately clear row units that no longer exist.
                 runtime = PlanRuntimeService.recalculate(moduleCell, currentYear, plan);
                 const dirty = state.baselineSnapshot ? YearPlanDashboard.isDirty(state, plan) : false;
+                if (dirty) plannerHold?.touch(); // NEW: viewing/collapsing clean plans never claims the garden.
                 dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics, extraValidationErrors: state.saveValidationErrors }); // CHANGE: include save-only validation after failed saves.
                 const demandErrors = PlanSchema.validateDemand(plan);
                 const selfSufficiencyErrors = PlanSchema.validateSelfSufficiency(plan);
@@ -9127,12 +9145,14 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
 
             function saveDraft(validationErrors) {
+                if (session.holdLost) return null; // NEW: forced-close disposers cannot publish a recovered draft.
                 const record = PlanRepository.saveDraftForYear(moduleCell, currentYear, plan);
                 noteDraftSaved(record, validationErrors || commitValidationErrors());
                 return record;
             } // CHANGE
 
             function saveDraftIfDirty() {
+                if (session.holdLost) return false; // NEW
                 if (!YearPlanDashboard.isDirty(state, plan)) return false;
                 saveDraft(commitValidationErrors());
                 return true;
@@ -9147,7 +9167,8 @@ Draw.loadPlugin(function (ui) {
                 else if (planCheckHeader) focusAndHighlight(planCheckHeader); // CHANGE: empty-plan save failures have only the Plan Check list.
             }
 
-            function saveCurrent(closeAfter) {
+            function saveCurrent(closeAfter) { return withPlannerHold(() => commitCurrent(closeAfter)); } // CHANGE
+            function commitCurrent(closeAfter) { // NEW
                 state.saveValidationErrors = validateSaveReadiness(); // CHANGE: save-only rule runs for Save/commit readiness and draft diagnostics.
                 refreshDerived();
                 const validationErrors = commitValidationErrors(); // CHANGE
@@ -9177,9 +9198,8 @@ Draw.loadPlugin(function (ui) {
             }
 
             function requestClose() {
-                refreshDerived();
-                saveDraftIfDirty(); // CHANGE: closing preserves unfinished work without prompting.
-                SessionController.close(); DbClient.release()?.catch(() => {}); // CHANGE
+                const close = () => { refreshDerived(); saveDraftIfDirty(); SessionController.close(); DbClient.release()?.catch(() => {}); }; // CHANGE
+                return YearPlanDashboard.isDirty(state, plan) ? withPlannerHold(close) : close(); // NEW
             }
 
             const yearInput = mkInput("number", currentYear, 88);
@@ -9997,10 +10017,12 @@ Draw.loadPlugin(function (ui) {
             addCropsButton.addEventListener("click", openAddCropPicker); // CHANGE
             reloadPlants.addEventListener("click", () => loadAddCropOptions(true));
 
-            yearInput.addEventListener("change", () => {
+            yearInput.addEventListener("change", async () => { // CHANGE
                 const nextYear = Number(yearInput.value);
                 if (!Number.isFinite(nextYear) || nextYear < 1900 || nextYear > 3000) { yearInput.value = String(currentYear); return; }
                 if (nextYear === currentYear) return;
+                if (YearPlanDashboard.isDirty(state, plan) && plannerHold && window.Trellis?.sharing?.getInfo?.()?.managed && await withPlannerHold(() => true) !== true) { yearInput.value = String(currentYear); return; } // CHANGE
+                if (session.holdLost || !SessionController.isActive(session)) return; // NEW
                 saveDraftIfDirty(); // CHANGE: year changes preserve unfinished work without blocking.
                 const nextWorkingYear = loadWorkingYear(nextYear); // CHANGE
                 replacePlan(nextWorkingYear.plan, nextYear, nextWorkingYear.loadedCommitted, nextWorkingYear.loadedDraft, nextWorkingYear.draftUpdatedAt); // CHANGE

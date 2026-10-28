@@ -1,5 +1,7 @@
 # Object collaboration over Syncthing <!-- NEW -->
 
+Current new projects use [protocol 3 background saving and independent activity](background-saving-v3.md). Version 2 collaboration is no longer supported; the description below records the previous implementation. Existing local diagrams and recovery data are retained without migration. <!-- CHANGE -->
+
 Version 2 keeps the existing peer transport, approved-device keys, assets, and saved history. It does not require a hosted editing service or the coordinator to arbitrate edits. The coordinator still signs membership and approves computers. <!-- NEW -->
 
 ## Data and saving <!-- NEW -->
@@ -14,9 +16,22 @@ Autosave is mandatory for v2 shared canvases and continues without connected pee
 
 ## Viewing, editing, and handoff <!-- NEW -->
 
+Open canvases use [change notifications and explicit refresh](explicit-refresh.md).
+Replay and the local projection remain current; displayed objects advance through
+current-window edits or explicit refresh. Private remembered objects survive
+reopening. Shared history captures accepted state, including unseen changes. <!-- CHANGE -->
+
 Selection reports viewing without acquiring a hold. Model edits and actual typing in a bound edit form request an optimistic hold. Form input renews activity without publishing unapplied values. The scheduler binds its actual target explicitly; spacing rows use their existing cell IDs. Background/viewing heartbeats do not renew editing activity. <!-- NEW -->
 
-All required objects are acquired together or the entire action is rejected. Established holders cannot be displaced by ordinary claims. A release request gives every authority level at most five minutes to finish; additional requests and activity cannot extend that deadline. Five minutes without editing also releases an abandoned hold. Leaving an object or closing its edit form preserves pending edits and releases its holds. <!-- NEW -->
+All required objects are acquired together or the entire action is rejected. Established holders cannot be displaced by ordinary claims. New signed claims use `holdPolicy: "request"` and remain held until normal release, access loss, session cleanup, or a requested deadline. A release request gives every authority level at most five minutes to finish; additional requests and activity cannot extend that deadline. Historical unmarked claims retain their original idle expiry so replay cannot resurrect abandoned holds or change accepted history. Presence expiry and clock-skew checks remain independent. Older builds are not supported for collaboration with request-driven claims. <!-- CHANGE -->
+
+The year planner acquires the garden cell's hold on its first edit, covering every year stored on that garden. Viewing does not acquire a hold; selection and year changes do not release the active planner's hold. Planting scheduler and spacing editors use the existing planting-group targets. Closed windows/users release their captured session generations; reopening clears abandoned sessions belonging to this computer while preserving other active windows and remote sessions. <!-- NEW -->
+
+A release request opens a persistent non-modal countdown above active editors, without stealing typing focus. Its module-style move handle supports dragging, keyboard movement, cancellation and viewport clamping. One popup lists the window's requested claims and requesters. Countdown values use the recorded deadline, so delayed delivery can leave less than five minutes. **Save & release** invokes the affected editor's existing Save/Apply operation, waits for the diagram save, and then releases the hold. Failed saves leave the timer running and show the error. <!-- NEW -->
+
+When a hold ends, the renderer preserves the diagram proposal before reverting affected unsaved native actions and their dependencies to the saved local baseline. Independent local work remains, and unreviewed peer content is not applied. Save retries the remaining local draft; accepted in-flight saves settle before background rollback. Failed recovery or rollback leaves the draft modified and reports an error. Discarded undo entries and delayed editor callbacks cannot reintroduce the proposal. <!-- NEW -->
+
+`Trellis.sharing.registerEditor({kind, targets, capture, save, discard})` registers planting or year-planner editors and returns `acquire`, `touch`, `active` and `dispose`. Only these domain editors add unapplied state to private versioned `.drawio.editors.json` recovery companions. The collaboration actions `recover-holds` and `recovery-data` respectively recover/rebuild a local draft and read an indexed companion. Recovery copies expose editor data as inert text with JSON export; opening a copy never publishes it. Individual-field merging and new reconciliation workflows are deferred. <!-- NEW -->
 
 Waiting requests are ordered admin, relevant owner, content manager, then other authorized editor, with deterministic request order for ties. The next requester receives a thirty-second opportunity to begin. The previous editor cannot immediately reacquire through selection or delayed events. Once this window expires, ordinary acquisition resumes. Concurrent claims use authority and consistent causal ordering; losing proposals and stale generations are rejected and recovered. <!-- NEW -->
 
@@ -24,7 +39,7 @@ Badges and the overview distinguish reported viewing/editing, requested release,
 
 ## Protocol compatibility <!-- CHANGE -->
 
-Object collaboration v2 is the only supported Trellis sharing protocol. Recognized version 1 registrations (including older entries without a version) remain available as local diagrams with sharing disabled. Available copies appear in Home as **Local only · Sharing off**; missing copies stay hidden while their metadata is retained. Old folders are excluded from transport before current synchronization is enabled. Version 1 invitations and replies remain unsupported; there is no conversion or re-sharing workflow. Diagram XML, assets, Users/PIN settings, recovery copies, and signed catalog records remain intact. <!-- CHANGE -->
+New projects use protocol 3 with [independent activity and background saving](background-saving-v3.md). Version 1 and 2 collaboration is unsupported. Recognized old registrations, including entries without a protocol version, are hidden from Garden Projects while existing files remain accessible through ordinary file opening. Old folders are excluded from transport before current synchronization is enabled. Old invitations and replies remain unsupported; there is no conversion or re-sharing workflow. Diagram XML, assets, Users/PIN settings, history, recovery copies, registration records and signed catalog records remain intact. <!-- CHANGE -->
 
 Normal sharing still grants a complete diagram and assets to approved computers. Editing grants restrict workflow, not visibility. The existing diagram-local Users/PIN system remains soft permission enforcement. <!-- NEW -->
 

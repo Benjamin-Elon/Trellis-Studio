@@ -1091,6 +1091,18 @@ Draw.loadPlugin(function (ui) {
     }
 
     function collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, opts = {}) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'planting-layout:' + groupCell.id, // NEW
+          title: 'Planting summary', // NEW
+          cells: () => [groupCell], // NEW
+          retry: () => { // NEW
+            const current = graph.getModel().getCell(groupCell.id); // NEW
+            if (current) return retileGroup(graph, current, { // NEW
+              forceCollapse: true // NEW
+            }); // NEW
+          } // NEW
+        }, () => collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, opts)); // NEW
         const model = graph.getModel();
         model.beginUpdate();
         try {
@@ -2788,9 +2800,9 @@ Draw.loadPlugin(function (ui) {
             if (typeof api.getModuleLabel === "function") return api.getModuleLabel(moduleCell, "Garden Module");
             const raw = getXmlAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : "");
             if (document && document.createElement) {
-                const holder = document.createElement("div");
-                holder.innerHTML = raw;
-                const text = String(holder.textContent || "").replace(/\s+/g, " ").trim();
+                const holder = document.createElement("template"); // CHANGE: parse in an inert template.
+            holder.innerHTML = raw; // CHANGE
+            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(raw) : holder.content.textContent || "").replace(/\s+/g, " ").trim();
                 if (text) return text;
             }
             const stripped = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -4785,6 +4797,12 @@ Draw.loadPlugin(function (ui) {
             return { changed: false, fitted: false, reason: "not-available" };
         }
         const model = activeGraph.getModel();
+        const context = activeGraph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+            id: 'planting-fit:' + groupCell.id, title: 'Fit planting layout', cells: () => [groupCell], // NEW
+            retry: () => { const current = model.getCell(groupCell.id); if (current) return retileAndFitToContainingBed(activeGraph, current, { source: 'retry' }); }, // NEW
+            deferredValue: { changed: false, fitted: false, reason: 'deferred' } // NEW
+        }, () => retileAndFitToContainingBed(activeGraph, groupCell, opts)); // NEW
         let fitResult = null;
         let trimmed = false;
         let result = { changed: false, fitted: false, reason: "" };
@@ -5053,7 +5071,7 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function showSpacingDialog(ui, curX, curY, onOk) {
+    function showSpacingDialog(ui, curX, curY, onOk, groupCell) { // CHANGE
         const div = document.createElement("div");
         div.style.padding = "10px";
         div.style.minWidth = "280px";
@@ -5093,16 +5111,18 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.justifyContent = "flex-end";
         btnRow.style.gap = "8px";
 
-        const okBtn = tilerButton("OK", function () {
+        let editingHold = null; // NEW
+        function submitSpacing() { // NEW
             const x = Number(inputX.value),
                 y = Number(inputY.value);
             if (!isFinite(x) || !isFinite(y) || x <= 0 || y <= 0) {
                 log("[spacing] invalid " + JSON.stringify({ x, y }));
-                return;
+                return false; // CHANGE
             }
-            ui.hideDialog();
-            onOk(x, y);
-        }, "neutral", { title: "Apply this horizontal and vertical spacing to the planting." }); // CHANGE: explicit action tooltip.
+            const apply = () => { if (editingHold && !editingHold.active()) return false; ui.hideDialog(); onOk(x, y); return true; }; // NEW
+            return editingHold && window.Trellis?.sharing?.getInfo?.()?.managed ? editingHold.acquire().then(apply) : apply(); // NEW
+        } // NEW
+        const okBtn = tilerButton("OK", () => { Promise.resolve(submitSpacing()).catch(error => log(error.message)); }, "neutral", { title: "Apply this horizontal and vertical spacing to the planting." }); // CHANGE
         const cancelBtn = tilerButton("Cancel", function () {
             ui.hideDialog();
         }, "close"); // CHANGE: spacing cancellation uses the red outline.
@@ -5120,7 +5140,12 @@ Draw.loadPlugin(function (ui) {
             }
         });
 
-        ui.showDialog(div, 360, 170, true, true);
+        if (groupCell) { // NEW
+            const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; div.dataset.collaborationObjectId = String(groupCell.id); div.dataset.trellisCollaborativeEditor = 'planting'; // NEW
+            editingHold = window.Trellis?.sharing?.registerEditor?.({ kind: 'planting', targets: [JSON.stringify([pageId, String(groupCell.id)])], capture: () => ({ pageId, objectId: String(groupCell.id), spacingX: inputX.value, spacingY: inputY.value }), save: submitSpacing, discard: () => { inputX.disabled = true; inputY.disabled = true; okBtn.disabled = true; } }); // NEW
+            div.addEventListener('input', () => editingHold?.touch()); // NEW
+        } // NEW
+        ui.showDialog(div, 360, 170, true, true, () => editingHold?.dispose(true)); // CHANGE
         elevateTrellisDialog();
         inputX.focus();
     }
@@ -5160,7 +5185,7 @@ Draw.loadPlugin(function (ui) {
             graph.refresh(groupCell);
 
             log("[spacing] applied " + JSON.stringify({ x, y }));
-        });
+        }, groupCell); // CHANGE
     }
 
     function collectSelectedPlantTilesByGroup(graph, fallbackTarget) {
@@ -5606,6 +5631,11 @@ Draw.loadPlugin(function (ui) {
 
     function createTilerGroupFromCircle(graph, circleCells) {
         if (!circleCells || circleCells.length === 0) return null;
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+            id: 'planting-wrap:' + circleCells.map(cell => cell.id).join(','), title: 'Generate planting group', cells: () => circleCells, // NEW
+            retry: () => createTilerGroupFromCircle(graph, circleCells.map(cell => graph.getModel().getCell(cell.id)).filter(Boolean)), deferredValue: null // NEW
+        }, () => createTilerGroupFromCircle(graph, circleCells)); // NEW
 
         const model = graph.getModel();
         const first = circleCells[0];
@@ -5709,6 +5739,11 @@ Draw.loadPlugin(function (ui) {
     function createSiblingTilerGroupFromSource(graphArg, sourceCell, opts = {}) {
         const activeGraphArg = graphArg || graph;
         if (!activeGraphArg || !sourceCell || !isTilerGroup(sourceCell)) return null;
+        const context = activeGraphArg.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+            id: 'planting-sibling:' + sourceCell.id, title: 'Generate related planting', cells: () => [sourceCell], // NEW
+            retry: () => window.USL.scheduler.openScheduleDialog(ui, activeGraphArg.getModel().getCell(sourceCell.id), { derivedMode: opts.attributes?.derived_mode || 'companion' }), deferredValue: null // NEW
+        }, () => createSiblingTilerGroupFromSource(graphArg, sourceCell, opts)); // NEW
         const model = activeGraphArg.getModel && activeGraphArg.getModel();
         if (!model) return null;
         const parent = model.getParent(sourceCell);
@@ -5718,6 +5753,7 @@ Draw.loadPlugin(function (ui) {
         const creationSource = String(opts.source || 'derived-sibling');
         const attrs = Object.assign({}, opts.attributes || {}, { tiler_group: "1" });
         const value = cloneXmlValueWithAttrs(sourceCell, attrs);
+        for (const key of ['createdAt', 'lastEditedAt', 'createdByUserId', 'lastEditedByUserId', 'trellis_actor_name', 'trellis_actor_role']) value.removeAttribute(key); // CHANGE: new sibling attribution is independent of the source; existing access policy remains intact.
         stripSiblingCompanionMetadata(value);
         for (const [k, v] of Object.entries(attrs || {})) {
             if (v === null || v === undefined || v === "") value.removeAttribute(k);
@@ -6373,6 +6409,14 @@ Draw.loadPlugin(function (ui) {
         if (proposal.ok === false) throw new Error("Cannot create a planting that does not physically fit."); // CHANGE
         const moduleCell = input.moduleCell || proposal.moduleCell || findGardenModuleAncestor(activeGraphArg, proposal.bedCell);
         if (!activeGraphArg || !moduleCell || !isGardenModule(moduleCell)) throw new Error("Planting creation requires a garden module.");
+        const context = activeGraphArg.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
+          id: 'planting-create:' + (proposal.bedCell?.id || moduleCell.id), // NEW
+          title: 'Create planting', // NEW
+          cells: () => [proposal.bedCell || moduleCell], // NEW
+          retry: () => window.USL.scheduler.openBedScheduleDialog(ui, activeGraphArg.getModel().getCell(proposal.bedCell?.id || moduleCell.id)), // NEW
+          deferredValue: null // NEW
+        }, () => createPlantingFromProposal(input, opts)); // NEW: retry opens a fresh proposal against current bed geometry instead of replaying a reviewed rectangle.
         const geometry = proposal.geometry || {};
         const model = activeGraphArg.getModel && activeGraphArg.getModel();
         const attrs = Object.assign({ tiler_group: '1', season_start_year: String(getCurrentGardenYear(moduleCell)), yield_unit: YIELD_UNIT, planting_actual_yield_kg: '0' }, input.attributes || proposal.attributes || {}, { // CHANGE: initialize identity and final crop attributes before publishing the group.
@@ -6690,6 +6734,16 @@ Draw.loadPlugin(function (ui) {
 
     // expand/collapse helpers
     function expandGroupDetail(graph, groupCell, opts = {}) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'planting-layout:' + groupCell.id, // NEW
+          title: 'Planting detail', // NEW
+          cells: () => [groupCell], // NEW
+          retry: () => { // NEW
+            const current = graph.getModel().getCell(groupCell.id); // NEW
+            if (current) return expandGroupDetail(graph, current); // NEW
+          } // NEW
+        }, () => expandGroupDetail(graph, groupCell, opts)); // NEW
         const abbr = groupCell.getAttribute("plant_abbr") || "?";
         const sx = toPx(Number(groupCell.getAttribute("spacing_x_cm") ||
             groupCell.getAttribute("spacing_cm") || "30"));
@@ -6765,6 +6819,20 @@ Draw.loadPlugin(function (ui) {
 
 
     function retileGroup(graph, groupCell, opts = {}) {
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'derived-presentation') return context.run('derived-presentation', { // NEW
+          id: 'planting-layout:' + groupCell.id, // NEW
+          title: 'Planting layout', // NEW
+          cells: () => [groupCell], // NEW
+          retry: () => { // NEW
+            const current = graph.getModel().getCell(groupCell.id); // NEW
+            if (current) return retileGroup(graph, current, { // NEW
+              forceExpand: opts.forceExpand, // NEW
+              forceCollapse: opts.forceCollapse, // NEW
+              preferInPlace: true // NEW
+            }); // NEW
+          } // NEW
+        }, () => retileGroup(graph, groupCell, opts)); // NEW: layout is rebuilt from current attributes on explicit retry.
 
         if (opts.duringResize) return;
         const previousSnapshot = activePlantingLayoutSnapshots.get(groupCell); // CHANGE
@@ -9916,6 +9984,7 @@ Draw.loadPlugin(function (ui) {
             body.innerHTML = ''; // CHANGE: migrated planting overlay.
             entry.spacingRows = context.rows || []; // CHANGE: migrated planting overlay.
             const wrap = document.createElement('div'); // CHANGE: migrated planting overlay.
+            if (!options.live) wrap.dataset.trellisCollaborativeEditor = 'planting'; // NEW
             wrap.className = 'manual-link-spacing-editor'; // CHANGE: migrated planting overlay.
             wrap.style.display = 'flex'; // CHANGE: migrated planting overlay.
             wrap.style.flexDirection = 'column'; // CHANGE: migrated planting overlay.
@@ -10073,6 +10142,7 @@ Draw.loadPlugin(function (ui) {
 
             function refreshDraftState() { // CHANGE: migrated planting overlay.
                 const changed = rowStates.filter(state => state.row.enabled !== false && spacingRowChanged(state)); // CHANGE: migrated planting overlay.
+                if (changed.length && !options.live) entry.spacingHold?.touch(); // NEW
                 writeStoredSpacingDrafts(entry, rowStates); // CHANGE: migrated planting overlay.
                 rowStates.forEach(state => { // CHANGE: migrated planting overlay.
                     const showRevert = state.row.enabled !== false && spacingRowChanged(state); // CHANGE: migrated planting overlay.
@@ -10191,10 +10261,11 @@ Draw.loadPlugin(function (ui) {
             })); // CHANGE
             refreshPatterns(); // CHANGE
             apply.textContent = options.applyLabel || 'Apply'; // CHANGE
-            apply.addEventListener('click', async function (evt) { // CHANGE: migrated planting overlay.
-                consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
-                if (apply.disabled || options.live) return; // CHANGE: a hidden allocation action cannot mutate saved plantings.
+            async function applySpacing() { // CHANGE: native Apply and handoff share validation and the graph command.
+                if (apply.disabled || options.live) return !rowStates.some(spacingRowChanged); // CHANGE
                 try { // CHANGE: migrated planting overlay.
+                    if (entry.spacingHold) await entry.spacingHold.acquire(); // NEW
+                    if (entry.spacingHold && (!wrap.isConnected || !entry.spacingHold.active())) return false; // CHANGE
                     const allRows = spacingDraftFromRowStates(rowStates); // CHANGE
                     const changedRows = allRows.filter(row => row.enabled !== false && (options.proposed || spacingRowChanged(rowStates.find(state => state.row.cellId === row.cellId)))); // CHANGE
                     if (options.onApply) await options.onApply(allRows, { saveDefaults: saveDefaults.checked }); // CHANGE
@@ -10206,10 +10277,13 @@ Draw.loadPlugin(function (ui) {
                     clearSpacingPreview(); // CHANGE: migrated planting overlay.
                     status.textContent = 'Spacing applied.'; // CHANGE: migrated planting overlay.
                     if (!options.onApply) setTimeout(refresh, 0); // CHANGE
+                    return true; // NEW
                 } catch (e) { // CHANGE: migrated planting overlay.
                     status.textContent = e && e.message ? e.message : String(e); // CHANGE: migrated planting overlay.
+                    return false; // NEW
                 } // CHANGE: migrated planting overlay.
-            }); // CHANGE: migrated planting overlay.
+            } // CHANGE
+            apply.addEventListener('click', event => { consumeOverlayControlEvent(event); applySpacing(); }); // NEW
             applySetDefault.addEventListener('click', async function (evt) { // CHANGE: migrated planting overlay.
                 consumeOverlayControlEvent(evt); // CHANGE: migrated planting overlay.
                 if (!context.hasSetDefault || !tools || typeof tools.applySetDefault !== 'function') return; // CHANGE: migrated planting overlay.
@@ -10225,6 +10299,14 @@ Draw.loadPlugin(function (ui) {
                     status.textContent = e && e.message ? e.message : String(e); // CHANGE: migrated planting overlay.
                 } // CHANGE: migrated planting overlay.
             }); // CHANGE: migrated planting overlay.
+            if (!options.live) { // NEW
+                const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
+                entry.spacingEditorState = { targets: () => rowStates.filter(state => state.row.enabled !== false && spacingRowChanged(state)).map(state => JSON.stringify([pageId, String(state.row.cellId)])), capture: () => ({ pageId, objectId: entry.sourceId, rows: spacingDraftFromRowStates(rowStates), saveDefaults: saveDefaults.checked }), save: applySpacing }; // NEW: refresh controls without replacing the held editing generation.
+                if (!entry.spacingHold) entry.spacingHold = window.Trellis?.sharing?.registerEditor?.({ // CHANGE
+                    kind: 'planting', targets: () => entry.spacingEditorState.targets(), capture: () => entry.spacingEditorState.capture(), save: () => entry.spacingEditorState.save(), // CHANGE
+                    discard() { clearStoredSpacingDrafts(entry); clearSpacingPreview(); if (entry.panel) removeEntry(entry, false); else { entry.spacingHold?.dispose(); entry.spacingHold = null; wrap.remove(); } } // CHANGE
+                }); // NEW
+            } // NEW
             refreshDraftState(); // CHANGE: preserve and redraw valid spacing drafts across view refreshes.
             return { setStatus: message => { status.textContent = message || ''; } }; // CHANGE: live fitting updates feedback without replacing inputs or focus.
         } // CHANGE: migrated planting overlay.
@@ -11037,6 +11119,7 @@ Draw.loadPlugin(function (ui) {
 
         function removeEntry(entry, restoreYear) { // CHANGE: migrated planting overlay.
             if (!entry) return; // CHANGE: migrated planting overlay.
+            entry.spacingHold?.dispose(true); entry.spacingHold = null; // NEW
             clearStoredSpacingDrafts(entry); // CHANGE: closing an editor invalidates context loads as well as its retained draft.
             clearSpacingPreview(); // CHANGE: migrated planting overlay.
             for (const poly of entry.lines.values()) removePolyline(poly); // CHANGE: migrated planting overlay.
@@ -11139,6 +11222,7 @@ Draw.loadPlugin(function (ui) {
 
         /** History always discards drafts, even when the edited cell is outside the planting context. */ // CHANGE
         function discardSpacingDrafts() { // CHANGE
+            registry.forEach(entry => { entry.spacingHold?.dispose(true); entry.spacingHold = null; }); // NEW
             registry.forEach(clearStoredSpacingDrafts); // CHANGE
             clearSpacingPreview(); // CHANGE: unregister retained redraw inputs and restore real shapes/handles.
         } // CHANGE
@@ -11146,7 +11230,7 @@ Draw.loadPlugin(function (ui) {
         function setMode(mode) { // CHANGE: migrated planting overlay.
             clearSpacingPreview(); // CHANGE: migrated planting overlay.
             activeMode = mode === MODE_SPACING ? MODE_SPACING : (mode === MODE_SCHEDULE ? MODE_SCHEDULE : MODE_CARDS); // CHANGE: migrated planting overlay.
-            if (activeMode !== MODE_SPACING) registry.forEach(entry => clearStoredSpacingDrafts(entry)); // CHANGE: leaving Spacing discards uncommitted layout drafts.
+            if (activeMode !== MODE_SPACING) registry.forEach(entry => { entry.spacingHold?.dispose(true); entry.spacingHold = null; clearStoredSpacingDrafts(entry); }); // CHANGE
             refresh(); // CHANGE: migrated planting overlay.
         } // CHANGE: migrated planting overlay.
 

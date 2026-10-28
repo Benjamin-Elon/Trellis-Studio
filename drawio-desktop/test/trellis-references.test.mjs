@@ -172,3 +172,13 @@ test('catalog dependencies use portable IDs and repeated saves do not manufactur
     assert.equal(saved.current, base.current); assert.deepEqual(definitions.items[0].capabilities, ['till']); // NEW
     const revision = Object.values(base.revisions).find(rev => rev.data.item?.id === 'hoe' && C.references(rev.data).length); assert.ok(revision); assert.equal(C.references(revision.data).length, 2); // NEW
 }); // NEW
+
+/** Domain-specific proposal access must survive the generic content policy without allowing bundled garden edits. */ // NEW
+test('signed gardener proposals reuse reference approval while unrelated bundled edits remain forbidden', () => { // NEW
+    const base = fixture(), request = proposal(base, edit(base, { spacing_cm: 31 })), before = canvas(base, emptyLog()), after = canvas(base, { ...emptyLog(), requests: [request] }), delta = diffObjects(before, after); // NEW
+    const claim = { schema: 3, id: 'reference-claim', kind: 'claim', sessionId: 'session', deviceId: 'device', userId: 'editor', clock: 1, at: 1000, parents: [], targets: delta.targets }; // NEW
+    const transaction = { ...claim, ...delta, id: 'reference-edit', kind: 'edit', clock: 2, at: 1001, parents: [claim.id], claimIds: [claim.id] }; // NEW
+    assert.deepEqual(replay(before, [claim, transaction], 2000).accepted, [transaction.id]); // NEW
+    const mixed = after.replace('id="garden" ', 'id="garden" label="Forbidden garden rename" '), changed = { ...transaction, ...diffObjects(before, mixed) }; // NEW
+    assert.deepEqual(replay(before, [claim, changed], 2000).accepted, []); // NEW
+}); // NEW

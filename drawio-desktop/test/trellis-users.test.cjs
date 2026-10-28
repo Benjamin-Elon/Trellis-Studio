@@ -297,6 +297,7 @@ function loadUsersPlugin(options = {}) {
         mxEvent: { CHANGE: "change" },
         mxUtils: { createXmlDocument() { return document.implementation.createDocument("", "", null); } }
     };
+    vm.runInNewContext(fs.readFileSync(path.join(projectRoot, "drawio/src/main/webapp/js/trellis-permission-core.js"), "utf8"), context); // NEW
     vm.runInNewContext(fs.readFileSync(pluginPath, "utf8"), context, { filename: pluginPath });
     const loginButton = document.querySelector(".trellis-users-login-button");
     if (loginButton) loginButton.getBoundingClientRect = () => ({ left: 850, right: 910, top: 10, bottom: 34, width: 60, height: 24 });
@@ -2366,8 +2367,8 @@ test("pending invite creates regular pending user grants and email draft", () =>
     const result = users.createPendingInvite({ email: "Bob@Example.com", scopeCellIds: [harness.module.id], shareInfo: { deviceId: "DEV", folderId: "FOL", folderLabel: "Garden", folderPath: "C:/Garden" } });
     assert.equal(result.ok, true);
     assert.equal(result.invite.email, "bob@example.com");
-    assert.match(result.emailDraft.body, /In Trellis OS, choose Join Shared Canvas/); // CHANGE: invitations use the public product name.
-    assert.match(result.emailDraft.body, /Open the synced diagram in Trellis OS/); // CHANGE
+    assert.match(result.emailDraft.body, /Home screen, choose Join a garden project/); // CHANGE: invitations point to the guided Home entry.
+    assert.match(result.emailDraft.body, /Pending invitations in Garden Projects.*Open project/); // CHANGE
     assert.doesNotMatch(result.emailDraft.body, /Trellis Studio/); // CHANGE: catch partially renamed sharing instructions.
     assert.match(result.emailDraft.body, /DEV/);
     assert.match(result.emailDraft.body, /FOL/);
@@ -2443,6 +2444,41 @@ test("accept invite activates pending regular user and prevents token reuse", ()
     assert.match(reuse.reason, /No active invite/);
 });
 
+test('guided acceptance links identity before saving, keeps the same account on retry, and restores graph access', async () => { // NEW
+    const h = loadUsersPlugin(), users = h.context.window.Trellis.users; users.enableUsers('Owner', '1234'); h.module.style = 'module=1'; users.stampCreatedOwner(h.module); // NEW
+    const invite = users.createPendingInvite({ email: 'member@example.org', scopeCellIds: [h.module.id] }); users.logout(); // NEW
+    h.context.window.trellisIdentity = { getSession: async () => ({ identityId: 'portable', generation: 1 }) }; // NEW
+    h.context.window.crypto = require('node:crypto').webcrypto; // NEW
+    const input = { identityId: 'portable', generation: 1, userId: invite.invite.pendingUserId, email: 'member@example.org', code: invite.code, displayName: 'Member' }; // NEW
+    const result = await users.finishIdentityJoin(input); assert.equal(result.ok, true); assert.equal(result.user.portableIdentityId, 'portable'); // NEW
+    const saved = users._test.readStore().users.find(user => user.id === result.user.id); assert.ok(saved.pinHash); assert.equal(saved.portableIdentityId, 'portable'); // NEW
+    users.logout(); assert.equal((await users.finishIdentityJoin(input)).ok, true); assert.equal(users.getCurrentUser().id, result.user.id); assert.equal(users._test.readStore().users.length, 2); // NEW
+    assert.equal(h.graph.enabled, true); assert.equal(h.document.querySelector('.trellis-users-auth-overlay'), null); // CHANGE
+}); // NEW
+
+test('existing members prove their own PIN once; wrong PIN, foreign identity, stale login and mismatched invite cannot link', async () => { // NEW
+    const h = loadUsersPlugin(), users = h.context.window.Trellis.users; users.enableUsers('Owner', '1234'); const member = users.createUser('Member', '5678', false).user; users.logout(); // NEW
+    let session = { identityId: 'portable', generation: 1 }; h.context.window.trellisIdentity = { getSession: async () => session }; // NEW
+    const input = { identityId: 'portable', generation: 1, userId: member.id }; // NEW
+    assert.equal((await users.finishIdentityJoin(input)).needsPin, true); assert.equal((await users.finishIdentityJoin({ ...input, pin: 'wrong' })).ok, false); // NEW
+    assert.equal((await users.finishIdentityJoin({ ...input, pin: '5678' })).ok, true); assert.equal(users.getCurrentUser().id, member.id); users.logout(); // NEW
+    assert.equal((await users.finishIdentityJoin({ ...input, userId: 'not-invited', email: 'member@example.org' })).ok, false); // NEW
+    session = { identityId: 'foreign', generation: 2 }; assert.match((await users.finishIdentityJoin({ ...input, identityId: 'foreign', generation: 2, pin: '5678' })).reason, /different identity/); // NEW
+    session = { identityId: 'portable', generation: 3 }; assert.match((await users.finishIdentityJoin(input)).reason, /changed/); // NEW
+}); // NEW
+
+test('a proven guided account survives pending native policy until saved, but revocation ends that provisional login', async () => { // NEW
+    const h = loadUsersPlugin(), users = h.context.window.Trellis.users; users.enableUsers('Owner', '1234'); h.module.style = 'module=1'; users.stampCreatedOwner(h.module); // NEW
+    const invite = users.createPendingInvite({ email: 'member@example.org', scopeCellIds: [h.module.id] }), policy = JSON.parse(JSON.stringify(users._test.readStore())); users.logout(); // NEW
+    h.graph.__trellisSharedPolicy = { diagramId: users.getDiagramKey(true), store: policy, cells: new Map() }; // NEW
+    h.context.window.trellisIdentity = { getSession: async () => ({ identityId: 'portable', generation: 1 }) }; h.context.window.crypto = require('node:crypto').webcrypto; // NEW
+    const input = { identityId: 'portable', generation: 1, userId: invite.invite.pendingUserId, email: 'member@example.org', code: invite.code, displayName: 'Member' }; // NEW
+    assert.equal((await users.finishIdentityJoin(input)).ok, true); users.revalidateCurrentSession(); assert.equal(users.getCurrentUser().id, input.userId); assert.equal(users.isAdmin(), false); // NEW
+    const raw = () => JSON.parse(h.layer.getAttribute('trellis_users_json')), credential = raw().users.find(user => user.id === input.userId).pinHash; // NEW
+    assert.equal((await users.finishIdentityJoin(input)).ok, true); assert.equal(raw().users.find(user => user.id === input.userId).pinHash, credential); // NEW
+    policy.invites[0].status = 'revoked'; users.revalidateCurrentSession(); assert.equal(users.getCurrentUser(), null); // NEW
+}); // NEW
+
 test("revoking pending invite removes pending grants", () => {
     const harness = loadUsersPlugin();
     const users = harness.context.window.Trellis.users;
@@ -2487,7 +2523,7 @@ test("regular non-owner cannot invite selected scopes", () => {
     assert.match(result.reason, /own or administer/);
 });
 
-test("expired invites are hidden and remove pending grants", () => {
+test("expired invitation queries are pure and an authorized invitation command cleans pending grants", () => {
     const harness = loadUsersPlugin();
     const users = harness.context.window.Trellis.users;
     users.enableUsers("Alice", "1234");
@@ -2497,9 +2533,13 @@ test("expired invites are hidden and remove pending grants", () => {
     const store = users._test.readStore();
     store.invites[0].expiresAt = Date.now() - 1;
     users._test.writeStore(store);
-    assert.deepEqual(users.listPendingInvites(), []);
-    assert.doesNotMatch(harness.module.getAttribute(users.attrs.accessGrants) || "", new RegExp(invite.invite.pendingUserId));
-    assert.equal(users.acceptInvite({ email: "bob@example.com", code: invite.code, name: "Bob", pin: "5678" }).ok, false);
+    const before = harness.module.getAttribute(users.attrs.accessGrants), saved = JSON.stringify(users._test.readStore()); // CHANGE
+    assert.equal(users.listPendingInvites(store.invites[0].expiresAt - 1)[0].status, "pending"); // NEW
+    assert.deepEqual(users.listPendingInvites(store.invites[0].expiresAt), []); // NEW
+    assert.deepEqual(users.listPendingInvites(), []); // CHANGE
+    assert.equal(harness.module.getAttribute(users.attrs.accessGrants), before); assert.equal(JSON.stringify(users._test.readStore()), saved); // NEW
+    assert.equal(users.acceptInvite({ email: "bob@example.com", code: invite.code, name: "Bob", pin: "5678" }).ok, false); // CHANGE
+    assert.doesNotMatch(harness.module.getAttribute(users.attrs.accessGrants) || "", new RegExp(invite.invite.pendingUserId)); // CHANGE
 });
 
 /** Use real invitation policy and UI with mocked email, sharing, and clipboard boundaries. */ // NEW
@@ -2510,9 +2550,9 @@ function inviteDeliveryFixture(t, options = {}) { // NEW
     h.module.style = 'module=1'; users.stampCreatedOwner(h.module); // NEW
     const result = users.createPendingInvite({ email: 'grower@example.com', scopeCellIds: [h.module.id] }); // NEW
     const prepared = [], launches = [], copies = []; // NEW
-    win.Trellis.sharing = { async prepareInvite(invite) { // NEW
+    win.Trellis.sharing = { async prepareInvite(invite, progressOptions) { // CHANGE
         prepared.push(invite); // NEW
-        if (options.prepare) return options.prepare(invite); // NEW
+        if (options.prepare) return options.prepare(invite, progressOptions); // CHANGE
         return { to: invite.emailDraft.to, subject: 'Jalapeño & herbs 🌱', body: 'First line\nSecond line\n\nTRELLIS INVITE\n' + invite.code + '\nEND INVITE' }; // NEW
     } }; // NEW
     win.trellisShare = { async openEmailDraft(draft) { launches.push(draft); return options.launch ? options.launch(draft) : { ok: true }; } }; // NEW
@@ -2646,7 +2686,7 @@ test('closing during email launch or clipboard copy never reopens the view or st
     h.users.openInviteDelivery(h.result); // NEW
     await new Promise(setImmediate); // NEW
     assert.equal(h.button('Retry Email').disabled, true); // NEW
-    assert.equal(h.button('Copy Invitation').disabled, true); // NEW
+    assert.equal(h.button('Copy Invitation').disabled, false); // CHANGE: prepared text stays available during a slow external launch. // NEW
     h.button('Done').click(); // NEW
     const outside = h.document.createElement('button'); h.document.body.appendChild(outside); outside.focus(); // NEW
     finishLaunch(); // NEW
@@ -2655,7 +2695,7 @@ test('closing during email launch or clipboard copy never reopens the view or st
     h.win.trellisShare.openEmailDraft = async () => ({ ok: true }); // NEW
     h.users.openInviteDelivery(h.result); // NEW
     await new Promise(setImmediate); // NEW
-    h.button('Copy Invitation').click(); h.button('Done').click(); outside.focus(); // NEW
+    h.button('Copy Invitation').click(); await new Promise(setImmediate); h.button('Done').click(); outside.focus(); // CHANGE: close after asynchronous validation has entered clipboard copying.
     failCopy(); // NEW
     await new Promise(setImmediate); // NEW
     assert.equal(h.delivery(), null); assert.equal(h.document.activeElement, outside); // NEW
@@ -2679,4 +2719,24 @@ test('People & Access Resend renews once and uses the same retained delivery and
     assert.equal(h.users._test.readStore().invites[0].codeHash, renewedHash); // NEW
     h.button('Done').click(); // NEW
     assert.equal(h.users.listPendingInvites().length, 1); // NEW
+}); // NEW
+
+test('slow invitation preparation reports its stage without retrying or enabling incomplete copy', async t => { // NEW
+    let finish; const h = inviteDeliveryFixture(t, { prepare(invite, options) { // NEW
+        options.onProgress('waiting for editing access'); return new Promise(resolve => { finish = () => resolve(invite.emailDraft); }); // NEW
+    } }); // NEW
+    let tick; h.win.setInterval = callback => { tick = callback; return 1; }; h.win.clearInterval = () => {}; // NEW
+    const now = Date.now; let elapsed = 0; t.mock.method(Date, 'now', () => now() + elapsed); // NEW
+    h.users.openInviteDelivery(h.result); assert.match(h.status(), /Waiting for editing access/); // NEW
+    elapsed = 6000; tick(); assert.match(h.status(), /Taking longer than usual.*6 seconds.*Still working/); // NEW
+    assert.equal(h.button('Retry Email').disabled, true); assert.equal(h.button('Copy Invitation').disabled, true); // NEW
+    assert.equal(h.prepared.length, 1); h.button('Done').click(); finish(); await new Promise(setImmediate); assert.equal(h.launches.length, 0); // NEW
+}); // NEW
+
+test('retained delivery rejects rotated or revoked invitations before launch or clipboard copy', async t => { // NEW
+    const h = inviteDeliveryFixture(t); h.users.openInviteDelivery(h.result); await new Promise(setImmediate); // NEW
+    h.win.Trellis.sharing.validateInvite = async () => { throw new Error('The invitation code has rotated.'); }; // NEW
+    h.button('Copy Invitation').click(); await new Promise(setImmediate); // NEW
+    assert.equal(h.copies.length, 0); assert.equal(h.preview().value, ''); assert.equal(h.button('Copy Invitation').disabled, true); // NEW
+    assert.match(h.status(), /rotated/); // NEW
 }); // NEW

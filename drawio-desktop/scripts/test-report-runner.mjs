@@ -36,6 +36,8 @@ function addCounts(target, source = {}) {
 }
 
 function statusFromEventType(type, details = {}) {
+	if (details.skip) return 'skipped'; // CHANGE: Node reports skipped tests using test:pass.
+	if (details.todo) return 'todo'; // CHANGE
 	if (type === 'test:pass') return 'passed';
 	if (type === 'test:fail') return 'failed';
 	if (type === 'test:skip') return 'skipped';
@@ -117,9 +119,9 @@ export function buildTestReport(events, options = {}) {
 		}
 
 		if (event.type === 'test:summary' && !data.file) {
-			runDurationMs = roundMs(data.duration_ms || runDurationMs);
-			runSuccess = Boolean(data.success);
-			Object.assign(runCounts, { ...zeroCounts(), ...data.counts });
+			runDurationMs = roundMs(runDurationMs + (data.duration_ms || 0)); // CHANGE: sequential lanes contribute independent root summaries.
+			runSuccess = runSuccess && Boolean(data.success); // CHANGE: a successful later lane cannot erase an earlier failure or process error.
+			addCounts(runCounts, data.counts); // CHANGE
 			continue;
 		}
 
@@ -132,7 +134,7 @@ export function buildTestReport(events, options = {}) {
 		const durationMs = roundMs(details.duration_ms || 0);
 		const testRecord = {
 			name: String(data.name || '(unnamed test)'),
-			status: statusFromEventType(event.type, details),
+			status: statusFromEventType(event.type, { ...details, skip: data.skip, todo: data.todo }), // CHANGE
 			durationMs,
 			line: data.line || null,
 			column: data.column || null,
@@ -270,7 +272,7 @@ async function pruneHistory(reportDir, limit) {
 	]));
 }
 
-function parseCliArgs(argv) {
+export function parseCliArgs(argv) { // CHANGE: exercise flag/path routing without spawning the suite.
 	const options = {
 		reportDir: DEFAULT_REPORT_DIR,
 		historyLimit: DEFAULT_HISTORY_LIMIT,
@@ -297,9 +299,27 @@ function parseCliArgs(argv) {
 		}
 	}
 
-	if (!options.testArgs.length) options.testArgs = DEFAULT_TEST_PATTERNS.slice();
+	const valueFlags = new Set(['--test-name-pattern', '--test-skip-pattern', '--test-concurrency', '--test-timeout', '--test-shard', '--require', '--import']); // CHANGE
+	let valueNext = false, hasPath = false; // CHANGE
+	for (const arg of options.testArgs) { if (valueNext) { valueNext = false; continue; } if (valueFlags.has(arg)) valueNext = true; else if (!arg.startsWith('-')) hasPath = true; } // CHANGE
+	if (!hasPath) { // CHANGE: Node filters alone still select the default test files.
+		options.defaultDiscovery = true; options.testArgs.push(...DEFAULT_TEST_PATTERNS); // CHANGE
+	} // CHANGE
 	return options;
 }
+
+/** Keep native windows and daemon owners serial while ordinary files use Node's normal concurrency. */ // CHANGE
+export function planTestLanes(testArgs, files, defaultDiscovery = false) { // CHANGE
+	const serialRuntime = /(?:trellis-(?:syncthing-runtime|identity-runtime|garden-communities-runtime|save-stress))\.test\.mjs$/; // CHANGE
+	const native = /-electron\.test\.cjs$/; // CHANGE
+	if (!defaultDiscovery) return [{ name: 'selected', testArgs: ['--test-concurrency=1', ...testArgs] }]; // CHANGE: explicit paths, globs and filter arguments pass through intact.
+	const flags = testArgs.filter(arg => !DEFAULT_TEST_PATTERNS.includes(arg)); // CHANGE
+	const lanes = [{ name: 'ordinary', files: [] }, { name: 'native', files: [] }, { name: 'runtime', files: [] }]; // CHANGE
+	for (const file of [...files].sort()) { // CHANGE
+		lanes[serialRuntime.test(file) ? 2 : native.test(file) ? 1 : 0].files.push(file); // CHANGE
+	} // CHANGE
+	return lanes.filter(lane => lane.files.length).map(lane => ({ name: lane.name, testArgs: [...flags, ...(lane.name === 'ordinary' ? [] : ['--test-concurrency=1']), ...lane.files] })); // CHANGE
+} // CHANGE
 
 function runNodeTests({ testArgs, eventsPath }) {
 	const args = [
@@ -331,27 +351,29 @@ export async function runCli(argv = process.argv.slice(2), operations = {}) {
 		write = writeReport,
 		prune = pruneHistory,
 		now = () => new Date(),
+		discover = async () => (await fs.readdir(path.join(PROJECT_ROOT, 'test'))).filter(name => /\.test\.(?:cjs|mjs)$/.test(name)).map(name => './test/' + name), // CHANGE
 	} = operations;
 	const options = parseArgs(argv);
 	const timestamp = stableTimestamp(now());
 	const tempDir = await makeTempDir(path.join(os.tmpdir(), 'trellis-test-events-'));
-	const eventsPath = path.join(tempDir, 'events.ndjson');
-	const result = await runTests({ testArgs: options.testArgs, eventsPath });
-	let events = [];
-
-	try {
-		events = parseNdjsonEvents(await readFile(eventsPath, 'utf8'));
-	} catch (error) {
-		if (error.code !== 'ENOENT') throw error;
-	}
-
-	const exitCode = result.code == null ? 1 : result.code;
+	const lanes = planTestLanes(options.testArgs, options.defaultDiscovery ? await discover() : [], options.defaultDiscovery); // CHANGE
+	const events = [], phases = []; let exitCode = 0; // CHANGE
+	for (const lane of lanes) { // CHANGE: await every lane and retain all failures.
+		console.log('\nTest lane: ' + lane.name); // CHANGE
+		const eventsPath = path.join(tempDir, lane.name + '.ndjson'); // CHANGE
+		const result = await runTests({ testArgs: lane.testArgs, eventsPath }); // CHANGE
+		const code = result.code == null ? 1 : result.code; if (code) exitCode = code; // CHANGE
+		phases.push({ name: lane.name, exitCode: code, signal: result.signal || null }); // CHANGE
+		try { const laneEvents = parseNdjsonEvents(await readFile(eventsPath, 'utf8')); events.push(...laneEvents); if (!laneEvents.some(event => event.type === 'test:summary' && !event.data?.file)) exitCode = exitCode || 1; } // CHANGE: a truncated or empty reporter stream is incomplete evidence.
+		catch (error) { if (error.code !== 'ENOENT') throw error; exitCode = exitCode || 1; } // CHANGE: missing reports cannot count as success.
+	} // CHANGE
 	const report = buildTestReport(events, {
 		exitCode,
 		generatedAt: now().toISOString(),
 		nodeVersion: process.version,
 		projectRoot: PROJECT_ROOT,
 	});
+	report.phases = phases; // CHANGE
 
 	await write(report, options.reportDir, timestamp);
 	await prune(options.reportDir, options.historyLimit);

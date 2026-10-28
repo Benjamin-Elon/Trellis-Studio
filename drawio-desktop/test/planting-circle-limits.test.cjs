@@ -21,6 +21,7 @@ function fixture() { // NEW
     h.count = group => Number(group.getAttribute('plant_count_actual')); // NEW
     h.collapsed = group => group.getAttribute('lod_collapsed') === '1'; // NEW
     h.users = () => { // NEW
+        h.window.eval(fs.readFileSync(path.join(plugins, '../../js/trellis-permission-core.js'), 'utf8')); // NEW
         h.window.eval(fs.readFileSync(path.join(plugins, 'Trellis_Users.js'), 'utf8')); // NEW
         const users = h.window.Trellis.users; assert.equal(users.enableUsers('Alice', '1234').ok, true); users.stampCreatedOwner(h.moduleCell); // NEW
         return users; // NEW

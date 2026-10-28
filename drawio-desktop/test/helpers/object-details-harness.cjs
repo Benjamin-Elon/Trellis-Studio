@@ -26,6 +26,7 @@ module.exports = function harness(t, options = {}) { // CHANGE
         const cleanup = fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8'); // NEW
         w.eval(cleanup.slice(0, cleanup.indexOf('\nDraw.loadPlugin'))); w.Trellis.ui.installOverlayVisibility(graph); // NEW
     } // NEW
+    w.eval(fs.readFileSync(path.join(webapp, 'js/trellis-permission-core.js'), 'utf8')); // NEW
     for (const name of ['Trellis_Context_Menu.js', 'Trellis_Details_Core.js', 'Trellis_Details_Toolbar.js', 'Trellis_Details_Comments.js', 'Trellis_Object_Details.js']) w.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins', name), 'utf8')); // CHANGE
     const controller = graph.__trellisObjectDetails; // NEW
     t.after(() => { controller.destroy(); graph.destroy(); dom.window.close(); }); // NEW

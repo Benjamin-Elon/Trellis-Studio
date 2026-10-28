@@ -9,7 +9,9 @@ import {
 	buildTestReport,
 	formatMarkdownReport,
 	parseNdjsonEvents,
+	parseCliArgs, planTestLanes, runCli, // CHANGE
 } from '../scripts/test-report-runner.mjs';
+import ndjsonReporter from '../scripts/test-report-ndjson-reporter.mjs'; // CHANGE
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runnerPath = path.join(projectRoot, 'scripts', 'test-report-runner.mjs');
@@ -49,6 +51,36 @@ test('test report aggregates files and tests by descending duration', () => {
 	assert.equal(report.status, 'passed');
 });
 
+test('default discovery assigns every file once and serializes native and runtime owners', () => { // CHANGE
+	const files = ['./test/plain.test.mjs', './test/a-electron.test.cjs', './test/trellis-identity-runtime.test.mjs', './test/trellis-save-stress.test.mjs']; // CHANGE
+	const options = parseCliArgs(['--test-name-pattern', 'two words']); // CHANGE
+	const lanes = planTestLanes(options.testArgs, files, options.defaultDiscovery); // CHANGE
+	assert.deepEqual(lanes.map(lane => lane.name), ['ordinary', 'native', 'runtime']); // CHANGE
+	assert.deepEqual(lanes.flatMap(lane => lane.testArgs.filter(arg => files.includes(arg))).sort(), [...files].sort()); // CHANGE
+	assert.ok(!lanes[0].testArgs.includes('--test-concurrency=1')); // CHANGE
+	for (const lane of lanes.slice(1)) assert.ok(lane.testArgs.includes('--test-concurrency=1')); // CHANGE
+	for (const lane of lanes) assert.deepEqual(lane.testArgs.slice(0, 2), ['--test-name-pattern', 'two words']); // CHANGE
+	const selected = ['--test-name-pattern=a b', './test/a-electron.test.cjs']; // CHANGE
+	assert.deepEqual(planTestLanes(selected, files)[0].testArgs, ['--test-concurrency=1', ...selected]); // CHANGE
+}); // CHANGE
+
+test('lane reports accumulate counts and retain process failures despite successful summaries', () => { // CHANGE
+	const report = buildTestReport([event('test:summary', { success: false, duration_ms: 10, counts: { tests: 2, failed: 1, passed: 1 } }), event('test:summary', { success: true, duration_ms: 20, counts: { tests: 3, passed: 2, skipped: 1 } })], { exitCode: 1 }); // CHANGE
+	assert.equal(report.status, 'failed'); assert.equal(report.counts.tests, 5); assert.equal(report.counts.failed, 1); assert.equal(report.durationMs, 30); // CHANGE
+	assert.equal(buildTestReport([event('test:summary', { success: true })], { exitCode: 1 }).status, 'failed'); // CHANGE
+}); // CHANGE
+
+test('runner awaits lanes and continues after an earlier failed lane', async () => { // CHANGE
+	const seen = []; let active = false, report; // CHANGE
+	const code = await runCli([], { // CHANGE
+		discover: async () => ['./test/plain.test.mjs', './test/a-electron.test.cjs'], makeTempDir: async () => '/tmp/lanes', // CHANGE
+		runTests: async ({ testArgs }) => { assert.equal(active, false); active = true; await new Promise(resolve => setTimeout(resolve, 5)); seen.push(testArgs); active = false; return { code: seen.length === 1 ? 1 : 0 }; }, // CHANGE
+		readFile: async () => JSON.stringify(event('test:summary', { success: true, counts: { tests: 1, passed: 1 } })), // CHANGE
+		write: async value => { report = value; }, prune: async () => {}, rm: async () => {} // CHANGE
+	}); // CHANGE
+	assert.equal(code, 1); assert.equal(seen.length, 2); assert.equal(report.counts.tests, 2); assert.equal(report.status, 'failed'); // CHANGE
+}); // CHANGE
+
 test('test report markdown shows slowest file and test tables', () => {
 	const report = buildTestReport([
 		event('test:fail', { name: 'breaks loudly', file: 'C:/repo/test/slow.test.mjs', line: 7, column: 2, details: { duration_ms: 10, error: { code: 'ERR_TEST_FAILURE', cause: { message: 'Expected true' } } } }),
@@ -68,6 +100,15 @@ test('test report parser reads newline-delimited reporter events', () => {
 
 	assert.deepEqual(events.map((item) => item.type), ['test:summary', 'test:plan']);
 });
+
+test('structured reporter retains native Error messages, stacks and circular nested causes', async () => { // CHANGE
+	const cause = new TypeError('inner failure'), original = Object.assign(new Error('outer failure', { cause }), { code: 'DIAGNOSTIC' }); // CHANGE
+	const error = Object.create(Error.prototype, { ...Object.getOwnPropertyDescriptors(original), stack: { value: original.stack } }); cause.cause = error; // CHANGE: Node transports the evaluated stack string, rather than its native lazy getter.
+	const lines = []; for await (const line of ndjsonReporter([{ type: 'test:fail', data: { details: { error } } }])) lines.push(line); // CHANGE
+	const saved = JSON.parse(lines.join('')).data.details.error; // CHANGE
+	assert.equal(saved.message, 'outer failure'); assert.equal(saved.code, 'DIAGNOSTIC'); assert.match(saved.stack, /outer failure/); // CHANGE
+	assert.equal(saved.cause.message, 'inner failure'); assert.equal(saved.cause.name, 'TypeError'); assert.equal(saved.cause.cause, '[Circular Error]'); // CHANGE
+}); // CHANGE
 
 test('test report runner writes latest and history artifacts for passing tests', async () => {
 	const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-test-report-pass-'));
@@ -92,7 +133,9 @@ test('fixture quick', () => assert.equal(2, 2));
 
 	assert.equal(latest.status, 'passed');
 	assert.equal(latest.files.length, 1);
-	assert.deepEqual(latest.files[0].tests.map((testRecord) => testRecord.name), ['fixture slow enough to report', 'fixture quick']);
+	const recorded = latest.files[0].tests; // CHANGE: operating-system scheduling can make the nominally quick fixture slower than its timer fixture.
+	assert.deepEqual(recorded.map((testRecord) => testRecord.name).sort(), ['fixture quick', 'fixture slow enough to report']); // CHANGE
+	assert.ok(recorded[0].durationMs >= recorded[1].durationMs); // CHANGE: verify measured sorting; fixed-duration parser tests establish the deterministic ordering contract.
 	assert.match(markdown, /Slowest Files/);
 	assert.equal(history.filter((entry) => entry.endsWith('.json')).length, 1);
 	assert.equal(history.filter((entry) => entry.endsWith('.md')).length, 1);
@@ -117,6 +160,7 @@ test('fixture fails', () => assert.equal(1, 2));
 	assert.equal(latest.status, 'failed');
 	assert.equal(latest.counts.failed, 1);
 	assert.equal(latest.files[0].failures[0].name, 'fixture fails');
+	assert.match(latest.files[0].failures[0].error, /1 !== 2/); // CHANGE: real child-process errors must reach the saved report with their original message.
 
 	await fs.rm(tempDir, { recursive: true, force: true });
 });

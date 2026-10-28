@@ -54,10 +54,10 @@ export function createLibraryNaming({ identities, own, getEntry, catalog, localS
         const displayName = naming.displayName(shared || entry.name, personalSuffix); // NEW
         return { projectName: shared, suffix: personalSuffix, displayName, name: displayName, filename: local?.filename || null, path: local?.path || null, folderPath: local?.folderPath || null, available: !!local?.available, canRename, canEditSuffix: verifiedMember && !!shared, namingReady, filenamePending: !!local?.filenamePending || !!source?.legacy && namingReady, namingError: namingError || local?.namingError || (source?.legacy && namingReady ? 'Your personal project copy must download and receive device approval before its filename can change.' : '') }; // CHANGE
     } // NEW
-    async function rename(input) { // NEW
+    async function rename(input, callerId) { // CHANGE
         const session = own(); await identities.requireSession(); const entry = await getEntry(input.diagramId); // NEW
         const name = naming.projectName(input.name); // NEW
-        return { ok: true, ...await describe(session.identityId, entry, { name }) }; // NEW
+        return { ok: true, ...await describe(session.identityId, entry, { name, callerId }) }; // CHANGE
     } // NEW
     /** Reuse download enrollment; retain the legacy source until the private projection is ready. */ // NEW
     async function requestPersonalCopy(session, entry, source, daemon) { // NEW
@@ -87,7 +87,7 @@ export function createLibraryNaming({ identities, own, getEntry, catalog, localS
                 if (!registries.has(daemon)) registries.set(daemon, await daemon.listCanvases()); // NEW
                 const local = registries.get(daemon).find(canvas => canvas.shareId === entry.shareId), personalSuffix = personalSuffixes.get(entry.diagramId) || ''; // NEW
                 const stamp = async filename => fs.stat(filename).then(stat => [stat.mtimeMs, stat.ctimeMs, stat.size]).catch(error => { if (error.code === 'ENOENT') return null; throw error; }); // NEW
-                const token = JSON.stringify([local, personalSuffix, entry.projectName, current.devices, local?.path && await stamp(local.path), local?.folderPath && await stamp(path.join(local.folderPath, '.trellis', 'collaboration-v2', 'records'))]); // NEW
+                const token = JSON.stringify([local, personalSuffix, entry.projectName, current.devices, local?.path && await stamp(local.path), local?.folderPath && await stamp(path.join(local.folderPath, '.trellis', 'collaboration-v3', 'records'))]); // NEW
                 const key = identityId + ':' + entry.diagramId; // NEW
                 if (reconciled.get(key) === token && !local?.filenamePending && !source?.namingDownload) continue; // NEW
                 const result = await describe(identityId, entry, {}, source?.namingDownload ? undefined : { source, daemon, local, suffix: personalSuffix }); // NEW

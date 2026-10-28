@@ -74,6 +74,10 @@ test('production window close, explicit Quit and timer-triggered Quit release pr
     const directory = await profile(t); // NEW
     for (const mode of ['close', 'quit', 'timeout', 'quit']) { const run = launch(directory, mode); t.after(run.terminate); successful(await run.result); } // NEW
 }); // NEW
+test('opening a document with a retained draft offers production recovery', { timeout: 90000 }, async t => { // NEW
+    const directory = await profile(t), run = launch(directory, 'draft-recovery'); t.after(run.terminate); // NEW
+    const result = await run.result; successful(result); assert.match(result.output, /^LIFECYCLE_DRAFT_RECOVERY: offered\r?$/m); // NEW
+}); // NEW
 for (const forceColor of ['0', '1']) { // CHANGE: the owner must remain reachable with numeric console coloring disabled or enabled.
     test('a second instance is rejected while the owning profile stays reachable: FORCE_COLOR=' + forceColor, { timeout: 120000 }, async t => { // CHANGE
         const directory = await profile(t), owner = launch(directory, 'hold', forceColor); t.after(owner.terminate); // CHANGE

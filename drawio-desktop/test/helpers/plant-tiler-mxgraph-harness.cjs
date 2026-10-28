@@ -18,6 +18,7 @@ function loadPlantTilerMxGraph() { // CHANGE
     const undoManager = new window.mxUndoManager(); // CHANGE
     graph.getModel().addListener(window.mxEvent.UNDO, (sender, event) => undoManager.undoableEditHappened(event.getProperty('edit'))); // CHANGE
     const ui = createPreviewHistoryUi(window, graph, undoManager); // CHANGE
+    window.eval(fs.readFileSync(path.join(webapp, 'js/trellis-edit-context.js'), 'utf8')); // NEW: exercise generator provenance on the native model.
     window.Draw = { loadPlugin(callback) { callback(ui); } }; // CHANGE
     window.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Planting_Group.js'), 'utf8')); // CHANGE
     function value(attrs) { // CHANGE

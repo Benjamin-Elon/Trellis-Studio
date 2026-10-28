@@ -1,3 +1,4 @@
+require('../../src/main/trellis-asset-scheme.cjs'); // NEW: production protocol privileges must precede app readiness.
 /** NEW: Diagnose the real splash with normal GPU/network defaults and parent-bounded cleanup.
  * Run scripts/run-production-smoke.cjs with TRELLIS_SPLASH_DIAGNOSTIC=1. // NEW
  * The default profile is disposable; TRELLIS_SPLASH_PROFILE=live requires a closed-profile backup first. // NEW
@@ -48,6 +49,35 @@ async function evaluate(expression, timeout = 3000) { // NEW
     return value.result.value; // NEW
 } // NEW
 
+/** Verify real Home styling, native keyboard order and narrow wrapping before fixture navigation. */ // NEW
+async function verifyHomeActions(until) { // NEW
+    window.webContents.setBackgroundThrottling(false); // NEW: screenshot checks must progress while the diagnostic window is occluded.
+    await until("document.querySelector('[data-project-launcher=open]')?.getBoundingClientRect().height > 0", 'visible Home actions'); // NEW
+    const inspect = () => evaluate(`(()=>{const actions=document.querySelector('.trellis-splash-actions');return [...actions.querySelectorAll('button')].map(button=>({label:button.textContent,background:getComputedStyle(button).backgroundColor,icons:button.querySelectorAll('.trellis-splash-icon').length,overflow:button.scrollWidth>button.clientWidth+1,whiteSpace:getComputedStyle(button).whiteSpace}));})()`); // NEW
+    const expected = ['Create or Open a Garden Project', 'Join a Garden Project', 'Explore and Support Trellis'], before = await inspect(); // NEW
+    if (JSON.stringify(before.map(button => button.label)) !== JSON.stringify(expected)) throw new Error('Unexpected Home action labels or order.'); // NEW
+    if (before[0].background !== 'rgb(24, 128, 56)' || before[1].background !== 'rgb(0, 82, 204)' || before[2].background !== 'rgb(245, 220, 137)') throw new Error('Unexpected Home action colors: ' + JSON.stringify(before)); // NEW
+    const support = await evaluate(`(()=>{const original=window.open,opened=[],button=document.querySelector('.trellis-support-action');window.open=(...args)=>opened.push(args);try{button.click();}finally{window.open=original;}return {opened,url:button.getAttribute('data-trellis-url')};})()`); // NEW
+    if (!support.url.startsWith('https://patreon.com/Benjamin980?') || JSON.stringify(support.opened) !== JSON.stringify([[support.url, '_blank']])) throw new Error('Support destination changed.'); // NEW
+    await evaluate("(()=>{const splash=document.querySelector('.trellis-splash-root').trellisSplashDialog;TrellisGardenHome.attachSplash(splash,splashDiagnosticUi);TrellisGardenHome.attachSplash(splash,splashDiagnosticUi);document.querySelector('[data-project-launcher=open]').focus();})()"); // NEW
+    for (const selector of ['[data-join-project]', '.trellis-support-action']) { // NEW
+        window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' }); window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' }); // NEW
+        await until('document.activeElement.matches(' + JSON.stringify(selector) + ')', 'Home tab order'); // NEW
+    } // NEW
+    const after = await inspect(); if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error('Repeated Home decoration changed actions or icons.'); // NEW
+    const capture = async name => { // NEW
+        await new Promise(resolve => setTimeout(resolve, 150)); // NEW: allow resize painting without an occlusion-dependent animation frame.
+        fs.writeFileSync(path.join(output, name), (await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); // NEW
+    }; // NEW
+    const size = window.getSize(); await capture('home-wide.png'); // NEW
+    try { // NEW
+        window.setSize(360, 740); await evaluate("document.querySelector('.trellis-support-action').scrollIntoView({block:'end'});void 0;"); await capture('home-narrow.png'); const narrow = await inspect(); // NEW
+        if (narrow.some(button => button.overflow || button.whiteSpace !== 'normal')) throw new Error('Home labels overflow at narrow width.'); // NEW
+        if (await evaluate("(()=>{const home=document.querySelector('.trellis-splash-root'),actions=home.querySelector('.trellis-splash-actions'),rect=actions.getBoundingClientRect();return home.scrollWidth>home.clientWidth+1||rect.left<0||rect.right>innerWidth+1;})()")) throw new Error('Home overflows the narrow viewport.'); // NEW
+        record('home-actions-verified', { wide: before, narrow }); // NEW
+    } finally { window.setSize(...size); } // NEW
+} // NEW
+
 /** Exercise Create, Open and Home against a disposable identity and project, never the live profile. */ // NEW
 async function navigateFixture() { // NEW
     if (live) throw new Error('Navigation fixtures require an isolated profile.'); // NEW
@@ -56,8 +86,9 @@ async function navigateFixture() { // NEW
         while (Date.now() < deadline) { if (await evaluate(expression)) { record('navigation', label); return; } await new Promise(resolve => setTimeout(resolve, 200)); } // NEW
         throw new Error('Navigation timed out: ' + label); // NEW
     } // NEW
-    await until("!!document.querySelector('[data-project-launcher=create]')", 'Create control'); // NEW
-    await evaluate("document.querySelector('[data-project-launcher=create]').click()"); // NEW
+    await verifyHomeActions(until); // NEW
+    await until("!!document.querySelector('[data-project-launcher=open]')", 'Create or Open control'); // CHANGE
+    await evaluate("document.querySelector('[data-project-launcher=open]').click()"); // CHANGE
     await until("!!window.splashDiagnosticUi.__trellisGardenHome.panel?.textContent.includes('Create identity')", 'identity controls'); // NEW
     await evaluate("(()=>{const panel=splashDiagnosticUi.__trellisGardenHome.panel;[...panel.querySelectorAll('button')].find(b=>b.textContent==='Create identity').click();panel.querySelector('input[aria-label=Username]').value='Splash diagnostic';panel.querySelector('input[type=password]').value='isolated-splash-fixture-password';panel.querySelector('form').requestSubmit();})()"); // NEW
     await until("splashDiagnosticUi.__trellisGardenHome.session?.username === 'Splash diagnostic'", 'fixture identity'); // CHANGE: the restored account menu moves login text out of the identity panel.

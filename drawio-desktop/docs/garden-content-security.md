@@ -1,0 +1,93 @@
+# Garden content security
+
+All garden data is untrusted, including records signed by an approved device. Signatures establish authorship and integrity, not display safety. Policy revision 1 applies to private, shared, imported, remembered, recovered and exported documents. There is no switch to enable automatic remote content.
+
+## Policy and processing boundaries
+
+`js/trellis-content-policy.js` loads before application startup and document decoding in both `index.html` and `export3.html`. `ElectronApp.js` installs its hooks after the compiled host classes exist and before the initial garden opens. The export installer does the same for the compiled export renderer. Rebuilding `app.min.js` is not required to install this policy.
+
+Plain-text extraction uses an inert template and removes active/resource-bearing nodes. Rich text uses the existing DOMPurify, an explicit vocabulary, restricted CSS properties and checked links/images. Graph labels, stencil images, HTML images and export canvases share image validation. Remote images become placeholders and a dismissible, nonmodal document notice explains local image import. Stored labels and source references are never rewritten by these display hooks.
+
+The compiled editor creates resize, connection and rotation icons with the historical SVG 1.1 public declaration. Embedded-image display copies remove only that exact leading declaration, then pass the normal byte, XML and static-SVG checks. Normalized copies use UTF-8 base64, avoiding percent-encoding expansion; already-safe SVGs retain their original URI encoding. The browser receives a declaration-free SVG; general document XML and verified managed-asset bytes are not rewritten. Other declarations, entity subsets, scripts and external dependencies remain rejected. The host loading spinner uses a static SVG with application CSS rotation, including reduced-motion support; document-controlled SVG animation remains forbidden.
+
+Embedded SVG data URIs accept plain percent-encoded bodies, the navigator's legacy `;utf8` marker, `;charset=utf-8` or `;charset=utf8`, and base64 with an optional preceding UTF-8 declaration. Header tokens are case-insensitive; duplicate/conflicting declarations, unknown parameters and other charsets are rejected. Only the declared encoding is decoded, once, with strict UTF-8 validation. The header is capped at 256 characters; encoded bodies are bounded by three times the 8 MiB SVG budget for percent encoding or four times the ceiling of that budget divided by three for base64. Decoded bytes are checked before DOM construction. Inline data never enters the general URL resolver. Encoding recognition does not skip any static-SVG or reference validation, and safe URIs remain unchanged.
+
+`TrellisContentPolicy.diagnostics()` returns copied reason-code objects from a fixed ten-code vocabulary. It records no payload, source URL or invitation data, and resets on document changes. Repeated cached rejections still report in the newly opened document. The document notice carries its initial code in `data-trellis-content-reason`.
+
+Native codec entry points reject includes, active codec instructions, unsafe property names, excessive depth, duplicate cell/page identities, missing graph references, inconsistent wrapped identities, hidden native cells, parent cycles and non-finite geometry. Object, stencil and graph-view expression evaluation stays disabled. XML metadata that does not invoke native instructions remains inert. Every page is checked before whole-file replacement; every incoming object is checked before any object in an explicit-refresh batch is decoded.
+
+The main process installs its CSP and single request filter before creating the first document window. HTTP(S), WebSocket, FTP and other document-generated network schemes are blocked, including loopback/private destinations and redirects. Images allow bundled resources, validated data URIs and the verified asset protocol. Media and remote fonts/styles/scripts are blocked; ordinary local fonts and the bundled MathJax TeX font remain available. Deliberate links retain the main-process HTTP(S)/mailto/tel/callto allowlist. Synchronization and updates remain main-process services.
+
+| Input boundary | Validator and ordering | Consumers and regression coverage |
+| --- | --- | --- |
+| Invitation block | Existing 65,536-character guard, bounded JSON/depth, protocol/project/device identifiers and expiry | `decodeBlock`, `parseGardenInvitation`; sharing, joining, invitation delivery tests |
+| Joining journals/completion | Bounded JSON, identity/request match, captured-login rechecks; downloaded document validation and existing access checks | `trellis-garden-join-service`; joining and production joining tests; repasting still repairs damaged local journals |
+| Genesis | Bounded read and envelope before canonicalization, coordinator signature/hash/project checks, full document validation even with no journal records | `trellis-collaboration-store`, `trellis-share-protocol`; collaboration and content-security tests |
+| Collaboration journal | Bounded enumeration and actual-byte reads, bounded JSON/envelope, current signer/membership, schema/clock/author/permissions/causal checks, whole-result graph validation | Journal, replay worker, explicit refresh, recovery; collaboration, worker, object-view, renderer and native refresh tests |
+| Remembered view | Bounded checkpoint, project/user/hash/sequence/version checks, complete graph validation before reopening | `trellis-object-views`; checkpoint corruption, account switches, refresh receipts and recovery tests |
+| Incoming object patch | Validate all object XML before native cell decoding; accepted projection remains the main-process authority | `trellis-incoming-changes`; batch rejection, rollback, lost acknowledgements, intervening typing and native explicit-refresh tests |
+| Recovery documents/editors | Bounded reads/JSON and full document checks before restoration; captured document/session checks remain in place | Collaboration recovery, Syncthing recovery, editing-hold and local-view tests |
+| History/reset records | Bounded encoded records, coordinator/signer/project/generation/hash checks, bounded decompression and complete reconstructed document validation | History codec/service/transport and history previews/restoration; codec, transport and history tests |
+| Community/library metadata | Bounded JSON and directory reads before signature work; current identity keys, domain schemas and signed authority chains | Community transport/service, garden library and trash; community/library/project-summary tests |
+| Reference exchanges | Metadata byte/depth/property checks before domain validation, schema/revision/relationship checks and current editor/owner checks | Reference core/database/transition policy; reference and reference UI tests |
+| Identity events/encrypted metadata | Bounded event reads and envelope shape before signature work; channel authentication before bounded decrypted JSON/domain validation | Identity service/protocol; identity and content-security tests |
+| Labels/comments/details/tooltips | Inert extraction or restricted rich text; plain UI strings use text nodes | Modules, Dashboard, Users, Task Manager, Planting Group, details/comments and compiled graph; plugin and content-security tests |
+| Clipboard/undo/redo | Shared codec, rich-text and image hooks apply again on decoding/rendering | Native compiled graph, object details, renderer and local-view tests |
+| Print/visual export | Separate disposable document projection embeds verified managed image bytes; renderer hooks remove unsafe display content | Main export IPC, preload, compiled export renderer; native security export test and object-details export tests |
+| Managed images/attachments | Current caller/garden context and canonical path checks, actual-byte cap, filename hash, detected format, dimensions/frames/static SVG checks | Verified protocol and save-only picker; content-security unit/native and Syncthing path authorization tests |
+
+## Limits
+
+The shared module owns these defaults; main-process readers import the same values.
+
+| Boundary | Limit |
+| --- | ---: |
+| Decoded document, all pages together | 128 MiB UTF-8 |
+| Collaboration/genesis record | 128 MiB |
+| Encoded history record | 180 MiB |
+| Library/community/reference metadata record | 8 MiB |
+| Invitation block | 65,536 characters |
+| JSON/XML depth | 128 |
+| Replay input | 50,000 records, 256 MiB combined |
+| Replay worker | 30 seconds, 512 MiB V8 old-generation heap |
+| Attachment | 128 MiB |
+| Raster image | 32 MiB encoded, 32 million canvas pixels across frames |
+| Static SVG | 8 MiB |
+
+XML and JSON additionally have a one-million-node/operation complexity guard before native processing. SVG references must form a finite acyclic graph with bounded expansion. GIF/WebP frame budgets include the full canvas per decoded frame; animated PNG declarations are checked against frame controls. URI-encoded diagram streams may use up to three intermediate bytes per remaining decoded byte; decoded UTF-8 accounting still spans the whole document.
+
+Each reference exchange proposal has the 8 MiB metadata limit. Complete internal reference-store projections and document-embedded reference state use the 128 MiB document limit; a store containing many individually bounded proposals is not a single exchange record.
+
+Readers use a single open handle and enforce actual bytes, including after an understated stat or concurrent growth. Directory enumeration is bounded before collecting records. Collaboration batches retain the existing maximum of 32 files and ordinary 8 MiB read burst. Active input limits are separate from retained caches. Signature proofs and compressed disposable community projections share the existing 16 MiB main-process cache; replay parsing reservations share 48 MiB across workers. Cache keys include policy revision and current trust/input fingerprints. Current files and authority are checked before reuse, and callers receive copied projections.
+
+The replay deadline starts when the worker is created, excluding queue waiting and the overall save workflow. The serialized operation waits for worker exit, then reclaims its reservation exactly once. Timeout and heap exhaustion are local availability failures, not permanent rejection of signed records. An unchanged failing fingerprint does not automatically trigger another expensive replay. Changed input/trust or explicit retry can try again under the same limits. Internal fault tests can lower worker budgets, never raise production limits.
+
+## Asset and export handling
+
+`trellis-asset` privileges register before asynchronous startup dependencies. Each capability is bound to one requesting window, watched garden and account/document generation. The Electron request filter permits only that window's image requests. Navigation, watched-file changes, identity/context changes and destruction revoke capabilities, including reads already in progress.
+
+The protocol serves the exact buffer that passed the bounded read, SHA-256 filename-prefix check and image validation. Chromium never reopens the path after verification. Responses have explicit MIME, `nosniff`, no-store and an image-compatible restrictive CSP. CORS permits canvas conversion of these image-only capabilities; fetch/XHR and other windows are still denied by the request filter. PNG, JPEG, WebP, GIF and static SVG are supported. Filename extensions must agree with detected image bytes. SVG excludes scripts, foreign objects, media, external references and active CSS.
+
+The existing 16-hex-character content-derived filename convention is retained. This verifies the existing truncated SHA-256 identifier; it does not claim the collision resistance of a full-length SHA-256 filename. Raw records and canonical XML are preserved. Exported visual projections embed verified managed images without changing the XML embedded as source metadata. Export IPC uses the preload bridge rather than a product-name-dependent user-agent test, and math rendering uses bundled fonts.
+
+The preload exposes `saveAsset`, replacing `openAsset`. Saving verifies bounded attachment bytes, opens a native destination picker and uses a safe suggested filename. It neither starts an OS handler nor changes the source record. Saved attachments and preserved source content remain untrusted when opened outside this application.
+
+## Failure and recovery behavior
+
+Validation does not sanitize signed records in place. Invalid records and their dependent proposals use existing rejection/recovery handling. Aggregate input failures stop the operation before a collaboration projection is published. Diagnostics carry bounded codes/reasons and safe record identifiers; payloads, invitation secrets and sensitive URLs are not included.
+
+Accepted shared state, remembered state, displayed state and drafts remain separate. A failed refresh preserves the previous view and pending changes, rolls back through the existing preimages, retains dirty state and does not acknowledge an unapplied receipt. Source hashes, refresh/save barriers, stale-view rules, request-driven holds, local folding and accepted-state history sourcing retain their existing mechanics.
+
+## Verification record
+
+The starting tracked diff/status is retained under `.test-artifacts/content-security/baseline*`; unrelated workspace changes were preserved. The review's 220 focused passing tests are the initial reference, not evidence of a clean full-suite baseline.
+
+The initial implementation-wide `npm test` run reported 2,605 passes, 37 failures and 10 skips. Starting-source copies reproduce all 24 failures in the regular-spacing, fitted-geometry and API-key startup groups, plus the native planting-preview failure. A subsequent run reported 2,625 passes, 28 failures and 10 skips: the 25 reproduced starting-source failures, a settings companion-plugin startup stall, a community revocation race and a community cached-browsing timing failure. The two community cases pass targeted reruns. Newly exposed joining, journal-I/O and lifecycle issues were fixed. Native failures and final full-suite results must be evaluated independently; historical documentation claiming 2,548 passes/36 failures is not substituted for a current run.
+
+Security checks use real Electron interception, context isolation and sandboxing, without `--no-sandbox` or source-only substitutes. They cover initial-load timing, live graph rendering, inert label extraction, raw HTML/CSS/font/fetch/include probes, loopback URLs, undo/redo, history reconstruction, verified-image canvas conversion and the actual main-process export IPC/preload/compiled-renderer path. Native startup or export failures are failures, not skips. Focused tests also exercise whole-document budgets, malformed graphs, batch prevalidation, signature stability, bounded reads, asset replacement/context revocation, save-only attachments, worker timeout/heap failure and reservation recovery.
+
+The editor-icon correction has a 175-icon compiled-bundle audit, including the 29 legacy-declaration icons, UTF-8/source-preservation checks, cached diagnostic checks and rejection of altered declarations or unsafe SVG bodies. Its native fixture opens a clean garden model, selects it, checks decoded resize/rotation icons, verifies the CSS spinner, asserts no content notice and dispatches an actual mouse drag that increases the garden's dimensions. A normalized malicious SVG still fails, and the loopback server receives zero requests. The final focused security/collaboration/Syncthing/renderer/label/details run passes all 246 tests.
+
+The icon-correction full-suite snapshot reports 2,660 passes, 9 failures and 10 skips (`full-suite-icons.log`, 1,143.7 seconds). Failures comprise four previously reproduced fitted-geometry fixtures, settings companion-plugin startup, the community cached-browsing time bound, native edge live-preview interaction, a native production export timeout, and an outdated XML error-message assertion. The current focused run passes the XML assertion. The final URI-preservation adjustment was checked after this full-suite snapshot, in the 246-test focused run and separate native checks. All three final sequential native checks pass: compiled handles/real resizing/zero requests, production export, and the edge live-preview interaction (`icon-native-final.log`). No sandbox, assertion or timeout was weakened. The full-suite export timeout remains a release blocker despite the isolated pass; the full suite is not claimed clean.
+
+Release requires the final focused/native suites and full-suite failure comparison. Existing remote images may become placeholders and font fallbacks may change layout. Slow legitimate replays can stop at the approved deadline; no responsiveness or very-large-garden acceptance is implied by security test success. V8 heap limits do not cover every native allocation or Buffer; byte/image budgets remain necessary.

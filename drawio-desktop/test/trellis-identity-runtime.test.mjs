@@ -10,6 +10,7 @@ import { createSyncthingService } from '../src/main/trellis-syncthing-service.js
 import { createIdentityService } from '../src/main/trellis-identity-service.js';
 import { createGardenLibraryService } from '../src/main/trellis-garden-library-service.js';
 import '../drawio/src/main/webapp/js/trellis-field-protocol.js'; // NEW
+import { cleanupRuntimeServices, waitForRuntime } from './helpers/runtime-lifecycle.mjs'; // CHANGE
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 test('real paired desktops download a garden and resume an interrupted signed field package', { skip: process.env.TRELLIS_SYNCTHING_RUNTIME_TEST !== '1', timeout: 240000 }, async t => { // CHANGE
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-identity-runtime-')), addresses = new Map(), all = [];
@@ -17,7 +18,7 @@ test('real paired desktops download a garden and resume an interrupted signed fi
         const base = path.join(root, name), services = new Map();
         const transportFactory = async (identityId, profileRoot) => {
             if (!services.has(identityId)) {
-                const service = createSyncthingService({ userDataPath: profileRoot, profilePath: path.join(profileRoot, 'transport'), documentsPath: base, canvasesRoot: path.join(base, 'gardens', identityId), binaryRoot: path.join(project, 'vendor/syncthing'), setStartup: async () => {}, onListening: ({ deviceId, port }) => addresses.set(deviceId, ['tcp://127.0.0.1:' + port]), deviceAddresses: id => addresses.get(id) || ['dynamic'], fetch: async (url, input) => { // CHANGE
+                const service = createSyncthingService({ userDataPath: profileRoot, profilePath: path.join(profileRoot, 'transport'), documentsPath: base, canvasesRoot: path.join(base, 'gardens', identityId), binaryRoot: path.join(project, 'vendor/syncthing'), setStartup: async () => {}, onLifecycle: entry => t.diagnostic('DAEMON_LIFECYCLE: ' + JSON.stringify(entry)), onListening: ({ deviceId, port }) => addresses.set(deviceId, ['tcp://127.0.0.1:' + port]), deviceAddresses: id => addresses.get(id) || ['dynamic'], fetch: async (url, input) => { // CHANGE
                     if (input.method === 'PUT' && new URL(url).pathname === '/rest/config') { // NEW
                         const config = JSON.parse(input.body); Object.assign(config.options, { maxSendKbps: 128, maxRecvKbps: 128, limitBandwidthInLan: true }); input = { ...input, body: JSON.stringify(config) }; // NEW: keep a large loopback transfer observable before its atomic rename.
                     } // NEW
@@ -31,7 +32,7 @@ test('real paired desktops download a garden and resume an interrupted signed fi
         const library = createGardenLibraryService({ identities, legacyService: () => transportFactory('legacy', path.join(base, 'legacy')) });
         return { identities, library };
     }
-    t.after(async () => { for (const service of all) await service.stop(); await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }); // CHANGE: Windows can retain briefly closed database handles.
+    t.after(() => cleanupRuntimeServices(all, root)); // CHANGE
     const a = await client('a'), b = await client('b');
     const made = await a.identities.create({ username: 'Alice', password: 'runtime-password' });
     const garden = await a.library.create({ name: 'Runtime garden' });
@@ -70,12 +71,21 @@ test('real paired desktops download a garden and resume an interrupted signed fi
     t.diagnostic('Interrupted signed field package resumed: ' + bytes.length + ' bytes, preserved temporary file, matching SHA-256 and signature, no acknowledgment.'); // NEW
     const peerPath = (await b.library.list()).gardens[0].path; // NEW
     await a.library.trash({ diagramId: garden.entry.diagramId, confirm: true }); // NEW
-    await until(async () => (await b.library.list()).gardens.length === 0, 'Paired project Trash'); // NEW
-    await assert.rejects(fs.access(peerPath)); const retained = (await b.library.listTrash()).gardens[0]; // NEW
+    await until(async () => { // CHANGE: listing reflects signed state; lifecycle processing performs filesystem retirement.
+        await b.library.processLifecycle(identityId); // CHANGE
+        if ((await b.library.list()).gardens.length !== 0) return false; // CHANGE
+        try { await fs.access(peerPath); return false; } catch (error) { if (error.code === 'ENOENT') return true; throw error; } // CHANGE
+    }, 'Paired project Trash and filesystem retirement'); // CHANGE
+    await assert.rejects(fs.access(peerPath), { code: 'ENOENT' }); const retained = (await b.library.listTrash()).gardens[0]; // CHANGE
     await b.library.restore({ diagramId: garden.entry.diagramId, trashId: retained.trashId }); // NEW
-    await until(async () => (await a.library.list()).gardens[0]?.available === true, 'Paired restoration'); // NEW
+    await until(async () => { await a.library.processLifecycle(identityId); return (await a.library.list()).gardens[0]?.available === true; }, 'Paired restoration'); // CHANGE
     assert.equal((await b.library.list()).gardens[0].available, true); // NEW
-    await a.library.trash({ diagramId: garden.entry.diagramId, confirm: true }); const second = (await a.library.listTrash()).gardens[0]; // NEW
+    await a.library.trash({ diagramId: garden.entry.diagramId, confirm: true }); let second; // CHANGE
+    await waitForRuntime('Second paired Trash and filesystem retirement', async () => { // CHANGE: a signed record can precede Windows releasing the detached folder.
+        second = (await a.library.listTrash()).gardens.find(entry => entry.diagramId === garden.entry.diagramId); // CHANGE: listing reapplies this same durable lifecycle operation; it does not publish another Trash command.
+        if (!second) return false; if (second.reason) throw new Error(second.reason); // CHANGE: retain the precise application failure if convergence never completes.
+        try { await fs.access(garden.path); return false; } catch (error) { if (error.code === 'ENOENT') return true; throw error; } // CHANGE: require physical retirement before testing permanent deletion.
+    }); // CHANGE: reuse the existing 60-second convergence bound without extending the test deadline or bypassing the purge guard.
     await a.library.purge({ diagramId: garden.entry.diagramId, trashId: second.trashId, confirm: true }); // NEW
     await until(async () => { await b.library.processLifecycle(identityId); return (await b.library.lifecycle(identityId, garden.entry.diagramId)).state === 'purged'; }, 'Paired permanent deletion'); // NEW
     assert.equal((await b.library.list()).gardens.length, 0); assert.equal((await b.library.listTrash()).gardens.length, 0); // NEW

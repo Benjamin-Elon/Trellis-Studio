@@ -1,10 +1,11 @@
+import { readJson as readBoundedJson } from './trellis-input-policy.js'; // NEW
 /** Recoverable filesystem moves. Callers authorize both paths before entering here. */ // NEW
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
 import crypto from 'node:crypto'; // NEW
 
 export async function readOptional(filename) { // NEW
-    return fs.readFile(filename, 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error; }); // NEW
+    return readBoundedJson(filename) /* CHANGE */.catch(error => { if (error.code === 'ENOENT') return null; throw error; }); // NEW
 } // NEW
 
 export async function atomicJson(filename, value) { // NEW

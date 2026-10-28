@@ -553,6 +553,7 @@
 	margin: 0 0 10px !important;
 	min-height: 54px;
 	padding: 12px 20px !important;
+	white-space: normal !important; /* CHANGE: long Home labels wrap inside narrow buttons. */
 	width: 100% !important;
 }
 
@@ -713,3 +714,7 @@
 
 .trellis-projects-heading { flex-wrap: wrap; } /* CHANGE: section controls remain usable in narrow dialogs. */
 .trellis-projects-updated { font-size: 11px; font-weight: normal; color: #586653; } /* CHANGE: static snapshot boundary, with full date in accessible text. */
+.trellis-join-guide { margin: 12px 0; padding: 12px; border: 1px solid #cbd5c1; border-radius: 8px; overflow-wrap: anywhere; } /* NEW */
+.trellis-join-guide textarea { max-width: 100%; box-sizing: border-box; min-height: 80px; padding: 8px; font: inherit; } /* NEW */
+.trellis-join-guide h3, .trellis-join-guide h4 { margin: 12px 0 8px; } /* NEW */
+.trellis-join-guide .trellis-home-row { flex-wrap: wrap; } /* NEW */

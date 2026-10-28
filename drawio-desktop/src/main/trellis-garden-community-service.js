@@ -1,25 +1,33 @@
+import { serialize, deserialize } from 'node:v8'; // NEW
+import { deflateRawSync, inflateRawSync } from 'node:zlib'; // NEW
+import { saveCache } from './trellis-save-cache.js'; // NEW
+import { REVISION, listBounded, readJson as readBoundedJson, readBounded, parseJson, LIMITS, diagnostic } from './trellis-input-policy.js'; // NEW
 /** Community orchestration: small shared directories, private request channels, existing garden grants. */ // NEW
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
 import { EventEmitter } from 'node:events'; // NEW
-import { safeId, makeId, canonical, verifyRecord } from './trellis-share-protocol.js'; // NEW
+import { safeId, makeId, canonical, digest, verifyRecord } from './trellis-share-protocol.js'; // NEW
 import { COMMUNITY_VERSION, COMMUNITY_PRESETS, communityHash, communityText, reduceCommunity, verifyGardenEvidence, evidenceSigner } from './trellis-community-protocol.js'; // NEW
 import { projectPeople } from './trellis-project-people.js'; // NEW
 import { nearestDistance } from './trellis-project-summary.js'; // NEW
 
-async function read(filename) { return fs.readFile(filename, 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error; }); } // NEW
+async function read(filename, budget) { return readBoundedJson(filename, LIMITS.metadata, budget) /* CHANGE */.catch(error => { if (error.code === 'ENOENT') return null; throw error; }); } // NEW
 async function immutable(filename, value) { // NEW
     await fs.mkdir(path.dirname(filename), { recursive: true, mode: 0o700 }); // NEW
     try { await fs.writeFile(filename, JSON.stringify(value), { mode: 0o600, flag: 'wx' }); } catch (error) { if (error.code !== 'EEXIST' || canonical(await read(filename)) !== canonical(value)) throw error; } // NEW
 } // NEW
 async function records(directory) { // NEW
-    const names = await fs.readdir(directory).catch(error => { if (error.code === 'ENOENT') return []; throw error; }); // NEW
-    const loaded = await Promise.allSettled(names.filter(n => /^[A-Za-z0-9_-]+\.json$/.test(n)).sort().map(async n => { const filename = path.join(directory, n); if (!(await fs.lstat(filename)).isFile()) throw new Error('Metadata records must be ordinary files.'); return read(filename); })); // CHANGE
-    return loaded.filter(r => r.status === 'fulfilled' && r.value).map(r => r.value); // NEW: one corrupt peer record cannot hide the remaining directory or inbox.
+    const names = await listBounded(directory).catch(error => { if (error.code === 'ENOENT') return []; throw error; }); // NEW
+    const sorted = names.filter(n => /^[A-Za-z0-9_-]+\.json$/.test(n)).sort(), result = [], budget = { used: 0, maximum: LIMITS.replay }; // NEW
+    for (let offset = 0; offset < sorted.length; offset += 32) { // NEW
+        const loaded = await Promise.allSettled(sorted.slice(offset, offset + 32).map(async name => { const filename = path.join(directory, name); if (!(await fs.lstat(filename)).isFile()) throw new Error('Metadata records must be ordinary files.'); return read(filename, budget); })); // CHANGE
+        for (const entry of loaded) { if (entry.status === 'fulfilled' && entry.value) result.push(entry.value); else if (entry.reason?.code === 'REPLAY_LIMIT' || entry.reason?.code === 'INPUT_LIMIT') throw entry.reason; } // NEW
+    } // NEW
+    return result; // CHANGE
 } // NEW
 
 export function createGardenCommunityService({ identities, library }) { // NEW
-    let queue = Promise.resolve(); const events = new EventEmitter(), warnings = new Map(), directoryCache = new Map(), fileCache = new Map(); // CHANGE
+    let queue = Promise.resolve(); const events = new EventEmitter(), warnings = new Map(); // CHANGE
     const run = fn => { const task = queue.then(fn); queue = task.catch(() => {}); return task; }; // NEW
     const directory = (identityId, id) => path.join(identities.identityRoot(identityId), 'community-data', safeId(id)); // NEW
     const requestDirectory = (identityId, id) => path.join(identities.identityRoot(identityId), 'community-requests', safeId(id)); // NEW
@@ -42,25 +50,25 @@ export function createGardenCommunityService({ identities, library }) { // NEW
         await immutable(path.join(identities.metadataRoot(identityId), 'community-registrations', record.payload.id + '.json'), record); // NEW
         await immutable(path.join(directory(identityId, entry.id), 'records', entry.genesis.payload.id + '.json'), entry.genesis); // NEW
     } // NEW
-    /** Cache immutable records by file metadata, then cache verified replay by content hash. */ // NEW
-    async function cachedRecords(folder) { // NEW
-        const names = (await fs.readdir(folder).catch(error => { if (error.code === 'ENOENT') return []; throw error; })).filter(n => /^[A-Za-z0-9_-]+\.json$/.test(n)).sort(), loaded = []; // NEW
-        for (const name of names) { // NEW
-            const filename = path.join(folder, name); // NEW
-            try { // NEW
-                const stat = await fs.lstat(filename); if (!stat.isFile()) continue; // NEW
-                const stamp = stat.mtimeMs + ':' + stat.ctimeMs + ':' + stat.size; let cached = fileCache.get(filename); // NEW
-                if (cached?.stamp !== stamp) { const value = await read(filename); cached = { stamp, value, hash: communityHash(value) }; fileCache.set(filename, cached); } // NEW
-                loaded.push(cached); // NEW
-            } catch (_) { fileCache.delete(filename); } // NEW
+    /** Observe current bounded bytes in each channel, then reuse only an identical verified replay. */ // NEW
+    async function cachedRecords(folder, budget) { // NEW
+        const names = (await listBounded(folder).catch(error => { if (error.code === 'ENOENT') return []; throw error; })).filter(n => /^[A-Za-z0-9_-]+\.json$/.test(n)).sort(), loaded = []; // NEW
+        for (let offset = 0; offset < names.length; offset += 32) { // NEW: bounded parallel reads preserve current-byte validation without serial filesystem latency.
+            const batch = await Promise.allSettled(names.slice(offset, offset + 32).map(async name => { // NEW
+                const filename = path.join(folder, name), stat = await fs.lstat(filename); if (!stat.isFile()) return null; // NEW
+                const text = await readBounded(filename, LIMITS.metadata, 'utf8', budget); return { text, hash: digest(text), name }; // CHANGE: exact-input proofs let unchanged validated state reuse its schema checks. // CHANGE: cache fingerprints use observed bytes; signed community hashes remain canonical. // NEW
+            })); // NEW
+            for (const entry of batch) { if (entry.status === 'fulfilled' && entry.value) loaded.push(entry.value); else if (entry.reason?.code === 'INPUT_LIMIT' || entry.reason?.code === 'REPLAY_LIMIT') throw entry.reason; } // NEW
         } // NEW
         return loaded; // NEW
     } // NEW
     async function state(identityId, entry) { // NEW
         const base = directory(identityId, entry.id); // NEW
-        const [changes, proofs] = await Promise.all([cachedRecords(path.join(base, 'records')), cachedRecords(path.join(base, 'evidence'))]), token = entry.genesisHash + changes.map(r => r.hash).join('') + proofs.map(r => r.hash).join(''), cached = directoryCache.get(base); // CHANGE
-        if (cached?.token === token) return cached.value; // NEW
-        const value = reduceCommunity(changes.map(r => r.value), entry.genesisHash, proofs.map(r => r.value)); directoryCache.set(base, { token, value }); return value; // NEW
+        const budget = { used: 0, maximum: LIMITS.replay }; // NEW
+        const [changes, proofs] = await Promise.all([cachedRecords(path.join(base, 'records'), budget), cachedRecords(path.join(base, 'evidence'), budget)]), token = digest(JSON.stringify([entry.genesisHash, changes.map(r => [r.name, r.hash]), proofs.map(r => [r.name, r.hash])])), cacheKey = 'community:' + REVISION + ':' + base, cached = saveCache.get(cacheKey); // CHANGE
+        if (cached?.token === token) return deserialize(inflateRawSync(cached.bytes, { maxOutputLength: LIMITS.replay })); // CHANGE: copied, bounded cache projection. // NEW
+        const parseRecords = records => records.flatMap(record => { try { return [parseJson(record.text, LIMITS.metadata)]; } catch (error) { if (error.code === 'INPUT_LIMIT') throw error; const issue = diagnostic(error, record.name); warnings.set(identityId, [...new Set([...(warnings.get(identityId) || []), '[' + issue.code + '] Community metadata could not be verified: ' + (issue.recordId || 'record')])].slice(0, 32)); return []; } }); // NEW
+        const value = reduceCommunity(parseRecords(changes), entry.genesisHash, parseRecords(proofs)); const bytes = serialize(value); if (bytes.length <= LIMITS.replay) { const compressed = deflateRawSync(bytes); saveCache.set(cacheKey, { token, bytes: compressed }, compressed.length + token.length * 2 + 512); } return value; // CHANGE: charge exact compressed storage to the existing main cache budget. // NEW
     } // NEW
     async function signed(identityId, community, kind, data, id = makeId()) { // NEW
         const daemon = await identities.transport(identityId); // NEW
@@ -81,7 +89,7 @@ export function createGardenCommunityService({ identities, library }) { // NEW
     } // NEW
     async function source(identityId, diagramId, admin = false) { // NEW
         const located = await library.communitySource(identityId, diagramId); if (!located) throw new Error('Choose a garden in your library.'); // NEW
-        if (located.entry.protocolVersion !== 2) throw new Error('Unsupported Trellis sharing protocol. Only version 2 gardens are supported.'); // CHANGE
+        if (located.entry.protocolVersion !== 3) throw new Error('Unsupported Trellis sharing protocol. Only version 3 gardens are supported.'); // CHANGE
         const daemon = await identities.transport(identityId); // NEW
         if (located.daemon !== daemon) throw new Error('Download the identity-managed garden copy before using communities.'); // NEW
         const info = await daemon.communities.garden({ shareId: located.entry.shareId, identityId }); // NEW

@@ -1,3 +1,4 @@
+import { listBounded, readJson as readBoundedJson, readBounded, LIMITS } from './trellis-input-policy.js'; // NEW
 /** Garden-side community integration. Only a garden coordinator commits roster/device changes. */ // NEW
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
@@ -7,7 +8,7 @@ import { projectName } from './trellis-project-naming.js'; // NEW
 import { cityRecord, projectSummary } from './trellis-project-summary.js'; // NEW
 import '../../drawio/src/main/webapp/js/trellis-identity-protocol.js'; // NEW
 const cryptoProtocol = globalThis.TrellisIdentityProtocol; // NEW
-async function optional(filename) { return fs.readFile(filename, 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error; }); } // NEW
+async function optional(filename) { return readBoundedJson(filename) /* CHANGE */.catch(error => { if (error.code === 'ENOENT') return null; throw error; }); } // NEW
 
 export function createCommunityTransport(context) { // NEW
     const { profile, initialize, writeAtomic, writeImmutable, persist, configureCanvas, publishMembership, collaborationStore, canvasState } = context; // NEW
@@ -104,7 +105,7 @@ export function createCommunityTransport(context) { // NEW
     async function evidence(canvas, state) { // NEW
         const members = (state.store.users || []).filter(u => u.portableIdentityId && !u.disabled && hasCanvasAccess(state, u.id)).map(u => ({ identityId: u.portableIdentityId, userId: u.id, admin: !!u.admin, devices: canvas.members.filter(d => d.userId === u.id).map(d => ({ deviceId: d.deviceId, publicKey: d.publicKey })), manager: scopeCells(state).some(c => manages(state, u, c)) })); // NEW
         const membership = []; // NEW
-        for (const name of (await fs.readdir(path.join(canvas.folderPath, '.trellis', 'membership'))).filter(n => /^\d{12}\.json$/.test(n)).sort()) membership.push(await optional(path.join(canvas.folderPath, '.trellis', 'membership', name))); // NEW
+        for (const name of (await listBounded(path.join(canvas.folderPath, '.trellis', 'membership'))).filter(n => /^\d{12}\.json$/.test(n)).sort()) membership.push(await optional(path.join(canvas.folderPath, '.trellis', 'membership', name))); // NEW
         const association = await binding(canvas), previous = await previousEvidence(canvas); // CHANGE
         const descriptor = await context.descriptor(canvas.shareId); // NEW
         const catalog = await locationCatalog().catch(() => null); // CHANGE
@@ -114,7 +115,7 @@ export function createCommunityTransport(context) { // NEW
         const retiredSigners = [...(previous?.payload.retiredSigners || [])]; // NEW
         if (previous?.payload.binding?.communityId) { // NEW
             const changes = []; // NEW
-            for (const name of (await fs.readdir(path.join(path.dirname(profile), 'community-data', safeId(previous.payload.binding.communityId), 'records')).catch(() => [])).filter(n => /^[A-Za-z0-9_-]+\.json$/.test(n))) changes.push(await optional(path.join(path.dirname(profile), 'community-data', previous.payload.binding.communityId, 'records', name)).catch(() => null)); // CHANGE
+            for (const name of (await listBounded(path.join(path.dirname(profile), 'community-data', safeId(previous.payload.binding.communityId), 'records')).catch(error => { if (error.code === 'ENOENT') return []; throw error; })).filter(n => /^[A-Za-z0-9_-]+\.json$/.test(n))) changes.push(await optional(path.join(path.dirname(profile), 'community-data', previous.payload.binding.communityId, 'records', name)).catch(() => null)); // CHANGE
             for (const old of previous.payload.members) for (const device of old.devices) if ((association?.communityId !== previous.payload.binding.communityId || !members.some(m => m.identityId === old.identityId && m.devices.some(d => d.deviceId === device.deviceId && d.publicKey === device.publicKey))) && !retiredSigners.some(r => r.identityId === old.identityId && r.deviceId === device.deviceId && r.communityId === previous.payload.binding.communityId)) retiredSigners.push({ communityId: previous.payload.binding.communityId, identityId: old.identityId, deviceId: device.deviceId, recordIds: changes.filter(r => r?.payload?.actorIdentityId === old.identityId && r.payload.authorDeviceId === device.deviceId && verifyRecord(r, device.publicKey)).map(r => r.payload.id).sort() }); // CHANGE
         } // NEW
         const fields = { schema: COMMUNITY_VERSION, kind: 'garden-evidence', descriptor, binding: association, name: projectName(state) || canvas.projectName || canvas.label, members, membership, retiredSigners, userCount: locations.userCount, moduleCities: locations.moduleCities, gardenModuleCount: locations.gardenModuleCount, locationsComplete: locations.locationsComplete, deleted: false }; // CHANGE: only city-level locations join the coordinator attestation; no live presence or changing timestamps.
@@ -130,7 +131,7 @@ export function createCommunityTransport(context) { // NEW
         if (canonical(await optional(endpointPath)) !== canonical(localEndpoint)) await writeAtomic(endpointPath, JSON.stringify(localEndpoint)); // CHANGE
         if (canvas.coordinatorDeviceId !== context.deviceId()) return; // NEW
         const state = await canvasState(canvas); // NEW
-        for (const name of (await fs.readdir(path.join(area(canvas), 'commands')).catch(() => [])).filter(n => /^[A-Za-z0-9_-]+\.json$/.test(n)).sort()) { // NEW
+        for (const name of (await listBounded(path.join(area(canvas), 'commands')).catch(error => { if (error.code === 'ENOENT') return []; throw error; })).filter(n => /^[A-Za-z0-9_-]+\.json$/.test(n)).sort()) { // NEW
             const receipt = path.join(area(canvas), 'receipts', name); if (await optional(receipt)) continue; // NEW
             const record = await optional(path.join(area(canvas), 'commands', name)), p = record?.payload, member = canvas.members.find(m => m.deviceId === p?.authorDeviceId); // NEW
             try { // NEW
@@ -206,7 +207,7 @@ export function createCommunityTransport(context) { // NEW
             const ids = JSON.parse(cell.node.getAttribute('trellis_access_user_ids_json') || '[]'); if (!ids.includes(user.id)) ids.push(user.id); cell.node.setAttribute('trellis_access_user_ids_json', JSON.stringify(ids)); // NEW
         } // NEW
         for (const cell of state.cells) if (cell.node.hasAttribute('trellis_users_json')) cell.node.setAttribute('trellis_users_json', JSON.stringify(state.store)); // NEW
-        const baseXml = await fs.readFile(canvas.diagramPath, 'utf8'), xml = state.document.serialize(); // NEW
+        const baseXml = await readBounded(canvas.diagramPath, LIMITS.diagram) /* CHANGE */, xml = state.document.serialize(); // NEW
         const store = collaborationStore(canvas), result = await store.action('community-approval', coordinator.userId, { kind: 'save', baseXml, xml, usersPolicyAction: true }); // CHANGE
         await store.action('community-approval', coordinator.userId, { kind: 'release' }); // CHANGE
         if (!result.ok) return { ok: false, waiting: true, reason: result.reason }; // CHANGE

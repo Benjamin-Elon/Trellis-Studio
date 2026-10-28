@@ -60,7 +60,7 @@
         if (!graph || graph.__trellisQuickstart) return;
         let preferences, identity = '', active = false, offering = false, card = null, body = null, prompt = null;
         let observer = null, scheduled = null, highlighted = null, highlightedCell = null, cellHighlight = null, surface = null, observedModel = null, generation = 0; // NEW
-        let notice = '', storageWarning = '', dragging = null, lastPromptKey = '', contextKey = '', portableIdentity = ui.__trellisGardenHome?.session?.identityId || null; // NEW
+        let notice = '', storageWarning = '', dragging = null, dragHandle = null, placementTarget = null, placementKey = '', lastPromptKey = '', contextKey = '', portableIdentity = ui.__trellisGardenHome?.session?.identityId || null; // NEW
         const model = () => graph.getModel(), file = () => ui.getCurrentFile && ui.getCurrentFile();
         const users = () => graph.__trellisUsers || root.Trellis && root.Trellis.users;
         const selected = () => graph.getSelectionCell && graph.getSelectionCell();
@@ -100,6 +100,7 @@
         }
         /** Keep independent walkthrough positions and optional choices for every garden/year. */ // NEW
         function switchBinding(gardenId, year) {
+            finishDrag(true); // NEW: context switches cannot retain a gesture from the previous garden/year.
             const p = progress(), fields = ['positions', 'skipped', 'viewed', 'successes'];
             p.bindings[p.gardenId + ':' + p.year] = Object.fromEntries(fields.map(key => [key, p[key]]));
             p.gardenId = String(gardenId); p.year = Number(year);
@@ -163,55 +164,105 @@
                 if (state) { cellHighlight = new mxCellHighlight(graph, '#2563eb', 4); cellHighlight.highlight(state); }
             }
         }
-        function clampCard() { // NEW
+        function clampCard(position = dragging?.position || preferences.position || { x: 16, y: 100 }) { // NEW
             if (!card || surface) return;
             const width = card.getBoundingClientRect().width || 310, height = card.getBoundingClientRect().height || 180;
-            const position = preferences.position || { x: 16, y: 100 };
-            card.style.left = Math.max(8, Math.min(position.x, root.innerWidth - width - 8)) + 'px';
-            card.style.top = Math.max(8, Math.min(position.y, root.innerHeight - height - 8)) + 'px';
+            const bounded = { x: Math.max(8, Math.min(position.x, root.innerWidth - width - 8)), y: Math.max(8, Math.min(position.y, root.innerHeight - height - 8)) }; // NEW
+            card.style.left = bounded.x + 'px'; card.style.top = bounded.y + 'px'; // NEW
+            return bounded; // NEW: save viewport coordinates rather than an out-of-bounds pointer position.
+        }
+        /** End once on every exit path; cancelled gestures restore their starting position without saving. */ // NEW
+        function finishDrag(cancelled = false) { // NEW
+            if (!dragging) return; // NEW
+            const gesture = dragging; dragging = null; gesture.cleanup(); // NEW
+            card?.classList.remove('trellis-quickstart-dragging'); // NEW
+            if (card && !surface) { // NEW
+                const position = clampCard(cancelled ? gesture.origin : gesture.position); // NEW
+                if (!cancelled) { preferences.position = position; persist(); } // NEW
+            } // NEW
+            schedule(); // NEW: render any workflow changes deferred during the gesture.
+        }
+        /** Match native window gestures: start on the handle, then follow the pointer on the document. */ // NEW
+        function beginDrag(event) { // NEW
+            if (surface || dragging || event.button != null && event.button !== 0 || event.isPrimary === false || event.touches?.length > 1) return; // NEW
+            const box = card.getBoundingClientRect(), origin = { x: box.left, y: box.top }; // NEW
+            const matches = next => event.pointerId == null || next.pointerId === event.pointerId; // NEW
+            const move = next => { // NEW
+                if (!dragging || !matches(next)) return; // NEW
+                dragging.position = clampCard({ x: origin.x + mxEvent.getClientX(next) - dragging.x, y: origin.y + mxEvent.getClientY(next) - dragging.y }); mxEvent.consume(next); // NEW
+            }; // NEW
+            const end = next => { if (matches(next)) { move(next); finishDrag(); mxEvent.consume(next); } }; // NEW
+            const cancel = () => finishDrag(true); // NEW
+            const escape = next => { if (next.key === 'Escape') { mxEvent.consume(next); finishDrag(true); } }; // NEW
+            dragging = { x: mxEvent.getClientX(event), y: mxEvent.getClientY(event), origin, position: origin, cleanup() { // NEW
+                mxEvent.removeGestureListeners(document, null, move, end); // NEW
+                root.removeEventListener('blur', cancel); document.removeEventListener('keydown', escape, true); // NEW
+                document.removeEventListener('pointercancel', cancel, true); document.removeEventListener('touchcancel', cancel, true); // NEW
+            } }; // NEW
+            mxEvent.addGestureListeners(document, null, move, end); // NEW
+            root.addEventListener('blur', cancel); document.addEventListener('keydown', escape, true); // NEW
+            document.addEventListener('pointercancel', cancel, true); document.addEventListener('touchcancel', cancel, true); // NEW
+            card.classList.add('trellis-quickstart-dragging'); dragHandle.focus({ preventScroll: true }); mxEvent.consume(event); // NEW
+        }
+        /** Same 18px move button and icon as module handles, with no graph-cell movement semantics. */ // NEW
+        function createDragHandle(header) { // NEW
+            const handle = element('button', null, header); handle.type = 'button'; handle.dataset.trellisQuickstartDragHandle = '1'; // NEW
+            handle.setAttribute('aria-label', 'Move Quickstart'); handle.title = 'Drag to move Quickstart; use arrow keys to move the card'; // NEW
+            if (typeof Editor !== 'undefined' && Editor.moveImage) { // NEW
+                const icon = element('img', null, handle); icon.src = Editor.moveImage; icon.alt = ''; icon.setAttribute('aria-hidden', 'true'); // NEW
+            } else handle.textContent = '+'; // NEW: match the module handle fallback.
+            mxEvent.addGestureListeners(handle, beginDrag); // NEW
+            handle.addEventListener('keydown', event => { // NEW
+                if (surface || dragging || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; // NEW
+                const box = card.getBoundingClientRect(); // NEW
+                preferences.position = clampCard({ x: box.left + (event.key === 'ArrowRight' ? 16 : event.key === 'ArrowLeft' ? -16 : 0), y: box.top + (event.key === 'ArrowDown' ? 16 : event.key === 'ArrowUp' ? -16 : 0) }); // NEW
+                mxEvent.consume(event); persist(); // NEW
+            }); // NEW
+            return handle; // NEW
         }
         /** One card follows the active modal, keeping its buttons inside native focus containment. */ // NEW
         function moveCard(destination) {
             if (!card || card.parentNode === destination) return;
+            finishDrag(true); // NEW
             destination.appendChild(card); surface = destination === document.body ? null : destination;
-            card.style.position = surface ? 'sticky' : 'fixed'; card.style.bottom = surface ? '0' : ''; // NEW card.style.left = surface ? '0' : ''; card.style.top = surface ? '0' : '';
+            card.style.position = surface ? 'sticky' : 'fixed'; card.style.bottom = surface ? '0' : ''; // NEW
+            card.style.left = surface ? '0' : ''; card.style.top = surface ? '0' : ''; dragHandle.hidden = !!surface; // NEW
+            placementTarget = null; placementKey = ''; // NEW: a new surface must resolve placement again.
             card.style.width = surface ? 'auto' : '310px'; card.style.margin = surface ? '8px 0' : '0';
             card.style.maxHeight = surface ? 'min(34vh, 260px)' : 'calc(100vh - 24px)'; card.style.flex = '0 0 auto'; // NEW
             clampCard();
         }
         /** Prefer a free viewport corner when the floating card would cover its target control. */ // NEW
-        function avoidTarget(node) {
-            if (surface || !card || !node) return;
+        function avoidTarget(node, key) { // NEW
+            if (surface || !card || dragging) return; // NEW
+            if (node === placementTarget && key === placementKey) return; // NEW: ordinary refreshes respect a manual drop.
+            placementTarget = node; placementKey = key; if (!node) return; // NEW
             const box = card.getBoundingClientRect(), targetBox = node.getBoundingClientRect();
             const overlaps = (x, y) => x < targetBox.right + 8 && x + box.width > targetBox.left - 8 && y < targetBox.bottom + 8 && y + box.height > targetBox.top - 8;
             if (!overlaps(box.left, box.top)) return;
             const right = Math.max(8, root.innerWidth - box.width - 16), bottom = Math.max(8, root.innerHeight - box.height - 16);
             for (const [x, y] of [[right, 100], [16, bottom], [right, bottom], [16, 100]]) {
-                if (y + box.height <= root.innerHeight && !overlaps(x, y)) { card.style.left = x + 'px'; card.style.top = y + 'px'; return; }
+                if (y + box.height <= root.innerHeight && !overlaps(x, y)) { preferences.position = clampCard({ x, y }); return; } // NEW
             }
         }
         function ensureCard() { // NEW
             if (card?.isConnected) return;
+            finishDrag(true); // NEW: external removal must not leave document listeners pointing at a detached card.
             surface = null; card = element('section'); card.className = 'trellis-quickstart-card'; card.style.position = 'fixed'; card.style.width = '310px'; card.setAttribute('aria-label', 'Trellis Quickstart'); // NEW
             for (const event of ['mousedown', 'click', 'dblclick']) card.addEventListener(event, event => event.stopPropagation()); // NEW
-            const header = element('header', null, card), heading = element('strong', 'Quickstart', header);
-            heading.tabIndex = 0; heading.title = 'Drag to move; use arrow keys to move the card';
+            const header = element('header', null, card); dragHandle = createDragHandle(header); element('strong', 'Quickstart', header); // NEW
             button('Collapse', () => { preferences.collapsed = !preferences.collapsed; persist(); }, header);
             button('Close', close, header);
             body = element('div', null, card); document.body.appendChild(card);
-            heading.addEventListener('pointerdown', event => { if (surface) return; dragging = { x: event.clientX, y: event.clientY, left: card.offsetLeft, top: card.offsetTop }; heading.setPointerCapture?.(event.pointerId); event.preventDefault(); });
-            heading.addEventListener('pointermove', event => { if (!dragging) return; preferences.position = { x: dragging.left + event.clientX - dragging.x, y: dragging.top + event.clientY - dragging.y }; clampCard(); });
-            heading.addEventListener('pointerup', () => { dragging = null; persist(); });
-            heading.addEventListener('keydown', event => { if (surface || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; preferences.position = { x: card.offsetLeft + (event.key === 'ArrowRight' ? 16 : event.key === 'ArrowLeft' ? -16 : 0), y: card.offsetTop + (event.key === 'ArrowDown' ? 16 : event.key === 'ArrowUp' ? -16 : 0) }; event.preventDefault(); clampCard(); persist(); });
             clampCard();
         }
-        function selectStage(key) { progress().stage = key; lastPromptKey = ''; persist(); schedule(); } // NEW
+        function selectStage(key) { finishDrag(true); progress().stage = key; lastPromptKey = ''; persist(); schedule(); } // NEW
         function advanceField(delta) { const p = progress(), key = stage()[0]; p.positions[key] = Math.max(0, (p.positions[key] || 0) + delta); persist(); } // NEW
         function choose(label, values, value, change, parent = body) { // NEW
             const wrapper = element('label', label + ' ', parent), input = element('select', null, wrapper);
             input.setAttribute('aria-label', label); input.dataset.quickstartFocus = 'select:' + label; // NEW
             for (const [key, text] of values) { const option = element('option', text, input); option.value = key; }
-            input.value = String(value); input.addEventListener('change', () => { change(input.value); persist(); schedule(); }); return input;
+            input.value = String(value); input.addEventListener('change', () => { finishDrag(true); change(input.value); persist(); schedule(); }); return input;
         }
         async function openProjects(highlightName) { // NEW
             if (!root.TrellisGardenHome) { notice = 'Garden Projects is still loading. Use Open, or retry this step after the garden tools finish loading.'; return; }
@@ -333,6 +384,7 @@
             const container = currentSurface();
             const modal = ui.dialog?.container;
             moveCard(container || (modal && visible(modal) ? modal : document.body)); // NEW
+            if (dragging) return; // NEW: retain stable card dimensions until release; docking above still cancels.
             if (surface && !surface.isConnected) { surface = null; document.body.appendChild(card); }
             const focus = document.activeElement, focusKey = card.contains(focus) && focus.dataset.quickstartFocus;
             body.replaceChildren(); body.hidden = !!preferences.collapsed;
@@ -379,7 +431,7 @@
             }
             button('Finish', () => { if (!completeAll(values)) return; preferences.completed = true; if (persist()) close(); }).disabled = !completeAll(values);
             if (focusKey) [...card.querySelectorAll('[data-quickstart-focus]')].find(node => node.dataset.quickstartFocus === focusKey)?.focus({ preventScroll: true });
-            clampCard(); avoidTarget(detail.node); // NEW
+            clampCard(); avoidTarget(detail.node, promptKey); // NEW
         }
         function schedule() { if ((active || offering) && scheduled == null) scheduled = root.setTimeout(render, 30); } // NEW
         /** Observe active guidance only; ignore our own DOM and highlight class mutations. */ // NEW
@@ -388,7 +440,7 @@
             observer = new MutationObserver(records => { if (records.some(event => !card?.contains(event.target) && event.target !== card && (event.type === 'attributes' || ![...event.addedNodes, ...event.removedNodes].every(node => node === card)))) schedule(); }); // NEW
             observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'hidden', 'disabled', 'open', TARGET] });
         }
-        function close() { active = false; offering = false; observer?.disconnect(); observer = null; clearHighlight(); root.clearTimeout(scheduled); scheduled = null; card?.remove(); card = null; surface = null; } // NEW
+        function close() { finishDrag(true); active = false; offering = false; observer?.disconnect(); observer = null; clearHighlight(); root.clearTimeout(scheduled); scheduled = null; card?.remove(); card = null; dragHandle = null; surface = null; placementTarget = null; placementKey = ''; } // NEW
         function show() { close(); preferences.collapsed = false; active = true; bindGarden(); observe(); render(); } // NEW
         function resetIdentity() { close(); generation++; identity = userKey(); preferences = readPreferences(); contextKey = ''; notice = ''; } // NEW
         function watchModel() { // NEW: files can replace the mxGraph model.
@@ -406,7 +458,7 @@
             schedule();
         }
 
-        const style = element('style'); style.textContent = '.trellis-quickstart-card{box-sizing:border-box;z-index:2000000010;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);overflow:auto;padding:10px;border:1px solid #94a3b8;border-radius:8px;background:var(--ge-dialog-bg-color,#fff);color:var(--ge-dialog-color,#172033);box-shadow:0 4px 18px #0003;font:12px/1.45 Arial,sans-serif}.trellis-quickstart-card header{display:flex;align-items:center;gap:4px}.trellis-quickstart-card header strong{flex:1;cursor:move;touch-action:none}.trellis-quickstart-card label{display:block;margin:5px 0}.trellis-quickstart-card select{max-width:100%}.trellis-quickstart-card ol{padding-left:20px}.trellis-quickstart-card li .geBtn{border:0;text-align:left;white-space:normal;margin:1px;padding:3px}.trellis-quickstart-card [aria-current=true]{font-weight:bold;text-decoration:underline}.trellis-quickstart-target{outline:3px solid #2563eb!important;outline-offset:3px;scroll-margin:12px}'; document.head.appendChild(style); // NEW
+        const style = element('style'); style.textContent = '.trellis-quickstart-card{box-sizing:border-box;z-index:2000000010;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);overflow:auto;padding:10px;border:1px solid #94a3b8;border-radius:8px;background:var(--ge-dialog-bg-color,#fff);color:var(--ge-dialog-color,#172033);box-shadow:0 4px 18px #0003;font:12px/1.45 Arial,sans-serif}.trellis-quickstart-card header{display:flex;align-items:center;gap:4px}.trellis-quickstart-card header strong{flex:1}.trellis-quickstart-card [data-trellis-quickstart-drag-handle]{flex:0 0 auto;width:18px;height:18px;padding:0;border:1px solid rgba(60,64,67,.35);border-radius:4px;background:rgba(255,255,255,.96);box-shadow:0 1px 4px rgba(0,0,0,.20);cursor:move;color:#3c4043;font:13px Arial,sans-serif;line-height:18px;text-align:center;pointer-events:auto;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}.trellis-quickstart-card [data-trellis-quickstart-drag-handle][hidden]{display:none}.trellis-quickstart-card [data-trellis-quickstart-drag-handle] img{width:16px;height:16px;display:block;pointer-events:none}.trellis-quickstart-dragging,.trellis-quickstart-dragging [data-trellis-quickstart-drag-handle]{cursor:grabbing;user-select:none}.trellis-quickstart-card label{display:block;margin:5px 0}.trellis-quickstart-card select{max-width:100%}.trellis-quickstart-card ol{padding-left:20px}.trellis-quickstart-card li .geBtn{border:0;text-align:left;white-space:normal;margin:1px;padding:3px}.trellis-quickstart-card [aria-current=true]{font-weight:bold;text-decoration:underline}.trellis-quickstart-target{outline:3px solid #2563eb!important;outline-offset:3px;scroll-margin:12px}'; document.head.appendChild(style); // NEW
         const api = { show, close, capture, record, refresh: schedule, getState: () => ({ active, offering, identity, preferences, progress: progress(), completion: completions() }) }; // NEW
         graph.__trellisQuickstart = api; root.Trellis = root.Trellis || {}; root.Trellis.quickstart = api;
         ui.actions.addAction('trellisQuickstart', show).label = 'Quickstart';

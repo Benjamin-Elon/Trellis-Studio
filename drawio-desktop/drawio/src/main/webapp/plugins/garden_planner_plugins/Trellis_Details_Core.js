@@ -5,57 +5,9 @@
     const COMMENTS_ATTRIBUTE = 'trellis_comments_json', COMMENT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // CHANGE
 
     /** Fail closed on unknown versions or damaged records; never repair stored discussion by dropping it. */ // CHANGE
-    function parseComments(raw) { // CHANGE
-        if (!raw) return []; // CHANGE
-        const value = JSON.parse(raw), ids = new Set(); // CHANGE
-        if (!value || Object.keys(value).length !== 2 || ![1, 2].includes(value.version) || !Array.isArray(value.comments)) throw new Error('Unsupported or damaged comments data.'); // CHANGE
-        return value.comments.map(record => { // CHANGE
-            const timestamp = number => Number.isSafeInteger(number) && number >= 0; // CHANGE
-            const keys = ['id', 'authorUserId', 'authorName', 'html', 'createdAt', 'updatedAt', 'resolvedAt', 'resolvedByUserId', 'resolvedByName']; // CHANGE
-            if (value.version === 2) keys.push('isAlert'); // CHANGE: version 1 remains readable without rewriting saved discussion.
-            if (!record || Object.keys(record).length !== keys.length || !keys.every(key => Object.prototype.hasOwnProperty.call(record, key)) || // CHANGE
-                !['id', 'authorUserId', 'authorName', 'html'].every(key => typeof record[key] === 'string' && record[key].trim()) || ids.has(record.id) || // CHANGE
-                !timestamp(record.createdAt) || !timestamp(record.updatedAt) || record.updatedAt < record.createdAt || value.version === 2 && typeof record.isAlert !== 'boolean' || // CHANGE
-                !(record.resolvedAt === null && record.resolvedByUserId === null && record.resolvedByName === null || // CHANGE
-                    timestamp(record.resolvedAt) && record.resolvedAt >= record.updatedAt && typeof record.resolvedByUserId === 'string' && record.resolvedByUserId && typeof record.resolvedByName === 'string' && record.resolvedByName)) throw new Error('Unsupported or damaged comments data.'); // CHANGE
-            ids.add(record.id); return { ...Object.fromEntries(keys.map(key => [key, record[key]])), isAlert: value.version === 2 ? record.isAlert : false }; // CHANGE
-        }); // CHANGE
-    } // CHANGE
-
-    /** A single policy shared by the UI and Users model guard; history replay remains the host's responsibility. */ // CHANGE
-    function commentsChangeAllowed(beforeRaw, afterRaw, actor, now = Date.now()) { // CHANGE
-        try { // CHANGE
-            if (!actor || !actor.enabled || !actor.editable || !actor.user || !actor.user.id) return false; // CHANGE
-            const before = parseComments(beforeRaw), after = parseComments(afterRaw), previous = new Map(before.map(item => [item.id, item])); // CHANGE
-            if (beforeRaw && afterRaw && JSON.parse(beforeRaw).version === 2 && JSON.parse(afterRaw).version !== 2) return false; // CHANGE: old writers must not downgrade alert-aware discussion.
-            const moderator = item => item.authorUserId === actor.user.id || actor.user.admin || actor.ownerUserId === actor.user.id; // CHANGE
-            const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right); // CHANGE
-            const recent = time => time <= now && now - time < 60000; // CHANGE: allow synchronous model listeners to run milliseconds after the command timestamp.
-            let changes = 0; // CHANGE
-            for (const item of after) { // CHANGE
-                const old = previous.get(item.id); previous.delete(item.id); // CHANGE
-                if (old && equal(old, item)) continue; // CHANGE
-                changes++; // CHANGE
-                if (item.html !== normalizeHtml(item.html)) return false; // CHANGE
-                if (!old) { // CHANGE
-                    if (item.authorUserId !== actor.user.id || item.authorName !== actor.user.name || !recent(item.createdAt) || item.updatedAt !== item.createdAt || item.resolvedAt !== null) return false; // CHANGE
-                    continue; // CHANGE
-                } // CHANGE
-                if (item.authorUserId !== old.authorUserId || item.authorName !== old.authorName || item.createdAt !== old.createdAt) return false; // CHANGE
-                if (item.html !== old.html) { // CHANGE
-                    if (old.authorUserId !== actor.user.id || !recent(item.updatedAt) || item.updatedAt < old.updatedAt || item.resolvedAt !== null) return false; // CHANGE
-                } else if (item.isAlert !== old.isAlert) { // CHANGE
-                    if (!moderator(old) || !equal({ ...old, isAlert: item.isAlert }, item)) return false; // CHANGE: moderation cannot change text, timestamps or resolution alongside a flag.
-                } else { // CHANGE
-                    if (!moderator(old) || item.updatedAt !== old.updatedAt) return false; // CHANGE
-                    if (old.resolvedAt === null) { // CHANGE
-                        if (!recent(item.resolvedAt) || item.resolvedByUserId !== actor.user.id || item.resolvedByName !== actor.user.name) return false; // CHANGE
-                    } else if (item.resolvedAt !== null) return false; // CHANGE
-                } // CHANGE
-            } // CHANGE
-            for (const old of previous.values()) { changes++; if (!moderator(old) || old.resolvedAt === null || now - old.resolvedAt < COMMENT_RETENTION_MS) return false; } // CHANGE
-            return changes === 1; // CHANGE: one user action cannot smuggle unrelated comment changes.
-        } catch (_) { return false; } // CHANGE
+    const parseComments = root.TrellisPermissionCore.parseComments; // CHANGE: the renderer and replay share authorship and retention rules.
+    function commentsChangeAllowed(before, after, actor, at = Date.now()) { // CHANGE
+        return root.TrellisPermissionCore.commentsChangeAllowed(before, after, actor, at, normalizeHtml); // CHANGE
     } // CHANGE
 
     /** Apply one explicit action to fresh canonical data, using the target baseline to reject stale editing or moderation. */ // CHANGE

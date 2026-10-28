@@ -1,3 +1,4 @@
+import { validateJson, textLimit, LIMITS } from './trellis-input-policy.js'; // NEW: reference validators share the pre-decoding policy.
 /** Garden reference SQL projections. No operation in this service writes a file. */ // NEW
 import '../../drawio/src/main/webapp/js/trellis-reference-core.js'; // NEW
 import { randomUUID } from 'node:crypto';
@@ -72,6 +73,7 @@ export function createReferenceDatabaseService({ Database, readDefaults }) {
     }
     return {
         async request(owner, method, input = {}) {
+            validateJson(input); textLimit(JSON.stringify(input), LIMITS.diagram); // NEW: complete document projections use the document budget; exchanged proposals are bounded separately.
             if (method === 'defaults') { const db = await readDefaults(); try { return { snapshot: prepareDefaultSnapshot(db.transaction(() => snapshotDatabase(db))()) }; } finally { db.close(); } } // CHANGE: one read transaction captures a consistent creation source.
             if (method === 'validate') { const db = materialize(Database, input.store, input.manifestId || input.store.current); db.close(); return { ok: true }; }
             if (method === 'create') {

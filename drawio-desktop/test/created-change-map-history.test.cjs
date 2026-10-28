@@ -194,6 +194,15 @@ test('whole-document comparison distinguishes identical object IDs on different 
     assert.deepEqual(Array.from(diff.changed), [JSON.stringify(['b', 'bed'])]);
 }); // NEW
 
+test('shared checkpoints record accepted objects while the displayed canvas remains stale', async () => { // NEW
+    const harness = loadPlugin(); await settle();
+    const viewed = "<mxGraphModel><root><mxCell id='0'/><mxCell id='1' parent='0'/><mxCell id='b' parent='1' value='B0'/></root></mxGraphModel>", accepted = viewed.replace('B0', 'B1');
+    harness.setSerialized(viewed); harness.graph.__trellisSharing = { isExplicitRefresh: () => true, historyXml: async () => accepted };
+    const saved = await harness.context.window.Trellis.history.createCheckpoint('Accepted shared state');
+    const snapshot = await harness.context.window.Trellis.history._test.components.HistoryStore.loadSnapshot(saved.revision.id);
+    assert.match(snapshot.compressed_xml || snapshot.xml || snapshot.compressedXml, /B1/); assert.equal(harness.restoredXml(), null);
+});
+
 test("history API records a baseline and exposes a side-panel action", async () => {
     const harness = loadPlugin();
     await settle();

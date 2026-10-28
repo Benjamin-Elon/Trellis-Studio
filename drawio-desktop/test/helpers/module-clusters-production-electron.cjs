@@ -1,3 +1,4 @@
+require('../../src/main/trellis-asset-scheme.cjs'); // NEW: production protocol privileges must precede app readiness.
 /** Load the real application and plugin set against a private local garden. */ // NEW
 const fs = require('node:fs'); // NEW
 const path = require('node:path'); // NEW
