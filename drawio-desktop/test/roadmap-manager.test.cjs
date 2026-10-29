@@ -1367,3 +1367,30 @@ test('coordinator grant changes create archive and restore roles through native 
     } // NEW
     assert.equal(Object.values(h.model.cells).filter(cell => cell.getAttribute?.('trellis_role_user_id') === charlie.id).length, 1); // NEW
 }); // NEW
+
+/** Shared accepted policy excludes uncommitted cells; real cluster layout must still pass creation preflight. */ // NEW
+test('a shared administrator creates a complete cluster against the accepted prior snapshot', async t => { // NEW
+    const h = harness(t, ['Trellis_Users.js', 'Garden_Task_Manager.js', 'Modules_Standalone.js']), users = h.graph.__trellisUsers; // NEW
+    users.enableUsers('Alice', '1234'); const diagramId = users.getDiagramKey({ create: true }); // NEW
+    const { permissionSnapshot } = await import('../src/main/trellis-permission-policy.js'), { inspectDiagram } = await import('../src/main/trellis-share-protocol.js'); // NEW
+    const snapshot = permissionSnapshot(inspectDiagram(h.xml())); h.graph.__trellisSharedPolicy = { diagramId, store: snapshot.store, cells: new Map(Object.entries(snapshot.cells)), teams: snapshot.memberships }; // NEW
+    h.ui.currentPage = { getId: () => 'editor-generated-page' }; // NEW: opening a standalone model creates an editor page before its first save.
+    const garden = h.graph.__trellisModules.createModuleAtPoint({ x: 500, y: 500 }, 'garden'); // NEW
+    assert.ok(garden, h.alerts.join(' | ')); // NEW
+    assert.equal(Object.values(h.model.cells).filter(cell => cell.getAttribute?.('garden_module') === '1').length, 1); // NEW
+    assert.ok(h.graph.__trellisModules.findExistingCompanionTeam(garden)); assert.ok(h.graph.__trellisModules.findExistingCompanionTask(garden)); // NEW
+    assert.ok(h.model.getCell(garden.getAttribute('roadmap_module_id'))); // NEW
+}); // NEW
+
+/** A new local object stays editable while its original native creation awaits publication; revocation still wins. */ // NEW
+test('pending native creation remains editable across commands using prior parent authority', async t => { // NEW
+    const h = harness(t, ['Trellis_Users.js', 'Garden_Task_Manager.js', 'Modules_Standalone.js']), users = h.graph.__trellisUsers; users.enableUsers('Alice', '1234'); const diagramId = users.getDiagramKey({ create: true }); // NEW
+    const { permissionSnapshot } = await import('../src/main/trellis-permission-policy.js'), { inspectDiagram } = await import('../src/main/trellis-share-protocol.js'), snapshot = permissionSnapshot(inspectDiagram(h.xml())); // NEW
+    const policy = { diagramId, store: snapshot.store, cells: new Map(Object.entries(snapshot.cells)), teams: snapshot.memberships }; h.graph.__trellisSharedPolicy = policy; // NEW
+    const pending = []; h.graph.__trellisSharing = { permissionChanges: () => pending.filter(edit => !edit.__trellisUsersRejected && !edit.undone).flatMap(edit => edit.changes) }; // NEW
+    h.model.addListener(h.w.mxEvent.CHANGE, (_sender, event) => pending.push(event.getProperty('edit'))); // NEW
+    const garden = h.graph.__trellisModules.createModuleAtPoint({ x: 500, y: 500 }, 'garden'); assert.ok(garden); assert.equal(users.canEditCell(garden), true); // NEW
+    const value = garden.value.cloneNode(true); value.setAttribute('label', 'Edited before publication'); h.model.setValue(garden, value); assert.equal(garden.getAttribute('label'), 'Edited before publication'); // NEW
+    h.graph.__trellisSharedPolicy = { ...policy, store: { ...policy.store, users: policy.store.users.map(user => ({ ...user, disabled: true })) } }; const before = h.xml(); // NEW
+    const denied = garden.value.cloneNode(true); denied.setAttribute('label', 'Revoked edit'); h.model.setValue(garden, denied); assert.equal(h.xml(), before); // NEW
+}); // NEW

@@ -85,8 +85,13 @@
             C.validate(store, manifestId);
             const userId = actor(), diagramRoot = model.getRoot(); let scopePromise, released = false, dirty = false, inTransaction = false, draftBase = store; // CHANGE
             const handles = new Set(), delegated = new Map(); let writeContext; // CHANGE
+            function permissionIdentity() { // NEW: invalidate on authority changes, not an unrelated accepted content write.
+                const access = users()?.getAccessSummary?.(garden) || { ownerUserId: attr(garden, 'trellis_owner_user_id'), directGrants: json(garden, 'trellis_access_grants_json', []) }, account = users()?.getCurrentUser(); // NEW
+                return C.canonical([access.ownerUserId || '', !!access.directOpen, access.directGrants || [], access.directTeamGrants || [], access.inheritedAccessGrant || null, !!account?.admin, graph.__trellisSharedPolicy ? graph.__trellisSharedPolicy.teams?.[userId] || [] : access.effectiveCapabilities || []]); // NEW: derived copies and presentation labels are not authority.
+            } // NEW
+            const capturedPermission = permissionIdentity(); // NEW
             function guard() {
-                if (released || diagramRoot !== model.getRoot() || model.getCell(garden.id) !== garden || actor() !== userId || !editor(garden) && options.editable) throw new Error('The garden or active user changed. Reopen this dialog.');
+                if (released || diagramRoot !== model.getRoot() || model.getCell(garden.id) !== garden || actor() !== userId || capturedPermission !== permissionIdentity() || !editor(garden) && options.editable) throw new Error('The garden or active user changed. Reopen this dialog.'); // CHANGE: readers and writers both stop when their captured authority changes.
             }
             async function scope() { guard(); if (!scopePromise) scopePromise = request('create', { store, manifestId, editable: options.draft === true && options.editable === true }); return scopePromise; } // CHANGE
             async function captureDraft() {
@@ -365,7 +370,9 @@
         const action = ui.actions.get('trellisGardenReferences'); if (action) action.label = 'Garden references…';
         const extras = ui.menus?.get('extras'); if (extras) { const old = extras.funct; extras.funct = function (menu, parent) { old?.apply(this, arguments); ui.menus.addMenuItems(menu, ['-', 'trellisGardenReferences'], parent); }; }
         ui.editor.addListener?.('fileLoaded', () => { drafts.clear(); draftLoads.clear(); draftReady.clear(); for (const context of contexts) context.release().catch(() => {}); }); // CHANGE
-        root.addEventListener('trellisUsersSessionChanged', () => { for (const context of contexts) context.release().catch(() => {}); });
+        root.addEventListener('trellisUsersSessionChanged', () => { // CHANGE: same-user policy revalidation must not close a valid in-flight SQL view.
+            for (const context of contexts) { try { context.guard(); } catch (_) { context.release().catch(() => {}); } } // NEW: actor, document and write-authority changes still invalidate their captured context.
+        }); // NEW
     }
     Draw.loadPlugin(ui => { const ready = () => root.indexedDB && !root.TrellisReferenceDrafts ? mxscript('js/trellis-reference-drafts.js', () => install(ui)) : install(ui); if (root.TrellisReferenceCore) ready(); else mxscript('js/trellis-reference-core.js', ready); }); // CHANGE
 })(window); // NEW

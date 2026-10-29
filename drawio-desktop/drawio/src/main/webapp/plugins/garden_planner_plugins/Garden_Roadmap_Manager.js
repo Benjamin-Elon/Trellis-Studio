@@ -116,7 +116,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     /** Nested commands share the caller's edit; failed commands reverse their own changes. // NEW */
-    function command(fn) {
+    function command(fn, options = {}) { // CHANGE: initiating factories may request the original rejection instead of a null result.
         if (commandDepth) return fn();
         const previousBounds = snapshotPeerBounds(); fixedBoardMoves = new Set(); // CHANGE
         model.beginUpdate();
@@ -124,19 +124,20 @@ Draw.loadPlugin(function (ui) {
         const start = currentEdit && currentEdit.changes ? currentEdit.changes.length : 0;
         journal = [];
         commandDepth++;
-        let result = null; // CHANGE: return only after synchronous permission inspection accepts the edit.
+        let result = null, failure = null; // CHANGE: return only after synchronous permission inspection accepts the edit.
         try { result = fn(); resolveSavedCollisions(previousBounds); } // CHANGE
         catch (error) {
-            result = null; // NEW
+            result = null; failure = error; // CHANGE: preserve the original command failure after rollback.
             const undo = journal; journal = null;
             if (currentEdit && currentEdit.changes) {
                 const changes = currentEdit.changes.splice(start);
                 for (let i = changes.length - 1; i >= 0; i--) changes[i].execute();
             } else { for (let i = undo.length - 1; i >= 0; i--) undo[i](); }
-            alertError(error);
+            if (!options.throwOnRejection) alertError(error); // CHANGE
         } finally {
             journal = null; commandDepth--; invalidateLayouts(); committingCanonical = true; try { model.endUpdate(); } finally { committingCanonical = false; } refresh(); // CHANGE
         }
+        if (options.throwOnRejection && (failure || currentEdit?.__trellisUsersRejected)) throw failure || new Error(currentEdit.__trellisUsersRejectedReason || 'The cluster transaction was rejected.'); // NEW
         return currentEdit && currentEdit.__trellisUsersRejected ? null : result; // NEW
     }
 
@@ -1838,4 +1839,5 @@ Draw.loadPlugin(function (ui) {
         _test: { moveContent, moveGoalMarkers, planMove, setObjectStatuses, setObjectAssignments, setProcessColor, dependencyRevealState, resizeTimelineCell, command, beginGesture, previewGesture, endGesture, checkToday, calculateLayout, get gesture() { return gesture; } } // CHANGE
     };
     refresh();
+    if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisGardenToolsReady')); // NEW: notify document startup after installing this tool's API.
 });

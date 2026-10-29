@@ -214,7 +214,7 @@ export function createGardenLibraryService({ identities, legacyService, listLega
         const name = naming.projectName(input.name || 'New garden'); // CHANGE
         if (!name) throw new Error('Enter a garden name.');
         const store = { schemaVersion: 1, usersEnabled: true, users: [{ id: workerId, name: session.username, portableIdentityId: session.identityId, admin: true, disabled: false, pinSalt: '', pinHash: '', createdAt: Date.now() }], pendingUsers: [], invites: [], accessRequests: [], accessMessages: [] };
-        const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_users_diagram_id="' + diagramId + '" trellis_history_id="' + diagramId + '" trellis_users_json="' + escape(JSON.stringify(store)) + '"><mxCell parent="0"/></object></root></mxGraphModel>';
+        const xml = '<mxfile><diagram id="' + uuid() + '" name="Page-1">' + '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_users_diagram_id="' + diagramId + '" trellis_history_id="' + diagramId + '" trellis_users_json="' + escape(JSON.stringify(store)) + '"><mxCell parent="0"/></object></root></mxGraphModel>' + '</diagram></mxfile>'; // CHANGE: stable page identity precedes accepted policy, editor loading and the first save.
         const daemon = await identities.transport(session.identityId);
         daemon.setContext(virtualCaller(session.identityId), { diagramId, userId: workerId });
         const namedXml = withProjectName(xml, name); // NEW

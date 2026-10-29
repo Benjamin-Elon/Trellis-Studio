@@ -571,3 +571,58 @@ test("domain plugins declare semantic history transactions and restore listeners
     assert.match(irrigation, /trellisHistoryAfterRestore/);
     assert.match(linking, /trellisHistoryAfterRestore/);
 });
+
+/** Deferred XML is owned by the document that requested it, not the document current when it resolves. */ // NEW
+test('late history XML cannot initialize a replacement document or overwrite its successful state', async () => { // NEW
+    const first = { fileObject: { path: '/first' }, stat: { size: 1024 } }, next = { fileObject: { path: '/next' }, stat: { size: 2048 } }, h = loadPlugin({ file: first }); // NEW
+    let current = first, release, reads = 0; const gate = new Promise(resolve => { release = resolve; }), requests = [], request = h.dbBridge.request; // NEW
+    h.ui.getCurrentFile = () => current; h.dbBridge.request = (method, input) => { requests.push({ method, input }); return request(method, input); }; // NEW
+    const xml = label => '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="note" label="'+label+'"><mxCell parent="1" vertex="1"/></object></root></mxGraphModel>'; // NEW
+    h.graph.__trellisSharing = { whenDocumentReady: async () => {}, isExplicitRefresh: () => true, historyXml: async () => ++reads === 1 ? gate : xml('Second') }; // NEW
+    await settle(); current = next; h.layer.setAttribute('trellis_history_id', 'next-document'); h.fireEditorEvent('fileLoaded'); await settle(); // NEW
+    release(xml('First')); await settle(); await h.context.window.Trellis.history.refresh(); // NEW
+    const initialized = requests.filter(item => item.method === 'initialize'); assert.equal(initialized.length, 1); assert.equal(initialized[0].input.diagramId, 'next-document'); assert.match(initialized[0].input.xml, /Second/); // NEW
+    assert.doesNotMatch(h.document.body.textContent, /History initialization failed/); h.dbBridge.service.close(); h.context.window.close(); // NEW
+}); // NEW
+
+/** Fix the initialization failure, then verify recovery and independent diagram accounting. */ // NEW
+test('history refresh retries failed initialization and keeps diagram size when statistics fail', async () => { // NEW
+    const file = { fileObject: { path: '/garden' }, stat: { size: 2048 } }, h = loadPlugin({ file }), request = h.dbBridge.request; let fail = true, statisticsFail = false; // NEW
+    h.dbBridge.request = (method, input) => { if (method === 'initialize' && fail) return Promise.reject(new Error('Injected initialization failure')); if (method === 'statistics' && statisticsFail) return Promise.reject(new Error('Injected statistics failure')); return request(method, input); }; // NEW
+    await settle(); assert.match(h.document.querySelector('.trellis-history-storage-button').textContent, /Diagram 2.0 KiB.*History error/); // NEW
+    fail = false; await h.context.window.Trellis.history.refresh(); assert.ok(h.context.window.Trellis.history.list().length); // NEW
+    statisticsFail = true; await h.context.window.Trellis.history.refreshStorage(); assert.match(h.document.querySelector('.trellis-history-storage-button').textContent, /Diagram 2.0 KiB.*History error/); // NEW
+    statisticsFail = false; await h.context.window.Trellis.history.refreshStorage(); assert.doesNotMatch(h.document.querySelector('.trellis-history-storage-button').textContent, /History error/); h.dbBridge.service.close(); h.context.window.close(); // NEW
+}); // NEW
+
+/** A fresh visit to A has a new generation even if the same File and diagram IDs are reused. */ // NEW
+test('rapid A to B to A switching discards old successes and failures', async () => { // NEW
+    const a = { fileObject: { path: '/a' } }, b = { fileObject: { path: '/b' } }, h = loadPlugin({ file: a }); let current = a, releaseA, rejectB, reads = 0; // NEW
+    const oldA = new Promise(resolve => { releaseA = resolve; }), oldB = new Promise((_resolve, reject) => { rejectB = reject; }), requests = [], request = h.dbBridge.request; // NEW
+    h.ui.getCurrentFile = () => current; h.dbBridge.request = (method, input) => { requests.push({ method, input }); return request(method, input); }; // NEW
+    const xml = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="note" label="Latest A"><mxCell parent="1" vertex="1"/></object></root></mxGraphModel>'; // NEW
+    h.graph.__trellisSharing = { whenDocumentReady: async () => {}, isExplicitRefresh: () => true, historyXml: async () => ++reads === 1 ? oldA : reads === 2 ? oldB : xml }; // NEW
+    await settle(); const id = h.layer.getAttribute('trellis_history_id'); current = b; h.layer.setAttribute('trellis_history_id', 'document-b'); h.fireEditorEvent('fileLoaded'); await settle(); // NEW
+    current = a; h.layer.setAttribute('trellis_history_id', id); h.fireEditorEvent('fileLoaded'); await settle(); rejectB(new Error('Obsolete B failed')); releaseA(xml.replace('Latest A', 'Obsolete A')); await settle(); // NEW
+    await h.context.window.Trellis.history.refresh(); const initialized = requests.filter(item => item.method === 'initialize'); assert.equal(initialized.length, 1); assert.match(initialized[0].input.xml, /Latest A/); assert.doesNotMatch(h.document.body.textContent, /Obsolete/); // NEW
+    h.dbBridge.service.close(); h.context.window.close(); // NEW
+}); // NEW
+
+/** Same-actor policy updates are common during open-view and must not repeatedly bind history. */ // NEW
+test('permission revalidation preserves the existing history context and recording warnings survive statistics refresh', async () => { // NEW
+    const h = loadPlugin(), request = h.dbBridge.request; let initialized = 0, failRecording = false; // NEW
+    h.dbBridge.request = (method, input) => { if (method === 'initialize') initialized++; if (method === 'record' && failRecording) return Promise.reject(new Error('Recording disk full')); return request(method, input); }; // NEW
+    await settle(); const count = initialized; h.context.window.dispatchEvent(new h.context.window.CustomEvent('trellisUsersSessionChanged')); await settle(); assert.equal(initialized, count); // NEW
+    failRecording = true; await h.context.window.Trellis.history.createCheckpoint('Rejected checkpoint'); await h.context.window.Trellis.history.refreshStorage(); // NEW
+    assert.match(h.document.querySelector('.trellis-history-storage-button').title, /History recording failed: Recording disk full/); // NEW
+    failRecording = false; await h.context.window.Trellis.history.createCheckpoint('Recovered checkpoint'); assert.doesNotMatch(h.document.querySelector('.trellis-history-storage-button').title, /Recording disk full/); assert.doesNotMatch(h.graph.__ccHistoryWarning || '', /Recording disk full/); // NEW
+    h.dbBridge.service.close(); h.context.window.close(); // NEW
+}); // NEW
+
+/** Main-process replies may reject after the renderer has already initialized another document. */ // NEW
+test('an old latest-revision failure cannot overwrite the replacement document warning', async () => { // NEW
+    const a = { fileObject: { path: '/a' } }, b = { fileObject: { path: '/b' } }, h = loadPlugin({ file: a }), request = h.dbBridge.request; let rejectOld, held = false, current = a; // NEW
+    h.ui.getCurrentFile = () => current; h.dbBridge.request = (method, input) => { if (method === 'latest' && !held) { held = true; return new Promise((_resolve, reject) => { rejectOld = reject; }); } return request(method, input); }; // NEW
+    await settle(); assert.ok(rejectOld); current = b; h.layer.setAttribute('trellis_history_id', 'new-document'); h.fireEditorEvent('fileLoaded'); await settle(); rejectOld(new Error('Obsolete native failure')); await settle(); // NEW
+    assert.doesNotMatch(h.graph.__ccHistoryWarning || '', /Obsolete/); assert.doesNotMatch(h.document.body.textContent, /Obsolete/); h.dbBridge.service.close(); h.context.window.close(); // NEW
+}); // NEW

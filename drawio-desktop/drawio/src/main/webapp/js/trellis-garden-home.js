@@ -570,18 +570,37 @@
         } catch (error) { state.projectsStatus.textContent = error.message; } // NEW
     } // NEW
     /** Seed only this newly created project, through the same module mechanics as New Diagram. */ // NEW
-    async function initializeProject(ui, shared) { // NEW
+    const starterInitializations = new WeakMap(); // NEW: concurrent submissions share this exact file's initializer.
+    function initializeProject(ui, shared) { // CHANGE
+        const file = ui.getCurrentFile(); if (!file) return Promise.reject(new Error('Open the created project before initializing its garden.')); // NEW
+        if (starterInitializations.has(file)) return starterInitializations.get(file); // NEW
+        const operation = initializeStarter(ui, shared).catch(error => { starterInitializations.delete(file); throw error; }); // NEW
+        starterInitializations.set(file, operation); return operation; // NEW
+    } // NEW
+    async function initializeStarter(ui, shared) { // NEW
         const graph = ui.editor.graph, file = ui.getCurrentFile(); // CHANGE
         const ready = () => graph.__trellisModules && graph.__trellisTaskManager && graph.__trellisRoadmapManager && root.Trellis?.users && (!root.trellisShare || root.Trellis?.sharing) && (!shared || ui.actions.get('trellisShareGardenProject')); // CHANGE
-        for (let attempt = 0; attempt < 100 && !ready(); attempt++) { if (file !== ui.getCurrentFile()) return false; await new Promise(resolve => root.setTimeout(resolve, 100)); } // CHANGE
-        const users = root.Trellis?.users; await users?.restorePortableLogin(); // NEW
-        if (file !== ui.getCurrentFile()) return false; // NEW: startup may finish after the user opens another document.
-        if (!ready() || !users?.isLoggedIn()) throw new Error('The project was created. Retry after the garden tools finish loading.'); // CHANGE
-        await root.Trellis?.sharing?.refresh?.(); // NEW: v2 starter edits wait for the signed baseline and save hooks.
+        if (!ready()) await new Promise((resolve, reject) => { // CHANGE: react to real plugin installation instead of polling startup timing.
+            const finish = error => { root.clearTimeout(timer); root.removeEventListener('trellisGardenToolsReady', check); ui.editor.removeListener?.(check); error ? reject(error) : resolve(); }; // NEW
+            const check = () => { if (file !== ui.getCurrentFile()) finish(new Error('The document changed during garden initialization.')); else if (ready()) finish(); }; // NEW
+            const timer = root.setTimeout(() => finish(new Error('The garden tools did not finish loading. Retry opening this project.')), 10000); // NEW
+            root.addEventListener('trellisGardenToolsReady', check); ui.editor.addListener?.('fileLoaded', check); check(); // NEW
+        });
+        const users = root.Trellis?.users; await users?.restorePortableLogin(); // CHANGE: finish the existing login transition before binding the document/actor generation.
         if (file !== ui.getCurrentFile()) return false; // NEW
+        if (root.Trellis?.sharing?.whenDocumentReady) await root.Trellis.sharing.whenDocumentReady(); else await root.Trellis?.sharing?.refresh?.(); // CHANGE: share policy and remembered-view setup with history and watching.
+        if (file !== ui.getCurrentFile()) return false; // NEW
+        if (!ready() || !users?.isLoggedIn()) throw new Error('The project was created. Retry after the garden tools finish loading.'); // CHANGE
         const parent = graph.getDefaultParent(), children = graph.model.getChildren(parent) || []; // NEW
-        const garden = children.find(cell => cell.value?.getAttribute?.('garden_module') === '1') || (!children.length ? graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, 'garden') : null); // NEW
+        const existingGarden = children.find(cell => cell.value?.getAttribute?.('garden_module') === '1'); // NEW
+        const garden = existingGarden || (!children.length ? graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, 'garden') : null); // CHANGE
         if (!garden) throw new Error('The project was created, but its starter garden could not be initialized.'); // NEW
+        const modules = graph.__trellisModules; // NEW
+        if (existingGarden && modules.ensureGardenTeamModule && modules.ensureGardenTaskModule && modules.ensureGardenRoadmapModule) { // NEW: retry repairs only missing companions through their existing idempotent mechanics.
+            const command = graph.__trellisRoadmapManager.runModelCommand; // NEW
+            const ensure = () => { modules.ensureGardenTeamModule(garden, { insideUpdate: true }); modules.ensureGardenTaskModule(garden, { insideUpdate: true, createMainBoard: true }); modules.ensureGardenRoadmapModule(garden); }; // NEW
+            if (command) command(ensure, { throwOnRejection: true }); else ensure(); // NEW
+        } // NEW
         graph.setSelectionCell(garden); // NEW
         await new Promise((resolve, reject) => file.save(false, resolve, reject)); // CHANGE
         if (file !== ui.getCurrentFile()) return false; // NEW
@@ -629,10 +648,14 @@
     /** A failed opening/setup step keeps a concrete retry target without another create call. */ // NEW
     function showCreationRecovery(ui, project, kind, error) { // NEW
         const panel = element('div', null, 'trellis-home-open'), status = element('p', error.message); // NEW
-        panel.append(element('h3', project.entry?.name || 'Created garden project'), status, button('Retry opening created project', async () => { // NEW
+        const state = ui.__trellisGardenHome; // NEW: retry shares the creation guard without issuing another library create.
+        const retry = button('Retry opening created project', async () => { // CHANGE
+            if (state.creating) return; state.creating = true; retry.disabled = true; // NEW
             try { if (await openPath(ui, project.path)) await initializeProject(ui, kind === 'shared'); } // NEW
             catch (failure) { if (panel.isConnected) status.textContent = failure.message; else showCreationRecovery(ui, project, kind, failure); } // NEW
-        }, 'open'), button('Garden Projects', () => { ui.hideDialog(); showProjects(ui); }, 'open'), button('Close', () => ui.hideDialog(), 'close')); // CHANGE
+            finally { state.creating = false; retry.disabled = false; } // NEW
+        }, 'open'); // CHANGE
+        panel.append(element('h3', project.entry?.name || 'Created garden project'), status, retry, button('Garden Projects', () => { ui.hideDialog(); showProjects(ui); }, 'open'), button('Close', () => ui.hideDialog(), 'close')); // CHANGE
         ui.showDialog(panel, 500, 240, true, true); // NEW
     } // NEW
     /** Background refreshes never rebuild a focused filter or an open city picker. */ // CHANGE

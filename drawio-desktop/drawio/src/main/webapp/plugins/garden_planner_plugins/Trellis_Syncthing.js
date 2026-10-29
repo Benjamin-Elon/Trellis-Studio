@@ -32,6 +32,24 @@ Draw.loadPlugin(function (ui) {
     const users = () => graph.__trellisUsers || window.Trellis && window.Trellis.users;
     const file = () => ui.getCurrentFile && ui.getCurrentFile();
     const history = () => graph.__trellisHistory || window.Trellis && window.Trellis.history;
+    if (ui.setStatusText && ui.statusContainer) { // NEW: trusted UI callbacks receive real controls after document HTML sanitization.
+        const renderStatus = ui.setStatusText; // NEW
+        ui.setStatusText = function () { // NEW
+            const result = renderStatus.apply(this, arguments), current = file(), generation = contextGeneration; // NEW
+            const message = ui.statusContainer.textContent, syncMessage = window.mxResources?.get?.('fileChangedSync'); // NEW
+            const callback = ui.editor.statusFunction || (current && syncMessage && message.includes(syncMessage) ? () => ui.synchronizeCurrentFile?.(false) : null); // NEW
+            if (typeof callback === 'function' && message) { // NEW
+                const container = document.createElement('div'), control = document.createElement('button'); container.className = 'geStatusAlert'; container.dataset.action = 'statusFunction'; control.type = 'button'; control.textContent = message; // NEW
+                control.addEventListener('click', event => { event.stopPropagation(); if (file() === current && generation === contextGeneration) callback(); }); // NEW
+                control.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); control.click(); } }); // NEW
+                container.appendChild(control); ui.statusContainer.replaceChildren(container); // NEW: no document markup or sanitizer exemption is introduced.
+            } // NEW
+            return result; // NEW
+        }; // NEW
+    } // NEW
+    function pathKey(value) { // NEW: filesystem identity must survive Windows slash and drive-letter variations.
+        const normalized = String(value || '').replace(/\\/g, '/'); return /^[a-z]:\//i.test(normalized) || normalized.startsWith('//') ? normalized.toLowerCase() : normalized; // NEW
+    } // NEW
     function context() {
         const current = file();
         const parent = graph.getDefaultParent();
@@ -178,25 +196,53 @@ Draw.loadPlugin(function (ui) {
         if (ui.watchFile && file()) await ui.watchFile(file());
         await bridge.setContext(context());
     }
+    let documentReady = null, classifiedFile = null; // NEW: one readiness result belongs to one document, actor and generation.
+    function invalidateDocumentReady() { // NEW: obsolete waiters fail immediately, even if their old request never returns.
+        if (documentReady && !documentReady.settled) { documentReady.settled = true; documentReady.reject(new Error('The user or document changed during initialization.')); } // NEW
+        documentReady = null; // NEW
+    } // NEW
+    function settleDocumentReady(error) { // NEW
+        const entry = documentReady; if (!entry || entry.settled || entry.actor === null) return; // NEW
+        if (file() !== entry.file || contextGeneration !== entry.generation || context().userId !== entry.actor) error = new Error('The user or document changed during initialization.'); // NEW
+        if (!error && info?.managed && !entry.actor) error = new Error('Log in before initializing this garden project.'); // NEW
+        if (!error && (classifiedFile !== entry.file || isCollaborative() && (!graph.__trellisSharedPolicy || explicitMode && viewIdentity !== entry.actor))) return; // CHANGE
+        entry.settled = true; // NEW
+        if (error) { entry.error = error; entry.reject(error); } else entry.resolve({ file: entry.file, userId: entry.actor, diagramId: context().diagramId, generation: entry.generation, managed: !!info?.managed }); // NEW
+    } // NEW
+    function whenDocumentReady() { // NEW
+        const current = file(), actor = context().userId; // NEW
+        if (documentReady && !documentReady.error && documentReady.file === current && documentReady.generation === contextGeneration && (documentReady.actor === null || documentReady.actor === actor)) return documentReady.promise; // NEW
+        invalidateDocumentReady(); // CHANGE
+        const entry = { file: current, generation: contextGeneration, actor: null, settled: false }; // NEW
+        entry.promise = new Promise((resolve, reject) => { entry.resolve = resolve; entry.reject = reject; }); documentReady = entry; // NEW
+        Promise.resolve().then(async () => { // NEW
+            await users()?.restorePortableLogin?.(); // NEW
+            if (file() !== current || contextGeneration !== entry.generation || documentReady !== entry) throw new Error('The document changed during initialization.'); // NEW
+            entry.actor = context().userId; // NEW
+            if (info?.managed && !entry.actor) throw new Error('Log in before initializing this garden project.'); // NEW
+            settleDocumentReady(); if (!entry.settled) await refresh(); // NEW
+        }).catch(error => { if (!entry.settled) { entry.settled = true; entry.error = error; entry.reject(error); } }); // NEW
+        return entry.promise; // NEW
+    } // NEW
     async function refresh() {
-        if (refreshing) { const generation = contextGeneration; await refreshFinished; if (generation === contextGeneration && file() && (info?.diagramPath !== context().diagramPath || explicitMode && context().userId && viewIdentity !== context().userId)) return refresh(); return; } // CHANGE: a previous document or user's refresh cannot initialize the next view.
+        if (refreshing) { const generation = contextGeneration; await refreshFinished; if (generation === contextGeneration && file() && (classifiedFile !== file() || explicitMode && isCollaborative() && context().userId && viewIdentity !== context().userId)) return refresh(); return; } // CHANGE: a previous document or user's refresh cannot initialize the next view.
         const openedFile = file(), generation = contextGeneration; // NEW
-        refreshing = true;
+        refreshing = true; let failure = null; // CHANGE
         refreshFinished = new Promise(resolve => { finishRefresh = resolve; }); // NEW
         try {
             await synchronizeContext();
             if (file() !== openedFile || generation !== contextGeneration) return; // NEW
             const current = context();
-            if (!current.diagramPath) { info = null; lastStatus = null; announce(); return; }
+            if (!current.diagramPath) { info = null; lastStatus = null; classifiedFile = openedFile; settleDocumentReady(); announce(); return; } // CHANGE
             const result = await bridge.getStatus();
             if (file() !== openedFile || generation !== contextGeneration) return; // NEW
-            const entry = (result.canvases || []).find(canvas => canvas.diagramPath === current.diagramPath);
-            if (!entry) { info = null; lastStatus = null; announce(); return; }
+            const entry = (result.canvases || []).find(canvas => pathKey(canvas.diagramPath) === pathKey(current.diagramPath)); // CHANGE
+            if (!entry) { info = null; lastStatus = null; classifiedFile = openedFile; settleDocumentReady(); announce(); return; } // CHANGE
             const nextInfo = await bridge.getSyncthingShareInfo({ diagramPath: current.diagramPath }); // CHANGE
             if (file() !== openedFile || generation !== contextGeneration) return; // CHANGE
             const assetContextChanged = info?.assetBaseUrl !== nextInfo.assetBaseUrl; info = nextInfo; window.TrellisContentPolicy?.setAssetBase(info?.assetBaseUrl); // CHANGE
             if (assetContextChanged) refreshManagedImages(); // CHANGE: unchanged context must not refresh the complete graph.
-            lastStatus = entry;
+            lastStatus = entry; classifiedFile = openedFile; // CHANGE
             assetAvailability = entry.state; // CHANGE
             assetSequence = entry.folderSequence ?? null; // CHANGE
             if (isCollaborative() && (collaborationBaseline == null || explicitMode && viewIdentity !== current.userId) && current.userId) { // CHANGE: each authenticated user restores their remembered objects.
@@ -209,11 +255,12 @@ Draw.loadPlugin(function (ui) {
                     incoming?.setGroups(baseline.groups || []); pendingHash = baseline.collaboration?.hash;
                 } // NEW
             } // NEW
+            settleDocumentReady(); // NEW: history may depend on readiness; resolve before importing history.
             startBackground(); // NEW: begin independent services only after the document/user baseline is initialized.
             await importNewHistory();
             announce();
-        } catch (err) { status(err.message + (explicitMode && /Remembered view unavailable/.test(err.message) ? ' Use Extras → Recover Remembered View.' : '')); } // CHANGE
-        finally { refreshing = false; finishRefresh(); } // CHANGE
+        } catch (err) { failure = err; status(err.message + (explicitMode && /Remembered view unavailable/.test(err.message) ? ' Use Extras → Recover Remembered View.' : '')); } // CHANGE
+        finally { refreshing = false; finishRefresh(); if (generation === contextGeneration) settleDocumentReady(failure); } // CHANGE
     }
     /** Invalidate rendered managed images only when their base or download availability changes. */ // CHANGE
     function refreshManagedImages() { // CHANGE
@@ -321,12 +368,16 @@ Draw.loadPlugin(function (ui) {
         if (!graph.__trellisSharingApplying) remoteBaselinePending = false; // NEW: imported history must not erase a newer local edit baseline.
         if (info && info.managed && entry && entry.revision.diagramHistoryId === info.diagramId && !graph.__trellisSharingApplying) queuedHistory.set(entry.revision.id, entry);
     }
-    async function publishSavedHistory(savedXml) {
+    async function publishSavedHistory(savedXml, checkpoint, isCurrent) { // CHANGE
         if (!info || !info.managed || graph.__trellisSharingApplying) return; // CHANGE
-        const entries = Array.from(queuedHistory.values());
+        const entries = checkpoint ? [checkpoint] : []; // CHANGE: a newer recorder event cannot substitute or bundle a different saved version.
         if (!entries.length) return;
+        const shareId = info.shareId; // NEW
         await synchronizeContext();
-        const historyResult = await bridge.exportHistory({ shareId: info.shareId, savedHash: await hash(savedXml), entries }); // CHANGE
+        if (!isCurrent() || shareId !== info?.shareId) return; // NEW
+        const savedHash = await hash(savedXml); if (!isCurrent()) return; // NEW
+        const historyResult = await bridge.exportHistory({ shareId, savedHash, entries }); // CHANGE
+        if (!isCurrent()) return; // NEW
         graph.__ccSharedHistoryStorage = historyResult && historyResult.storage || null; // CHANGE
         if (history()?.refresh) await history().refresh(); // NEW: reset/pruning may have changed the local generation.
         if (document.querySelector('.trellis-history-storage-details[open]')) await window.Trellis.sharing.refreshHistoryStorage(); // NEW: avoid scanning the collaboration journal on ordinary autosaves.
@@ -382,18 +433,23 @@ Draw.loadPlugin(function (ui) {
             const savedXml = args[0];
             const success = args[2];
             args[2] = function () {
+                const generation = contextGeneration, actor = context().userId; // NEW
+                const matches = () => file() === current && generation === contextGeneration && actor === context().userId; // NEW
                 savedQueue = savedQueue.then(async function () {
                     const historyStarted = window.performance.now(); // NEW: history is measured separately from project persistence and activity.
+                    let checkpoint = null; // NEW
                     // Flush stable history only if the in-memory canvas still matches the saved work.
-                    if (file() === current && info?.managed && current.fileObject?.path === info.diagramPath && history()?.flushForSharing && !current.isModified()) { // CHANGE: plain local files need no sharing checkpoint.
-                        const checkpoint = savedCheckpoint(await history().flushForSharing());
+                    if (matches() && info?.managed && pathKey(current.fileObject?.path) === pathKey(info.diagramPath) && history()?.flushForSharing && !current.isModified()) { // CHANGE: plain local files need no sharing checkpoint.
+                        checkpoint = savedCheckpoint(await history().flushForSharing()); // CHANGE
+                        if (!matches()) return; // NEW
                         queuedHistory.clear(); // NEW: unsaved intermediate revisions are never published.
                         if (checkpoint) queuedHistory.set(checkpoint.revision.id, checkpoint);
                     } else return;
                     const sharedXml = explicitMode ? (await coordinate({ kind: 'history-state' }))?.xml : savedXml; // NEW: history always describes the accepted project, never the stale view.
-                    if (sharedXml) await publishSavedHistory(sharedXml); // CHANGE
+                    if (!matches() || !checkpoint || checkpoint.xml && checkpoint.xml !== sharedXml) return; // NEW: a superseding save owns its own history completion.
+                    if (sharedXml) await publishSavedHistory(sharedXml, checkpoint, matches); // CHANGE
                     timings({ phase: 'history completion', durationMs: window.performance.now() - historyStarted }); // NEW
-                }).catch(err => status('Shared history export failed: ' + err.message));
+                }).catch(err => { if (matches()) status('Shared history export failed: ' + err.message); }); // CHANGE
                 if (success) success.apply(this, arguments);
             };
             return originalSaved.apply(this, args);
@@ -421,10 +477,15 @@ Draw.loadPlugin(function (ui) {
         if (explicitMode && isCollaborative()) return readRemote('get').then(() => incoming?.reviewAll()).catch(error => status(error.message));
         return originalSynchronizeCurrentFile.apply(this, arguments);
     }; // NEW
-    if (originalHandleFileChange) ui.handleFileChange = function (curr, prev, current) {
-        if (!info?.managed || !current.fileObject || current.fileObject.path !== info.diagramPath) return originalHandleFileChange.apply(this, arguments); // CHANGE
-        readRemote('get', curr).catch(err => status(err.message)); // CHANGE: managed files are local projections of the journal.
-    };
+    if (originalHandleFileChange) ui.handleFileChange = function (curr, prev, current) { // CHANGE
+        const generation = contextGeneration, deliver = async () => { // NEW
+            if (classifiedFile !== current) await whenDocumentReady(); // NEW: an early own write must not enter the native external-conflict path.
+            if (file() !== current || contextGeneration !== generation) return; // NEW
+            if (!info?.managed || !current.fileObject || pathKey(current.fileObject.path) !== pathKey(info.diagramPath)) return originalHandleFileChange.call(ui, curr, prev, current); // CHANGE
+            return readRemote('get', curr); // CHANGE: the main process verifies the projection and preserves unexpected external content.
+        }; // NEW
+        return deliver().catch(err => { if (file() === current && contextGeneration === generation) status(err.message); }); // CHANGE
+    }; // CHANGE
     let updateDialog = null; // NEW
     let collaborationBaseline = null, observedXml = null, localSessionId = null, acquiring = false, editingForm = null; // NEW
     let collaboration = null, collaborationSave = Promise.resolve(), contextGeneration = 0; // NEW
@@ -673,6 +734,16 @@ Draw.loadPlugin(function (ui) {
                         if (changes && file() === current && generation === contextGeneration) { incoming?.setGroups(changes.groups || []); pendingHash = changes.collaboration?.hash; }
                     }
                 } else if (result.xml && !current.isModified() && result.xml !== collaborationBaseline) applyRemote(result.xml, current, observedStat); // CHANGE
+                if (result.projection) { // CHANGE: background refresh may discover the external write before a stat notification arrives.
+                    if (observedStat) current.stat = observedStat; // CHANGE
+                    if (result.projection.externalRecoveryPath) { // NEW
+                        ui.editor.setStatus('External file changes were preserved. Open Sharing to inspect recovery copies.', () => { if (file() === current && generation === contextGeneration) showSharingDialog().catch(error => status(error.message)); }); // CHANGE: the trusted status renderer supplies its accessible control.
+                    } else if (observedStat && current.inConflictState && !current.__trellisConflict) { // CHANGE
+                        current.inConflictState = false; // NEW
+                        const message = window.mxResources?.get?.('fileChangedSync'); // NEW
+                        if (message && ui.editor.getStatus?.().includes(message)) ui.editor.setStatus(''); // NEW: clear this obsolete native warning, never an unrelated error or draft conflict.
+                    } // NEW
+                } // NEW
                 kind = 'get'; // CHANGE: follow-up file notifications need no presence publication.
             } while (task.stat && file() === current && generation === contextGeneration); // CHANGE
         })().finally(() => { if (remoteReadTask === task) remoteReadTask = null; }); // CHANGE
@@ -938,7 +1009,7 @@ Draw.loadPlugin(function (ui) {
         const pinned = holdEditors?.pinnedTargets() || [], targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); // NEW
         if (targets.length) await coordinate({ kind: 'release', targets }); // NEW
     } // NEW
-    window.Trellis.sharing = { ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, context, describeStatus, settleObjectEdits, registerEditor: config => holdEditors?.register(config), getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE
+    window.Trellis.sharing = { ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: config => holdEditors?.register(config), getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE
     /** Authenticate, initialize the remembered base, then claim and save the same account transition. */ // NEW
     window.Trellis.sharing.finishIdentityJoin = async function (options) { // NEW
         if (identityJoinInProgress) throw new Error('This invitation is already being completed.'); // NEW
@@ -1082,6 +1153,7 @@ Draw.loadPlugin(function (ui) {
         if (!explicitMode) { refresh().catch(err => status(err.message)); return; }
         const nextIdentity = context().userId; if (nextIdentity === sessionIdentity) return;
         sessionIdentity = nextIdentity;
+        invalidateDocumentReady(); // NEW
         const current = file(), previousIdentity = viewIdentity, shareId = info?.shareId, generation = ++contextGeneration; // CHANGE
         const privateDraft = previousIdentity && isCollaborative() && bridge.recoveryAction && (current?.isModified() || holdEditors?.pinnedTargets().length) ? { shareId, kind: 'checkpoint', expectedUserId: previousIdentity, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: holdEditors?.capture(['*']) || [] } : null; // NEW
         const privatePreservation = privateDraft ? bridge.recoveryAction(privateDraft) : null; // NEW: capture before disposing the previous author's editor registrations.
@@ -1128,7 +1200,9 @@ Draw.loadPlugin(function (ui) {
     ui.editor.addListener('pageSelected', () => { modelRevision++; }); // CHANGE: page switches invalidate pending captures too.
     ui.editor.addListener('fileLoaded', () => { window.TrellisContentPolicy?.resetDocument(); contextGeneration++; modelRevision++; holdEditors?.reset(); labelEditorRegistration = null; unsavedActions.length = 0; recoveringTargets.clear(); recoveryQueue = Promise.resolve(); recoveryFailure = null; retryRecovery = null; saveFence = Promise.resolve(); // CHANGE
          background?.dispose(); background = null; backgroundFile = null; savedObjects.clear(); dirtyObjects.clear(); conflictDialog?.remove(); conflictDialog = null; // NEW
+         invalidateDocumentReady(); classifiedFile = null; // CHANGE
          delete graph.__trellisSharedPolicy; remoteReadTask = null; window.clearTimeout(formActivityTimer); closeDialog(); acquiring = false; pendingEdits = []; acquisitionObjects.clear(); info = null; collaborationBaseline = null; observedXml = null; localSessionId = null; collaboration = null; viewIdentity = null; pendingHash = null; incoming?.reset(); refreshingTargets.clear(); formTargets = []; closeObjectPopover(); localRecovery = null; remoteBaselinePending = false; queuedHistory.clear(); importedIds.clear(); publishedIds.clear(); installFileHooks(); refresh(); }); // CHANGE
     installFileHooks();
     refresh();
+    if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisGardenToolsReady')); // NEW: notify document startup after installing this tool's API.
 });

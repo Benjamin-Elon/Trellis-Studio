@@ -17939,7 +17939,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const template = (await resolveTaskTemplate({ cell, plantId, varietyId: before.variety_id || null, methodId: context.inputs.methodId })).template; // NEW
         const tasks = await buildTasksForPlan({ method: context.inputs.methodId, plant: context.plant, schedule: result.schedule, timelines: result.timelines, taskTemplate: template, plantId, varietyId: before.variety_id || null, varietyName: before.variety_name || '', methodCategoryId: context.inputs.methodCategoryId, methodId: context.inputs.methodId }); // NEW
         const patch = buildScheduleAttributePatch(context.inputs, result, { taskTemplateJson: template ? JSON.stringify(template) : '', transplantDaysOverrideEnabled: before.days_transplant != null && before.days_transplant !== '', effectiveTransplantDays: before.days_transplant }); // NEW
-        return { tasks, patch }; // NEW
+        return { tasks, patch, plantName: context.plant.plant_name, varietyName: context.inputs.varietyName || '' }; // CHANGE: capture names while the compiled reference context is in scope.
     } // NEW
 
     /** Retry intentionally recompiles; a deferred task array is never retained for replay. */ // NEW
@@ -17968,7 +17968,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const taskFingerprint = () => C.canonical(Object.values(model.cells || {}).filter(item => String(item.getAttribute?.('linkedTo') || '').split(',').map(id => id.trim()).includes(String(cell.id))).map(item => [item.id, Array.from(item.value?.attributes || []).map(attr => [attr.name, attr.value])]).sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'en'))); // CHANGE
         const originalTasks = taskFingerprint(); // CHANGE: capture linked work before asynchronous preparation begins.
         if (!rectangle) throw new Error('The planting geometry is unavailable.'); // NEW
-        const parent = model.getParent(cell), { tasks, patch } = await compileSavedPlanting(cell, before); // CHANGE
+        const parent = model.getParent(cell), { tasks, patch, plantName, varietyName } = await compileSavedPlanting(cell, before); // CHANGE: retain the candidate names for the later synchronous transaction.
         const taskCommand = window.USL?.tasks?.applySchedulerTaskReplacement, tiler = window.USL?.tiler; // NEW
         if (typeof taskCommand !== 'function' || typeof tiler?.retileGroup !== 'function') throw new Error('Task reconciliation or planting layout is unavailable.'); // NEW
         function check() { // NEW
@@ -17977,7 +17977,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         } // NEW
         return { cell, before, patch, tasks, check, apply() { // NEW
             check(); applyCellAttributePatch(cell, patch, model); graph.__trellisReferences.pin(cell, referenceScope.manifestId); // NEW
-            taskCommand({ mode: 'replace', targetGroupId: cell.id, tasks, plantName: context.plant.plant_name, varietyName: context.inputs.varietyName || '' }, { insideUpdate: true, focusCreated: false }); // NEW
+            taskCommand({ mode: 'replace', targetGroupId: cell.id, tasks, plantName, varietyName }, { insideUpdate: true, focusCreated: false }); // CHANGE: apply only the names captured during compilation.
             tiler.retileGroup(graph, cell, { inTransaction: true, preferInPlace: true }); model.setGeometry(cell, rectangle.clone()); // NEW
         } }; // NEW
     } // NEW

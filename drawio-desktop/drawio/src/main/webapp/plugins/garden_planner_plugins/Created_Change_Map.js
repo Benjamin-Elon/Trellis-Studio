@@ -691,61 +691,95 @@ Draw.loadPlugin(function (ui) {
   // -------------------- HistoryStore --------------------
 
   /** Document-scoped adapter; verification, SQLite and pruning belong to the main process. */ // NEW
-  function createHistoryStore() {
-    const bridge = window.trellisHistory;
-    const store = { ready: false, warning: '', token: 0, generation: null };
-    function request(method, payload) {
-      const current = ui.getCurrentFile ? ui.getCurrentFile() : null;
-      return bridge.request(method, Object.assign({ diagramId: getDiagramHistoryId(), token: store.token, filePath: current && current.fileObject && current.fileObject.path || null }, payload || {}));
-    }
-    async function init() {
-      store.token += 1; store.ready = false;
-      if (!bridge || typeof bridge.request !== 'function') { store.warning = 'History storage is unavailable in this environment.'; return store; }
-      const token = store.token;
-      try {
-        const sharing = graph.__trellisSharing; // NEW
-        const xml = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // NEW
-        if (!xml) throw new Error('The accepted shared project is unavailable.'); // NEW
-        const result = await request('initialize', { xml, metadata: actorMetadata({}) }); // CHANGE
-        if (token !== store.token) return store;
-        store.generation = result.generation; store.ready = true; store.warning = '';
-        graph.__ccHistoryStorage = result.statistics; await refreshStatistics(); refreshStorageDisplay(); // CHANGE
-      } catch (error) { store.warning = 'History storage failed: ' + error.message; }
-      return store;
-    }
-    async function listRevisions() { return store.ready ? request('list') : []; }
-    async function getLatestRevision() {
-      const latest = store.ready ? await request('latest') : null; // CHANGE: causal head is independent of peer clock order.
-      return latest ? Object.assign({}, latest, { diagram_hash: latest.diagramHash, snapshot_id: latest.id }) : null;
-    }
-    async function loadSnapshot(id) {
-      const token = store.token; // NEW
-      const result = await request('read', { revisionId: id });
-      if (token !== store.token) throw new Error('History document context changed.'); // NEW
-      return { compressed_xml: result.xml, compressed_kind: 'plain' };
-    }
-    async function recordRevision(revision, snapshot) {
-      if (!store.ready) return false;
-      const token = store.token;
-      const xml = snapshot.compressedKind === 'graph-compress' ? Graph.decompress(snapshot.compressedXml) : snapshot.compressedXml;
-      const saved = await request('record', { xml, metadata: revision, generation: store.generation, forceFull: revision.checkpoint || revision.action === 'restore' || revision.action === 'baseline' });
-      if (token !== store.token) return false;
-      Object.assign(revision, saved); snapshot.snapshotId = saved.id;
-      delete snapshot.compressedXml; delete snapshot.compressedKind; delete snapshot.checksum; snapshot.byteSize = saved.payloadBytes; snapshot.storageKind = saved.storageKind; // NEW: sharing queues retain references, never duplicate whole diagrams in memory.
-      await refreshStatistics(); return true;
-    }
-    async function refreshStatistics() {
-      if (!store.ready) return;
-      const token = store.token;
-      try {
-        const result = await request('statistics');
-        if (token === store.token) { graph.__ccHistoryStorage = result; store.generation = result.generation; refreshStorageDisplay(); }
-      } catch (_) { if (token === store.token) { graph.__ccHistoryStorage = null; refreshStorageDisplay(); } }
-    }
-    function invalidate() { store.token += 1; store.ready = false; graph.__ccHistoryStorage = null; }
-    async function adoptBaseline(xml) { return store.ready ? request('baseline', { xml }) : null; } // NEW
+  function createHistoryStore() { // CHANGE
+    const bridge = window.trellisHistory; // CHANGE
+    const warnings = { initialization: '', recording: '', statistics: '' }; // NEW: success in one subsystem cannot erase a failure in another.
+    const store = { ready: false, token: 0, generation: null, get warning() { return Object.values(warnings).filter(Boolean).join('\n'); } }; // CHANGE
+    let active = null, initializing = null; // NEW
+    const currentFile = () => ui.getCurrentFile ? ui.getCurrentFile() : null; // NEW
+    const currentActor = () => (graph.__trellisUsers || window.Trellis?.users)?.getCurrentUser?.()?.id || ''; // NEW
+    function matches(context) { // NEW
+      return active === context && context.file === currentFile() && context.diagramId === getDiagramHistoryId() && context.actor === currentActor(); // NEW
+    } // NEW
+    function capture() { // NEW
+      if (active && matches(active)) return active; // NEW
+      invalidate(); // NEW
+      active = Object.freeze({ file: currentFile(), diagramId: getDiagramHistoryId(), actor: currentActor(), token: store.token }); // NEW
+      return active; // NEW
+    } // NEW
+    function request(method, payload, context = active) { // CHANGE
+      if (!context || !matches(context)) return Promise.reject(new Error('History document context changed.')); // NEW
+      return bridge.request(method, Object.assign({ diagramId: context.diagramId, token: context.token, filePath: context.file?.fileObject?.path || null }, payload || {})); // CHANGE
+    } // CHANGE
+    function init() { // CHANGE
+      const context = capture(); // NEW
+      if (store.ready) return Promise.resolve(store); // NEW
+      if (initializing) return initializing; // NEW
+      if (!bridge || typeof bridge.request !== 'function') { warnings.initialization = 'History storage is unavailable in this environment.'; return Promise.resolve(store); } // CHANGE
+      const operation = async () => { // NEW
+        try { // CHANGE
+          const sharing = graph.__trellisSharing; // CHANGE
+          await sharing?.whenDocumentReady?.(); // NEW: accepted XML is requested only after login and managed-view setup.
+          if (!matches(context)) return store; // NEW
+          const xml = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // CHANGE
+          if (!matches(context)) return store; // NEW
+          if (!xml) throw new Error('The accepted shared project is unavailable.'); // CHANGE
+          const result = await request('initialize', { xml, metadata: actorMetadata({}) }, context); // CHANGE
+          if (!matches(context)) return store; // NEW
+          store.generation = result.generation; store.ready = true; warnings.initialization = ''; // CHANGE
+          graph.__ccHistoryStorage = result.statistics; await refreshStatistics(); // CHANGE
+        } catch (error) { if (matches(context)) warnings.initialization = 'History initialization failed: ' + error.message; } // CHANGE: stale failures cannot overwrite another document's state.
+        return store; // CHANGE
+      }; // NEW
+      initializing = Promise.resolve().then(operation).finally(() => { if (matches(context)) { initializing = null; refreshStorageDisplay(); } }); // NEW
+      return initializing; // NEW
+    } // CHANGE
+    async function listRevisions() { return store.ready ? request('list') : []; } // CHANGE
+    async function getLatestRevision() { // CHANGE
+      const latest = store.ready ? await request('latest') : null; // CHANGE
+      return latest ? Object.assign({}, latest, { diagram_hash: latest.diagramHash, snapshot_id: latest.id }) : null; // CHANGE
+    } // CHANGE
+    async function loadSnapshot(id) { // CHANGE
+      const context = active, result = await request('read', { revisionId: id }, context); // CHANGE
+      if (!matches(context)) throw new Error('History document context changed.'); // CHANGE
+      return { compressed_xml: result.xml, compressed_kind: 'plain' }; // CHANGE
+    } // CHANGE
+    async function recordRevision(revision, snapshot) { // CHANGE
+      if (!store.ready) return false; // CHANGE
+      const context = active; // CHANGE
+      const xml = snapshot.compressedKind === 'graph-compress' ? Graph.decompress(snapshot.compressedXml) : snapshot.compressedXml; // CHANGE
+      try { // NEW
+        const saved = await request('record', { xml, metadata: revision, generation: store.generation, forceFull: revision.checkpoint || revision.action === 'restore' || revision.action === 'baseline' }, context); // CHANGE
+        if (!matches(context)) return false; // CHANGE
+        Object.assign(revision, saved); snapshot.snapshotId = saved.id; // CHANGE
+        delete snapshot.compressedXml; delete snapshot.compressedKind; delete snapshot.checksum; snapshot.byteSize = saved.payloadBytes; snapshot.storageKind = saved.storageKind; // CHANGE
+        warnings.recording = ''; await refreshStatistics(); return true; // CHANGE
+      } catch (error) { if (matches(context)) warnings.recording = 'History recording failed: ' + error.message; throw error; } // NEW
+    } // CHANGE
+    async function refreshDiagramSize(context) { // NEW
+      if (!context?.file?.fileObject?.path) { graph.__ccDiagramStorageBytes = null; return; } // NEW
+      try { // NEW
+        const stat = await new Promise((resolve, reject) => { // NEW
+          if (!window.electron?.request) { resolve(context.file.stat); return; } // NEW
+          window.electron.request({ action: 'fileStat', file: context.file.fileObject.path }, resolve, message => reject(new Error(message))); // NEW
+        }); // NEW
+        if (matches(context)) graph.__ccDiagramStorageBytes = Number.isFinite(stat?.size) ? stat.size : null; // NEW
+      } catch (_) { if (matches(context)) graph.__ccDiagramStorageBytes = null; } // NEW
+    } // NEW
+    async function refreshStatistics() { // CHANGE
+      const context = capture(); await refreshDiagramSize(context); // NEW: saved diagram bytes do not depend on SQLite initialization.
+      if (!matches(context)) return; // NEW
+      if (!store.ready) { if (!initializing) await init(); refreshStorageDisplay(); return; } // CHANGE
+      try { // CHANGE
+        const result = await request('statistics', null, context); // CHANGE
+        if (matches(context)) { graph.__ccHistoryStorage = result; store.generation = result.generation; warnings.statistics = ''; } // CHANGE
+      } catch (error) { if (matches(context)) { graph.__ccHistoryStorage = null; warnings.statistics = 'History statistics failed: ' + error.message; } } // CHANGE
+      if (matches(context)) refreshStorageDisplay(); // NEW
+    } // CHANGE
+    function invalidate() { store.token += 1; store.ready = false; for (const name of Object.keys(warnings)) warnings[name] = ''; active = null; initializing = null; graph.__ccHistoryStorage = null; graph.__ccDiagramStorageBytes = null; } // CHANGE
+    async function adoptBaseline(xml) { return store.ready ? request('baseline', { xml }) : null; } // CHANGE
     return { init, getLatestRevision, listRevisions, loadSnapshot, recordRevision, refreshStatistics, invalidate, adoptBaseline, get contextToken() { return store.token; }, get ready() { return store.ready; }, get disabled() { return !bridge; }, get warning() { return store.warning; } }; // CHANGE
-  }
+  } // CHANGE
 
   function safeParseJson(text, fallback) {
     try { return JSON.parse(text); } catch (e) { return fallback; }
@@ -857,10 +891,11 @@ Draw.loadPlugin(function (ui) {
       const meta = pending || normalizeMetadata({ category: 'System', action: 'baseline', origin: 'history', title: 'Opened diagram baseline' });
       pending = null;
       recording = true;
-      const recordGeneration = generation; // NEW
+      const recordGeneration = generation, recordToken = store.contextToken; // CHANGE: XML and recording remain bound to the original document scope.
       try {
         const sharing = graph.__trellisSharing; // NEW
         const xml = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // CHANGE: shared history never records a mixed stale/current view.
+        if (recordGeneration !== generation || recordToken !== store.contextToken) return null; // NEW
         if (!xml) return null; // NEW: never substitute a stale view after an accepted-state read failure.
         const hash = hashString(xml);
         if (!force && latestHash === hash && !meta.checkpoint) return latestEntry; // CHANGE
@@ -898,6 +933,7 @@ Draw.loadPlugin(function (ui) {
         const snapshot = { snapshotId, compressedXml: xml, compressedKind: 'plain' }; // CHANGE: compression and byte accounting happen once, in the history service.
         const saved = await store.recordRevision(revision, snapshot);
         if (saved && recordGeneration === generation) { // CHANGE
+          if (graph.__ccHistoryWarning?.startsWith('History recording failed:')) graph.__ccHistoryWarning = ''; // NEW
           latestHash = hash;
           latestXml = xml;
           latestRevisionId = revision.id;
@@ -907,8 +943,7 @@ Draw.loadPlugin(function (ui) {
           return latestEntry; // NEW
         }
       } catch (e) {
-        graph.__ccHistoryWarning = 'History record failed: ' + (e && e.message ? e.message : String(e));
-        updateHistoryUI();
+        if (recordGeneration === generation && recordToken === store.contextToken) { graph.__ccHistoryWarning = 'History recording failed: ' + (e && e.message ? e.message : String(e)); updateHistoryUI(); } // CHANGE: obsolete recording errors cannot replace the current document's status.
       } finally {
         recording = false;
         if (pending) scheduleStableRecord(); // NEW: retry a settled edit whose timer fired during a slow write or vacuum.
@@ -932,21 +967,25 @@ Draw.loadPlugin(function (ui) {
       return result;
     }
 
-    async function initializeBaseline() {
-      await store.init();
+    async function initializeBaseline() { // CHANGE
+      const baselineGeneration = generation; await store.init(); // CHANGE
+      if (baselineGeneration !== generation) return; // NEW
       if (!store.ready) { updateHistoryUI(); return; }
       const diagramId = getDiagramHistoryId();
-      const latest = await store.getLatestRevision(diagramId);
+      const latest = await store.getLatestRevision(diagramId).catch(error => { if (baselineGeneration !== generation) return null; throw error; }); // CHANGE: an obsolete native failure cannot reach the new document's warning handler.
+      if (baselineGeneration !== generation) return; // NEW
       if (latest) {
         latestHash = null; // CHANGE: canonical storage hashes differ from renderer serialization.
         latestRevisionId = latest.id;
         try {
-          const snapshot = await store.loadSnapshot(latest.snapshot_id);
+          const snapshot = await store.loadSnapshot(latest.snapshot_id); // CHANGE
+          if (baselineGeneration !== generation) return; // NEW
           latestXml = decompressSnapshotXml(snapshot);
           const sharing = graph.__trellisSharing; // NEW
           const current = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // CHANGE
+          if (baselineGeneration !== generation) return; // NEW
           latestHash = current ? hashString(current) : null;
-        } catch (e) { latestXml = null; }
+        } catch (e) { if (baselineGeneration === generation) latestXml = null; } // CHANGE
         await refreshHistoryRevisions();
         return;
       }
@@ -971,7 +1010,7 @@ Draw.loadPlugin(function (ui) {
       await recordStableRevision(false);
       const sharing = graph.__trellisSharing; // NEW
       const xml = sharing?.isExplicitRefresh?.() ? await sharing.historyXml() : serializeActivePageXml(); // NEW
-      return xml && latestHash === hashString(xml) ? latestEntry : null; // CHANGE
+      return xml && latestHash === hashString(xml) && latestEntry ? { ...latestEntry, xml } : null; // CHANGE: publication binds the checkpoint to exactly the accepted XML it describes.
     }
     async function captureBeforeRestore() { // NEW
       const currentGeneration = generation;
@@ -984,6 +1023,7 @@ Draw.loadPlugin(function (ui) {
     function resetForDocument() { // NEW
       generation++; pending = null; latestHash = null; latestXml = null; latestRevisionId = null; latestEntry = null; // NEW
       if (settleTimer) clearTimeout(settleTimer); settleTimer = null; historyStore.invalidate(); // NEW
+      graph.__ccHistoryWarning = ''; // NEW: warnings belong to the retired document or actor.
       graph.__ccSharedHistoryStorage = null; graph.__ccAdoptedHistoryId = null; graph.__ccAdoptedHistoryXml = null; refreshStorageDisplay(); // NEW
     } // NEW
 
@@ -1542,13 +1582,13 @@ Draw.loadPlugin(function (ui) {
   function refreshStorageDisplay() {
     const stats = graph.__ccHistoryStorage, current = ui.getCurrentFile && ui.getCurrentFile();
     const saved = current && current.fileObject && current.fileObject.path;
-    const diagram = saved ? formatStorageBytes(stats && stats.diagramBytes) : 'unsaved';
-    const history = formatStorageBytes(stats && stats.historyBytes);
+    const diagram = saved ? formatStorageBytes(graph.__ccDiagramStorageBytes ?? current.stat?.size ?? stats?.diagramBytes) : 'unsaved'; // CHANGE: saved size remains visible if history statistics fail.
+    const history = stats ? formatStorageBytes(stats.historyBytes) : historyStore.warning ? 'error' : 'starting…'; // CHANGE: distinguish initialization from an actual storage failure.
     const label = 'Diagram ' + diagram + ' · History ' + history;
     if (storageButton) {
       storageButton.textContent = window.innerWidth && window.innerWidth < 900 ? 'D ' + diagram + ' · H ' + history : label;
       storageButton.setAttribute('aria-label', label + '. Open document history.');
-      storageButton.title = label + (current && current.isModified && current.isModified() ? '\nDiagram size is the last saved file; there are unsaved changes.' : '\nDiagram size is the last saved file.') + '\nHistory includes stored records and reconstruction anchors.';
+      storageButton.title = label + (current && current.isModified && current.isModified() ? '\nDiagram size is the last saved file; there are unsaved changes.' : '\nDiagram size is the last saved file.') + '\nHistory includes stored records and reconstruction anchors.' + (historyStore.warning ? '\n' + historyStore.warning : ''); // CHANGE: expose the actual failing subsystem and cause.
     }
     if (historyStorageSummary) historyStorageSummary.textContent = stats ? stats.revisionCount + ' revisions · ' + history + ' / ' + formatStorageBytes(stats.budgetBytes) + (stats.overBudget ? ' · Protected revisions exceed the soft budget.' : '') + (stats.reclamationPending ? ' · Disk reclamation pending.' : '') : 'Storage figures unavailable.';
     if (historyStorageDetails) {
@@ -2603,7 +2643,7 @@ Draw.loadPlugin(function (ui) {
       await refreshHistoryRevisions(); await historyStore.refreshStatistics(); // NEW: transport has verified and imported this record.
     };
     window.Trellis.history.refreshStorage = historyStore.refreshStatistics; // NEW
-    window.Trellis.history.refresh = async function () { await refreshHistoryRevisions(); await historyStore.refreshStatistics(); }; // NEW
+    window.Trellis.history.refresh = async function () { if (!historyStore.ready) await historyRecorder.initializeBaseline(); await refreshHistoryRevisions(); await historyStore.refreshStatistics(); }; // CHANGE: recover initialization rather than refreshing an uninitialized store forever. // NEW
     window.Trellis.history.createCheckpoint = historyRecorder.createCheckpoint;
     window.Trellis.history.list = function () { return (graph.__ccHistoryRevisions || []).slice(); };
     window.Trellis.history.isRestoring = function () { return !!graph.__ccHistoryRestoring; };
@@ -2851,6 +2891,12 @@ Draw.loadPlugin(function (ui) {
   installHistoryToolbarButton();
   installStorageButton(); // NEW
   installDiagramBoundaryReset();
+  let historyActor = (graph.__trellisUsers || window.Trellis?.users)?.getCurrentUser?.()?.id || ''; // NEW
+  window.addEventListener('trellisUsersSessionChanged', () => { // CHANGE: policy revalidation emits this event without changing the actor.
+    const actor = (graph.__trellisUsers || window.Trellis?.users)?.getCurrentUser?.()?.id || ''; if (actor === historyActor) return; historyActor = actor; // NEW
+    historyRecorder.resetForDocument(); historyRecorder.initializeBaseline().catch(error => { graph.__ccHistoryWarning = error.message; updateHistoryUI(); }); // CHANGE
+  }); // NEW
+  window.addEventListener('trellisSharingStatusChanged', () => { if (!historyStore.ready) historyStore.init(); }); // NEW: retry on readiness transitions, not a blind polling loop.
   historyRecorder.initializeBaseline();
 
 });

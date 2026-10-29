@@ -120,7 +120,7 @@ test('selected future planting updates share the acceptance transaction and task
     const neighbor = h.graph.insertVertex(garden, 'neighbor', '', 500, 100, 350, 300, 'tiler_group=1;'); h.attrs(neighbor, attrs); const neighborText = neighbor.value.outerHTML, rectangle = [planting.geometry.x, planting.geometry.y, planting.geometry.width, planting.geometry.height]; // NEW
     const candidate = changed(h.C, base, { annual: 1, biennial: 0, perennial: 0, lifespan_years: 1, days_maturity: 30, gdd_to_maturity: null, days_germ: 5, days_transplant: 0, harvest_window_days: 7, tbase_c: 5, tmin_c: 0, topt_low_c: 15, topt_high_c: 25, tmax_c: 40, spacing_cm: 60, spacing_x_cm: 60, spacing_y_cm: 60, yield_per_plant_kg: 2 }); // NEW
     const request = h.api.submit(garden, garden, base, candidate), selected = request.changes.filter(item => !item.dependency).map(item => item.entityId); let fail = true, taskCalls = 0; // NEW
-    h.w.USL.tasks = { applySchedulerTaskReplacement() { taskCalls++; if (fail) throw new Error('Injected task reconciliation failure'); } }; // NEW
+    h.w.USL.tasks = { applySchedulerTaskReplacement(command, options) { taskCalls++; assert.equal(command.plantName, h.C.project(candidate).tables.Plants.find(row => row.plant_id === binding.key.plant_id).plant_name); assert.equal(command.varietyName, ''); assert.equal(options.insideUpdate, true); assert.equal(options.focusCreated, false); if (fail) throw new Error('Injected task reconciliation failure'); } }; // CHANGE: compiled names reach both the failing and retried transaction without a live scheduler context.
     const preview = await h.api.preview(garden, request.id, selected, {}, {}, [planting.id]); assert.equal(preview.recalculations.length, 1); // NEW
     const gardenText = garden.value.outerHTML, plantingText = planting.value.outerHTML; assert.throws(() => h.api.commit(preview), /Injected task/); // NEW
     assert.equal(garden.value.outerHTML, gardenText); assert.equal(planting.value.outerHTML, plantingText); assert.equal(neighbor.value.outerHTML, neighborText); // NEW
@@ -148,4 +148,12 @@ test('the send dialog targets another cached page without selecting it and marks
     const base = h.api.read(source); await h.api.putDraft(source, base, changed(h.C, base, { spacing_cm: 123 })); h.api.show(source); const panel = h.dialogs.at(-1).panel, recipients = panel.querySelector('select[aria-label="Receiving gardens"]'); // NEW
     for (const option of recipients.options) option.selected = option.textContent.includes('Other garden'); [...panel.querySelectorAll('button')].find(button => button.textContent === 'Send proposal to selected gardens').click(); // NEW
     await until(() => !!target.getAttribute(h.C.PROPOSALS)); assert.equal(h.ui.currentPage, sourcePage); assert.equal(targetPage.needsUpdate, true); assert.equal(h.api.messages(target).requests[0].target.pageId, 'target-page'); assert.equal(h.api.messages(source).requests.length, 0); // NEW
+}); // NEW
+
+/** Verified policy updates for the same user must not invalidate a city's in-flight reference handle. */ // NEW
+test('same-user policy revalidation retains captured reference views while actor changes release them', async t => { // NEW
+    const h = fixture(t), garden = h.garden('reference-lifecycle'); await h.initialize(garden); const context = h.api.sqlContext(garden), { dbId } = await context.bridge.open('', { readOnly: true }); // NEW
+    h.w.dispatchEvent(new h.w.CustomEvent('trellisUsersSessionChanged')); const result = await context.bridge.query(dbId, 'SELECT * FROM Cities ORDER BY city_name', []); assert.ok(result.rows.length); // NEW
+    h.attrs(garden, { trellis_owner_user_id: 'new-owner' }); h.w.dispatchEvent(new h.w.CustomEvent('trellisUsersSessionChanged')); await assert.rejects(context.bridge.query(dbId, 'SELECT * FROM Cities', []), /garden or active user changed/); // CHANGE: same-actor scope revocation still closes read handles.
+    h.attrs(garden, { trellis_owner_user_id: 'owner' }); const next = h.api.sqlContext(garden), opened = await next.bridge.open('', { readOnly: true }); h.user.id = 'viewer'; h.w.dispatchEvent(new h.w.CustomEvent('trellisUsersSessionChanged')); await assert.rejects(next.bridge.query(opened.dbId, 'SELECT * FROM Cities', []), /garden or active user changed/); // NEW
 }); // NEW

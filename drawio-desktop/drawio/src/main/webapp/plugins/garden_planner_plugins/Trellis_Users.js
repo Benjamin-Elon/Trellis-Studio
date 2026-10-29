@@ -1475,9 +1475,15 @@ Draw.loadPlugin(function (ui) {
         return Array.from(value?.childNodes || []).filter(node => node.nodeType === 1 || node.nodeType === 3 && node.nodeValue.trim()).map(content); // NEW
     } // NEW
 
+    /** Bare graph models gain an editor page on opening; retain their accepted logical page until the first save. */ // NEW
+    function permissionPageId() { // NEW
+        const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '', metadata = metadataCell(), policy = graph.__trellisSharedPolicy; // NEW
+        const diagram = metadata?.getAttribute?.(ATTR_HISTORY_ID) || metadata?.getAttribute?.(ATTR_REMEMBER_DIAGRAM_ID), id = String(cellStableId(metadata)); // NEW
+        return policy && policy.diagramId === diagram && policy.cells.has(JSON.stringify(['', id])) && !policy.cells.has(JSON.stringify([page, id])) ? '' : page; // CHANGE
+    } // NEW
     /** Capture plain graph facts; native changes are reversed only in private copies. */ // NEW
     function permissionFacts(cell) { // NEW
-        const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
+        const pageId = permissionPageId(); // CHANGE
         const id = String(cellStableId(cell)), keyFor = value => value ? JSON.stringify([pageId, String(cellStableId(value))]) : null; // NEW
         const attributes = cell?.value?.nodeType === 1 ? Object.fromEntries(Array.from(cell.value.attributes).map(attribute => [attribute.name, attribute.value])) : { label: typeof cell?.value === 'string' ? cell.value : '' }; // NEW
         const parent = model.getParent ? model.getParent(cell) : cell.parent; // NEW
@@ -1508,6 +1514,12 @@ Draw.loadPlugin(function (ui) {
             else if (name === 'mxVisibleChange') old.visible = change.previous === false ? '0' : ''; // NEW
             cells.set(key, old); // NEW
         } // NEW
+        if (previous) { // NEW: cloned subtrees may have one native insertion change for the complete root.
+            const children = new Map(), reachable = new Set(), pending = [...cells.values()].filter(cell => cell.root); // NEW
+            for (const fact of cells.values()) { if (!children.has(fact.parent)) children.set(fact.parent, []); children.get(fact.parent).push(fact); } // NEW
+            while (pending.length) { const fact = pending.pop(); if (reachable.has(fact.key)) continue; reachable.add(fact.key); pending.push(...(children.get(fact.key) || [])); } // NEW
+            for (const key of cells.keys()) if (!reachable.has(key)) cells.delete(key); // NEW: descendants of a newly inserted clone were absent before that insertion.
+        } // NEW
         const metadata = [...cells.values()].find(cell => cell.attributes[ATTR_STORE]); // NEW
         const store = metadata ? parseJson(metadata.attributes[ATTR_STORE], {}) : { usersEnabled: false, users: [] }; // NEW
         for (const cell of cells.values()) { const attributes = { ...cell.attributes }; delete attributes[ATTR_STORE]; cells.set(cell.key, { ...cell, attributes }); } // NEW
@@ -1534,11 +1546,21 @@ Draw.loadPlugin(function (ui) {
         acceptedPolicySource = policy; acceptedProvisional = pendingIdentityJoin; acceptedPolicySnapshot = snapshot; return snapshot; // NEW // NEW
     } // NEW
 
+    let permissionTransaction = null; // NEW: actual native facts remain available while final guards inspect an uncommitted creation.
     let permissionOperation = null; // NEW: reuse one captured policy throughout a native transaction.
+    function pendingPermissionChanges(changes = []) { // NEW: existing unsaved native edits prove creation across commands until publication finishes.
+        return [...new Set([...(graph.__trellisSharing?.permissionChanges?.() || []), ...changes])]; // NEW
+    } // NEW
     function permissionDecision(action, cell) { // NEW
         try { // NEW
             const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)), actor = currentUser(); // NEW
-            return window.TrellisPermissionCore.authorize(snapshot, actor?.id || '', action, cell ? permissionFacts(cell).key : null, nowMs()); // NEW
+            const core = window.TrellisPermissionCore, key = cell ? permissionFacts(cell).key : null, at = nowMs(); // CHANGE
+            const result = core.authorize(snapshot, actor?.id || '', action, key, at); // CHANGE
+            if (!result.allowed && cell && !snapshot.cells[key] && permissionTransaction) return core.authorizePendingCreation(permissionTransaction.before, permissionTransaction.after, actor?.id || '', action, key, at, { policy: snapshot }); // NEW
+            if (result.allowed || !cell || snapshot.cells[key]) return result; // CHANGE
+            const changes = pendingPermissionChanges(model.updateLevel ? model.currentEdit?.changes || [] : []); if (!changes.length) return result; // CHANGE
+            const before = permissionSnapshotFor(changes, true), after = permissionSnapshotFor(changes, false); // NEW
+            return core.authorizePendingCreation(before, after, actor?.id || '', action, key, at, { policy: snapshot }); // NEW: actual pending native creation, never an internal flag or proposed grant.
         } catch (_) { return { allowed: false, reason: 'Invalid permission data.' }; } // NEW
     } // NEW
 
@@ -2619,6 +2641,7 @@ Draw.loadPlugin(function (ui) {
             previousParent: debugCellRef(previousParent),
             nearestOwnedScope: debugOwnedScope(cell),
             effectiveCapabilities: cell && user ? effectiveCapabilitiesForCell(cell, user.id) : [],
+            pendingCreation: { decision: permissionDecision('edit', cell), pending: graph.__trellisSharing?.isPendingCell?.(cell), before: !!permissionTransaction?.before.cells[permissionFacts(cell).key], after: !!permissionTransaction?.after.cells[permissionFacts(cell).key], page: permissionPageId() }, // NEW: distinguish prior-authority rejection from operational freshness in existing opt-in diagnostics.
             decisions: {
                 canCreatePlantingAtCurrentParent: canCreatePlanting(currentParent),
                 canManagePlanting: canManagePlanting(cell),
@@ -2958,7 +2981,7 @@ Draw.loadPlugin(function (ui) {
 
     function rejectEdit(edit, reason, context) {
         logRejectedEdit(edit, reason);
-        if (edit) edit.__trellisUsersRejected = true;
+        if (edit) { edit.__trellisUsersRejected = true; edit.__trellisUsersRejectedReason = reason || 'Change rejected by user permissions.'; } // CHANGE: retain the actual transaction failure for initiating commands.
         graph[REJECT_FLAG] = true;
         graph[INTERNAL_FLAG] = true;
         try {
@@ -2984,19 +3007,19 @@ Draw.loadPlugin(function (ui) {
         const edit = evt?.getProperty?.('edit'); if (edit && (edit.undone || edit.redone)) return; // CHANGE
         const changes = edit?.changes || []; if (!changes.length) return; // CHANGE
         try { // CHANGE
-            const before = permissionSnapshotFor(changes, true), after = permissionSnapshotFor(changes, false); // CHANGE
+            const pending = pendingPermissionChanges(changes), before = permissionSnapshotFor(pending, true), after = permissionSnapshotFor(pending, false); // CHANGE
             permissionOperation = acceptedPermissionSnapshot(window.TrellisPermissionCore.snapshot({ store: after.store, cells: Object.values({ ...before.cells, ...after.cells }), provisionalUsers: after.provisionalUsers })); // CHANGE: native heuristics can inspect newly created and just-removed objects.
-            const priorPolicy = acceptedPermissionSnapshot(before); // NEW
+            const priorPolicy = acceptedPermissionSnapshot(before); permissionTransaction = { before, after }; // CHANGE
             if (!graph[INTERNAL_FLAG] && isEnabled()) { // CHANGE: internal commands skip native heuristics, never the shared validator.
                 if (!isLoggedIn()) { rejectEdit(edit, 'Log in before editing this diagram.', { action: 'login' }); return; } // CHANGE
                 const context = editPermissionContext(changes); // CHANGE
                 for (let i = 0; i < changes.length; i++) if (!changeAllowed(changes[i], context)) { logDeniedChange(changes[i], i); rejectEdit(edit, 'Change rejected by Trellis user permissions.', { cell: cellFromChange(changes[i]) }); return; } // CHANGE
             } // CHANGE
-            const referenceEffects = referencePermissionEffects(changes); // NEW
+            const referenceEffects = referencePermissionEffects(pending); // CHANGE
             const result = window.TrellisPermissionCore.validateTransition(before, after, currentUserId, nowMs(), { policy: priorPolicy, referenceChangeAllowed: (old, next, names) => { const core = window.TrellisReferenceCore; return referenceEffects.has(old.key) && !!(old.attributes[core.ATTR] || next.attributes[core.ATTR] || old.attributes[core.PROPOSALS] || next.attributes[core.PROPOSALS]) && names.every(name => [core.ATTR, core.PROPOSALS, ...core.CATALOGS].includes(name)); }, commentsChangeAllowed: (a, b, actor, at) => window.TrellisDetailsCore?.commentsChangeAllowed(a, b, actor, at) || false }); // NEW
             if (!result.allowed) { rejectEdit(edit, result.reason, { cell: cellFromChange(changes[0]) }); return; } // NEW
             if (!graph[INTERNAL_FLAG]) stampAcceptedActorMetadata(edit, changes); // CHANGE
-        } catch (_) { rejectEdit(edit, 'Invalid permission data.', { cell: cellFromChange(changes[0]) }); } finally { permissionOperation = null; } // NEW
+        } catch (_) { rejectEdit(edit, 'Invalid permission data.', { cell: cellFromChange(changes[0]) }); } finally { permissionOperation = null; permissionTransaction = null; } // CHANGE
     } // CHANGE
 
     function makeButton(label, onClick, variant, tooltip) { // CHANGE: explicit help describes permission and account consequences.
@@ -5317,4 +5340,5 @@ Draw.loadPlugin(function (ui) {
     graph.__trellisUsers = window.Trellis.users;
     installTrellisDebugSurface();
     consoleGroup("[TrellisUsers] loaded", usersDebugStatus());
+    if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisGardenToolsReady')); // NEW: notify document startup after installing this tool's API.
 });

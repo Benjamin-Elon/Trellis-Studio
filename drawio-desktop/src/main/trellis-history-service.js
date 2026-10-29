@@ -276,7 +276,11 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
     }
     /** Renderer scopes are bound once per document open; transport-only mutations stay private. */ // NEW
     async function request(owner, method, input = {}) {
-        if (method === 'initialize') contexts.set(owner, { diagramId: safeId(input.diagramId), token: input.token, filePath: input.filePath || null }); // NEW
+        if (method === 'initialize') { // CHANGE: stale renderer initialization cannot reclaim a newer document binding.
+            const previous = contexts.get(owner); // NEW
+            if (!Number.isSafeInteger(input.token) || input.token < 0 || previous && (input.token < previous.token || input.token === previous.token && input.diagramId !== previous.diagramId)) throw new Error('History document context changed.'); // NEW
+            contexts.set(owner, { diagramId: safeId(input.diagramId), token: input.token, filePath: input.filePath || null }); // CHANGE
+        } // NEW
         const context = contexts.get(owner);
         if (!context || context.diagramId !== input.diagramId || context.token !== input.token || !['initialize', 'record', 'list', 'latest', 'read', 'baseline', 'statistics'].includes(method)) throw new Error('History document context changed.'); // CHANGE
         if (method === 'statistics') context.filePath = input.filePath || null; // NEW: Save As changes the path, not document identity.

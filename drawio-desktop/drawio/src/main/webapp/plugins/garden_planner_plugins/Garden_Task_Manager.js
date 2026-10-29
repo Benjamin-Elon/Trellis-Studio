@@ -8390,4 +8390,5 @@ Draw.loadPlugin(function (ui) {
         taskPolicy: TaskPolicyCore,
         schedulePolicy: SchedulePolicyCore
     }).install();
+    if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisGardenToolsReady')); // NEW: notify document startup after installing this tool's API.
 });

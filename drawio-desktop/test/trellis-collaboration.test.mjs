@@ -631,3 +631,15 @@ test('permission rejection precedes partial conflict handling and preserves the 
     const before = await a.journal.read(), result = await a.journal.action(1, 'alice', { kind: 'save', baseXml: initial, xml: draft }); // NEW
     assert.equal(result.code, 'PERMISSION_DENIED'); assert.equal(await fs.readFile(result.recoveryPath, 'utf8'), draft); assert.equal((await a.journal.read()).xml, before.xml); // NEW
 }); // NEW
+
+/** Watcher responses distinguish the app's verified projection from an externally modified file. */ // NEW
+test('verified projection notifications preserve genuine external changes and identify their recovery copy', async t => { // NEW
+    const { a } = await peers(t), own = await a.journal.action(1, 'alice', { kind: 'get' }); // NEW
+    assert.ok(own.projection.hash); assert.equal(own.projection.externalRecoveryPath, undefined); // NEW
+    const accepted = own.xml, external = accepted.replace('label="A"', 'label="External private draft"'); await fs.writeFile(a.entry.diagramPath, external); // NEW
+    await a.journal.refresh(); // NEW: a background projection rebuild can win the race with the renderer watcher.
+    const reconciled = await a.journal.action(1, 'alice', { kind: 'get' }); // NEW
+    assert.ok(reconciled.projection.externalRecoveryPath); assert.equal(await fs.readFile(reconciled.projection.externalRecoveryPath, 'utf8'), external); // NEW
+    assert.equal(await fs.readFile(a.entry.diagramPath, 'utf8'), accepted); assert.equal((await a.journal.read()).xml, accepted); // NEW
+    assert.equal((await a.journal.action(1, 'alice', { kind: 'get' })).projection.externalRecoveryPath, undefined); // NEW
+}); // NEW

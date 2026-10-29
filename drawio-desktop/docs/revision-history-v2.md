@@ -11,6 +11,10 @@ without an editing undo or shared edit. Folding is personal view state. History
 restores remain authorized shared edits with freshness and hold checks; other
 windows receive pending changes. <!-- CHANGE -->
 
+Initialization captures the File, diagram ID, actor and monotonic context token before awaiting readiness or XML. Requests for the same context coalesce; document or actor changes invalidate it, and main-process binding rejects older tokens. Managed history starts from verified accepted XML after document readiness; local files retain their local serialization path. Permission revalidation for the same actor leaves the context intact. A later readiness notification or explicit refresh retries failed initialization. Initialization, recording and statistics failures retain their actual reasons independently. Saved diagram size uses file statistics even when history cannot initialize or report its size; loading history displays a pending state. <!-- NEW -->
+
+Saved-history export retains one captured checkpoint and its accepted XML. Later recorder events cannot add another document version to that export, and a superseding save or document switch retires the old completion. The main-process saved-content and checkpoint-hash checks remain mandatory. <!-- NEW -->
+
 ## Records and reconstruction
 
 `trellis-history-codec.js` indexes persisted objects through the collaboration

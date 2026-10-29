@@ -173,3 +173,13 @@ test('generated presentation cannot authorize hidden model or XML payload change
         assert.deepEqual(transact(before, after, 'gardener').accepted, []); // NEW
     } // NEW
 }); // NEW
+
+/** The first save may wrap a standalone model without deleting its logical page or bypassing its prior authority. */ // NEW
+test('standalone first-save wrapping preserves object authority and journal validation', () => { // NEW
+    const before = fixture(), wrapped = '<mxfile><diagram id="first-page" name="Page-1">' + before.replace('label="Own"', 'label="Wrapped"') + '</diagram></mxfile>'; // NEW
+    assert.equal(validatePermissionChanges(before, wrapped, 'admin', 1001).allowed, true); // NEW
+    assert.equal(transact(before, wrapped, 'admin').accepted.includes('edit'), true); // NEW
+    const snapshot = permissionSnapshot(inspectDiagram(before)), after = permissionSnapshot(inspectDiagram(before.replace('</root>', '<object id="new" trellis_owner_user_id="gardener" trellis_access_grants_json="' + escaped(JSON.stringify([grant('gardener', 'coordinator')])) + '"><mxCell parent="foreign" vertex="1"/></object></root>'))); // NEW
+    assert.equal(C.authorizePendingCreation(snapshot, after, 'gardener', 'edit', key('new'), 1001, { policy: snapshot }).allowed, false); // NEW
+    assert.equal(C.authorizePendingCreation(snapshot, snapshot, 'admin', 'edit', key('foreign'), 1001, { policy: snapshot }).allowed, false); // NEW
+}); // NEW

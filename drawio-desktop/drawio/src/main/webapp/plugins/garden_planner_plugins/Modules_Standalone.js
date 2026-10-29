@@ -2830,7 +2830,7 @@ Draw.loadPlugin(function (ui) {
     function createModuleAtPoint(point, type, insideRoadmapCommand) { // CHANGE
         const moduleType = normalizeRootModuleType(type);
         const roadmapApi = graph.__trellisRoadmapManager; // NEW
-        if (!insideRoadmapCommand && (moduleType === 'garden' || moduleType === 'roadmap') && roadmapApi && roadmapApi.runModelCommand) return roadmapApi.runModelCommand(() => createModuleAtPoint(point, type, true)); // NEW
+        if (!insideRoadmapCommand && (moduleType === 'garden' || moduleType === 'roadmap') && roadmapApi && roadmapApi.runModelCommand) return roadmapApi.runModelCommand(() => createModuleAtPoint(point, type, true), { throwOnRejection: true }); // CHANGE: starter initialization receives the real rollback reason.
         if (moduleType === "roadmap" && !roadmapApiReady()) return null; // NEW: never create an unusable module shell.
         const x = Number(point && point.x) || 0;
         const y = Number(point && point.y) || 0;
@@ -4516,4 +4516,5 @@ Draw.loadPlugin(function (ui) {
         }
     });
 
+    if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisGardenToolsReady')); // NEW: notify document startup after installing this tool's API.
 });

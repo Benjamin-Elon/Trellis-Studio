@@ -526,12 +526,27 @@
       return decision(false, 'Invalid permission data or proposal.'); // NEW
     } // NEW
   } // NEW
+  /** Preflight only new native objects, using prior parent authority. Final whole-transaction validation remains mandatory. */ // NEW
+  function authorizePendingCreation(before, after, actor, action, key, at, options = {}) { // NEW
+    try { // NEW
+      const policy = options.policy || before; // NEW
+      if (!['edit', 'move', 'add', 'transferOwnership', 'manageAccess', 'manageScopeGrants', 'configureCircleLimits'].includes(action) || before.cells[key] || policy.cells[key] || !after.cells[key]) return decision(false); // NEW
+      const context = transitionContext(before, after, actor, at, options); // NEW
+      for (const cell of chain(after, key)) { // NEW
+        if (before.cells[cell.key] || policy.cells[cell.key]) break; // NEW
+        const result = validateObjectChange(context, { key: cell.key, after: cell }); // NEW
+        if (!result.allowed) return result; // NEW
+      } // NEW
+      return decision(true); // NEW
+    } catch (_) { return decision(false, 'Invalid pending creation.'); } // NEW
+  } // NEW
   root.TrellisPermissionCore = Object.freeze({ // NEW
     CAPABILITIES, // NEW
     parseComments, // NEW
     commentsChangeAllowed, // NEW
     snapshot, // NEW
     authorize, // NEW
+    authorizePendingCreation, // NEW
     effectiveCapabilities, // NEW
     directCapabilities, // NEW
     activeTeams, // NEW

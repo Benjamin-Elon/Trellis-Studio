@@ -94,14 +94,23 @@ export function commentsChangeAllowed(before, after, actor, at) { // NEW
   return permissions.commentsChangeAllowed(before, after, actor, at, normalizedCommentHtml, Infinity); // NEW
 } // NEW
 
+/** A standalone model and its first single-page wrapper describe the same objects, not deletion/recreation. */ // NEW
+function qualifyStandalone(snapshot, pageId) { // NEW
+  if (!pageId || Object.values(snapshot.cells).some(cell => cell.pageId)) return snapshot; // NEW
+  const key = id => JSON.stringify([pageId, id]); // NEW
+  return permissions.snapshot({ store: snapshot.store, memberships: snapshot.memberships, provisionalUsers: snapshot.provisionalUsers, cells: Object.values(snapshot.cells).map(cell => ({ ...cell, pageId, key: key(cell.id), parent: cell.parent ? key(snapshot.cells[cell.parent].id) : null })) }); // NEW
+} // NEW
+
 /** Return a decision; callers retain ownership of publication, recovery, and rejection feedback. */ // NEW
 export function validatePermissionChanges(beforeXml, afterXml, actor, at, options = {}) { // NEW
   try { // NEW
     validateReferenceChanges(beforeXml, afterXml, actor, at); // NEW: domain approval remains mandatory even for administrators.
-    const before = options.before || permissionSnapshot(inspectDiagram(beforeXml)), // NEW
-      after = permissionSnapshot(inspectDiagram(afterXml)); // NEW
+    const afterState = inspectDiagram(afterXml), after = permissionSnapshot(afterState), pageId = afterState.document.pages.length === 1 ? afterState.document.pages[0].container?.getAttribute('id') : null; // CHANGE
+    const before = qualifyStandalone(options.before || permissionSnapshot(inspectDiagram(beforeXml)), pageId); // CHANGE
+    const policySnapshot = options.policy ? qualifyStandalone(options.policy, pageId) : before; // NEW
     return permissions.validateTransition(before, after, actor, at, { // NEW
       ...options, // NEW
+      policy: policySnapshot, // NEW: only representation identity is aligned; all authority remains the prior policy.
       commentsChangeAllowed, // NEW
       referenceChangeAllowed: (old, next, names) => { const core = globalThis.TrellisReferenceCore; return !!(old.attributes[core.ATTR] || next.attributes[core.ATTR] || old.attributes[core.PROPOSALS] || next.attributes[core.PROPOSALS]) && names.length > 0 && names.every(name => [core.ATTR, core.PROPOSALS, ...core.CATALOGS].includes(name)); } // NEW: only independently validated reference fields receive the domain exception.
     }); // NEW

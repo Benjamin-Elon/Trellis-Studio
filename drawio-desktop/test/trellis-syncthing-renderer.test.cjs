@@ -48,7 +48,7 @@ function harness(t, options = {}) {
     const graph = { container: window.document.getElementById('graph'), getDefaultParent: () => ({ getAttribute: () => 'diagram' }), getImage: state => state.image, getLabel: cell => cell.label, refresh() {} };
     if (options.model) graph.getModel = () => options.model; // NEW: exercise the production change listener when testing snapshot capture timing.
     const ui = {
-        editor: { graph, setStatus(message) { calls.push({ status: message }); }, addListener(name, callback) { editorListeners.set(name, callback); } },
+        editor: { graph, setStatus(message, callback) { this.statusFunction = callback; calls.push({ status: message, callback }); ui.setStatusText(message); }, addListener(name, callback) { editorListeners.set(name, callback); } },
         getCurrentFile: () => current, getFileData: () => xml, watchFile: async () => {}, handleFileChange() { calls.push({ nativeReload: true }); },
         setFileData(data) { calls.push({ apply: data, internal: graph.__trellisUsersInternalChange, remote: graph.__trellisSharingApplying }); xml = data; },
         synchronizeCurrentFile() { calls.push({ nativeSynchronize: true }); }, // NEW
@@ -56,6 +56,7 @@ function harness(t, options = {}) {
         confirm(message, approve) { calls.push({ confirmation: message }); approve(); }, // NEW: sharing uses the asynchronous editor confirmation contract.
         menus: { get: () => null }, loadArgs(args) { calls.push({ open: args }); }
     };
+    ui.statusContainer = window.document.createElement('a'); window.document.body.appendChild(ui.statusContainer); ui.setStatusText = message => { ui.statusContainer.textContent = message; }; // NEW: simulate sanitized status text before the application installs trusted callback controls.
     window.Trellis = { users, history };
     window.trellisShare = bridge;
     window.__trellisLiveUpdatesForBenchmark = !options.explicitRefresh; // NEW: existing tests remain the controlled pre-change comparison fixture.
@@ -632,4 +633,65 @@ test('native save cancellation rejects invitation preparation without generating
     h.current.save = (_revision, _success, _error, _unloading, _overwrite, cancel) => cancel(); // NEW
     h.bridge.createInviteBlock = async () => { blocks++; return { ok: true, block: 'unexpected' }; }; // NEW
     await assert.rejects(h.sharing.prepareInvite({ invite: { id: 'i' }, emailDraft: {} }), /Save cancelled/); assert.equal(blocks, 0); // NEW
+}); // NEW
+
+/** The watcher must classify a newly opened managed file before dispatching its first self-write notification. */ // NEW
+test('early watcher events await coalesced readiness and Windows paths match the managed project', async t => { // NEW
+    const h = harness(t, { explicitRefresh: true }); let release; const gate = new Promise(resolve => { release = resolve; }); // NEW
+    h.bridge.getStatus = async () => { await gate; return { canvases: [h.state] }; }; // NEW
+    h.current.fileObject.path = 'c:\\SHARED\\canvas.drawio'; // NEW
+    const action = h.bridge.collaborationAction; h.bridge.collaborationAction = async input => { const result = await action(input); result.collaboration.policy = { store: { usersEnabled: true, users: [{ id: 'alice', admin: true }] }, cells: [], teams: {} }; return result; }; // NEW
+    const ready = h.sharing.whenDocumentReady(), again = h.sharing.whenDocumentReady(); assert.equal(ready, again); // NEW
+    const event = h.ui.handleFileChange({ mtimeMs: 2 }, { mtimeMs: 1 }, h.current); await settle(); // NEW
+    assert.equal(h.calls.some(call => call.nativeReload), false); release(); await ready; await event; // NEW
+    assert.equal(h.calls.some(call => call.nativeReload), false); assert.equal(h.calls.filter(call => call.collaboration?.kind === 'open-view').length, 1); // NEW
+}); // NEW
+
+/** External file recovery remains visible and actionable instead of being silently classified as an own write. */ // NEW
+test('external projection recovery offers a keyboard-accessible status action bound to the current file', async t => { // NEW
+    const h = harness(t); await settle(); const action = h.bridge.collaborationAction; // NEW
+    h.bridge.collaborationAction = async input => ({ ...await action(input), projection: { hash: 'verified', externalRecoveryPath: 'private/recovery.drawio' } }); // NEW
+    await h.ui.handleFileChange({ mtimeMs: 2 }, { mtimeMs: 1 }, h.current); // NEW
+    const notice = h.calls.findLast(call => call.status?.includes('External file changes')); assert.ok(notice); // NEW
+    const control = h.ui.statusContainer.querySelector('button'); assert.ok(control); assert.equal(control.type, 'button'); // CHANGE
+    control.click(); await settle(); assert.match(h.window.document.body.textContent, /Canvas collaboration/); // NEW
+}); // NEW
+
+/** Context invalidation must cancel old waiters even before the initial status request answers. */ // NEW
+test('a document switch cancels readiness and drops its delayed watcher event', async t => { // NEW
+    const h = harness(t, { explicitRefresh: true }); let release; const gate = new Promise(resolve => { release = resolve; }); // NEW
+    h.bridge.getStatus = async () => { await gate; return { canvases: [] }; }; // NEW
+    const ready = h.sharing.whenDocumentReady(), rejected = assert.rejects(ready, /document changed/); // NEW
+    const watched = h.ui.handleFileChange({ mtimeMs: 2 }, { mtimeMs: 1 }, h.current); await settle(); // NEW
+    const next = { ...h.current, fileObject: { path: 'C:/next.drawio' } }; h.ui.getCurrentFile = () => next; h.editorListeners.get('fileLoaded')(); // NEW
+    await rejected; await watched; release(); await settle(); // NEW
+    assert.equal(h.calls.some(call => call.nativeReload), false); assert.equal(h.calls.some(call => call.status?.includes('document changed')), false); // NEW
+    await h.sharing.whenDocumentReady(); // NEW: the replacement ordinary local document can still initialize.
+}); // NEW
+
+/** Own-write reconciliation must clear only the obsolete native conflict, retaining private content conflicts. */ // NEW
+test('verified watcher reconciliation clears obsolete warnings but preserves unresolved drafts', async t => { // NEW
+    const h = harness(t); await settle(); const action = h.bridge.collaborationAction; let status = 'The file has been modified. Click here to synchronize.'; // NEW
+    h.window.mxResources = { get: () => status }; h.ui.editor.getStatus = () => status; h.current.inConflictState = true; // NEW
+    h.bridge.collaborationAction = async input => ({ ...await action(input), projection: { hash: 'verified' } }); // NEW
+    await h.ui.handleFileChange({ mtimeMs: 2 }, { mtimeMs: 1 }, h.current); assert.equal(h.current.inConflictState, false); assert.equal(h.calls.at(-1).status, ''); // NEW
+    h.current.inConflictState = true; h.current.__trellisConflict = { draft: true }; h.current.modified = true; h.calls.length = 0; // NEW
+    await h.ui.handleFileChange({ mtimeMs: 3 }, { mtimeMs: 2 }, h.current); assert.equal(h.current.inConflictState, true); assert.equal(h.current.modified, true); assert.equal(h.calls.some(call => call.status === ''), false); // NEW
+}); // NEW
+
+/** Recorder events can arrive while the native save's export awaits context setup. */ // NEW
+test('history export retains its captured saved checkpoint when a newer recorder event arrives', { timeout: 5000 }, async t => { // NEW
+    const h = harness(t); await settle(); h.setXml('Saved snapshot'); const saved = { revision: { id: 'saved-only', diagramHistoryId: 'diagram' }, snapshot: {}, xml: 'Saved snapshot' }; // NEW
+    h.history.flushForSharing = async () => saved; // NEW
+    h.bridge.setContext = async () => h.window.dispatchEvent(new h.window.CustomEvent('trellisHistoryRevisionRecorded', { detail: { revision: { id: 'different-version', diagramHistoryId: 'diagram' }, snapshot: {} } })); // NEW
+    let captured, done; const exported = new Promise(resolve => { done = resolve; }); h.bridge.exportHistory = async input => { captured = input; done(); return {}; }; // NEW
+    await new Promise((resolve, reject) => h.current.save(false, resolve, reject)); await exported; // NEW
+    assert.deepEqual(Array.from(captured.entries, entry => entry.revision.id), ['saved-only']); // NEW
+}); // NEW
+
+/** Local native warnings also need an accessible action without admitting controls into document HTML. */ // NEW
+test('native synchronization text gets a keyboard control whose callback expires with its file', async t => { // NEW
+    const h = harness(t, { localOnly: true }); await settle(); const warning = 'The file has been modified. Click here to synchronize.'; h.window.mxResources = { get: () => warning }; // NEW
+    h.ui.editor.setStatus(warning); const control = h.ui.statusContainer.querySelector('button'); assert.ok(control); control.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); // NEW
+    assert.equal(h.calls.filter(call => call.nativeSynchronize).length, 1); h.ui.getCurrentFile = () => ({}); control.click(); assert.equal(h.calls.filter(call => call.nativeSynchronize).length, 1); // NEW
 }); // NEW

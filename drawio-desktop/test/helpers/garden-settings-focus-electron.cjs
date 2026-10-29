@@ -15,7 +15,7 @@ const foreground = process.env.TRELLIS_SETTINGS_FOCUS_FOREGROUND === '1'; // NEW
 const children = new Set(), originalSpawn = childProcess.spawn; // NEW
 childProcess.spawn = (...args) => { const child = originalSpawn(...args); children.add(child); child.once('close', () => children.delete(child)); return child; }; syncBuiltinESMExports(); // NEW
 for (const name of ['appData', 'documents', 'userData', 'sessionData']) { const dir = path.join(profile, name); fs.mkdirSync(dir); app.setPath(name, dir); } // NEW
-app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); // NEW
+app.disableHardwareAcceleration(); // CHANGE: use Chromium's normal isolated GPU process; in-process GPU can stall renderer creation on Windows.
 let win, stage = 'startup', heldQuery = null, holdCities = false, closing = false; // NEW
 const runDeadline = Date.now() + 125000; // CHANGE: every operation shares the existing test-wide budget, including real identity/daemon startup.
 const databaseEvents = [], collaborationEvents = []; // CHANGE: retain safe target-level diagnostics from this test's real IPC boundary.
@@ -23,7 +23,7 @@ app.on('browser-window-created', (_event, created) => { win = created; created.h
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms)); // NEW
 /** Bound each renderer operation independently and identify the operation that stalled. */ // CHANGE
 async function run(source, label = stage) { // CHANGE
-    stage = label; let timer; // CHANGE
+    stage = label; let timer; if (!win || win.isDestroyed()) throw new Error('Editor window is not loaded: ' + label); // CHANGE
     try { return await Promise.race([win.webContents.executeJavaScript('try {\n' + source + '\n} catch (error) { console.error("Focus regression renderer:", error.stack); throw error; }'), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Renderer operation timed out: ' + label)), Math.max(1, runDeadline - Date.now())); })]); } // CHANGE: do not introduce a shorter startup deadline than the original 125-second watchdog.
     finally { clearTimeout(timer); } // CHANGE
 } // CHANGE
@@ -74,11 +74,12 @@ async function initialize() { // NEW
     await until('!!focusUi.editor.graph.__trellisModules && !!focusUi.editor.graph.__trellisTaskManager && !!focusUi.editor.graph.__trellisRoadmapManager && !!focusUi.getCurrentFile()', 'companion plugins'); // NEW
     await run('Trellis.sharing.refresh()', 'initial collaboration base'); // CHANGE: settle the opened file's remembered view before authoring fixture cells.
     await run(`window.graph=focusUi.editor.graph;window.focusFrames=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));window.gardenSearch=()=>document.querySelector('input[placeholder="Search city, country, or region"]');window.clusterCounts=()=>['garden_module','team_module','task_module','roadmap_module'].map(attr=>Object.values(graph.model.cells).filter(cell=>cell.getAttribute?.(attr)==='1').length);void 0;`); // NEW
-    await run(`window.firstGarden=graph.__trellisModules.createModuleAtPoint({x:100,y:100},'garden');const value=firstGarden.value.cloneNode(true);value.setAttribute('city_id','1');value.setAttribute('city_name','Buenos Aires');value.setAttribute('unit_system','metric');graph.model.setValue(firstGarden,value);void 0;`, 'create configured module'); // CHANGE
-    await until('[...document.querySelectorAll("button")].some(node=>node.textContent==="Set Garden Settings" && node.offsetWidth>0)', 'initial settings action'); // CHANGE: the programmatic module factory selects the module; the visible action opens its settings.
-    await run(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Set Garden Settings' && button.offsetWidth>0).click();void 0;`, 'open initial garden settings'); // CHANGE
+    await run(`window.firstGarden=graph.__trellisModules.createModuleAtPoint({x:100,y:100},'garden');void 0;`, 'create initial cluster'); // CHANGE
+    await run(`new Promise((resolve,reject)=>focusUi.getCurrentFile().save(false,()=>resolve(true),reject)).then(()=>{firstGarden=graph.model.getCell(firstGarden.id);return true;})`, 'save initial cluster'); // NEW: match project creation's accepted save boundary before configuring reference definitions.
+    await until('!!gardenSearch() || [...document.querySelectorAll("button")].some(node=>node.textContent==="Set Garden Settings" && node.offsetWidth>0)', 'initial settings action'); // CHANGE: automatic settings may already be open after cluster creation.
+    if (!await run('!!gardenSearch()')) await run(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Set Garden Settings' && button.offsetWidth>0).click();void 0;`, 'open initial garden settings'); // CHANGE
     await until('!!gardenSearch()', 'initial garden settings'); // CHANGE
-    await run(`gardenSearch().value='Buenos';gardenSearch().dispatchEvent(new Event('input'));gardenSearch().dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));[...focusUi.dialog.container.querySelectorAll('button')].find(button=>button.textContent==='OK').click();void 0;`, 'accept initial garden settings'); // CHANGE: select the real city key and finalize its reference manifest instead of assuming city ID 1.
+    await run(`gardenSearch().value='Buenos';gardenSearch().dispatchEvent(new Event('input'));gardenSearch().dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));const units=[...focusUi.dialog.container.querySelectorAll('select')].find(node=>node.querySelector('option[value=metric]'));units.value='metric';units.dispatchEvent(new Event('change',{bubbles:true}));[...focusUi.dialog.container.querySelectorAll('button')].find(button=>button.textContent==='OK').click();void 0;`, 'accept initial garden settings'); // CHANGE: select the real city key and finalize its reference manifest instead of assuming city ID 1.
     await until('firstGarden.getAttribute("trellis_reference_pending","")!=="1" && focusUi.dialogs.length===0', 'initial garden references accepted'); // CHANGE
     await run(`new Promise((resolve,reject)=>focusUi.getCurrentFile().save(false,()=>resolve(true),reject))`, 'save configured module'); // CHANGE
     await run('focusFrames()'); // NEW

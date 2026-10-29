@@ -162,6 +162,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         recoveryPaths.push({ filename, recoveryPath, reason, ...(editorDataPath ? { editorDataPath } : {}) }); // CHANGE
         await writeAtomic(path.join(profile, 'recovery', canvas.shareId, 'index.json'), JSON.stringify(recoveryPaths)); return recoveryPath; // NEW
     } // NEW
+    let projectionRecoveryPath = null; const notifiedProjectionRecoveries = new Map(); // NEW: notify each live session once, including recoveries found by background materialization.
     async function materialize(state) { // NEW
         const started = performance.now(); // NEW
         if (canvas.localRemoved || canvas.projectRetired) return; // NEW: queued refreshes must never recreate a retired projection.
@@ -170,11 +171,12 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         const existing = await fs.readFile(canvas.diagramPath, 'utf8').catch(err => { if (err.code === 'ENOENT') return null; throw err; }); // NEW
         const markerPath = path.join(profile, 'recovery', canvas.shareId, 'projection.json'); // NEW
         const marker = await readJson(markerPath) /* CHANGE */.catch(err => { if (err.code === 'ENOENT') return null; throw err; }); // NEW
-        if (existing && existing !== state.xml && digest(existing) !== (marker?.hash || state.snapshotHash)) await preserve(existing, 'External or interrupted local changes were preserved before rebuilding the project.'); // NEW
+        if (existing && existing !== state.xml && digest(existing) !== (marker?.hash || state.snapshotHash)) projectionRecoveryPath = await preserve(existing, 'External or interrupted local changes were preserved before rebuilding the project.'); // CHANGE
         if (existing !== state.xml) await writeAtomic(canvas.diagramPath, state.xml); // NEW
         const hash = digest(state.xml); // CHANGE: unchanged polling must not rewrite the recovery marker.
         if (marker?.hash !== hash) await writeAtomic(markerPath, JSON.stringify({ hash })); // CHANGE
         timing({ phase: 'materialize', durationMs: performance.now() - started, wroteProjection: existing !== state.xml, bytes: Buffer.byteLength(state.xml) }); // NEW
+        return { hash }; // CHANGE: this hash describes the verified journal projection.
     } // NEW
     function refresh() { // CHANGE
         if (pendingRefresh) return pendingRefresh; // NEW: do not enqueue identical background work repeatedly.
@@ -201,7 +203,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         return serialized(async () => { // NEW
             if (canvas.revoked || canvas.pending) throw new Error('This computer is not approved to edit this project.'); // NEW
             const cachedRead = ['changes', 'review', 'ack-refresh', 'history-state'].includes(input.kind); // NEW: these read the latest verified state; refresh preparation and every edit re-read the journal.
-            let state = cachedRead && latest ? latest : await read(input.retry === true), journalChanged = false; const authorityContext = { at: now() }; // CHANGE: local checks use an explicit operation time.
+            let state = cachedRead && latest ? latest : await read(input.retry === true), journalChanged = false, projection; const authorityContext = { at: now() }; // CHANGE: local checks use an explicit operation time.
             if (input.kind === 'open-view' || input.kind === 'get') { // NEW: only this process owns the live local session registry.
                 const active = new Set(sessions.values()), abandoned = new Map(); // NEW
                 for (const hold of state.holds) if (hold.deviceId === deviceId && !active.has(hold.sessionId)) abandoned.set(hold.sessionId, hold); // NEW
@@ -255,7 +257,8 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
             if (input.kind === 'history-state') return { ok: true, xml: state.xml, collaboration: publicState(state, actor.sessionId) }; // NEW
             if (input.explicitRefresh && ['claim', 'save'].includes(input.kind) && !views.get(actor)) return { ok: false, reason: 'Open or explicitly recover your remembered objects before editing.', collaboration: publicState(state, actor.sessionId) }; // NEW
             if (input.kind === 'get') { // NEW
-                await materialize(state); // NEW
+                projection = await materialize(state); // CHANGE
+                if (projection && projectionRecoveryPath && notifiedProjectionRecoveries.get(actor.sessionId) !== projectionRecoveryPath) { projection.externalRecoveryPath = projectionRecoveryPath; notifiedProjectionRecoveries.set(actor.sessionId, projectionRecoveryPath); } // NEW: a background refresh may have preserved the external write before its watcher is serviced.
             } else if (input.kind === 'view') { // NEW
                 const index = objects(state.xml); const targets = [...new Set((input.objects || []).filter(k => index.has(k)).map(k => logicalKey(index, k)))]; // NEW
                 const previous = state.records.filter(r => r.sessionId === actor.sessionId && r.kind === 'view').sort((a, b) => b.clock - a.clock)[0]; // NEW
@@ -347,7 +350,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
                 checkpointRetries.delete(actorKey);
             }
             if (input.resolution && views.get(actor)) await views.saved(actor, input.originalBaseXml, input.resolution.baseXml); // NEW
-            return { ok: true, resolution: input.resolution, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId) }; // CHANGE: status and save replies never carry incoming canvas content in explicit mode.
+            return { ok: true, projection, resolution: input.resolution, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId) }; // CHANGE: status and save replies never carry incoming canvas content in explicit mode.
         }); // NEW
     } // NEW
     /** Remove ownership immediately, then release the captured generation without touching a replacement session. */ // NEW
@@ -355,7 +358,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         views.forget(callerId); // NEW
         for (const key of checkpointRetries.keys()) if (JSON.parse(key)[0] === callerId) checkpointRetries.delete(key); // NEW: a reopened window must not replay a previous window's outstanding private write.
         for (const [key, sessionId] of [...sessions]) if (key.startsWith(callerId + ':')) { // NEW
-            const actor = { userId: key.slice(String(callerId).length + 1), sessionId }; sessions.delete(key); policySent.delete(sessionId); // NEW
+            const actor = { userId: key.slice(String(callerId).length + 1), sessionId }; sessions.delete(key); policySent.delete(sessionId); notifiedProjectionRecoveries.delete(sessionId); // NEW
             serialized(async () => { const state = await read(); await append(state, actor, 'release', {}); }).catch(() => {}); // NEW
         } // NEW
     } // NEW

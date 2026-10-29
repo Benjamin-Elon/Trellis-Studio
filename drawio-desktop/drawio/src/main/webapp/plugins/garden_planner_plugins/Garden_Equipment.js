@@ -66,6 +66,7 @@ Draw.loadPlugin(function (ui) {
         TASK_QUANTITY_VALUE: "task_quantity_value",
         TASK_COMPLEXITY: "task_complexity",
         TASK_EQUIPMENT_IDS: "task_equipment_ids",
+        TASK_PLANNING_OVERRIDE: "task_planning_override_json", // NEW: occurrence choices survive scheduler regeneration.
         TASK_ESTIMATED_HOURS: "task_estimated_hours"
     };
 

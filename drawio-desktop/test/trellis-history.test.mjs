@@ -118,3 +118,13 @@ test('document contexts reject stale writes and cross-document reads while windo
     await assert.rejects(store.request('window-a', 'read', { diagramId: 'document-b', token: 2, revisionId: old.id }), /another diagram/);
     assert.ok((await store.request('window-b', 'list', first)).some(item => item.id === old.id)); store.close();
 }); // NEW
+
+/** A delayed old initialize must never replace the newer document binding of the same renderer. */ // NEW
+test('stale initialization cannot replace a newer history context', async () => { // NEW
+    const store = service(); const a = { diagramId: 'document-a', token: 1, xml: fixture(0, false) }, b = { diagramId: 'document-b', token: 2, xml: fixture(1, false) }; // NEW
+    try { // NEW
+        await store.request('window', 'initialize', b); // NEW
+        await assert.rejects(store.request('window', 'initialize', a), /context changed/); // NEW
+        await store.request('window', 'statistics', b); // NEW
+    } finally { store.close(); } // NEW
+}); // NEW
