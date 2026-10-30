@@ -5,10 +5,11 @@ import path from 'node:path';
 import { digest, safeId, signRecord, verifyRecord, canonical } from './trellis-share-protocol.js';
 import { normalizeDocument, decodePayload } from './trellis-history-codec.js';
 
-export function createHistoryTransport({ canvas, deviceId, keys, history, profile, writeImmutable }) {
+export function createHistoryTransport({ canvas, deviceId, keys, history, profile, writeImmutable, writeAtomic }) { // CHANGE
     const directory = path.join(canvas.folderPath, '.trellis', 'history-v2');
     const expectedGeneration = 'history-v2-' + digest(canvas.shareId).slice(0, 32); // NEW: this one-time upgrade has one stable, non-replayable epoch per share.
-    let queue = Promise.resolve(), lastPublished = null, lastPruning = null; // NEW
+    let queue = Promise.resolve(), lastPublished = null, lastPruning = null, resetProof = null; // CHANGE
+    const receivedHeads = new Map(); // NEW: current issuer positions, never a list of all published revisions.
     const run = (method, input) => history().run(method, { diagramId: canvas.diagramId, ...input });
     const signer = id => canvas.members.find(member => member.deviceId === id)?.publicKey;
     /** Membership handovers record the former coordinator's exclusive upper version bound. */ // NEW
@@ -35,17 +36,6 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
         if (digest(xml) !== p.baseline.record.hash) throw new Error('Shared history reset baseline is corrupt.');
         return { ...p, xml };
     }
-    /** Remove only explicitly owned legacy timeline directories, after verifying the reset. */ // NEW
-    async function clearLegacy() {
-        for (const relative of [['.trellis', 'history'], ['.stversions', '.trellis', 'history']]) {
-            const filename = path.resolve(canvas.folderPath, ...relative), root = await fs.realpath(canvas.folderPath);
-            const expected = path.resolve(root, ...relative);
-            try {
-                if (await fs.realpath(filename) !== expected || (await fs.lstat(filename)).isSymbolicLink()) throw new Error('Legacy history cleanup path is outside its expected project directory.');
-                await fs.rm(filename, { recursive: true, force: true });
-            } catch (error) { if (error.code !== 'ENOENT') throw error; }
-        }
-    }
     async function ensureReset() {
         let record = await optional(path.join(directory, 'reset.json'));
         if (!record) {
@@ -58,9 +48,10 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
             validateReset(record);
             await writeImmutable(path.join(directory, 'reset.json'), record);
         }
-        const reset = validateReset(record);
+        const fingerprint = digest(canonical(record)), authority = coordinatorKey(record.payload); // CHANGE
+        const reset = resetProof?.fingerprint === fingerprint && resetProof.authority === authority ? resetProof.reset : validateReset(record); // CHANGE: cached verification remains bound to current trust as well as the bytes.
+        resetProof = { fingerprint, authority, reset }; // CHANGE
         await run('reset', { generation: reset.generation, baselineId: reset.baseline.revision.id, xml: reset.xml, metadata: reset.baseline.revision, timestamp: reset.baseline.revision.timestamp });
-        await clearLegacy();
         return reset;
     }
     function validEntry(record, reset) {
@@ -69,8 +60,7 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
         safeId(entry.revision.id); return entry;
     }
     async function publish(savedXml, revisionIds) {
-        const before = new Set((await run('list')).map(item => item.id)); // NEW
-        for (const id of revisionIds) if (!before.has(id)) throw new Error('Unknown shared history revision.'); // NEW
+        for (const id of revisionIds) if (!await run('has', { revisionId: safeId(id) })) throw new Error('Unknown shared history revision.'); // CHANGE: exporting one save does not list the timeline.
         const reset = await ensureReset();
         if (!reset) throw new Error('Waiting for the coordinator to reset shared history.');
         const savedHash = digest(normalizeDocument(savedXml));
@@ -78,15 +68,17 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
             let entry;
             try { entry = await run('export', { revisionId: id, baseRevisionId: lastPublished?.revision.id, baseState: lastPublished?.record }); }
             catch (error) { if (id === reset.baseline.revision.id) throw error; continue; } // A reset may have retired a queued pre-reset revision. // NEW
+            if (entry.generation !== reset.generation) throw new Error('History from a previous sharing identity remains local. Record a new saved revision before publishing.'); // NEW
             if (entry.record.hash !== savedHash) throw new Error('Only history matching the saved whole diagram may be published.');
             entry.revision.parentRevisionId = lastPublished?.revision.id || reset.baseline.revision.id;
             const target = path.join(directory, reset.generation, 'records', safeId(id) + '.json');
             const existing = await optional(target);
             if (existing) entry = validEntry(existing, reset);
             else await writeImmutable(target, signed({ version: 2, shareId: canvas.shareId, diagramId: canvas.diagramId, entry }));
+            await writeAtomic(path.join(directory, 'heads', safeId(deviceId) + '.json'), JSON.stringify(signed({ version: 2, shareId: canvas.shareId, diagramId: canvas.diagramId, generation: reset.generation, revisionId: entry.revision.id, hash: entry.record.hash }))); // NEW
             lastPublished = entry;
         }
-        await prune(reset);
+        // CHANGE: pruning is explicit maintenance; publishing a save never scans archives.
         return { ok: true, generation: reset.generation, reset: reset.baseline }; // NEW: recursive disk accounting is requested only when storage details are open.
     }
     /** Anchors and signed tombstones precede physical deletion, making interruption retryable. */ // NEW
@@ -176,11 +168,36 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
         }
         return { ok: true, generation: reset.generation, reset: reset.baseline, entries, errors };
     }
-    async function maintain() { // NEW: migrate registered but unopened shared projects when their coordinator is available.
-        const revisions = await run('list');
-        const result = await importAll(revisions.filter(item => !item.pending).map(item => item.id)); // CHANGE
-        if (result.generation) await prune({ generation: result.generation }); // NEW: remote saves also receive the coordinator's retention policy.
-        return result;
+    /** Import current issuer heads and their bounded storage dependencies; timeline browsing is separate. */ // CHANGE
+    async function maintain() { // CHANGE
+        const reset = await ensureReset(); // NEW
+        if (!reset) return { ok: true, entries: [], errors: [], waitingForCoordinator: true }; // NEW
+        const entries = [], errors = [], root = path.join(directory, reset.generation, 'records'); // NEW
+        async function importDependency(id, visiting = new Set()) { // NEW
+            safeId(id); // NEW
+            if (visiting.has(id) || visiting.size > 30) throw new Error('Invalid or excessive history dependency chain.'); // NEW
+            if (await run('has', { revisionId: id }) && !(await run('describe', { revisionId: id })).pending) return; // CHANGE: a received delta with a missing base is not complete.
+            visiting.add(id); // NEW
+            const entry = validEntry(await readRecord(path.join(root, id + '.json')), reset); // NEW
+            if (entry.revision.id !== id) throw new Error('History filename identity mismatch.'); // NEW
+            if (entry.record.kind === 'delta') await importDependency(entry.record.baseRevisionId, visiting); // NEW
+            await run('import', { entry }); entries.push(entry); visiting.delete(id); // NEW
+        } // NEW
+        for (const member of canvas.members) { // NEW
+            try { // NEW
+                const record = await optional(path.join(directory, 'heads', safeId(member.deviceId) + '.json')); // NEW
+                if (!record) continue; // NEW
+                const payload = record.payload; // NEW
+                if (payload?.version !== 2 || payload.shareId !== canvas.shareId || payload.diagramId !== canvas.diagramId || payload.generation !== reset.generation || payload.issuerDeviceId !== member.deviceId || !verifyRecord(record, member.publicKey)) throw new Error('Invalid history head signature.'); // NEW
+                const proof = digest(canonical(record)); // NEW
+                if (receivedHeads.get(member.deviceId) === proof && await run('has', { revisionId: payload.revisionId }) && !(await run('describe', { revisionId: payload.revisionId })).pending) continue; // CHANGE
+                await importDependency(payload.revisionId); // NEW
+                const revision = await run('describe', { revisionId: payload.revisionId }); // NEW
+                if (revision.pending || revision.diagramHash !== payload.hash || revision.generation !== reset.generation) throw new Error('History head content mismatch.'); // CHANGE
+                receivedHeads.set(member.deviceId, proof); // NEW
+            } catch (error) { errors.push({ filename: member.deviceId, ...diagnostic(error, member.deviceId) }); } // NEW
+        } // NEW
+        return { ok: true, generation: reset.generation, reset: reset.baseline, entries, errors }; // NEW
     }
     async function directoryBytes(directoryPath) {
         let total = 0;
@@ -198,5 +215,5 @@ export function createHistoryTransport({ canvas, deviceId, keys, history, profil
         return { historyBytes: await directoryBytes(directory) + archiveBytes + legacyBytes, archiveBytes, legacyBytes, collaborationBytes: await directoryBytes(path.join(canvas.folderPath, '.trellis', 'collaboration-v3')), recoveryBytes: await directoryBytes(path.join(profile, 'recovery', canvas.shareId)) }; // CHANGE
     }
     function serialized(work) { const result = queue.then(work); queue = result.catch(() => {}); return result; }
-    return { publish: (...args) => serialized(() => publish(...args)), importAll: (...args) => serialized(() => importAll(...args)), maintain: () => serialized(maintain), statistics }; // CHANGE
+    return { publish: (...args) => serialized(() => publish(...args)), importAll: (...args) => serialized(() => importAll(...args)), maintain: () => serialized(maintain), prune: () => serialized(async () => { const reset = await ensureReset(); if (reset) await prune(reset); }), statistics }; // CHANGE: destructive maintenance is never an ordinary save side effect.
 }

@@ -40,6 +40,7 @@ const trellisDefaultPluginIds = [
     "gardenAllocate",
     "gardenScale",
     "gardenBeds",
+    "gardenStructures", // NEW
     "gardenEquipment",
     "gardenIrrigationPlanner"
 ];
@@ -72,6 +73,7 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Allocate_Planner.js",
     "plugins/garden_planner_plugins/Garden_Scale.js",
     "plugins/garden_planner_plugins/Garden_Beds.js",
+    "plugins/garden_planner_plugins/Garden_Structures.js", // NEW
     "plugins/garden_planner_plugins/Garden_Equipment.js",
     "plugins/garden_planner_plugins/Garden_Irrigation_Planner.js"
 ];
@@ -289,14 +291,17 @@ test('desktop startup migrates saved profiles to object details once and loads i
     vm.runInNewContext(runtimeAssignment(source, 'main'), context); // NEW
     const details = 'plugins/garden_planner_plugins/Trellis_Object_Details.js'; // NEW
     await context.App.main(); // NEW
-    assert.deepEqual(hostArray(mxSettings.getPlugins()), ['./plugins/custom.js', './' + details, './plugins/garden_planner_plugins/Trellis_API_Keys.js', './plugins/garden_planner_plugins/Garden_Quickstart.js']); // CHANGE: desktop API credentials also migrate into saved plugin lists.
+    assert.deepEqual(hostArray(mxSettings.getPlugins()), ['./plugins/custom.js', './' + details, './plugins/garden_planner_plugins/Garden_Structures.js', './plugins/garden_planner_plugins/Trellis_API_Keys.js', './plugins/garden_planner_plugins/Garden_Quickstart.js']); // CHANGE: structures also migrate into saved desktop profiles.
+    assert.ok(requests.some(url => url.endsWith('Garden_Structures.js'))); // NEW
     assert.ok(requests.includes('./' + details), 'the actual desktop loader requests the migrated plugin'); // NEW
     assert.equal(JSON.parse(localStorage.getItem('.drawio-config')).plugins.filter(plugin => plugin.endsWith('Trellis_Object_Details.js')).length, 1); // NEW
     await context.App.main(); // NEW
     assert.equal(mxSettings.getPlugins().filter(plugin => plugin.endsWith('Trellis_Object_Details.js')).length, 1, 'restarting does not duplicate the entry'); // NEW
+    assert.equal(mxSettings.getPlugins().filter(plugin => plugin.endsWith('Garden_Structures.js')).length, 1); // NEW
     mxSettings.setPlugins(['plugins/custom.js']); requests.length = 0; // NEW
     await context.App.main(); // NEW
     assert.equal(requests.some(url => url.endsWith('Trellis_Object_Details.js')), false, 'a later deliberate removal is preserved'); // NEW
+    assert.equal(requests.some(url => url.endsWith('Garden_Structures.js')), false); // NEW
     localStorage.removeItem('.trellisObjectDetailsDefault.v1'); mxSettings.setPlugins(['./' + details]); // NEW
     await context.App.main(); // NEW
     assert.equal(mxSettings.getPlugins().length, 1, 'already enabled profiles are not duplicated'); // NEW

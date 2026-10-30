@@ -138,6 +138,7 @@ Draw.loadPlugin(function (ui) {
   graph.__ccFiltered = [];          // current filtered cells (for navigation)
   graph.__ccNavIndex = 0;
   graph.__ccHistoryRevisions = [];
+  graph.__ccHistoryOffset = 0; // NEW: browsing is bounded to one page, independently of the lifetime timeline size.
   graph.__ccHistorySelectedId = null;
   graph.__ccHistoryFilter = 'all';
   graph.__ccHistoryPreviewMode = false;
@@ -734,7 +735,7 @@ Draw.loadPlugin(function (ui) {
       initializing = Promise.resolve().then(operation).finally(() => { if (matches(context)) { initializing = null; refreshStorageDisplay(); } }); // NEW
       return initializing; // NEW
     } // CHANGE
-    async function listRevisions() { return store.ready ? request('list') : []; } // CHANGE
+    async function listRevisions() { return store.ready ? request('list', { limit: 100, offset: graph.__ccHistoryOffset || 0 }) : []; } // CHANGE
     async function getLatestRevision() { // CHANGE
       const latest = store.ready ? await request('latest') : null; // CHANGE
       return latest ? Object.assign({}, latest, { diagram_hash: latest.diagramHash, snapshot_id: latest.id }) : null; // CHANGE
@@ -939,7 +940,8 @@ Draw.loadPlugin(function (ui) {
           latestRevisionId = revision.id;
           latestEntry = { revision, snapshot }; // NEW
           if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisHistoryRevisionRecorded', { detail: { revision, snapshot } })); // NEW: sharing publishes after a successful save.
-          await refreshHistoryRevisions();
+          if (!graph.__ccHistoryOffset) graph.__ccHistoryRevisions = [revision].concat((graph.__ccHistoryRevisions || []).slice(0, 100).filter(item => item.id !== revision.id)).slice(0, 100); // CHANGE: recording never traverses or replaces an older browsed page.
+          updateHistoryUI(); // CHANGE
           return latestEntry; // NEW
         }
       } catch (e) {
@@ -1639,6 +1641,7 @@ Draw.loadPlugin(function (ui) {
   let historyRailWrap = null;
   let historyPreview = null;
   let historyStatus = null;
+  let historyOlderBtn = null, historyNewerBtn = null, historyPageLabel = null; // NEW
   let returnLatestBtn = null;
   let compareBtn = null;
   let restoreBtn = null;
@@ -1894,6 +1897,13 @@ Draw.loadPlugin(function (ui) {
 
     historyStatus = makeEl('div', { color: '#666', fontSize: '11px', minHeight: '16px' });
     panel.appendChild(historyStatus);
+    const historyPages = makeEl('div', {display:'flex',gap:'6px',alignItems:'center',margin:'4px 0'}); // NEW
+    historyNewerBtn = makeEl('button'); historyNewerBtn.textContent = 'Newer revisions'; // NEW
+    historyOlderBtn = makeEl('button'); historyOlderBtn.textContent = 'Older revisions'; // NEW
+    historyPageLabel = makeEl('span', {fontSize:'11px'}); // NEW
+    historyNewerBtn.addEventListener('click', async () => { graph.__ccHistoryOffset = Math.max(0,(graph.__ccHistoryOffset || 0)-100); await refreshHistoryRevisions(); }); // NEW
+    historyOlderBtn.addEventListener('click', async () => { graph.__ccHistoryOffset = (graph.__ccHistoryOffset || 0)+100; await refreshHistoryRevisions(); }); // NEW
+    historyPages.appendChild(historyNewerBtn); historyPages.appendChild(historyOlderBtn); historyPages.appendChild(historyPageLabel); panel.appendChild(historyPages); // NEW
     historyStorageSummary = makeEl('div', { color: '#555', fontSize: '11px', margin: '4px 0' }); panel.appendChild(historyStorageSummary); // NEW
     const storageDetails = document.createElement('details'), storageHeading = document.createElement('summary'); storageDetails.className = 'trellis-history-storage-details'; // NEW
     storageHeading.textContent = 'Storage details'; storageDetails.appendChild(storageHeading); // NEW
@@ -2171,6 +2181,9 @@ Draw.loadPlugin(function (ui) {
     historyRailWrap.innerHTML = '';
     const filter = graph.__ccHistoryFilter || 'all';
     const all = graph.__ccHistoryRevisions || [];
+    const offset = graph.__ccHistoryOffset || 0, total = graph.__ccHistoryStorage?.revisionCount || all.length; // NEW
+    historyNewerBtn.disabled = offset === 0; historyOlderBtn.disabled = offset+100 >= total; // NEW
+    historyPageLabel.textContent = all.length ? String(offset+1)+'–'+String(offset+all.length)+' of '+String(total) : 'No revisions'; // NEW
     const categoryFiltered = filter === 'all' ? all : all.filter(function (rev) { return rev.category === filter || (rev.tags || []).indexOf(filter) >= 0; });
     const revisions = categoryFiltered.filter(revisionMatchesUserFilter);
     if (revisions.length === 0) {
@@ -2640,7 +2653,8 @@ Draw.loadPlugin(function (ui) {
     window.Trellis.history.applyRemoteBaseline = historyRecorder.applyRemoteBaseline; // NEW
     window.Trellis.history.importShared = async function (entry) { // CHANGE
       if (!entry || entry.version !== 2 || entry.revision.diagramHistoryId !== getDiagramHistoryId()) throw new Error('Invalid shared document history.'); // NEW
-      await refreshHistoryRevisions(); await historyStore.refreshStatistics(); // NEW: transport has verified and imported this record.
+      if (!graph.__ccHistoryOffset) graph.__ccHistoryRevisions = [entry.revision].concat((graph.__ccHistoryRevisions || []).slice(0,100).filter(item => item.id !== entry.revision.id)).slice(0, 100); // CHANGE: background import leaves an older browsed page stable.
+      updateHistoryUI(); await historyStore.refreshStatistics(); // CHANGE
     };
     window.Trellis.history.refreshStorage = historyStore.refreshStatistics; // NEW
     window.Trellis.history.refresh = async function () { if (!historyStore.ready) await historyRecorder.initializeBaseline(); await refreshHistoryRevisions(); await historyStore.refreshStatistics(); }; // CHANGE: recover initialization rather than refreshing an uninitialized store forever. // NEW
@@ -2847,7 +2861,7 @@ Draw.loadPlugin(function (ui) {
     editor.addListener('fileLoaded', function () {
       turnOffChangeMapForFileBoundary();
       if (graph.__ccHistoryRestoring) return; // NEW
-      historyRecorder.resetForDocument(); graph.__ccDiagramHistoryId = null; graph.__ccHistoryRevisions = []; // NEW
+      historyRecorder.resetForDocument(); graph.__ccDiagramHistoryId = null; graph.__ccHistoryRevisions = []; graph.__ccHistoryOffset = 0; // CHANGE
       historyRecorder.initializeBaseline().catch(error => { graph.__ccHistoryWarning = error.message; updateHistoryUI(); }); // NEW
       installStorageFileHooks(); // NEW
     });

@@ -583,6 +583,17 @@ function makeHarness(options = {}) {
         try { const filename = path.join(path.dirname(TASK_MANAGER_PATH), 'Garden_Guide.js'); vm.runInContext(fs.readFileSync(filename, 'utf8'), context, { filename }); } finally { context.Draw.loadPlugin = register; } // CHANGE
     } // CHANGE
 
+    /** Install real equipment logic against the same graph and UI for planning integration. */ // NEW
+    function loadEquipment() { // NEW
+        const register = context.Draw.loadPlugin, actions = new Map(); // NEW
+        currentUi.actions = { addAction(id, fn) { actions.set(id, { funct: fn }); }, get: id => actions.get(id) }; // NEW
+        context.CustomEvent = dom.window.CustomEvent; // NEW
+        context.Draw.loadPlugin = callback => callback(currentUi); // NEW
+        try { const filename = path.join(path.dirname(TASK_MANAGER_PATH), 'Garden_Equipment.js'); vm.runInContext(fs.readFileSync(filename, 'utf8'), context, { filename }); } // NEW
+        finally { context.Draw.loadPlugin = register; } // NEW
+        return graph.__trellisEquipment; // NEW
+    } // NEW
+
     /** Loads the real linker into the Task Manager harness; mx shapes render inspectable SVG nodes. */ // NEW
     function loadVertexLinking() { // NEW
         model.contains = cell => { let ancestor = cell; while (ancestor && ancestor.parent) ancestor = ancestor.parent; return ancestor === root; }; // NEW
@@ -608,6 +619,7 @@ function makeHarness(options = {}) {
 
     return {
         loadGuide, // CHANGE
+        loadEquipment, // NEW
         loadVertexLinking, // NEW: integration tests exercise both production plugins
         document,
         window: dom.window,
@@ -3754,3 +3766,125 @@ test("task manager assignee badges expand to readable name stack, navigate, and 
     assert.equal(expanded.querySelectorAll(".trellis-task-assignee-pill").length, 3);
     assert.doesNotMatch(expanded.title, /A One/);
 });
+
+/** A real equipment/task integration with two occurrences and a separately completed task. */ // NEW
+function makeEquipmentTaskFixture() { // NEW
+    const h = makeHarness(), equipment = h.loadEquipment(); // NEW
+    const garden = new TestCell('planning-garden', makeValue(h.document, { garden_module: '1', label: 'Garden' })); // NEW
+    h.addCell(h.root, garden); // NEW
+    const source = new TestCell('planning-source', makeValue(h.document, { tiler_group: '1', plant_id: '10', plant_count: '20', linkedTo: [h.card1.id, h.card2.id, h.weekLaneCard.id].join(','), task_template_json: JSON.stringify({ version: 2, rules: [{ id: 'prune', taskTypeId: 'pruning', title: 'Prune', repeatMode: 'interval' }] }) })); // NEW
+    h.addCell(garden, source); // NEW
+    h.graph.__trellisModules = { findExistingCompanionTask: candidate => candidate === garden ? h.root : null }; // NEW
+    for (const [index, card] of [h.card1, h.card2, h.weekLaneCard].entries()) { // NEW
+        setAttr(card, 'linkedTo', source.id); setAttr(card, 'scheduler_rule_id', 'prune'); setAttr(card, 'scheduler_task_key', 'prune::' + index); // NEW
+        setAttr(card, 'task_type_id', 'pruning'); setAttr(card, 'task_planning_override_json', '{}'); setAttr(card, 'task_quantity_basis', 'plants'); setAttr(card, 'task_quantity_value', '20'); // NEW
+    } // NEW
+    equipment.writeEquipmentInventory(garden, [ // NEW
+        { id: 'pruners', name: 'Pruners', status: 'owned', capabilities: ['pruning_hand', 'harvest_cutting'], relevantTaskTypes: ['pruning'], skillLevelRequired: 'none', setupTimeHours: 0.1, efficiencyEffects: [{ taskTypeId: 'pruning', multiplier: 0.5 }] }, // NEW
+        { id: 'cart', name: 'Cart', status: 'owned', capabilities: ['harvest_transport'], relevantTaskTypes: ['pruning'], skillLevelRequired: 'none', cleanupTimeHours: 0.1 }, // NEW
+        { id: 'wish', name: 'Wishlist tool', status: 'wishlist', capabilities: ['pruning_hand'], skillLevelRequired: 'none' } // NEW
+    ]); // NEW
+    h.window.USL.scheduler = { taskPlanning: { async prepareSeries(group, _card, patch) { // NEW
+        const template = JSON.parse(attr(group, 'task_template_json')); Object.assign(template.rules[0], patch); // NEW
+        return { source: group, before: group.value, templateJson: JSON.stringify(template) }; // NEW
+    } } }; // NEW
+    return { ...h, garden, source, equipment }; // NEW
+} // NEW
+
+test('task planning dropdowns save several tools, explicit no-tools and advisory suggestions without moving bookings', async () => { // NEW
+    const h = makeEquipmentTaskFixture(), card = h.card1; // NEW
+    const booked = { start: attr(card, 'start'), end: attr(card, 'end'), geometry: { ...card.geometry } }; // NEW
+    setAttr(card, 'schedule_start_minute', '480'); setAttr(card, 'schedule_duration_minutes', '90'); // NEW
+    h.setState(card, { x: 20, y: 30, width: 160, height: 80 }); h.graph.setSelectionCell(card); await nextTick(); // NEW
+    let control = h.document.querySelector('.trellis-task-equipment-dropdown'); assert.match(control.querySelector('summary').textContent, /Suggested tools/); // NEW
+    control.open = true; // NEW
+    changeCheckbox(h.document, control.querySelector('input[value="pruners"]'), true); // NEW
+    changeCheckbox(h.document, control.querySelector('input[value="cart"]'), true); // NEW
+    buttonByText(control, 'Apply tools').click(); // NEW
+    assert.ok(h.document.querySelector('.trellis-task-planning-scope')); // NEW
+    buttonByText(h.document.querySelector('.trellis-task-planning-scope'), 'This occurrence').click(); await nextTick(); // NEW
+    assert.deepEqual(JSON.parse(attr(card, 'task_equipment_ids')), ['pruners', 'cart']); // NEW
+    assert.match(h.document.querySelector('.trellis-task-equipment-dropdown summary').textContent, /Selected tools: Pruners, Cart/); // NEW
+    assert.ok(Number(attr(card, 'task_estimated_hours')) > 0); // NEW
+    assert.equal(attr(card, 'start'), booked.start); assert.equal(attr(card, 'end'), booked.end); assert.deepEqual({ ...card.geometry }, booked.geometry); // NEW
+    assert.equal(attr(card, 'schedule_start_minute'), '480'); assert.equal(attr(card, 'schedule_duration_minutes'), '90'); // NEW
+    await h.graph.__trellisTaskManager.applyTaskPlanningChange(card, { equipmentIds: [] }); // NEW
+    assert.deepEqual(JSON.parse(attr(card, 'task_equipment_ids')), []); // NEW
+    await h.graph.__trellisTaskManager.applyTaskPlanningChange(card, { equipmentIds: null }); // NEW
+    assert.equal(attr(card, 'task_equipment_ids'), null); assert.equal(JSON.parse(attr(card, 'task_planning_override_json')).equipmentIds, null); // NEW
+}); // NEW
+
+test('task type changes prompt for occurrence or series and preserve completed tasks and other local overrides', async () => { // NEW
+    const h = makeEquipmentTaskFixture(); // NEW
+    setAttr(h.weekLaneCard, 'workflow_state', 'DONE'); setAttr(h.weekLaneCard, 'completed', '2026-07-01'); // NEW
+    setAttr(h.card2, 'task_planning_override_json', JSON.stringify({ taskTypeId: 'pruning', equipmentIds: [] })); // NEW
+    h.setState(h.card1, { x: 20, y: 30, width: 160, height: 80 }); h.graph.setSelectionCell(h.card1); await nextTick(); // NEW
+    const type = h.document.querySelector('select[aria-label="Task type"]'); type.value = 'harvesting'; type.dispatchEvent(new h.window.Event('change')); // NEW
+    assert.equal(attr(h.card1, 'task_type_id'), 'pruning'); // NEW
+    buttonByText(h.document.querySelector('.trellis-task-planning-scope'), 'Series').click(); await nextTick(); // NEW
+    assert.equal(attr(h.card1, 'task_type_id'), 'harvesting'); assert.equal(attr(h.card2, 'task_type_id'), 'pruning'); assert.equal(attr(h.weekLaneCard, 'task_type_id'), 'pruning'); // NEW
+    assert.equal(JSON.parse(attr(h.source, 'task_template_json')).rules[0].taskTypeId, 'harvesting'); // NEW
+    assert.equal(Object.hasOwn(JSON.parse(attr(h.card1, 'task_planning_override_json')), 'taskTypeId'), false); // NEW
+    await h.graph.__trellisTaskManager.applyTaskPlanningChange(h.card1, { equipmentIds: ['pruners'] }, 'series'); // NEW
+    assert.deepEqual(JSON.parse(attr(h.source, 'task_template_json')).rules[0].equipmentIds, ['pruners']); // NEW
+    assert.deepEqual(JSON.parse(attr(h.card2, 'task_equipment_ids') || '[]'), []); // NEW
+}); // NEW
+
+test('task planning checks permissions and unsupported quantities preserve the previous estimate', async () => { // NEW
+    const h = makeEquipmentTaskFixture(); // NEW
+    setAttr(h.card1, 'task_estimated_hours', '7'); setAttr(h.card1, 'task_quantity_basis', 'row_meters'); setAttr(h.card1, 'task_quantity_value', null); // NEW
+    await h.graph.__trellisTaskManager.applyTaskPlanningChange(h.card1, { equipmentIds: ['pruners'] }); // NEW
+    assert.equal(attr(h.card1, 'task_estimated_hours'), '7'); assert.match(attr(h.card1, 'task_equipment_estimate_note'), /Previous estimate retained/); // NEW
+    h.graph.__trellisUsers = { canEditTaskDetails: () => false }; // NEW
+    const before = h.card1.value; // NEW
+    await assert.rejects(h.graph.__trellisTaskManager.applyTaskPlanningChange(h.card1, { taskTypeId: 'harvesting' }), /cannot edit/); // NEW
+    assert.equal(h.card1.value, before); // NEW
+    h.graph.__trellisUsers = { canEditTaskDetails: () => true, canManagePlanting: () => false }; // NEW
+    await assert.rejects(h.graph.__trellisTaskManager.applyTaskPlanningChange(h.card1, { taskTypeId: 'harvesting' }, 'series'), /source planting/); // NEW
+}); // NEW
+
+test('equipment checkbox drafts retain focus through view refreshes and invalidate when the task changes', async () => { // NEW
+    const h = makeEquipmentTaskFixture(); // NEW
+    h.setState(h.card1, { x: 20, y: 30, width: 160, height: 80 }); h.graph.setSelectionCell(h.card1); await nextTick(); // NEW
+    const check = h.document.querySelector('.trellis-task-equipment-dropdown input[value="pruners"]'); check.focus(); changeCheckbox(h.document, check, true); // NEW
+    h.fireViewEvent(); await nextTick(); // NEW
+    assert.equal(h.document.activeElement, check); assert.equal(check.checked, true); // NEW
+    h.graph.setSelectionCell(h.card2); await nextTick(); // NEW
+    const replacement = h.document.querySelector('.trellis-task-equipment-dropdown input[value="pruners"]'); // NEW
+    assert.notEqual(replacement, check); assert.equal(replacement.checked, false); // NEW
+}); // NEW
+
+test('task planning choices survive differential refresh and safe full regeneration with explicit empty selections', async () => { // NEW
+    const h = makeEquipmentTaskFixture(); // NEW
+    await h.graph.__trellisTaskManager.applyTaskPlanningChange(h.card1, { taskTypeId: 'harvesting', equipmentIds: [] }); // NEW
+    const commands = h.window.USL.tasks; // NEW
+    const tasks = [0, 1, 2].map(index => ({ title: 'Prune', task_type_id: 'pruning', equipmentIds: ['pruners'], startISO: '2026-07-01', endISO: '2026-07-02', scheduler_rule_id: 'prune', scheduler_task_key: 'prune::' + index })); // NEW
+    commands.applySchedulerTaskReplacement({ mode: 'sync', targetGroupId: h.source.id, tasks }); // NEW
+    assert.equal(attr(h.card1, 'task_type_id'), 'harvesting'); assert.equal(attr(h.card1, 'task_equipment_ids'), '[]'); // NEW
+    commands.applySchedulerTaskReplacement({ mode: 'replace', targetGroupId: h.source.id, tasks: tasks.map(task => ({ ...task, title: 'Changed task' })) }); // NEW
+    const all = h.graph.__trellisTaskManager.listPlanningTasks(h.garden); // NEW
+    const replacement = all.find(card => attr(card, 'scheduler_task_key') === 'prune::0'); // NEW
+    assert.ok(replacement, JSON.stringify({ tasks: all.map(card => [card.id, attr(card, 'scheduler_task_key'), attr(card, 'status'), attr(card, 'workflow_state')]), links: attr(h.source, 'linkedTo').split(',').map(id => { const cell = h.model.getCell(id); return [id, attr(cell, 'workflow_state'), attr(cell, 'status'), attr(cell, 'completed'), cell?.parent?.id, attr(cell, 'linkedTo'), h.graph.__trellisTaskManager.gardenForTask(cell)?.id]; }), boards: h.graph.__trellisTaskManager.listBoardsForGarden(h.garden).map(card => card.id) })); assert.equal(attr(replacement, 'task_type_id'), 'harvesting'); assert.equal(attr(replacement, 'task_equipment_ids'), '[]'); // NEW
+    assert.equal(JSON.parse(attr(replacement, 'task_planning_override_json')).taskTypeId, 'harvesting'); // NEW
+}); // NEW
+
+
+test('task planning can reset an occurrence type to its source rule without retaining an override', async () => { // NEW
+    const h = makeEquipmentTaskFixture(); // NEW
+    await h.graph.__trellisTaskManager.applyTaskPlanningChange(h.card1, { taskTypeId: 'harvesting' }); // NEW
+    await h.graph.__trellisTaskManager.applyTaskPlanningChange(h.card1, { taskTypeId: null }); // NEW
+    assert.equal(attr(h.card1, 'task_type_id'), 'pruning'); // NEW
+    assert.equal(Object.hasOwn(JSON.parse(attr(h.card1, 'task_planning_override_json')), 'taskTypeId'), false); // NEW
+}); // NEW
+
+test('task planning preserves a previously selected deleted tool while rejecting new unknown IDs', async () => { // NEW
+    const h = makeEquipmentTaskFixture(), manager = h.graph.__trellisTaskManager; // NEW
+    setAttr(h.card1, 'task_equipment_ids', 'deleted'); setAttr(h.card1, 'task_planning_override_json', JSON.stringify({ equipmentIds: ['deleted'] })); // NEW
+    await manager.applyTaskPlanningChange(h.card1, { equipmentIds: ['deleted', 'pruners'] }); // NEW
+    assert.deepEqual(JSON.parse(attr(h.card1, 'task_equipment_ids')), ['deleted', 'pruners']); // NEW
+    assert.match(attr(h.card1, 'task_equipment_estimate_note'), /missing/); // NEW
+    const before = h.card1.value; // NEW
+    await assert.rejects(manager.applyTaskPlanningChange(h.card1, { equipmentIds: ['invented'] }), /unavailable/); assert.equal(h.card1.value, before); // NEW
+    await manager.applyTaskPlanningChange(h.card1, { equipmentIds: ['pruners'] }); // NEW
+    assert.deepEqual(JSON.parse(attr(h.card1, 'task_equipment_ids')), ['pruners']); // NEW
+}); // NEW

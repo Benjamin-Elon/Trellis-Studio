@@ -137,7 +137,7 @@ export function decodeBlock(kind, text) {
     const raw = text.slice(text.indexOf(start) + start.length, text.indexOf(end)).trim();
     if (!text.includes(start) || !text.includes(end) || !/^[A-Za-z0-9+/=\s]+$/.test(raw)) throw new Error('Paste the complete Trellis sharing block.');
     const result = parseJson(Buffer.from(raw, 'base64').toString(), LIMITS.invitation); // CHANGE
-    if (result.schema !== 2 || result.protocolVersion !== 3) throw new Error('Unsupported Trellis sharing protocol. Only version 3 invitations and replies are supported.'); // CHANGE
+    if (result.schema !== 2 || result.protocolVersion !== 4) throw new Error('Unsupported Trellis sharing protocol. Only version 4 invitations and replies are supported.'); // CHANGE
     safeId(result.shareId);
     safeId(result.diagramId);
     if (typeof result.deviceId !== 'string' || !/^[A-Z2-7-]{63}$/.test(result.deviceId)) throw new Error('Invalid Syncthing device ID.');

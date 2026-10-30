@@ -41,6 +41,43 @@ test('saving A2 keeps B0 displayed and remembered while B1 is accepted elsewhere
     assert.deepEqual(reopened.groups[0].objects.map(object => object.key), [key('b')]);
 });
 
+test('remembered ordering does not accumulate deletion tombstones after completed saves', async t => { // NEW
+    const {views,actor,profile} = await fixture(t), base = xml(); // NEW
+    await views.open(actor,state(base)); // NEW
+    for (let index = 0; index < 100; index++) { // NEW
+        const added = base.replace('</root>','<object id="temporary-'+index+'"><mxCell parent="1" vertex="1"/></object></root>'); // NEW
+        await views.saved(actor,base,added); await views.saved(actor,added,base); // NEW
+    } // NEW
+    const name = (await fs.readdir(path.join(profile,'object-views'))).find(name => name.endsWith('.json')); // NEW
+    const saved = JSON.parse(await fs.readFile(path.join(profile,'object-views',name),'utf8')); // NEW
+    assert.deepEqual(saved.versions,{}); assert.equal(saved.floor,saved.sequence); // NEW
+}); // NEW
+
+test('an outstanding older acknowledgement cannot resurrect a newer deletion', async t => { // NEW
+    const {views,actor,make,profile} = await fixture(t), other = {...actor,callerId:2}, base = xml(); // NEW
+    await views.open(actor,state(base)); await views.open(other,state(base)); // NEW
+    const older = state(xml('A2')), review = await views.action(actor,{kind:'review'},older); // NEW
+    const pending = await views.action(actor,{kind:'prepare-refresh',token:review.token},older); // NEW
+    const deleted = base.replace('<object id="a" label="A1"><mxCell parent="1" vertex="1"/></object>',''); // NEW
+    await refresh(views,other,state(deleted)); // NEW
+    await views.action(actor,{kind:'ack-refresh',receipt:pending.receipt},older); // NEW
+    const reopened = await make().open({...actor,callerId:3},state(deleted)); // NEW
+    assert.equal(objects(reopened.xml).has(key('a')),false); // NEW
+    await views.saved(other,deleted,deleted.replace('B0','B1')); // NEW
+    const name = (await fs.readdir(path.join(profile,'object-views'))).find(name => name.endsWith('.json')); // NEW
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(profile,'object-views',name),'utf8')).versions,{}); // NEW
+}); // NEW
+
+test('an older acknowledgement still merges independent objects after a newer save', async t => { // NEW
+    const {views,actor,make} = await fixture(t), other = {...actor,callerId:2}, base = xml(); // NEW
+    await views.open(actor,state(base)); await views.open(other,state(base)); // NEW
+    const older = state(xml('A1','B1')), review = await views.action(actor,{kind:'review'},older); // NEW
+    const pending = await views.action(actor,{kind:'prepare-refresh',token:review.token},older); // NEW
+    await views.saved(other,base,xml('A2')); // NEW
+    await views.action(actor,{kind:'ack-refresh',receipt:pending.receipt},older); // NEW
+    assert.equal((await make().open({...actor,callerId:3},state(xml('A2','B1')))).xml,xml('A2','B1')); // NEW
+}); // NEW
+
 test('refreshing in one window changes remembered objects without refreshing another window', async t => {
     const { views, actor, make } = await fixture(t), other = { ...actor, callerId: 2 };
     await views.action(actor, { kind: 'open-view' }, state(xml()));

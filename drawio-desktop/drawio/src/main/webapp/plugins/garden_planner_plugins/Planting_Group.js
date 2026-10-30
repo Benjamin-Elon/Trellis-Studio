@@ -2743,6 +2743,7 @@ Draw.loadPlugin(function (ui) {
         let labelInputWrap = null;
         let settingsBtn = null;
         let addBedBtn = null;
+        let addStructureBtn = null; // NEW: structures are layout-only garden children.
         let schedulePlantingBtn = null; // CHANGE
         let allocateModeBtn = null; // NEW
         let irrigationModeBtn = null; // CHANGE
@@ -2913,6 +2914,7 @@ Draw.loadPlugin(function (ui) {
             labelInputWrap.style.cssText = "display:flex;flex-direction:column;gap:4px;padding:2px 2px 4px;border-bottom:1px solid #e5e7eb;";
             settingsBtn = makeButton("Set Garden Settings", "open");
             addBedBtn = makeButton("Add Garden Bed", "add");
+            addStructureBtn = makeButton("Add Structure", "add"); // NEW
             schedulePlantingBtn = makeButton("Schedule Planting", "add"); // CHANGE
             allocateModeBtn = makeButton("Enter Allocation Mode", "open"); // NEW
             irrigationModeBtn = makeButton("Enter Irrigation Design Mode", "open"); // CHANGE
@@ -2920,6 +2922,7 @@ Draw.loadPlugin(function (ui) {
             settingsBtn.setAttribute('data-trellis-quickstart', 'settings'); addBedBtn.setAttribute('data-trellis-quickstart', 'add-bed'); // NEW
             toolbar.appendChild(settingsBtn);
             toolbar.appendChild(addBedBtn);
+            toolbar.appendChild(addStructureBtn); // NEW
             toolbar.appendChild(schedulePlantingBtn); // CHANGE
             toolbar.appendChild(allocateModeBtn); // NEW
             toolbar.appendChild(irrigationModeBtn); // CHANGE
@@ -2943,6 +2946,17 @@ Draw.loadPlugin(function (ui) {
                     mxUtils.alert("Error creating garden bed: " + (e && e.message ? e.message : e));
                 }
             });
+
+            mxEvent.addListener(addStructureBtn, "click", function (evt) { // NEW
+                mxEvent.consume(evt); // NEW
+                if (!activeModuleCell || !anchorModelPoint) return; // NEW
+                try { // NEW
+                    const structures = graph.__trellisStructures; // NEW
+                    if (!structures) throw new Error("Structure controls are unavailable."); // NEW
+                    structures.create(activeModuleCell, anchorModelPoint); // NEW
+                    hideToolbar(); // NEW
+                } catch (error) { mxUtils.alert("Error creating structure: " + error.message); } // NEW
+            }); // NEW
 
             mxEvent.addListener(schedulePlantingBtn, "click", function (evt) {
                 mxEvent.consume(evt);
@@ -3243,6 +3257,9 @@ Draw.loadPlugin(function (ui) {
             if (!bedMode) renderGardenModuleLabelInput(moduleCell);
             settingsBtn.style.display = bedMode ? "none" : "";
             addBedBtn.style.display = bedMode ? "none" : "";
+            addStructureBtn.style.display = bedMode ? "none" : ""; // NEW
+            addStructureBtn.disabled = !graph.__trellisStructures || !graph.isEnabled() || graph.isCellLocked(moduleCell) || window.Trellis?.users?.canEditCell?.(moduleCell) === false; // NEW
+            addStructureBtn.title = "Add a named layout structure. Structures do not block planting allocation or irrigation."; // NEW
             schedulePlantingBtn.style.display = bedMode ? "" : "none"; // CHANGE
             allocateModeBtn.style.display = bedMode ? "" : "none"; // NEW
             irrigationModeBtn.style.display = ""; // CHANGE
@@ -4877,6 +4894,7 @@ Draw.loadPlugin(function (ui) {
 
         // XML-attr types
         const typeAttrs = [
+            "garden_structure", // NEW: structures must never be offered as ordinary vertices for bed conversion.
             "garden_module",
             "tiler_group",
             "garden_bed",
@@ -8425,13 +8443,42 @@ Draw.loadPlugin(function (ui) {
             ui.updateActionStates?.(); // CHANGE: preview dismissal remains available even with empty graph stacks.
         } // CHANGE
 
+        /** Approval is valid only for the same registered, active owners that received this history command. */ // NEW
+        function sameActiveOwners(active) { // NEW
+            const current = Array.from(participants.entries()).filter(([, owner]) => owner.isActive()); // NEW
+            return current.length === active.length && active.every(([key, owner]) => participants.get(key) === owner && owner.isActive()); // NEW
+        } // NEW
+
+        function approveOwners(active, start = 0) { // NEW
+            for (let i = start; i < active.length; i++) { // NEW
+                if (!sameActiveOwners(active)) return false; // NEW
+                const approval = active[i][1].beforeDiscard?.(); // NEW: optional guards may approve synchronously or await a confirmation.
+                if (approval && typeof approval.then === 'function') return Promise.resolve(approval).then(allowed => allowed !== false && approveOwners(active, i + 1)); // NEW
+                if (approval === false) return false; // NEW
+            } // NEW
+            return true; // NEW
+        } // NEW
+
+        function discardApprovedOwners(active, approved) { // NEW
+            if (approved && sameActiveOwners(active)) active.forEach(([, owner]) => owner.discard()); // NEW: no owner is discarded before every guard approves.
+        } // NEW
+
+        function finishDismissal() { dismissing = false; refreshActions(true); } // NEW
+
         function dismissActivePreviews() { // CHANGE
             if (dismissing) return true; // CHANGE: callbacks cannot recursively advance graph history during cleanup.
-            const active = Array.from(participants.values()).filter(owner => owner.isActive()); // CHANGE: snapshot before any owner changes shared state.
+            const active = Array.from(participants.entries()).filter(([, owner]) => owner.isActive()); // CHANGE: snapshot registration identities as well as activity.
             if (!active.length) return false; // CHANGE
             dismissing = true; // CHANGE
-            try { active.forEach(owner => owner.discard()); } // CHANGE: one command dismisses every active workflow.
-            finally { dismissing = false; refreshActions(true); } // CHANGE
+            let approval; // NEW
+            try { approval = approveOwners(active); } catch (error) { finishDismissal(); throw error; } // NEW
+            if (approval && typeof approval.then === 'function') { // NEW
+                approval.then(approved => discardApprovedOwners(active, approved)).catch(error => { // NEW
+                    if (ui.handleError) ui.handleError(error); else console.error('Unable to close preview editors:', error); // NEW
+                }).finally(finishDismissal); // NEW: commands arriving during approval are consumed, never queued.
+            } else { // NEW
+                try { discardApprovedOwners(active, approval); } finally { finishDismissal(); } // NEW: preserve synchronous dismissal for existing owners.
+            } // NEW
             return true; // CHANGE: no synthetic history edit and no completed-history event.
         } // CHANGE
 
@@ -11582,6 +11629,7 @@ Draw.loadPlugin(function (ui) {
         readBedProfile,
         buildDraftTilerGroupPreview, buildUnsavedTilerGroupPreview, // CHANGE
         listPlantingFootprints,
+        graphUnitsToCm, // NEW: planning quantities reuse the tiler’s canonical scale.
         readPlantingFootprint, // CHANGE: allocation timeline clustering can use the same header-free occupancy as placement.
         resolveAllowedOverhangPct, // CHANGE: shared scheduler and Allocate defaults use the same percentage policy.
         prepareBedFitSpacingDraft, // CHANGE: pure fitting shared by saved-planting previews and commits.

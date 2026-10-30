@@ -168,7 +168,7 @@
         } else change(old.find(rev => rev.data.payload), { payload: data }); // NEW
         return changes; // CHANGE
     }
-    const CATALOG_RELATIONSHIPS = { capabilities: 'equipment_capability_registry_json', requiredCapabilities: 'equipment_capability_registry_json', optionalCapabilities: 'equipment_capability_registry_json', recommendedCapabilities: 'equipment_capability_registry_json', capabilityId: 'equipment_capability_registry_json', relevantTaskTypes: 'task_type_registry_json', taskTypeId: 'task_type_registry_json' }; // NEW
+    const CATALOG_RELATIONSHIPS = { equipmentIds: 'equipment_inventory_json', capabilities: 'equipment_capability_registry_json', requiredCapabilities: 'equipment_capability_registry_json', optionalCapabilities: 'equipment_capability_registry_json', recommendedCapabilities: 'equipment_capability_registry_json', capabilityId: 'equipment_capability_registry_json', relevantTaskTypes: 'task_type_registry_json', taskTypeId: 'task_type_registry_json' }; // NEW
     function encodeCatalogReferences(store, value, key = '') { // NEW
         if (value == null || value === '') return value; // NEW
         if (Array.isArray(value)) return value.map(item => encodeCatalogReferences(store, item, key)); // NEW

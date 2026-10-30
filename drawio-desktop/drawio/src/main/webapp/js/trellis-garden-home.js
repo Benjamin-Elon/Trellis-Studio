@@ -21,15 +21,15 @@
     function request(payload) {
         return new Promise((resolve, reject) => root.electron.request(payload, resolve, (message, error) => reject(error || new Error(message))));
     }
-    async function chooseJson() {
+    async function chooseJson(isActive) { // CHANGE: account workflows may lose authority while a native dialog is open.
         const paths = await request({ action: 'showOpenDialog', properties: ['openFile'], filters: [{ name: 'Trellis setup / field packages', extensions: ['json'] }] });
-        if (!paths?.length) return null;
+        if (!paths?.length || (isActive && !isActive())) return null; // CHANGE
         return JSON.parse(await request({ action: 'readFile', filename: paths[0], encoding: 'utf8' }));
     }
-    async function saveJson(value, name) {
+    async function saveJson(value, name, isActive) { // CHANGE: cancellation and invalidation must not export an obsolete setup package.
         const filename = await request({ action: 'showSaveDialog', defaultPath: name, filters: [{ name: 'Trellis package', extensions: ['json'] }] });
-        if (filename) await request({ action: 'writeFile', path: filename, data: JSON.stringify(value, null, 2), enc: 'utf8' });
-        return !!filename;
+        if (!filename || (isActive && !isActive())) return false; // CHANGE
+        await request({ action: 'writeFile', path: filename, data: JSON.stringify(value, null, 2), enc: 'utf8' }); return true; // CHANGE
     }
     /** Confirm only when a navigation actually replaces the current document. */
     function mayReplace(ui) {
@@ -98,6 +98,7 @@
             if (state.session && !value.session && root.Trellis?.users?.getCurrentUser()?.portableIdentityId === state.session.identityId) root.Trellis.users.logout(); // NEW: background revocation ends the linked session while preserving the editor's unsaved document.
             if (changed && !value.session) { state.mode = 'idle'; state.reminder = null; } // CHANGE
             if (projectLoginKey(state.session) !== projectLoginKey(value.session)) { activateProjectSnapshot(state, value.session); // CHANGE
+                 state.accountPopover?.dispose(); state.reminder = null; state.persistenceWarning = null; // CHANGE: account callbacks and notices cannot cross login generations.
                  state.confirmation?.invalidate(); state.mode = 'idle'; state.showIdentity = false; state.referenceKey = null; drawProjects(ui, state); } // CHANGE
             const previousIdentity = state.session?.identityId; // NEW
             state.session = value.session; state.sessionVersion = (state.sessionVersion || 0) + 1; updateSplashStatuses(state); // CHANGE
@@ -110,6 +111,7 @@
         });
         root.trellisShare?.onStatus?.(() => { if (state.projectsRoot?.isConnected || [...state.splashStatuses].some(node => node.isConnected)) refreshPendingJoins(ui, state); }); // NEW: transport progress updates invitations without refreshing project snapshots.
         root.trellisIdentity.onLocked(() => {
+            state.accountPopover?.dispose(); // CHANGE: retire account operations before the library is replaced.
             state.confirmation?.invalidate(); // CHANGE: retire the prompt before closing its underlying library.
             const wasProjects = !!state.projectsRoot?.isConnected; // NEW
             activateProjectSnapshot(state, null); state.reminder = null; state.persistenceWarning = null; state.session = null; state.mode = 'idle'; updateSplashStatuses(state); // CHANGE
@@ -296,13 +298,14 @@
     /** Host dialogs consume events, so outside dismissal and Escape run in capture. */ // NEW
     function installProjectPopovers(panel) { // NEW
         const selector = 'details[data-project-popover][open]'; // NEW
-        function outside(event) { for (const popover of panel.querySelectorAll(selector)) if (!popover.contains(event.target)) popover.open = false; } // NEW
+        function close(popover) { popover.open = false; popover.__trellisDismiss?.(); } // CHANGE: clear account drafts synchronously, before the native toggle event.
+        function outside(event) { for (const popover of panel.querySelectorAll(selector)) if (!popover.contains(event.target)) close(popover); } // CHANGE
         function escape(event) { // NEW
             if (event.key !== 'Escape' || !panel.contains(document.activeElement)) return; // NEW
             const opened = [...panel.querySelectorAll(selector)].at(-1); // NEW
-            if (opened) { event.preventDefault(); event.stopImmediatePropagation(); opened.open = false; opened.querySelector('summary').focus({ preventScroll: true }); } // NEW
+            if (opened) { event.preventDefault(); event.stopImmediatePropagation(); close(opened); opened.querySelector('summary').focus({ preventScroll: true }); } // CHANGE
         } // NEW
-        function toggled(event) { if (event.target.matches?.(selector)) for (const other of panel.querySelectorAll(selector)) if (other !== event.target) other.open = false; } // NEW
+        function toggled(event) { if (event.target.matches?.(selector)) for (const other of panel.querySelectorAll(selector)) if (other !== event.target) close(other); } // CHANGE
         document.addEventListener('pointerdown', outside, true); document.addEventListener('click', outside, true); document.addEventListener('focusin', outside, true); document.addEventListener('keydown', escape, true); panel.addEventListener('toggle', toggled, true); // CHANGE
         return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('click', outside, true); document.removeEventListener('focusin', outside, true); document.removeEventListener('keydown', escape, true); panel.removeEventListener('toggle', toggled, true); }; // CHANGE
     } // NEW
@@ -543,6 +546,7 @@
         panel.dataset.quickstartSurface = 'projects'; // NEW
         body.append(folder, footer); const removePopoverListeners = installProjectPopovers(panel); // CHANGE
         ui.showDialog(panel, Math.max(240, Math.min(760, (root.innerWidth || 1000) - 40)), Math.max(180, Math.min(710, (root.innerHeight || 900) - 70)), true, true, cancel => { // NEW
+            state.accountPopover?.dispose(); // CHANGE: pending account results cannot update a closed or reopened library.
             state.confirmation?.invalidate(); // CHANGE: late membership callbacks cannot outlive the library.
             state.quickstartHighlight = null; // NEW: highlight intent cannot leak to a later dialog.
             removePopoverListeners(); state.opening = false; state.projectsVersion++; // CHANGE: pending reads own cache state, never detached UI.
@@ -1244,6 +1248,138 @@
         menu.querySelectorAll('button').forEach(control => { if (project.departing && control !== remove) control.disabled = true; }); // NEW
         row.append(info, controls); state.projectRowNodes.set(nodeKey, { token, row }); return row; // CHANGE
     } // NEW
+    /** Keep account navigation local; submitted work survives dismissal, but never its login or library. */ // NEW
+    function renderAccount(state) { // NEW
+        const host = state.accountHost, library = state.projectsRoot, owner = projectLoginKey(state.session); // NEW
+        if (state.accountPopover?.host === host && state.accountPopover.owner === owner) { state.accountPopover.update(); return; } // NEW: background refreshes retain the live form and its focus.
+        state.accountPopover?.dispose(); host.replaceChildren(); // NEW
+        const account = element('details', null, 'trellis-account-menu'), summary = element('summary', state.session.username); // NEW
+        const menu = element('section', null, 'trellis-project-menu-items trellis-account-panel'), content = element('div'), status = element('p', null, 'trellis-home-muted'), notices = element('div', null, 'trellis-account-notices'); // NEW
+        account.setAttribute('data-project-popover', 'account'); summary.setAttribute('aria-label', 'Account: ' + state.session.username); // NEW
+        menu.setAttribute('aria-label', 'Account & devices'); menu.tabIndex = -1; status.setAttribute('aria-live', 'polite'); // NEW
+        root.Trellis?.ui?.applyButtonStyle?.(summary, 'neutral'); // NEW
+        menu.append(element('h3', 'Account & devices'), content, status); account.append(summary, menu); host.append(account, notices); // NEW
+        let view = 'overview', pending = null, message = '', devices = null, disposed = false; // NEW
+        const controller = state.accountPopover = { host, owner, update, dispose }; // NEW
+        function active() { return !disposed && state.accountPopover === controller && state.accountHost === host && host.isConnected && projectLoginKey(state.session) === owner; } // NEW
+        /** Clear even detached form references held by a submitted action. */ // NEW
+        function clearPasswords() { for (const field of content.querySelectorAll('input[type=password]')) field.value = ''; } // NEW
+        function navigate(next, focus = true) { clearPasswords(); view = next; render(focus); } // NEW
+        function dismiss() { if (active()) navigate('overview', false); } // NEW
+        function dispose() { // NEW
+            if (disposed) return; clearPasswords(); disposed = true; account.open = false; // NEW
+            root.removeEventListener('resize', position); library.removeEventListener('toggle', position, true); // NEW
+            if (state.accountPopover === controller) state.accountPopover = null; // NEW
+        } // NEW
+        /** Constrain the anchored panel to the library, whose header is outside the scrolling project body. */ // NEW
+        function position() { // NEW
+            if (!active() || !account.open) return; // NEW
+            const bounds = library.getBoundingClientRect(), trigger = summary.getBoundingClientRect(); // NEW
+            menu.style.width = Math.max(0, Math.min(360, bounds.width - 24)) + 'px'; // NEW
+            menu.style.maxHeight = Math.max(0, Math.min(bounds.bottom, root.innerHeight) - trigger.bottom - 16) + 'px'; // NEW
+        } // NEW
+        /** Refresh progress and account notices without replacing an active form. */ // NEW
+        function update() { // NEW
+            if (!active()) return; // NEW
+            summary.textContent = state.session.username; summary.setAttribute('aria-label', 'Account: ' + state.session.username); // NEW
+            status.textContent = pending?.label || message; menu.setAttribute('aria-busy', String(!!pending)); // NEW
+            for (const control of content.querySelectorAll('button,input')) if (!control.hasAttribute('data-account-navigation')) control.disabled = !!pending; // NEW
+            const submit = content.querySelector('form button'); if (submit) submit.textContent = state.session.passwordConflict ? 'Resolve password conflict' : 'Change password'; // NEW
+            notices.replaceChildren(); // NEW
+            const warning = [state.persistenceWarning, state.session.passwordConflict ? 'Password changes conflict. Open Account & devices and change your password to resolve them before pairing or changing the library.' : null].filter(Boolean).join(' '); // NEW
+            if (warning) { // NEW
+                const notice = element('p', warning, 'trellis-home-muted'); notice.setAttribute('role', 'status'); notices.append(notice); // NEW
+                notices.append(button('Account & devices', () => { account.open = true; position(); content.querySelector('button')?.focus(); }, 'open')); // NEW
+            } // NEW
+            if (state.reminder) { // NEW
+                notices.append(element('span', 'Keep a record of your password. ', 'trellis-home-muted'), button('Copy login reminder', () => run('Copying login reminder…', async () => { // NEW
+                    const password = state.reminder, session = await root.trellisIdentity.getSession(); // NEW
+                    if (!active() || projectLoginKey(session) !== owner) return; // NEW
+                    await request({ action: 'clipboardAction', method: 'writeText', data: 'Username: ' + session.username + '\nPassword: ' + password + '\nDate: ' + new Date().toISOString() }); // NEW
+                    if (active()) state.reminder = null; // NEW
+                    return { message: 'Login reminder copied. Paste it into your own secure record.' }; // NEW
+                }), 'neutral')); // NEW
+                notices.lastChild.disabled = !!pending; // NEW
+            } // NEW
+            position(); // NEW
+        } // NEW
+        /** Serialize bridge workflows without holding the popover open or repopulating a dismissed form. */ // NEW
+        async function run(label, action) { // NEW
+            if (!active() || pending) return; // NEW
+            const origin = view, hadFocus = menu.contains(document.activeElement); pending = { label }; message = ''; update(); // NEW
+            if (account.open && hadFocus) (content.querySelector('[data-account-navigation]') || menu).focus({ preventScroll: true }); // NEW: disabled fields must not drop Escape handling onto the underlying library.
+            let result, failure; // NEW
+            try { result = await action(); } catch (error) { failure = error; } // NEW
+            if (!active()) return; // NEW
+            pending = null; message = failure ? failure.message : result?.message || ''; // NEW
+            const focus = account.open && menu.contains(document.activeElement); // NEW
+            if (!failure && result?.overview && view === origin) navigate('overview', focus); // NEW
+            else if (!failure && (view === 'devices' || view === 'overview')) render(focus); // NEW
+            else update(); // NEW: failed password attempts keep an undismissed form usable.
+        } // NEW
+        /** Submit through the native form so Enter and the button share one guarded operation. */ // NEW
+        function passwordView() { // NEW
+            const current = input('Current password', 'password'), next = input('New password', 'password'), form = element('form', null, 'trellis-home-form'); // NEW
+            current.control.autocomplete = 'current-password'; next.control.autocomplete = 'new-password'; // NEW
+            const submit = button(state.session.passwordConflict ? 'Resolve password conflict' : 'Change password', null, 'add'); submit.type = 'submit'; // NEW
+            form.append(current.wrap, next.wrap, submit); // NEW
+            const cancel = button('Cancel', () => navigate('overview'), 'close'); cancel.setAttribute('data-account-navigation', ''); form.append(cancel); // NEW
+            form.addEventListener('submit', event => { // NEW
+                event.preventDefault(); if (pending || !active()) return; // NEW
+                const payload = { currentPassword: current.control.value, password: next.control.value, resolveConflict: !!state.session.passwordConflict }; // NEW
+                run('Changing password…', async () => { // NEW
+                    const result = await root.trellisIdentity.changePassword(payload); // NEW
+                    if (!active()) return; // NEW
+                    state.persistenceWarning = result?.persistenceWarning || null; state.reminder = payload.password; // NEW
+                    if (result?.session && projectLoginKey(result.session) === owner) state.session = result.session; // NEW
+                    return { message: 'Password changed.', overview: true }; // NEW
+                }); // NEW
+            }); // NEW
+            content.append(element('h4', 'Change password'), form); // NEW
+        } // NEW
+        /** Render a complete device snapshot; removal updates this snapshot rather than appending rows. */ // NEW
+        function devicesView() { // NEW
+            content.append(element('h4', 'Manage devices')); // NEW
+            const back = button('Back', () => navigate('overview'), 'close'); back.setAttribute('data-account-navigation', ''); content.append(back); // NEW
+            if (!devices) return; // NEW
+            if (!devices.length) content.append(element('p', 'No paired devices.', 'trellis-home-muted')); // NEW
+            for (const device of devices) { // NEW
+                const row = element('div', null, 'trellis-account-device'); // NEW
+                row.append(element('span', device.name + ' · ' + device.kind), button('Remove device', () => { // NEW
+                    if (pending || !active() || !confirm('Remove this device from future identity synchronization? Downloaded files cannot be erased remotely.')) return; // NEW
+                    run('Removing device…', async () => { // NEW
+                        await root.trellisIdentity.removeDevice({ deviceId: device.id }); // NEW
+                        if (active()) devices = devices.filter(item => item.id !== device.id); // NEW
+                        return { message: 'Device removed.' }; // NEW
+                    }); // NEW
+                }, 'danger')); content.append(row); // NEW
+            } // NEW
+        } // NEW
+        /** Each navigation owns exactly one content subtree; only explicit navigation moves focus. */ // NEW
+        function render(focus = false) { // NEW
+            if (!active()) return; clearPasswords(); content.replaceChildren(); // NEW
+            if (view === 'password') passwordView(); // NEW
+            else if (view === 'devices') devicesView(); // NEW
+            else { // NEW
+                content.append(button('Change password', () => navigate('password'), 'neutral')); // NEW
+                content.append(button('Approve a device request', () => run('Approving device request…', async () => { // NEW
+                    const file = await chooseJson(active); if (!file || !active()) return; // NEW
+                    const result = await root.trellisIdentity.approvePairRequest({ request: file }); if (!active()) return; // NEW
+                    const saved = await saveJson(result.setup, 'trellis-device-setup.json', active); // NEW
+                    return { message: saved ? 'Send the setup package to the requesting device.' : 'Setup package was not saved. Approve the request again to export it.' }; // NEW
+                }), 'add')); // NEW
+                content.append(button('Manage devices', () => { // NEW
+                    navigate('devices'); run('Loading devices…', async () => { const result = await root.trellisIdentity.getDevices(); if (active()) devices = result; }); // NEW
+                }, 'open')); // NEW
+                const logout = element('div', null, 'trellis-account-logout'); logout.append(button('Log out', () => run('Logging out…', () => root.trellisIdentity.lock()), 'close')); content.append(logout); // NEW
+            } // NEW
+            update(); if (focus && account.open) (content.querySelector('input') || content.querySelector('button'))?.focus({ preventScroll: true }); // NEW
+        } // NEW
+        account.__trellisDismiss = dismiss; // NEW
+        summary.addEventListener('click', () => { if (account.open) dismiss(); }); // NEW: native disclosure closes after this handler, including keyboard activation.
+        account.addEventListener('toggle', () => { if (account.open) position(); else dismiss(); }); // NEW
+        root.addEventListener('resize', position); library.addEventListener('toggle', position, true); render(); // NEW
+    } // NEW
     async function renderIdentity(ui, state) {
         const panel = state.panel; if (!panel) return;
         const version = ++state.renderVersion, mode = state.mode; // NEW: guard responses that arrive after another render or form navigation.
@@ -1254,16 +1390,8 @@
         updateProjectSections(state); // NEW: login forms can change identities without a separate status event.
         const status = element('div', null, 'trellis-home-muted'); status.setAttribute('aria-live', 'polite');
         const row = element('div', null, 'trellis-home-row'); panel.append(row, status);
-        if (state.session && state.persistenceWarning) { const notice = element('p', state.persistenceWarning, 'trellis-home-muted'); notice.setAttribute('role', 'status'); panel.append(notice); } // NEW: separate from password-conflict and copy-reminder messages.
         function perform(action) { return async () => { try { await action(); } catch (error) { status.textContent = error.message; } }; }
         function back() { state.mode = 'idle'; state.showIdentity = false; state.reminder = null; renderIdentity(ui, state).catch(error => { status.textContent = error.message; }); } // CHANGE
-        function reminder() { // CHANGE: render into the current panel after creation or password changes.
-            status.append(element('span', 'Keep a record of your password. '), button('Copy login reminder', perform(async () => {
-                const session = await root.trellisIdentity.getSession();
-                await request({ action: 'clipboardAction', method: 'writeText', data: 'Username: ' + session.username + '\nPassword: ' + state.reminder + '\nDate: ' + new Date().toISOString() }); // CHANGE: copy only the requested login details.
-                state.reminder = null; status.textContent = 'Login reminder copied. Paste it into your own secure record.';
-            }), 'neutral')); // CHANGE: use the shared semantic button contract.
-        }
         function form(title, fields, submit, label) {
             state.mode = title; row.replaceChildren(element('strong', title));
             const body = element('form', null, 'trellis-home-form'); panel.append(body);
@@ -1276,25 +1404,7 @@
             const field = input('Keep me logged in on this device', 'checkbox'); field.control.checked = true; // NEW
             field.wrap.prepend(field.control); return field; // NEW
         } // NEW
-        if (state.session) {
-            row.append(element('strong', 'Logged in as ' + state.session.username), button('Log out', perform(async () => { await root.trellisIdentity.lock(); }), 'close'), button('Identity settings', () => { // CHANGE: use the shared semantic button contract.
-                state.mode = 'settings'; row.replaceChildren(element('strong', 'Identity settings'), button('Back', back, 'close')); // CHANGE: use the shared semantic button contract.
-                panel.append(button('Change password', () => {
-                    const current = input('Current password', 'password'), next = input('New password', 'password');
-                    form('Change password', [current, next], async () => { const password = next.control.value; const result = await root.trellisIdentity.changePassword({ currentPassword: current.control.value, password, resolveConflict: !!state.session.passwordConflict }); state.persistenceWarning = result?.persistenceWarning || null; current.control.value = ''; next.control.value = ''; state.mode = 'idle'; state.reminder = password; await renderIdentity(ui, state); }, state.session.passwordConflict ? 'Resolve password conflict' : 'Change password'); // CHANGE: retain a persistence failure notice after a local password change.
-                }, 'neutral')); // CHANGE: use the shared semantic button contract.
-                panel.append(button('Approve a device request', perform(async () => { const requestFile = await chooseJson(); if (!requestFile) return; const result = await root.trellisIdentity.approvePairRequest({ request: requestFile }); await saveJson(result.setup, 'trellis-device-setup.json'); status.textContent = 'Send the setup package to the requesting device.'; }), 'add')); // CHANGE: use the shared semantic button contract.
-                panel.append(button('Manage devices', perform(async () => {
-                    const devices = await root.trellisIdentity.getDevices();
-                    for (const device of devices) {
-                        const item = element('div', null, 'trellis-home-row');
-                        item.append(element('span', device.name + ' · ' + device.kind), button('Remove device', perform(async () => { if (confirm('Remove this device from future identity synchronization? Downloaded files cannot be erased remotely.')) { await root.trellisIdentity.removeDevice({ deviceId: device.id }); back(); } }), 'danger')); // CHANGE: use the shared semantic button contract.
-                        panel.append(item);
-                    }
-                }), 'open')); // CHANGE: use the shared semantic button contract.
-            }, 'open')); // CHANGE: use the shared semantic button contract.
-            if (state.session.passwordConflict) status.textContent = 'Password changes conflict. Resolve them in Identity settings before pairing or changing the library.';
-        } else {
+        if (state.session) { renderAccount(state); } else { // CHANGE: signed-in settings live entirely in the username popover.
             row.append(button('Log in', () => {
                 if (!data.identities.length) { status.textContent = 'Create an identity or connect an existing one first.'; return; }
                 const choice = { wrap: element('label', null, 'trellis-home-field'), control: element('select') }; choice.wrap.append(element('span', 'Identity'), choice.control);
@@ -1320,20 +1430,14 @@
             }, 'open')); // CHANGE: use the shared semantic button contract.
             row.append(element('span', 'Local projects are available below.', 'trellis-home-muted')); // CHANGE
         }
-        if (state.accountHost) { // NEW
-            state.accountHost.replaceChildren(); // NEW
-            if (state.session) { // NEW
-                const account = element('details', null, 'trellis-account-menu'), summary = element('summary', state.session.username), menu = element('div', null, 'trellis-project-menu-items'); // NEW
-                account.setAttribute('data-project-popover', 'account'); summary.setAttribute('aria-label', 'Account: ' + state.session.username); root.Trellis?.ui?.applyButtonStyle?.(summary, 'neutral'); // NEW
-                menu.append(...row.querySelectorAll('button')); row.replaceChildren(); account.append(summary, menu); state.accountHost.append(account); // NEW
-                menu.addEventListener('click', event => { if (event.target.closest('button')) { account.open = false; panel.hidden = false; } }); // NEW
-            } else state.accountHost.append(button('Login', () => { state.showIdentity = true; panel.hidden = false; if (data.identities.length) [...row.querySelectorAll('button')].find(control => control.textContent === 'Log in')?.click(); else row.querySelector('button')?.focus(); }, 'open')); // NEW
-            panel.hidden = !state.showIdentity && state.mode === 'idle' && !state.reminder && !state.persistenceWarning && !state.session?.passwordConflict; // NEW
-        } // NEW
+        if (!state.session && state.accountHost) { // CHANGE: preserve the signed-out forms and their existing entry point.
+            state.accountPopover?.dispose(); state.accountHost.replaceChildren(); // CHANGE
+            state.accountHost.append(button('Login', () => { state.showIdentity = true; panel.hidden = false; if (data.identities.length) [...row.querySelectorAll('button')].find(control => control.textContent === 'Log in')?.click(); else row.querySelector('button')?.focus(); }, 'open')); // CHANGE
+        } // CHANGE
+        panel.hidden = !!state.session || (!state.showIdentity && state.mode === 'idle'); // CHANGE: account actions never reveal an inline settings section.
         state.updateJoinIdentity?.(); refreshPendingJoins(ui, state); // NEW
         state.libraryIdentityId = state.session?.identityId; // CHANGE
         refreshProjects(ui, state, { reopen: true }); // CHANGE
-        if (state.session && state.reminder) reminder(); // NEW: background status refreshes retain the explicit copy action.
     }
     /** Combine library entry points only when the desktop bridge is available; retain base splash fallbacks. */ // CHANGE
     function attachSplash(splash, ui) { // NEW

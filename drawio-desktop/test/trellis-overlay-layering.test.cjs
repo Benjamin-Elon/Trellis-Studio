@@ -87,6 +87,7 @@ test("graph overlay plugins share a dialog-safe layer contract", () => {
         "Planting_Group.js",
         "Modules_Standalone.js",
         "Garden_Beds.js",
+        "Garden_Structures.js", // NEW
         "Garden_Dashboard.js",
         "Garden_Task_Manager.js",
         "Garden_Irrigation_Planner.js",

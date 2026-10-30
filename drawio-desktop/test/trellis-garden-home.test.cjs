@@ -432,6 +432,138 @@ async function loginFixture() { // NEW
     return f; // NEW
 } // NEW
 
+/** Drive the real disclosure and account bridge without depending on its internal view state. */ // NEW
+async function accountFixture(session = { identityId: 'alice', generation: 1, username: 'Alice' }) { // NEW
+    const f = fixture(); f.setSession(session); f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // NEW
+    const state = f.ui.__trellisGardenHome, account = state.accountHost.querySelector('details'), summary = account.querySelector('summary'); // NEW
+    const find = label => [...state.accountHost.querySelectorAll('button')].find(control => control.textContent === label); // NEW
+    summary.click(); await tick(); return { ...f, state, account, summary, find }; // NEW
+} // NEW
+
+test('account actions replace their views without duplicating controls, devices, or library state', async () => { // NEW
+    const f = await accountFixture(); let reads = 0, release; // NEW
+    f.window.trellisIdentity.getDevices = () => { reads++; return new Promise(resolve => { release = resolve; }); }; // NEW
+    f.state.searchControl.value = 'draft filter'; f.state.searchControl.dispatchEvent(new f.window.Event('input')); f.state.projectsBody.scrollTop = 73; // NEW
+    const rows = f.state.privateRows, menu = f.account.querySelector('.trellis-account-panel'); // NEW
+    assert.match(menu.textContent, /Account & devices/); assert.equal(f.find('Identity settings'), undefined); assert.equal(f.state.panel.hidden, true); // NEW
+    const manage = f.find('Manage devices'); manage.click(); manage.click(); assert.equal(reads, 1); // NEW
+    release([{ id: 'one', name: 'My laptop', kind: 'desktop' }]); await tick(); // NEW
+    assert.equal(menu.querySelectorAll('.trellis-account-device').length, 1); f.find('Back').click(); // NEW
+    for (let index = 0; index < 3; index++) { f.summary.click(); f.summary.click(); await tick(); } // NEW
+    assert.equal([...menu.querySelectorAll('button')].filter(node => node.textContent === 'Change password').length, 1); // NEW
+    f.find('Manage devices').click(); assert.equal(reads, 2); release([{ id: 'one', name: 'My laptop', kind: 'desktop' }]); await tick(); // NEW
+    assert.equal(menu.querySelectorAll('.trellis-account-device').length, 1); assert.equal(f.state.privateRows, rows); // NEW
+    assert.equal(f.state.searchControl.value, 'draft filter'); assert.equal(f.state.projectsBody.scrollTop, 73); assert.equal(f.ui.dialogs.length, 1); // NEW
+}); // NEW
+
+for (const dismissal of ['escape', 'outside', 'username', 'cancel', 'focus']) test('account password drafts clear on ' + dismissal + ' while dismissal preserves its target', async () => { // NEW
+    const f = await accountFixture(); f.find('Change password').click(); // NEW
+    const fields = [...f.account.querySelectorAll('input')]; fields.forEach(field => { field.value = 'draft secret'; }); fields[0].focus(); // NEW
+    if (dismissal === 'escape') { // NEW
+        const event = new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); fields[0].dispatchEvent(event); // NEW
+        assert.equal(event.defaultPrevented, true); assert.equal(f.window.document.activeElement, f.summary); // NEW
+    } else if (dismissal === 'outside') { f.state.trashTab.click(); assert.equal(f.state.view, 'trash'); } // NEW
+    else if (dismissal === 'username') f.summary.click(); // NEW
+    else if (dismissal === 'focus') f.state.searchControl.focus(); // NEW
+    else f.find('Cancel').click(); // NEW
+    assert.ok(fields.every(field => field.value === '')); assert.equal(f.account.querySelector('form'), null); // NEW
+    assert.equal(f.account.open, dismissal === 'cancel'); assert.equal(f.state.panel.hidden, true); // NEW
+    if (!f.account.open) f.summary.click(); f.find('Change password').click(); // NEW
+    assert.ok([...f.account.querySelectorAll('input')].every(field => field.value === '')); // NEW
+}); // NEW
+
+test('background account refresh preserves a password draft and its focus', async () => { // NEW
+    const f = await accountFixture(); f.find('Change password').click(); const field = f.account.querySelector('input'); field.value = 'draft'; field.focus(); // NEW
+    const session = { identityId: 'alice', generation: 1, username: 'Alice', passwordConflict: true }; f.setSession(session); await f.emitStatus({ session }); // NEW
+    assert.equal(f.state.accountHost.querySelector('input'), field); assert.equal(field.value, 'draft'); assert.equal(f.window.document.activeElement, field); // NEW
+    assert.match(f.state.accountHost.querySelector('[role=status]').textContent, /Password changes conflict/); // NEW
+    assert.ok(f.find('Resolve password conflict')); // NEW
+}); // NEW
+
+test('submitted password changes survive dismissal and report completion without reopening or duplicate submission', async () => { // NEW
+    const f = await accountFixture(); let release, calls = 0; const copied = []; // NEW
+    f.window.electron = { request(payload, success) { copied.push(payload); success(); } }; // NEW
+    f.window.trellisIdentity.changePassword = payload => { calls++; assert.equal(payload.password, 'new secret'); return new Promise(resolve => { release = resolve; }); }; // NEW
+    f.find('Change password').click(); const form = f.account.querySelector('form'), fields = [...form.querySelectorAll('input')]; // NEW
+    fields[0].value = 'old secret'; fields[1].value = 'new secret'; fields[0].focus(); form.dispatchEvent(new f.window.Event('submit', { cancelable: true })); form.dispatchEvent(new f.window.Event('submit', { cancelable: true })); // NEW
+    assert.equal(calls, 1); assert.ok(f.account.contains(f.window.document.activeElement)); // NEW
+    f.window.document.activeElement.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); // NEW
+    assert.equal(f.account.open, false); assert.ok(fields.every(field => field.value === '')); f.summary.click(); // NEW
+    assert.match(f.account.textContent, /Changing password/); assert.equal(f.find('Change password').disabled, true); f.summary.click(); // NEW
+    release({ persistenceWarning: 'Remembered login unavailable.' }); await tick(); // NEW
+    assert.equal(f.account.open, false); assert.match(f.account.textContent, /Password changed/); assert.equal(f.find('Change password').disabled, false); // NEW
+    assert.equal(f.state.accountHost.querySelector('[role=status]').textContent, 'Remembered login unavailable.'); // NEW
+    f.find('Copy login reminder').click(); await tick(); assert.match(copied[0].data, /Password: new secret/); assert.equal(f.state.reminder, null); // NEW
+}); // NEW
+
+test('failed password submissions retain an open form and can be retried to resolve conflicts', async () => { // NEW
+    const session = { identityId: 'alice', generation: 1, username: 'Alice', passwordConflict: true }, f = await accountFixture(session); let calls = 0; // NEW
+    f.window.trellisIdentity.changePassword = async payload => { calls++; assert.equal(payload.resolveConflict, true); if (calls === 1) throw new Error('Incorrect password.'); return { session: { ...session, passwordConflict: false } }; }; // NEW
+    f.find('Change password').click(); const form = f.account.querySelector('form'); form.querySelector('input').value = 'typed'; // NEW
+    f.find('Resolve password conflict').click(); await tick(); assert.match(f.account.textContent, /Incorrect password/); // NEW
+    assert.equal(f.account.querySelector('form'), form); assert.equal(form.querySelector('input').value, 'typed'); assert.equal(f.find('Resolve password conflict').disabled, false); // NEW
+    f.find('Resolve password conflict').click(); await tick(); assert.equal(calls, 2); assert.equal(f.account.querySelector('form'), null); assert.equal(f.state.session.passwordConflict, false); // NEW
+}); // NEW
+
+for (const change of ['logout', 'identity', 'generation', 'library']) test('obsolete account work is ignored after ' + change, async () => { // NEW
+    const f = await accountFixture(); let release; f.window.trellisIdentity.changePassword = () => new Promise(resolve => { release = resolve; }); // NEW
+    f.find('Change password').click(); const form = f.account.querySelector('form'); form.querySelectorAll('input')[1].value = 'obsolete'; form.dispatchEvent(new f.window.Event('submit', { cancelable: true })); // NEW
+    if (change === 'library') f.ui.hideDialog(); // NEW
+    else { const session = change === 'logout' ? null : { identityId: change === 'identity' ? 'bob' : 'alice', generation: 2, username: 'Current' }; f.setSession(session); await f.emitStatus({ session }); } // NEW
+    release({ persistenceWarning: 'Obsolete warning.' }); await tick(); // NEW
+    assert.equal(f.state.reminder, null); assert.doesNotMatch(f.state.projectsRoot.textContent, /Obsolete warning|Password changed/); // NEW
+    assert.ok([...form.querySelectorAll('input')].every(field => field.value === '')); // NEW
+}); // NEW
+
+for (const cancelAt of ['open', 'save', 'none']) test('device approval handles native file dialogs and cancellation at ' + cancelAt, async () => { // NEW
+    const f = await accountFixture(); let approvals = 0, writes = 0; // NEW
+    f.window.trellisIdentity.approvePairRequest = async () => { approvals++; return { setup: { approved: true } }; }; // NEW
+    f.window.electron = { request(payload, success) { // NEW
+        if (payload.action === 'showOpenDialog') { f.state.searchControl.focus(); success(cancelAt === 'open' ? [] : ['request.json']); } // NEW: native focus changes may dismiss the panel without cancelling submitted work.
+        else if (payload.action === 'readFile') success('{}'); // NEW
+        else if (payload.action === 'showSaveDialog') success(cancelAt === 'save' ? null : 'setup.json'); // NEW
+        else if (payload.action === 'writeFile') { writes++; success(); } // NEW
+    } }; // NEW
+    const approve = f.find('Approve a device request'); approve.click(); approve.click(); await tick(); // NEW
+    assert.equal(approvals, cancelAt === 'open' ? 0 : 1); assert.equal(writes, cancelAt === 'none' ? 1 : 0); assert.equal(f.account.open, false); // NEW
+    if (cancelAt === 'none') assert.match(f.account.textContent, /Send the setup package/); // NEW
+    else assert.doesNotMatch(f.account.textContent, /Send the setup package/); // NEW
+    if (cancelAt === 'save') assert.match(f.account.textContent, /not saved/); // NEW
+}); // NEW
+
+test('device lists handle empty, failed, and successful reads and retain removal confirmation', async () => { // NEW
+    const f = await accountFixture(); let attempt = 0, removes = 0, confirmed = false; // NEW
+    f.window.confirm = () => confirmed; f.window.trellisIdentity.getDevices = async () => { attempt++; if (attempt === 1) throw new Error('Device list unavailable.'); return attempt === 2 ? [] : [{ id: 'one', name: 'Laptop', kind: 'desktop' }]; }; // NEW
+    f.window.trellisIdentity.removeDevice = async () => { removes++; }; // NEW
+    f.find('Manage devices').click(); await tick(); assert.match(f.account.textContent, /Device list unavailable/); f.find('Back').click(); // NEW
+    f.find('Manage devices').click(); await tick(); assert.match(f.account.textContent, /No paired devices/); f.find('Back').click(); // NEW
+    f.find('Manage devices').click(); await tick(); f.find('Remove device').click(); await tick(); assert.equal(removes, 0); // NEW
+    confirmed = true; f.find('Remove device').click(); await tick(); assert.equal(removes, 1); assert.equal(f.account.querySelectorAll('.trellis-account-device').length, 0); // NEW
+    assert.match(f.account.textContent, /Device removed/); // NEW
+}); // NEW
+
+for (const stage of ['open', 'save']) test('account invalidation during the ' + stage + ' dialog prevents subsequent file operations', async () => { // NEW
+    const f = await accountFixture(); let release, reads = 0, writes = 0, approvals = 0; // NEW
+    f.window.trellisIdentity.approvePairRequest = async () => { approvals++; return { setup: {} }; }; // NEW
+    f.window.electron = { request(payload, success) { // NEW
+        if (payload.action === 'showOpenDialog') { if (stage === 'open') release = success; else success(['request.json']); } // NEW
+        else if (payload.action === 'readFile') { reads++; success('{}'); } // NEW
+        else if (payload.action === 'showSaveDialog') release = success; // NEW
+        else if (payload.action === 'writeFile') { writes++; success(); } // NEW
+    } }; // NEW
+    f.find('Approve a device request').click(); await tick(); f.setSession(null); await f.emitStatus({ session: null }); // NEW
+    release(stage === 'open' ? ['request.json'] : 'setup.json'); await tick(); // NEW
+    assert.equal(reads, stage === 'open' ? 0 : 1); assert.equal(approvals, stage === 'open' ? 0 : 1); assert.equal(writes, 0); // NEW
+}); // NEW
+
+test('dismissed device reads cannot repopulate the overview and logout remains directly available', async () => { // NEW
+    const f = await accountFixture(); let release, locks = 0; f.window.trellisIdentity.getDevices = () => new Promise(resolve => { release = resolve; }); // NEW
+    f.window.trellisIdentity.lock = async () => { locks++; }; f.find('Manage devices').click(); f.find('Back').click(); // NEW
+    release([{ id: 'late', name: 'Late device', kind: 'desktop' }]); await tick(); // NEW
+    assert.equal(f.account.querySelector('.trellis-account-device'), null); assert.equal(f.find('Manage devices').disabled, false); // NEW
+    f.find('Log out').click(); await tick(); assert.equal(locks, 1); // NEW
+}); // NEW
+
 for (const flow of ['Log in', 'Create identity', 'Connect existing identity']) { // NEW
     for (const checked of [true, false]) { // NEW
         test(`${flow} defaults to remembered login, sends ${checked}, and retains a failure notice`, async () => { // NEW
@@ -485,7 +617,7 @@ test('received identity invalidation returns settings to login and preserves the
     f.setCurrent(draft); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
     await f.emitStatus({ session: await f.window.trellisIdentity.getSession() }); // NEW
     f.window.Trellis = { users: { getCurrentUser: () => ({ portableIdentityId: 'alice' }), logout: () => { logouts++; } } }; // NEW
-    f.find('Identity settings').click(); f.setSession(null); await f.emitStatus({ session: null }); // NEW
+    f.ui.__trellisGardenHome.accountHost.querySelector('summary').click(); f.setSession(null); await f.emitStatus({ session: null }); // CHANGE
     assert.equal(logouts, 1); assert.equal(f.ui.getCurrentFile(), draft); assert.deepEqual(f.calls, []); // NEW
     assert.ok(f.find('Log in')); assert.equal(f.window.document.querySelector('[role=status]'), null); // NEW
 }); // NEW
@@ -804,8 +936,8 @@ test('library, identity, creation, and dynamic menu buttons reuse the production
     find('Projects').click(); await tick(); find('Create New Private Garden Project').click(); // CHANGE
     assert.equal(root.querySelector('button[type=submit]').getAttribute('data-trellis-button-variant'), 'add'); find('Cancel').click(); // CHANGE
     find('Edit my suffix').click(); variant('Save suffix', 'add'); find('Cancel').click(); // CHANGE
-    find('Identity settings').click(); find('Change password').click(); // CHANGE
-    const form = f.state.panel.querySelector('form'); assert.equal(form.querySelector('button').getAttribute('data-trellis-button-variant'), 'add'); assert.equal(form.querySelector('button:last-child').getAttribute('data-trellis-button-variant'), 'close'); // CHANGE
+    f.state.accountHost.querySelector('summary').click(); find('Change password').click(); // CHANGE
+    const form = f.state.accountHost.querySelector('form'); assert.equal(form.querySelector('button').getAttribute('data-trellis-button-variant'), 'add'); assert.equal(form.querySelector('button:last-child').getAttribute('data-trellis-button-variant'), 'close'); // CHANGE
 }); // CHANGE
 
 test('community creation and destructive community submissions have explicit variants', async () => { // CHANGE

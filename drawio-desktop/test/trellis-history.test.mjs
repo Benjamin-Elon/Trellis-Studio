@@ -31,7 +31,7 @@ test('document deltas preserve wrappers, Unicode, page/object order and page str
     assert.equal(normalizeDocument(before), normalizeDocument(before.replace('<mxfile>', '<mxfile modified="today" agent="test">').replace('<mxGraphModel>', '<mxGraphModel dx="100" dy="200">')));
 });
 
-test('real SQLite migration purges all legacy rows without touching unrelated tables and is restart safe', async () => {
+test('real SQLite initialization preserves legacy history and unrelated tables across restart', async () => { // CHANGE
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-history-')), dbPath = path.join(dir, 'history.sqlite');
     const legacy = new DatabaseSync(dbPath);
     legacy.exec('CREATE TABLE history_events(id TEXT); CREATE TABLE history_snapshots(payload BLOB); CREATE TABLE unrelated(value TEXT); INSERT INTO unrelated VALUES (\'keep\');');
@@ -40,16 +40,16 @@ test('real SQLite migration purges all legacy rows without touching unrelated ta
     try {
         await assert.rejects(initialize(store, '<invalid/>'));
         assert.ok(store._test.database.prepare("SELECT name FROM sqlite_master WHERE name='history_snapshots'").get());
-        const start = performance.now(); await initialize(store);
-        assert.equal(store._test.database.prepare("SELECT name FROM sqlite_master WHERE name='history_snapshots'").get(), undefined);
+        await initialize(store); // CHANGE
+        assert.equal(store._test.database.prepare('SELECT length(payload) AS bytes FROM history_snapshots').get().bytes, 2 * 1024 * 1024); // CHANGE
         assert.equal(store._test.database.prepare('SELECT value FROM unrelated').get().value, 'keep');
         assert.equal((await store.run('list', { diagramId: 'document-a' })).length, 1);
         await record(store, fixture(2)); store.close();
         const reopened = service({ dbPath }); await initialize(reopened, fixture(2));
         assert.equal((await reopened.run('list', { diagramId: 'document-a' })).length, 2);
-        const stats = await reopened.run('statistics', { diagramId: 'document-a' });
-        assert.ok(stats.databaseBytes < sizeBefore / 2); assert.equal(stats.reclamationPending, false);
-        console.log('History purge:', Math.round(performance.now() - start), 'ms;', sizeBefore, '->', stats.databaseBytes, 'bytes'); reopened.close();
+        const stats = await reopened.run('statistics', { diagramId: 'document-a' }); // CHANGE
+        assert.ok(stats.databaseBytes >= sizeBefore); assert.equal(stats.reclamationPending, false); // CHANGE
+        assert.equal(reopened._test.database.prepare('SELECT length(payload) AS bytes FROM history_snapshots').get().bytes, 2 * 1024 * 1024); reopened.close(); // CHANGE
     } finally { store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -126,5 +126,18 @@ test('stale initialization cannot replace a newer history context', async () => 
         await store.request('window', 'initialize', b); // NEW
         await assert.rejects(store.request('window', 'initialize', a), /context changed/); // NEW
         await store.request('window', 'statistics', b); // NEW
+    } finally { store.close(); } // NEW
+}); // NEW
+
+test('explicit re-sharing preserves prior shared generations for local access', async () => { // NEW
+    const store = service(); // NEW
+    try { // NEW
+        await initialize(store, fixture(0, false)); // NEW
+        await store.run('reset', {diagramId:'document-a',generation:'first-share',baselineId:'first-baseline',xml:fixture(0,false)}); // NEW
+        const old = await record(store,fixture(1,false)); // NEW
+        await store.run('reset', {diagramId:'document-a',generation:'second-share',baselineId:'second-baseline',xml:fixture(2,false)}); // NEW
+        assert.equal((await store.run('read',{revisionId:old.id})).xml,normalizeDocument(fixture(1,false))); // NEW
+        assert.equal((await store.run('describe',{diagramId:'document-a',revisionId:old.id})).generation,'first-share'); // NEW
+        assert.equal((await store.run('statistics',{diagramId:'document-a'})).generation,'second-share'); // NEW
     } finally { store.close(); } // NEW
 }); // NEW

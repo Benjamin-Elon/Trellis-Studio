@@ -24,6 +24,15 @@
 .trellis-projects-root details[data-project-popover]>summary { list-style:none;overflow-wrap:anywhere; } /* NEW */
 .trellis-projects-root details[data-project-popover]:not([open])>.trellis-project-menu-items,.trellis-city-picker:not([open])>.trellis-city-popup { display:none; } /* NEW */
 .trellis-account-menu .trellis-project-menu-items { max-width:calc(100vw - 70px); } /* NEW */
+.trellis-account-menu .trellis-account-panel { box-sizing:border-box;width:360px;min-width:0;max-width:none;padding:14px;overflow:auto;overscroll-behavior:contain; } /* NEW: JS bounds the anchored panel to the library on opening and resize. */
+.trellis-account-panel h3,.trellis-account-panel h4 { margin:0 0 10px; } /* NEW */
+.trellis-account-panel>div,.trellis-account-panel .trellis-home-form { display:flex;flex-direction:column;align-items:stretch;gap:6px; } /* NEW */
+.trellis-account-panel .trellis-home-field { flex-direction:column;align-items:stretch;margin:2px 0; } /* NEW */
+.trellis-account-panel input { width:100%;min-width:0; } /* NEW */
+.trellis-account-panel .trellis-account-logout { border-top:1px solid #d3dac8;margin-top:8px;padding-top:8px; } /* NEW */
+.trellis-account-device { display:flex;flex-direction:column;align-items:stretch;gap:4px;border-top:1px solid #d3dac8;padding-top:8px;overflow-wrap:anywhere; } /* NEW */
+.trellis-account-notices { max-width:300px;overflow-wrap:anywhere; } /* NEW */
+.trellis-account-notices:empty,.trellis-account-panel .trellis-home-muted:empty { display:none; } /* NEW */
 .trellis-city-popup { position:absolute;top:100%;left:0;z-index:25;width:440px;max-width:calc(100vw - 100px);box-sizing:border-box;padding:10px;background:#fffdf6;border:1px solid #c8d2c8;border-radius:6px;box-shadow:0 4px 12px #253c2d26; } /* NEW */
 .trellis-city-popup .trellis-home-field { margin-top:0; } /* NEW */
 .trellis-city-popup input { width:100%; } /* NEW */

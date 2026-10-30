@@ -157,3 +157,91 @@ test('same-user policy revalidation retains captured reference views while actor
     h.attrs(garden, { trellis_owner_user_id: 'new-owner' }); h.w.dispatchEvent(new h.w.CustomEvent('trellisUsersSessionChanged')); await assert.rejects(context.bridge.query(dbId, 'SELECT * FROM Cities', []), /garden or active user changed/); // CHANGE: same-actor scope revocation still closes read handles.
     h.attrs(garden, { trellis_owner_user_id: 'owner' }); const next = h.api.sqlContext(garden), opened = await next.bridge.open('', { readOnly: true }); h.user.id = 'viewer'; h.w.dispatchEvent(new h.w.CustomEvent('trellisUsersSessionChanged')); await assert.rejects(next.bridge.query(opened.dbId, 'SELECT * FROM Cities', []), /garden or active user changed/); // NEW
 }); // NEW
+
+
+test('equipment recommendations keep accepted consumer pins isolated from private drafts and later acceptance', async t => { // NEW
+    const h = fixture(t); h.load('plugins/garden_planner_plugins/Garden_Equipment.js'); // NEW
+    const garden = h.garden('equipment-pins'); await h.initialize(garden); // NEW
+    const equipment = h.graph.__trellisEquipment, base = h.api.read(garden), inventory = equipment.readEquipmentInventory(garden); // NEW
+    const pruners = inventory.find(item => item.id === 'eq_bypass_pruners'); assert.ok(pruners); // NEW
+    pruners.status = 'owned'; equipment.writeEquipmentInventory(garden, inventory); // NEW
+    const source = h.graph.insertVertex(garden, 'pinned-source', '', 0, 0, 100, 100, ''); // NEW
+    h.attrs(source, { tiler_group: '1', plant_id: '1', plant_count: '20', [h.C.PIN]: base.current }); // NEW
+    const task = h.graph.insertVertex(garden, 'pinned-task', '', 0, 0, 100, 50, ''); // NEW
+    h.attrs(task, { task_type_id: 'pruning', linkedTo: source.id, task_quantity_basis: 'plants', task_quantity_value: '20', task_equipment_ids: JSON.stringify([pruners.id]), task_estimated_hours: '8' }); // NEW
+    const before = equipment.recommendForTask(task, garden).estimate.estimatedHours; // NEW
+    const edited = equipment.readEquipmentInventory(garden); edited.find(item => item.id === pruners.id).efficiencyEffects[0].multiplier = 0.4; // NEW
+    equipment.writeEquipmentInventory(garden, edited); // NEW
+    assert.equal(equipment.recommendForTask(task, garden).estimate.estimatedHours, before); // NEW
+    const draft = h.api.getDraft(garden); assert.ok(draft); // NEW
+    const preview = equipment.recommendForTask(task, garden, { inventory: h.api.catalog(garden, 'equipment_inventory_json', { draft: true }).items, draftPreview: true }); // NEW
+    assert.ok(preview.estimate.estimatedHours < before); assert.equal(task.getAttribute('task_estimated_hours'), '8'); // NEW
+    const request = h.api.submit(garden, garden, draft.base, draft.candidate); // NEW
+    h.api.commit(await h.api.preview(garden, request.id, request.changes.filter(item => !item.dependency).map(item => item.entityId))); // NEW
+    assert.equal(equipment.recommendForTask(task, garden).estimate.estimatedHours, before); // NEW
+    const currentTask = h.graph.insertVertex(garden, 'current-task', '', 0, 0, 100, 50, ''); // NEW
+    h.attrs(currentTask, { task_type_id: 'pruning', task_quantity_basis: 'plants', task_quantity_value: '20', task_equipment_ids: JSON.stringify([pruners.id]) }); // NEW
+    assert.ok(equipment.recommendForTask(currentTask, garden).estimate.estimatedHours < before); // NEW
+}); // NEW
+
+test('legacy task-type links convert without writes and accepted empty links do not change pinned consumers', async t => { // NEW
+    const h = fixture(t); h.load('plugins/garden_planner_plugins/Garden_Equipment.js'); // NEW
+    const garden = h.garden('legacy-equipment-links'); await h.initialize(garden); const equipment = h.graph.__trellisEquipment; // NEW
+    const base = h.api.read(garden), definitions = h.C.catalog(base, 'equipment_inventory_json'); // NEW
+    definitions.items.forEach(item => { delete item.taskTypeLinksVersion; if (item.id === 'eq_bypass_pruners') item.relevantTaskTypes = []; }); // NEW
+    const legacy = h.C.putCatalog(base, 'equipment_inventory_json', definitions), request = h.api.submit(garden, garden, base, legacy); // NEW
+    h.api.commit(await h.api.preview(garden, request.id, request.changes.filter(item => !item.dependency).map(item => item.entityId))); // NEW
+    const pin = h.api.read(garden).current, source = h.graph.insertVertex(garden, 'legacy-pin-source', '', 0, 0, 100, 100, ''); // NEW
+    h.attrs(source, { tiler_group: '1', plant_count: '20', [h.C.PIN]: pin }); // NEW
+    const task = h.graph.insertVertex(garden, 'legacy-pin-task', '', 0, 0, 100, 50, ''); // NEW
+    h.attrs(task, { linkedTo: source.id, task_type_id: 'pruning', task_quantity_basis: 'plants', task_quantity_value: '20', task_equipment_ids: '["eq_bypass_pruners"]', task_estimated_hours: '8' }); // NEW
+    const acceptedBefore = garden.value.outerHTML, storedTask = task.value.outerHTML; // NEW
+    const recommendation = equipment.recommendForTask(task, garden); // NEW
+    assert.ok(recommendation.candidates.some(item => item.equipment.id === 'eq_bypass_pruners')); // NEW
+    assert.equal(recommendation.context.inventory.find(item => item.id === 'eq_bypass_pruners').taskTypeLinksVersion, 1); // NEW
+    assert.equal(garden.value.outerHTML, acceptedBefore); assert.equal(task.value.outerHTML, storedTask); // NEW
+    const edited = equipment.readEquipmentInventory(garden); edited.find(item => item.id === 'eq_bypass_pruners').relevantTaskTypes = []; equipment.writeEquipmentInventory(garden, edited); // NEW
+    const draft = h.api.getDraft(garden); assert.ok(draft); // NEW
+    const preview = equipment.recommendForTask(task, garden, { inventory: h.api.catalog(garden, 'equipment_inventory_json', { draft: true }).items, draftPreview: true }); // NEW
+    assert.equal(preview.candidates.some(item => item.equipment.id === 'eq_bypass_pruners'), false); assert.equal(preview.selected[0].relevant, false); // NEW
+    assert.ok(equipment.recommendForTask(task, garden).candidates.some(item => item.equipment.id === 'eq_bypass_pruners')); // NEW
+    const update = h.api.submit(garden, garden, draft.base, draft.candidate); // NEW
+    h.api.commit(await h.api.preview(garden, update.id, update.changes.filter(item => !item.dependency).map(item => item.entityId))); // NEW
+    assert.ok(equipment.recommendForTask(task, garden).candidates.some(item => item.equipment.id === 'eq_bypass_pruners')); // NEW
+    const current = h.graph.insertVertex(garden, 'empty-links-task', '', 0, 0, 100, 50, ''); h.attrs(current, { task_type_id: 'pruning' }); // NEW
+    assert.equal(equipment.recommendForTask(current, garden).candidates.some(item => item.equipment.id === 'eq_bypass_pruners'), false); // NEW
+    assert.equal(task.getAttribute('task_estimated_hours'), '8'); // NEW
+    const raw = h.C.catalog(h.api.read(garden), 'equipment_inventory_json', pin).items.find(item => item.id === 'eq_bypass_pruners'); // NEW
+    assert.equal(raw.taskTypeLinksVersion, undefined); assert.equal(raw.relevantTaskTypes.length, 0); // NEW
+}); // NEW
+
+test('real task series planning changes use one undoable model edit and leave schedule bookings intact', async t => { // NEW
+    const h = fixture(t); // NEW
+    for (const name of ['Garden_Equipment.js', 'Garden_Scheduler_Shared_Core.js', 'Garden_Scheduler_Annual_Core.js', 'Garden_Scheduler_Perennial_Core.js', 'Garden_Scheduler_Dialog.js']) h.load('plugins/garden_planner_plugins/' + name); // NEW
+    const garden = h.garden('planning-undo'); await h.initialize(garden); // NEW
+    const source = h.graph.insertVertex(garden, 'planning-undo-source', '', 0, 0, 100, 100, ''); // NEW
+    h.attrs(source, { tiler_group: '1', plant_id: '1', plant_count: '20', [h.C.PIN]: h.api.read(garden).current, task_template_json: JSON.stringify({ version: 2, rules: [{ id: 'sow', title: 'Sow', startAnchorStage: 'SOW', repeatMode: 'interval' }] }) }); // NEW
+    const taskModule = h.graph.insertVertex(null, 'planning-task-module', '', 0, 0, 1000, 1000, ''); h.attrs(taskModule, { task_module: '1' }); // NEW
+    const board = h.graph.insertVertex(taskModule, 'planning-board', '', 0, 0, 700, 400, ''); h.attrs(board, { board_key: 'MAIN_KANBAN_BOARD', task_view_mode: 'FULL' }); // NEW
+    const lane = h.graph.insertVertex(board, 'planning-lane', '', 0, 0, 200, 300, ''); h.attrs(lane, { lane_key: 'TODO', status: 'TODO' }); // NEW
+    const tasks = [0, 1].map(index => { // NEW
+        const task = h.graph.insertVertex(lane, 'planning-card-' + index, '', 0, 0, 160, 80, ''); // NEW
+        h.attrs(task, { kanban_card: '1', title: 'Sow', linkedTo: source.id, scheduler_rule_id: 'sow', scheduler_task_key: 'sow::' + index, task_type_id: 'direct_sowing', task_planning_override_json: '{}', task_quantity_basis: 'plants', task_quantity_value: '20', start: '2030-04-01', end: '2030-04-02', schedule_start_minute: '480', schedule_duration_minutes: '90' }); // NEW
+        return task; // NEW
+    }); // NEW
+    h.attrs(source, { linkedTo: tasks.map(task => task.id).join(',') }); // NEW
+    h.graph.__trellisModules = { findExistingCompanionTask: cell => cell === garden ? taskModule : null }; // NEW
+    h.load('plugins/garden_planner_plugins/Garden_Task_Manager.js'); // NEW
+    await new Promise(resolve => setTimeout(resolve, 30)); // NEW: settle initial board repair before measuring the planning command.
+    h.undoManager.clear(); // NEW
+    const bookings = tasks.map(task => ({ parent: task.parent, x: task.geometry.x, y: task.geometry.y, width: task.geometry.width, height: task.geometry.height, start: task.getAttribute('schedule_start_minute'), duration: task.getAttribute('schedule_duration_minutes') })); // NEW
+    const before = source.getAttribute('task_template_json'); // NEW
+    await h.graph.__trellisTaskManager.applyTaskPlanningChange(tasks[0], { taskTypeId: 'pruning', equipmentIds: [] }, 'series'); // NEW
+    await new Promise(resolve => setTimeout(resolve, 30)); // NEW: metadata changes must not queue a later schedule repair.
+    tasks.forEach((task, index) => assert.deepEqual({ parent: task.parent, x: task.geometry.x, y: task.geometry.y, width: task.geometry.width, height: task.geometry.height, start: task.getAttribute('schedule_start_minute'), duration: task.getAttribute('schedule_duration_minutes') }, bookings[index])); // NEW
+    assert.equal(JSON.parse(source.getAttribute('task_template_json')).rules[0].taskTypeId, 'pruning'); // NEW
+    assert.ok(tasks.every(task => task.getAttribute('task_type_id') === 'pruning')); // NEW
+    for (const task of tasks) assert.equal(task.getAttribute('start'), '2030-04-01'); // NEW
+    h.undoManager.undo(); assert.equal(source.getAttribute('task_template_json'), before); assert.ok(tasks.every(task => task.getAttribute('task_type_id') === 'direct_sowing')); // NEW
+    h.undoManager.redo(); assert.ok(tasks.every(task => task.getAttribute('task_type_id') === 'pruning')); // NEW
+}); // NEW

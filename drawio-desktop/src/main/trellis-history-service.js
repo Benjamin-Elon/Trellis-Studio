@@ -14,6 +14,7 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
     let db = null, queue = Promise.resolve(), closed = false, lastCompaction = 0; // NEW
     const contexts = new Map();
     const recent = new Map(); // NEW: one verified recorder base per document; explicit reads always revalidate dependencies.
+    const exported = new Map(); // NEW: one independent XML base per document bounds save-time export reconstruction.
     function transaction(work) {
         db.exec('BEGIN IMMEDIATE');
         try { const result = work(); db.exec('COMMIT'); return result; }
@@ -36,7 +37,27 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
                 full_bytes INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'ready');
             CREATE INDEX IF NOT EXISTS history_v2_diagram ON history_v2_revisions(diagram_id, generation, timestamp);
             CREATE TABLE IF NOT EXISTS history_v2_retired (diagram_id TEXT NOT NULL, generation TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(diagram_id,generation,id));`);
+        db.exec("CREATE INDEX IF NOT EXISTS history_v2_pending ON history_v2_revisions(diagram_id,status)"); // NEW
+        db.exec('CREATE INDEX IF NOT EXISTS history_v2_content ON history_v2_revisions(diagram_id,hash,status,timestamp)'); // NEW: remote baseline adoption resolves one current content hash directly.
+        db.exec('CREATE INDEX IF NOT EXISTS history_v2_timeline ON history_v2_revisions(diagram_id,timestamp)'); // NEW: bounded timeline pages include all retained generations.
         db.exec('CREATE TABLE IF NOT EXISTS history_v2_anchors (diagram_id TEXT NOT NULL, id TEXT PRIMARY KEY)'); // NEW: retain unpublished compaction work across crashes.
+        db.exec(`CREATE TABLE IF NOT EXISTS history_v2_statistics (diagram_id TEXT PRIMARY KEY, revision_count INTEGER NOT NULL, stored_bytes INTEGER NOT NULL);
+            CREATE TRIGGER IF NOT EXISTS history_v2_statistics_insert AFTER INSERT ON history_v2_revisions BEGIN
+                INSERT INTO history_v2_statistics VALUES (NEW.diagram_id,1,NEW.payload_bytes+NEW.metadata_bytes)
+                ON CONFLICT(diagram_id) DO UPDATE SET revision_count=revision_count+1,stored_bytes=stored_bytes+NEW.payload_bytes+NEW.metadata_bytes;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_v2_statistics_delete AFTER DELETE ON history_v2_revisions BEGIN
+                UPDATE history_v2_statistics SET revision_count=revision_count-1,stored_bytes=stored_bytes-OLD.payload_bytes-OLD.metadata_bytes WHERE diagram_id=OLD.diagram_id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_v2_statistics_update AFTER UPDATE OF payload_bytes,metadata_bytes,diagram_id ON history_v2_revisions BEGIN
+                UPDATE history_v2_statistics SET revision_count=revision_count-1,stored_bytes=stored_bytes-OLD.payload_bytes-OLD.metadata_bytes WHERE diagram_id=OLD.diagram_id;
+                INSERT INTO history_v2_statistics VALUES (NEW.diagram_id,1,NEW.payload_bytes+NEW.metadata_bytes)
+                ON CONFLICT(diagram_id) DO UPDATE SET revision_count=revision_count+1,stored_bytes=stored_bytes+NEW.payload_bytes+NEW.metadata_bytes;
+            END;`); // NEW: aggregate maintenance is transactional and independent of retained revision count.
+        if (!db.prepare("SELECT value FROM history_v2_state WHERE key='statistics-v1'").get()) transaction(() => { // NEW
+            db.exec('INSERT OR REPLACE INTO history_v2_statistics SELECT diagram_id,COUNT(*),SUM(payload_bytes+metadata_bytes) FROM history_v2_revisions GROUP BY diagram_id'); // NEW: existing narrative history is indexed once, without deleting it.
+            db.prepare('INSERT OR REPLACE INTO history_v2_state VALUES (?,?)').run('statistics-v1', 'complete'); // NEW
+        }); // NEW
     }
     const state = key => db.prepare('SELECT value FROM history_v2_state WHERE key=?').get(key)?.value;
     const setState = (key, value) => db.prepare('INSERT OR REPLACE INTO history_v2_state VALUES (?,?)').run(key, value);
@@ -52,7 +73,7 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
         if (visiting.has(id) || visiting.size > 30) throw new Error('History has a cyclic or excessive dependency chain.');
         const record = row(id);
         if (!record) throw new Error('History dependency is missing; wait for shared history to finish downloading.');
-        if (!document(record.diagram_id) || document(record.diagram_id).generation !== record.generation) throw new Error('History belongs to a retired generation.');
+        if (!document(record.diagram_id)) throw new Error('History belongs to an unavailable document.'); // CHANGE: retained generations remain readable locally; transport imports and publication still enforce the active generation.
         visiting.add(id);
         let xml;
         if (record.kind === 'full') xml = normalizeDocument(decodePayload(record.payload));
@@ -77,17 +98,9 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
         try { db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);'); setState('compact', 'complete'); lastCompaction = now(); } // CHANGE
         catch (_) { /* Keep valid history; statistics expose pending physical reclamation. */ }
     }
-    function purgeLegacy() {
-        if (state('legacy-purge') === 'complete' && !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('history_events','history_snapshots')").get()) return; // NEW: a downgraded app cannot permanently revive legacy rows.
-        transaction(() => {
-            db.exec('DROP TABLE IF EXISTS history_events; DROP TABLE IF EXISTS history_snapshots;');
-            setState('legacy-purge', 'complete'); setState('compact', 'pending');
-        });
-        compact();
-    }
     function initialize(input) {
         const diagramId = safeId(input.diagramId);
-        const xml = normalizeDocument(input.xml); // Verify the open document before removing any legacy history. // NEW
+        const xml = normalizeDocument(input.xml); // CHANGE: validate the open diagram while preserving retained legacy history tables.
         let doc = document(diagramId);
         if (!doc) {
             transaction(() => {
@@ -99,8 +112,8 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
             let valid = true; try { readRevision(doc.latest_id); } catch (_) { valid = false; }
             if (!valid || row(doc.latest_id)?.hash !== digest(xml)) record({ diagramId, xml, forceFull: !valid, metadata: { category: 'System', action: 'open', title: valid ? 'Opened diagram state' : 'Recovered document baseline' } });
         }
-        purgeLegacy(); compact();
-        return { generation: doc.generation, revisions: list(diagramId), statistics: statistics(diagramId) };
+        compact(); // CHANGE: engine replacement does not erase or convert old history.
+        return { generation: doc.generation, revisions: list(diagramId,100), statistics: statistics(diagramId) }; // CHANGE: opening a renderer starts with a bounded current summary.
     }
     function record(input, useTransaction = true) {
         const work = () => {
@@ -127,9 +140,13 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
         if (useTransaction && document(input.diagramId).generation === 'local-v2') { prune(input.diagramId); if (now() - lastCompaction > 60000) compact(); } // CHANGE: batch physical reclamation instead of vacuuming after every edit.
         return result;
     }
-    function list(id) { return rows(id).map(metadata); }
+    function list(id, limit, offset = 0) { // CHANGE
+        if (limit === undefined) return rows(id).map(metadata); // CHANGE: explicit internal archive operations retain their existing full result.
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid history page.'); // NEW
+        return db.prepare('SELECT id,metadata,hash,generation,payload_bytes,metadata_bytes,kind,base_id,status FROM history_v2_revisions WHERE diagram_id=? ORDER BY timestamp DESC,rowid DESC LIMIT ? OFFSET ?').all(id,limit,offset).reverse().map(metadata); // NEW: pagination does not read historical payload blobs.
+    } // NEW
     function statistics(id) {
-        const aggregate = db.prepare('SELECT COUNT(*) AS revisionCount, COALESCE(SUM(payload_bytes + metadata_bytes),0) AS historyBytes FROM history_v2_revisions WHERE diagram_id=?').get(id);
+        const aggregate = db.prepare('SELECT revision_count AS revisionCount, stored_bytes AS historyBytes FROM history_v2_statistics WHERE diagram_id=?').get(id) || { revisionCount: 0, historyBytes: 0 }; // CHANGE: save-time statistics use the maintained aggregate.
         const size = filename => { try { return fs.statSync(filename).size; } catch (error) { return error.code === 'ENOENT' ? 0 : null; } }; // NEW
         return { ...aggregate, budgetBytes: budget, overBudget: aggregate.historyBytes > budget, databaseBytes: dbPath === ':memory:' ? 0 : size(dbPath), walBytes: dbPath === ':memory:' ? 0 : size(dbPath + '-wal'), reclamationPending: state('compact') === 'pending', migrationComplete: state('legacy-purge') === 'complete', generation: document(id)?.generation };
     }
@@ -140,6 +157,7 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
     }
     /** Promote retained descendants before removing dependencies; categories grant no exemption. */ // NEW
     function prune(id) {
+        if (!statistics(id).overBudget) return { removed: [], anchors: [], overBudget: false }; // CHANGE: ordinary saves never enumerate retained revisions for a budget check.
         const candidates = rows(id).filter(item => item.status === 'ready');
         const protectedIds = new Set(candidates.slice(-100).map(item => item.id));
         const initial = db.prepare('SELECT id FROM history_v2_revisions WHERE diagram_id=? ORDER BY rowid LIMIT 1').get(id); if (initial) protectedIds.add(initial.id); // NEW: a peer's clock cannot displace the initial baseline.
@@ -160,31 +178,33 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
         });
         return { removed, anchors: [...new Set(anchors)].filter(revisionId => row(revisionId)), overBudget: statistics(id).overBudget };
     }
+    /** Reuse independently verified XML only while its own stored payload and content hash match. */ // NEW
+    function exportXml(revision) { // NEW
+        const cached = [recent.get(revision.diagram_id), exported.get(revision.diagram_id)].find(item => item?.id === revision.id && item.payloadHash === digest(revision.payload) && digest(item.xml) === revision.hash); // NEW
+        return cached ? cached.xml : readRevision(revision.id); // NEW: explicit history reads retain full dependency verification.
+    } // NEW
     /** Shared exports use a published storage base, never private narrative parents. */ // NEW
     function exportRevision(input) {
         const revision = row(input.revisionId);
         if (!revision || revision.diagram_id !== input.diagramId) throw new Error('Unknown history revision.');
-        const xml = readRevision(revision.id), base = input.baseRevisionId && row(input.baseRevisionId);
+        const xml = exportXml(revision), base = input.baseRevisionId && row(input.baseRevisionId); // CHANGE
         const usable = base && base.diagram_id === revision.diagram_id && base.generation === revision.generation;
         const baseState = input.baseState || (base && { depth: base.depth, deltaBytes: base.delta_bytes, fullBytes: base.full_bytes }); // NEW
-        const encoded = encodeRevision(xml, usable ? { xml: readRevision(base.id), ...baseState } : null, input.forceFull || metadata(revision).checkpoint || metadata(revision).action === 'restore'); // CHANGE
+        const encoded = encodeRevision(xml, usable ? { xml: exportXml(base), ...baseState } : null, input.forceFull || metadata(revision).checkpoint || metadata(revision).action === 'restore'); // CHANGE
+        exported.set(revision.diagram_id, { id: revision.id, xml, payloadHash: digest(revision.payload) }); // NEW
         return { version: HISTORY_VERSION, generation: revision.generation, revision: metadata(revision), record: { kind: encoded.kind, baseRevisionId: encoded.kind === 'delta' ? base.id : null, hash: encoded.contentHash, payload: encoded.payload.toString('base64'), depth: encoded.depth, deltaBytes: encoded.deltaBytes, fullBytes: encoded.fullBytes } };
     }
     /** Only the signed transport may adopt a remote generation. Baseline is independently verified. */ // NEW
     function reset(input) {
         safeId(input.generation);
+        if (document(input.diagramId)?.generation === input.generation) return null; // CHANGE: checking the active generation does not encode or list historical revisions.
         const encoded = encodeRevision(input.xml, null, true);
-        if (document(input.diagramId)?.generation === input.generation) return list(input.diagramId);
         const retainLocal = document(input.diagramId)?.generation === 'local-v2'; // NEW: delayed shared migration must not erase revisions recorded after the upgrade.
         transaction(() => {
             if (retainLocal) { // NEW
                 db.prepare('UPDATE history_v2_revisions SET generation=? WHERE diagram_id=?').run(input.generation, input.diagramId);
                 db.prepare('UPDATE history_v2_retired SET generation=? WHERE diagram_id=?').run(input.generation, input.diagramId);
-            } else { // NEW
-                db.prepare('DELETE FROM history_v2_revisions WHERE diagram_id=?').run(input.diagramId);
-                db.prepare('DELETE FROM history_v2_anchors WHERE diagram_id=?').run(input.diagramId);
-                db.prepare('DELETE FROM history_v2_retired WHERE diagram_id=?').run(input.diagramId);
-            }
+            } // CHANGE: prior shared generations remain available as local narrative history when a project is explicitly re-shared.
             db.prepare('INSERT OR REPLACE INTO history_v2_documents VALUES (?,?,NULL)').run(input.diagramId, input.generation);
             const revision = { category: 'System', action: 'baseline', title: 'Shared history reset baseline', ...input.metadata, id: input.baselineId, diagramHistoryId: input.diagramId, timestamp: input.timestamp || now(), parentRevisionId: null };
             insert(revision, encoded, input.generation);
@@ -208,7 +228,7 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
         let progress = true;
         while (progress) {
             progress = false;
-            for (const pending of rows(revision.diagramHistoryId).filter(item => item.status === 'pending')) {
+            for (const pending of db.prepare("SELECT * FROM history_v2_revisions WHERE diagram_id=? AND status='pending'").all(revision.diagramHistoryId)) {
                 try { readRevision(pending.id); db.prepare("UPDATE history_v2_revisions SET status='ready' WHERE id=?").run(pending.id); progress = true; } catch (_) { /* Wait for verified predecessors; never mutate the live diagram. */ }
             }
         }
@@ -250,12 +270,12 @@ export function createHistoryService({ Database, dbPath, budget = HISTORY_BUDGET
         });
     }
     function adoptBaseline(input) { // NEW: the clean renderer explicitly adopts a verified remote content base.
-        const hash = digest(normalizeDocument(input.xml)), match = rows(input.diagramId).filter(item => item.status === 'ready' && item.hash === hash).at(-1);
+        const hash = digest(normalizeDocument(input.xml)), match = db.prepare("SELECT * FROM history_v2_revisions WHERE diagram_id=? AND hash=? AND status='ready' ORDER BY timestamp DESC,rowid DESC LIMIT 1").get(input.diagramId, hash); // CHANGE
         if (!match) return null;
         readRevision(match.id); db.prepare('UPDATE history_v2_documents SET latest_id=? WHERE diagram_id=?').run(match.id, input.diagramId); recent.delete(input.diagramId);
         return metadata(match);
     }
-    const operations = { initialize, record, baseline: adoptBaseline, latest: input => { const head = document(input.diagramId)?.latest_id; return head && row(head) ? metadata(row(head)) : null; }, list: input => list(input.diagramId), anchors: input => db.prepare('SELECT id FROM history_v2_anchors WHERE diagram_id=?').all(input.diagramId).map(item => item.id), retired: input => db.prepare('SELECT id FROM history_v2_retired WHERE diagram_id=? AND generation=?').all(input.diagramId, document(input.diagramId)?.generation).map(item => item.id), read: input => { // NEW
+    const operations = { initialize, record, has: input => row(input.revisionId)?.diagram_id === input.diagramId, describe: input => { const revision = row(input.revisionId); if (!revision || revision.diagram_id !== input.diagramId) throw new Error('Unknown history revision.'); return metadata(revision); }, baseline: adoptBaseline, latest: input => { const head = document(input.diagramId)?.latest_id; return head && row(head) ? metadata(row(head)) : null; }, list: input => list(input.diagramId,input.limit,input.offset), anchors: input => db.prepare('SELECT id FROM history_v2_anchors WHERE diagram_id=?').all(input.diagramId).map(item => item.id), retired: input => db.prepare('SELECT id FROM history_v2_retired WHERE diagram_id=? AND generation=?').all(input.diagramId, document(input.diagramId)?.generation).map(item => item.id), read: input => { // CHANGE: transport validates a specific revision through an indexed lookup.
         if (input.diagramId && row(input.revisionId)?.diagram_id !== input.diagramId) throw new Error('Revision belongs to another diagram.');
         return { xml: readRevision(input.revisionId), revision: metadata(row(input.revisionId)) };
     }, statistics: input => {

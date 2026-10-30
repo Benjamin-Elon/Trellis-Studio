@@ -7,7 +7,7 @@ import { diagramDocument, inspectDiagram, parseXml, digest, canonical } from './
 import { permissions, permissionSnapshot, validatePermissionChanges } from './trellis-permission-policy.js'; // NEW
 import { saveCache } from './trellis-save-cache.js';
 import { REVISION, LIMITS, textLimit, fail } from './trellis-input-policy.js'; // NEW // NEW
-export const COLLABORATION_VERSION = 3; // NEW
+export const COLLABORATION_VERSION = 4; // CHANGE: the coordinator engine does not accept replay-era records.
 export const HOLD_MS = 300000; // NEW
 export const REQUEST_GRACE_MS = 300000; // NEW: request deadlines do not depend on idle activity.
 export const PRESENCE_MS = 300000; // NEW: viewing presence still expires.

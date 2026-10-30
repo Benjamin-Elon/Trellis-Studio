@@ -43,6 +43,7 @@ var mxSettings =
 		'gardenAllocate', // NEW
 		'gardenScale', // NEW
 		'gardenBeds', // NEW
+		'gardenStructures', // NEW: portable editable garden footprints.
 		'gardenEquipment', // NEW
 		'gardenIrrigationPlanner' // NEW
 	], // NEW
@@ -75,6 +76,7 @@ var mxSettings =
 		gardenAllocate: 'plugins/garden_planner_plugins/Allocate_Planner.js', // NEW
 		gardenScale: 'plugins/garden_planner_plugins/Garden_Scale.js', // NEW
 		gardenBeds: 'plugins/garden_planner_plugins/Garden_Beds.js', // NEW
+		gardenStructures: 'plugins/garden_planner_plugins/Garden_Structures.js', // NEW
 		gardenEquipment: 'plugins/garden_planner_plugins/Garden_Equipment.js', // NEW
 		gardenIrrigationPlanner: 'plugins/garden_planner_plugins/Garden_Irrigation_Planner.js' // NEW
 	}, // NEW

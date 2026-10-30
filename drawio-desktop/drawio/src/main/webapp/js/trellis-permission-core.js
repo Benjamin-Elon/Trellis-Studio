@@ -85,7 +85,7 @@
   }); // NEW
   const ACCESS = new Set(['trellis_access_user_ids_json', GRANTS, 'trellis_access_open']); // NEW
   const PROTECTED = new Set([STORE, OWNER, ...ACCESS, 'trellis_role_user_id', 'trellis_role_garden_module_id', 'trellis_role_team_module_id', 'trellis_role_archived_user_id', 'trellis_role_inactive', 'trellis_team_module_id', 'trellis_garden_module_id', 'trellis_team_role_archive_json', 'trellis_team_section', 'trellis_team_id', 'trellis_team_archived', 'trellis_team_unassigned']); // NEW
-  const TASK_DETAILS = new Set(['label', 'title', 'notes', 'card_note', 'task_instruction_override', 'trellis_details_html', 'trellis_comments_json', 'start', 'end', 'due', 'assigned_day', 'task_estimated_hours', 'scheduler_dates_locked']); // NEW
+  const TASK_DETAILS = new Set(['label', 'title', 'notes', 'card_note', 'task_instruction_override', 'trellis_details_html', 'trellis_comments_json', 'start', 'end', 'due', 'assigned_day', 'task_estimated_hours', 'task_type_id', 'task_equipment_ids', 'task_planning_override_json', 'task_quantity_basis', 'task_quantity_value', 'task_equipment_estimate_note', 'scheduler_dates_locked']); // NEW
   const AUDIT = new Set(['lastEditedByUserId', 'trellis_actor_name', 'trellis_actor_role']); // NEW
   const PRESENTATION = new Set(['lod_collapsed', 'lod_layout_snapshot_v1', 'lod_layout_snapshot_at', 'plant_count', 'plant_count_capacity', 'plant_count_actual', 'planting_expected_yield_kg']); // NEW
   const decision = (allowed, reason = 'This action is not permitted.') => ({ // NEW

@@ -195,8 +195,8 @@ export function createSyncthingService(options) {
             try { // CHANGE
                 safeId(canvas?.shareId); safeId(canvas.diagramId); validateManaged(canvas); // CHANGE
                 if (typeof canvas.filename !== 'string' || path.basename(canvas.filename) !== canvas.filename || !/\.drawio$/i.test(canvas.filename)) throw new Error('Invalid diagram filename.'); // CHANGE
-                const current = canvas.protocolVersion === 3 && canvas.folderId === 'trellis-v3-' + canvas.shareId; // CHANGE
-                const local = (canvas.protocolVersion === undefined || canvas.protocolVersion === 1) && canvas.folderId === 'trellis-' + canvas.shareId || canvas.protocolVersion === 2 && canvas.folderId === 'trellis-v2-' + canvas.shareId; // CHANGE: old projects retain only local-file access. // CHANGE
+                const current = canvas.protocolVersion === 4 && canvas.folderId === 'trellis-v4-' + canvas.shareId; // CHANGE
+                const local = (canvas.protocolVersion === undefined || canvas.protocolVersion === 1) && canvas.folderId === 'trellis-' + canvas.shareId || canvas.protocolVersion === 2 && canvas.folderId === 'trellis-v2-' + canvas.shareId || canvas.protocolVersion === 3 && canvas.folderId === 'trellis-v3-' + canvas.shareId; // CHANGE: old projects retain only local-file access. // CHANGE
                 if (!current && !local) throw new Error('Unsupported sharing registration.'); // CHANGE
                 if (current) { // CHANGE
                     if (!Array.isArray(canvas.members) || registry.some(entry => entry.shareId === canvas.shareId || samePath(entry.diagramPath, canvas.diagramPath))) throw new Error('Invalid or duplicate current registration.'); // CHANGE
@@ -544,7 +544,7 @@ export function createSyncthingService(options) {
         let available = false, reason = '';
         try { const stat = await fs.stat(canvas.diagramPath); available = stat.isFile() && !canvas.localRemoved; }
         catch (err) { if (err.code !== 'ENOENT') reason = err.message; }
-        return { joinInviteId: canvas.joinInvite?.inviteId, projectName: canvas.projectName || '', filename: canvas.filename, filenamePending: !!canvas.filenamePending, namingError: canvas.namingError || '', protocolVersion: 3, replacesShareId: canvas.replacesShareId || null, shareId: canvas.shareId, diagramId: canvas.diagramId, name: canvas.label, path: canvas.diagramPath, folderPath: canvas.folderPath, available, seeds: runtimeReady && !canvas.paused && !canvas.revoked ? statuses.get(canvas.shareId)?.seeds ?? null : null, pending: !!canvas.pending, revoked: !!canvas.revoked, rejoined: !!canvas.rejoined, retired: !!canvas.projectRetired, fenced: !!canvas.projectFenced, localRemoved: !!canvas.localRemoved, reason: reason || (!available ? canvas.pending ? 'Waiting for download or approval.' : 'No local copy.' : ''), state: statuses.get(canvas.shareId)?.state || (canvas.paused ? 'paused' : runtimeReady ? 'syncing' : 'offline') }; // CHANGE
+        return { joinInviteId: canvas.joinInvite?.inviteId, projectName: canvas.projectName || '', filename: canvas.filename, filenamePending: !!canvas.filenamePending, namingError: canvas.namingError || '', protocolVersion: 4, replacesShareId: canvas.replacesShareId || null, shareId: canvas.shareId, diagramId: canvas.diagramId, name: canvas.label, path: canvas.diagramPath, folderPath: canvas.folderPath, available, seeds: runtimeReady && !canvas.paused && !canvas.revoked ? statuses.get(canvas.shareId)?.seeds ?? null : null, pending: !!canvas.pending, revoked: !!canvas.revoked, rejoined: !!canvas.rejoined, retired: !!canvas.projectRetired, fenced: !!canvas.projectFenced, localRemoved: !!canvas.localRemoved, reason: reason || (!available ? canvas.pending ? 'Waiting for download or approval.' : 'No local copy.' : ''), state: statuses.get(canvas.shareId)?.state || (canvas.paused ? 'paused' : runtimeReady ? 'syncing' : 'offline') }; // CHANGE
     } // NEW
     /** Expose only public transport identity for targeted device provisioning. */ // NEW
     async function getTransportIdentity() { // NEW
@@ -602,7 +602,7 @@ export function createSyncthingService(options) {
     }
     /** Register a download using a verified library descriptor, never a remote path. */ // NEW
     async function registerLibraryDownload(input) { // NEW
-        if (input.protocolVersion !== 3) throw new Error('Unsupported Trellis sharing protocol. Only version 3 descriptors are supported.'); // CHANGE
+        if (input.protocolVersion !== 4) throw new Error('Unsupported Trellis sharing protocol. Only version 4 descriptors are supported.'); // CHANGE
         await initialize(); // CHANGE
         if (localCanvases.some(canvas => canvas.shareId === input.shareId)) throw new Error(localOnlyReason); // CHANGE
         await start();
@@ -611,7 +611,7 @@ export function createSyncthingService(options) {
         const folderPath = path.join(canvasesRoot, safeId(input.shareId));
         if (!canvas) {
             if (path.basename(input.filename) !== input.filename || !/\.drawio$/i.test(input.filename)) throw new Error('Invalid garden filename.');
-            canvas = { protocolVersion: 3, localDeviceId: deviceId, shareId: input.shareId, diagramId: safeId(input.diagramId), folderId: 'trellis-v3-' + input.shareId, folderPath, diagramPath: path.join(folderPath, input.filename), filename: input.filename, label: input.name, coordinatorDeviceId: input.originCoordinatorDeviceId || input.coordinatorDeviceId, coordinatorPublicKey: input.genesisCoordinatorPublicKey || input.coordinatorPublicKey, genesisCoordinatorPublicKey: input.genesisCoordinatorPublicKey, membershipVersion: 0, members: input.members, bootstrapMembers: input.members, joinMembershipVersion: input.communityGrantId ? Math.max(0, input.membershipVersion - 1) : input.membershipVersion || 0, pending: true, createdAt: now() }; // CHANGE: a verified community grant already includes this device's approval.
+            canvas = { protocolVersion: 4, localDeviceId: deviceId, shareId: input.shareId, diagramId: safeId(input.diagramId), folderId: 'trellis-v4-' + input.shareId, folderPath, diagramPath: path.join(folderPath, input.filename), filename: input.filename, label: input.name, coordinatorDeviceId: input.originCoordinatorDeviceId || input.coordinatorDeviceId, coordinatorPublicKey: input.genesisCoordinatorPublicKey || input.coordinatorPublicKey, genesisCoordinatorPublicKey: input.genesisCoordinatorPublicKey, membershipVersion: 0, members: input.members, bootstrapMembers: input.members, joinMembershipVersion: input.communityGrantId ? Math.max(0, input.membershipVersion - 1) : input.membershipVersion || 0, pending: true, createdAt: now() }; // CHANGE: a verified community grant already includes this device's approval.
             registry.push(canvas);
         }
         canvas.localRemoved = false; canvas.paused = false;
@@ -656,7 +656,7 @@ export function createSyncthingService(options) {
     /** Public catalog descriptors contain no local filesystem or daemon secrets. */ // NEW
     async function libraryDescriptor(shareId) { // NEW
         await initialize(); const canvas = canvasById(shareId);
-        return { protocolVersion: 3, replacesShareId: canvas.replacesShareId || null, shareId: canvas.shareId, diagramId: canvas.diagramId, filename: 'Garden.drawio', name: canvas.projectName || canvas.label, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, originCoordinatorDeviceId: canvas.coordinatorHistory?.[0]?.deviceId || canvas.coordinatorDeviceId, genesisCoordinatorPublicKey: canvas.genesisCoordinatorPublicKey || canvas.coordinatorPublicKey, membershipVersion: canvas.membershipVersion, members: canvas.members }; // CHANGE
+        return { protocolVersion: 4, replacesShareId: canvas.replacesShareId || null, shareId: canvas.shareId, diagramId: canvas.diagramId, filename: 'Garden.drawio', name: canvas.projectName || canvas.label, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, originCoordinatorDeviceId: canvas.coordinatorHistory?.[0]?.deviceId || canvas.coordinatorDeviceId, genesisCoordinatorPublicKey: canvas.genesisCoordinatorPublicKey || canvas.coordinatorPublicKey, membershipVersion: canvas.membershipVersion, members: canvas.members }; // CHANGE
     }
     async function shareInfo(context = {}) {
         await initialize();
@@ -682,10 +682,10 @@ export function createSyncthingService(options) {
         }
         if (!canvas) return { ok: !startupReason, managed: false, deviceId, reason: startupReason || 'Set up a managed sharing folder for this canvas.' }; // CHANGE
         if (!runtimeReady && !startupReason) try { await start(); } catch (err) { startupReason = err.message; } // CHANGE: managed projects retain local editing during transport failure.
-        return { ok: true, managed: true, protocolVersion: 3, deviceId: deviceId || canvas.localDeviceId, shareId: canvas.shareId, diagramId: canvas.diagramId, createdAt: canvas.createdAt, folderId: canvas.folderId, folderLabel: canvas.label, folderPath: canvas.folderPath, assetBaseUrl: pathToFileURL(canvas.folderPath + path.sep).href, diagramPath: canvas.diagramPath, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, membershipVersion: canvas.membershipVersion || 0, reason: startupReason }; // CHANGE
+        return { ok: true, managed: true, protocolVersion: 4, deviceId: deviceId || canvas.localDeviceId, shareId: canvas.shareId, diagramId: canvas.diagramId, createdAt: canvas.createdAt, folderId: canvas.folderId, folderLabel: canvas.label, folderPath: canvas.folderPath, assetBaseUrl: pathToFileURL(canvas.folderPath + path.sep).href, diagramPath: canvas.diagramPath, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, membershipVersion: canvas.membershipVersion || 0, reason: startupReason }; // CHANGE
     }
     async function setupCanvas(callerId, input) {
-        if (input.protocolVersion !== undefined && input.protocolVersion !== 3) throw new Error('Unsupported Trellis sharing protocol. Only version 3 shares can be created.'); // CHANGE
+        if (input.protocolVersion !== undefined && input.protocolVersion !== 4) throw new Error('Unsupported Trellis sharing protocol. Only version 4 shares can be created.'); // CHANGE
         await initialize(); // CHANGE
         if (input.diagramPath && localCanvases.some(entry => samePath(entry.folderPath, path.dirname(path.resolve(input.diagramPath))))) throw new Error(localOnlyReason); // CHANGE
         await start();
@@ -704,7 +704,7 @@ export function createSyncthingService(options) {
         const filename = path.basename(input.filename || source || 'Garden.drawio');
         if (!/\.drawio$/i.test(filename)) throw new Error('Save this canvas as an XML .drawio file before sharing.');
         const diagramPath = path.join(folderPath, filename);
-        const canvas = { shareId, diagramId: safeId(input.diagramId), protocolVersion: 3, replacesShareId: input.replacesShareId || null, localDeviceId: deviceId, folderId: 'trellis-v3-' + shareId, folderPath, diagramPath, filename, label: filename.replace(/\.drawio$/i, ''), coordinatorDeviceId: deviceId, coordinatorPublicKey: keys.publicKey, membershipVersion: 0, createdAt: now(), members: [{ deviceId, userId: session.userId, publicKey: keys.publicKey }], paused: false }; // CHANGE
+        const canvas = { shareId, diagramId: safeId(input.diagramId), protocolVersion: 4, replacesShareId: input.replacesShareId || null, localDeviceId: deviceId, folderId: 'trellis-v4-' + shareId, folderPath, diagramPath, filename, label: filename.replace(/\.drawio$/i, ''), coordinatorDeviceId: deviceId, coordinatorPublicKey: keys.publicKey, membershipVersion: 0, createdAt: now(), members: [{ deviceId, userId: session.userId, publicKey: keys.publicKey }], paused: false }; // CHANGE
         let registered = false;
         try {
             await fs.mkdir(folderPath, { recursive: true });
@@ -746,13 +746,11 @@ export function createSyncthingService(options) {
     }
     async function publishMembership(canvas, members, lifecycle = {}) { // CHANGE
         if (canvas.coordinatorDeviceId !== deviceId) throw new Error('Only the designated coordinator can publish membership.');
-        const retiredMembers = [...(canvas.retiredMembers || [])]; // NEW: signed cutoffs preserve known historical records after device removal.
-        for (const member of canvas.members.filter(m => !members.some(next => next.deviceId === m.deviceId))) { // CHANGE: both protocols retain signer keys for departure receipt delivery.
-            const directory = path.join(canvas.folderPath, '.trellis', 'collaboration-v3', 'records'), recordIds = []; // NEW
-            for (const name of await fs.readdir(directory).catch(() => [])) if (/^[a-zA-Z0-9_-]+\.json$/.test(name)) { // CHANGE
-                try { const record = await readJson(path.join(directory, name)) /* CHANGE */; if (record.payload?.deviceId === member.deviceId && record.payload?.shareId === canvas.shareId && record.payload.id + '.json' === name && verifyRecord(record, member.publicKey)) recordIds.push(record.payload.id); } catch (_) {} // NEW
-            } // NEW
-            retiredMembers.push({ ...member, recordIds: recordIds.sort(), retiredAt: now() }); // NEW
+        const retiredMembers = [...(canvas.retiredMembers || [])], remaining = new Set(members.map(member => member.deviceId)); // CHANGE
+        const removed = canvas.members.filter(member => !remaining.has(member.deviceId)); // NEW
+        if (removed.length) { // CHANGE: checkpoint the accepted prefix before changing its signer set; retirement never enumerates content archives.
+            const store = collaborationStore(canvas); await store.checkpoint(); const position = await store.snapshot(); // NEW
+            for (const member of removed) retiredMembers.push({ ...member, epoch: position.epoch, acceptedThrough: position.sequence, retiredAt: now() }); // NEW
         } // NEW
         const payload = { schema: SHARE_SCHEMA, shareId: canvas.shareId, diagramId: canvas.diagramId, version: (canvas.membershipVersion || 0) + 1, coordinatorDeviceId: deviceId, members, retiredMembers, timestamp: now(), ...lifecycle }; // CHANGE
         const record = signRecord(payload, keys.privateKey);
@@ -771,7 +769,7 @@ export function createSyncthingService(options) {
         if (!invite || !(activeAdmin(state, session.userId) || invite.createdBy === session.userId)) throw new Error('Save a valid invitation before preparing its sharing block.');
         if (!input.code || typeof input.code !== 'string') throw new Error('An invite code is required.');
         if (invite.codeHash && invite.codeHash !== inviteFingerprint(input.code, invite.codeSalt)) throw new Error('The invitation code has rotated. Prepare the current invitation instead.');
-        return { ok: true, block: encodeBlock('INVITE', { schema: 2, protocolVersion: 3, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId: canvas.coordinatorDeviceId, senderDeviceId: deviceId, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, originCoordinatorDeviceId: canvas.coordinatorHistory?.[0]?.deviceId || canvas.coordinatorDeviceId, genesisCoordinatorPublicKey: canvas.genesisCoordinatorPublicKey || canvas.coordinatorPublicKey, folderId: canvas.folderId, filename: 'Garden.drawio', label: canvas.projectName || canvas.label, senderEmail: (state.store.users || []).find(user => user.id === session.userId)?.email || '', inviteId: invite.id, email: invite.email, pendingUserId: invite.pendingUserId, code: input.code, codeHash: invite.codeHash || null, expiresAt: invite.expiresAt, membershipVersion: canvas.membershipVersion }) }; // CHANGE: preserve sender identity separately from the fixed coordinator.
+        return { ok: true, block: encodeBlock('INVITE', { schema: 2, protocolVersion: 4, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId: canvas.coordinatorDeviceId, senderDeviceId: deviceId, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, originCoordinatorDeviceId: canvas.coordinatorHistory?.[0]?.deviceId || canvas.coordinatorDeviceId, genesisCoordinatorPublicKey: canvas.genesisCoordinatorPublicKey || canvas.coordinatorPublicKey, folderId: canvas.folderId, filename: 'Garden.drawio', label: canvas.projectName || canvas.label, senderEmail: (state.store.users || []).find(user => user.id === session.userId)?.email || '', inviteId: invite.id, email: invite.email, pendingUserId: invite.pendingUserId, code: input.code, codeHash: invite.codeHash || null, expiresAt: invite.expiresAt, membershipVersion: canvas.membershipVersion }) }; // CHANGE: preserve sender identity separately from the fixed coordinator.
     }
     /** Issue a separate device setup invitation without recreating an existing account. */
     async function createDeviceInvite(callerId, input) {
@@ -780,26 +778,26 @@ export function createSyncthingService(options) {
         const user = (state.store.users || []).find(entry => entry.id === input.userId && !entry.disabled);
         if (!user || !user.email || !hasCanvasAccess(state, user.id, now())) throw new Error('Select an active user with an email and canvas access.');
         const setup = signRecord({ schema: SHARE_SCHEMA, id: makeId(), shareId: canvas.shareId, diagramId: canvas.diagramId, issuerDeviceId: deviceId, actorUserId: session.userId, userId: user.id, email: user.email, expiresAt: now() + 14 * 86400000 }, keys.privateKey);
-        return { ok: true, email: user.email, block: encodeBlock('INVITE', { schema: 2, protocolVersion: 3, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId: canvas.coordinatorDeviceId, senderDeviceId: deviceId, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, originCoordinatorDeviceId: canvas.coordinatorHistory?.[0]?.deviceId || canvas.coordinatorDeviceId, genesisCoordinatorPublicKey: canvas.genesisCoordinatorPublicKey || canvas.coordinatorPublicKey, folderId: canvas.folderId, filename: 'Garden.drawio', label: canvas.projectName || canvas.label, senderEmail: (state.store.users || []).find(user => user.id === session.userId)?.email || '', inviteId: setup.payload.id, email: user.email, pendingUserId: user.id, expiresAt: setup.payload.expiresAt, membershipVersion: canvas.membershipVersion, deviceSetup: setup }) }; // CHANGE
+        return { ok: true, email: user.email, block: encodeBlock('INVITE', { schema: 2, protocolVersion: 4, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId: canvas.coordinatorDeviceId, senderDeviceId: deviceId, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, originCoordinatorDeviceId: canvas.coordinatorHistory?.[0]?.deviceId || canvas.coordinatorDeviceId, genesisCoordinatorPublicKey: canvas.genesisCoordinatorPublicKey || canvas.coordinatorPublicKey, folderId: canvas.folderId, filename: 'Garden.drawio', label: canvas.projectName || canvas.label, senderEmail: (state.store.users || []).find(user => user.id === session.userId)?.email || '', inviteId: setup.payload.id, email: user.email, pendingUserId: user.id, expiresAt: setup.payload.expiresAt, membershipVersion: canvas.membershipVersion, deviceSetup: setup }) }; // CHANGE
     }
     async function joinCanvas(input) {
         const invite = decodeBlock('INVITE', input.block); // CHANGE
         await start();
         if (!invite.email || (!invite.code && !invite.deviceSetup) || invite.expiresAt <= now()) throw new Error('The canvas invitation has expired or is incomplete.');
-        if (invite.folderId !== 'trellis-v3-' + invite.shareId || !invite.coordinatorPublicKey) throw new Error('Invalid canvas sharing details.'); // CHANGE
+        if (invite.folderId !== 'trellis-v4-' + invite.shareId || !invite.coordinatorPublicKey) throw new Error('Invalid canvas sharing details.'); // CHANGE
         if (path.basename(invite.filename || '') !== invite.filename || !/\.drawio$/i.test(invite.filename)) throw new Error('Invalid shared canvas filename.');
         const previous = registry.find(entry => entry.shareId === invite.shareId); // CHANGE
         if (previous && (previous.projectRetired !== 'left' || !Number.isSafeInteger(invite.membershipVersion) || invite.membershipVersion < previous.membershipVersion || (previous.retiredInviteIds || []).includes(invite.inviteId) || previous.joinInvite?.inviteId === invite.inviteId)) throw new Error('This device has already joined this canvas, or the invitation predates departure. Request a fresh invitation.'); // CHANGE
         const folderPath = path.join(canvasesRoot, invite.shareId);
         if (await exists(folderPath)) throw new Error('The destination folder already exists. Choose recovery instead of overwriting it.');
-        const canvas = { protocolVersion: 3, localDeviceId: deviceId, shareId: invite.shareId, diagramId: invite.diagramId, folderId: invite.folderId, filename: invite.filename, diagramPath: path.join(folderPath, invite.filename), folderPath, label: invite.label, coordinatorDeviceId: invite.originCoordinatorDeviceId || invite.deviceId, coordinatorPublicKey: invite.genesisCoordinatorPublicKey || invite.coordinatorPublicKey, genesisCoordinatorPublicKey: invite.genesisCoordinatorPublicKey, membershipVersion: 0, createdAt: now(), pending: true, members: [{ deviceId: invite.deviceId, publicKey: invite.coordinatorPublicKey, userId: '' }], joinInvite: { inviteId: invite.inviteId, pendingUserId: invite.pendingUserId, email: invite.email, expiresAt: invite.expiresAt, codeHash: invite.codeHash || null, ...(invite.deviceSetup ? { deviceSetup: invite.deviceSetup } : {}) } }; // CHANGE
+        const canvas = { protocolVersion: 4, localDeviceId: deviceId, shareId: invite.shareId, diagramId: invite.diagramId, folderId: invite.folderId, filename: invite.filename, diagramPath: path.join(folderPath, invite.filename), folderPath, label: invite.label, coordinatorDeviceId: invite.originCoordinatorDeviceId || invite.deviceId, coordinatorPublicKey: invite.genesisCoordinatorPublicKey || invite.coordinatorPublicKey, genesisCoordinatorPublicKey: invite.genesisCoordinatorPublicKey, membershipVersion: 0, createdAt: now(), pending: true, members: [{ deviceId: invite.deviceId, publicKey: invite.coordinatorPublicKey, userId: '' }], joinInvite: { inviteId: invite.inviteId, pendingUserId: invite.pendingUserId, email: invite.email, expiresAt: invite.expiresAt, codeHash: invite.codeHash || null, ...(invite.deviceSetup ? { deviceSetup: invite.deviceSetup } : {}) } }; // CHANGE
         canvas.joinMembershipVersion = invite.membershipVersion || 0; canvas.bootstrapMembers = [...canvas.members]; // NEW
         if (previous) { canvas.rejoined = true; registry = registry.filter(entry => entry !== previous); collaborationStores.delete(previous.shareId); } // NEW
         registry.push(canvas);
         try { await persist(); } // CHANGE: commit the pending registration before configuration creates its folder.
         catch (err) { registry = registry.filter(entry => entry !== canvas); if (previous) registry.push(previous); throw err; } // CHANGE
         await configureCanvas(canvas); // CHANGE: retain durable pending progress when configuration or shutdown interrupts joining; resumeJoin retries it.
-        const reply = encodeBlock('REPLY', { schema: 2, protocolVersion: 3, shareId: invite.shareId, diagramId: invite.diagramId, deviceId, publicKey: keys.publicKey, inviteId: invite.inviteId, userId: invite.pendingUserId, email: invite.email, expiresAt: invite.expiresAt, codeHash: invite.codeHash || null, ...(invite.deviceSetup ? { deviceSetup: invite.deviceSetup } : {}) }); // CHANGE
+        const reply = encodeBlock('REPLY', { schema: 2, protocolVersion: 4, shareId: invite.shareId, diagramId: invite.diagramId, deviceId, publicKey: keys.publicKey, inviteId: invite.inviteId, userId: invite.pendingUserId, email: invite.email, expiresAt: invite.expiresAt, codeHash: invite.codeHash || null, ...(invite.deviceSetup ? { deviceSetup: invite.deviceSetup } : {}) }); // CHANGE
         const startup = await enableStartup();
         emit();
         return { ok: true, reply, diagramPath: canvas.diagramPath, startup, emailDraft: { to: input.senderEmail || '', subject: 'Trellis canvas device approval', body: 'Please approve this device for the canvas invitation.\n\n' + reply } };
@@ -817,7 +815,7 @@ export function createSyncthingService(options) {
             await persist(); // CHANGE
         } // NEW
         await start(); if (canvas.pending) await configureCanvas(canvas); // NEW
-        const reply = encodeBlock('REPLY', { schema: 2, protocolVersion: 3, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId, publicKey: keys.publicKey, inviteId: invite.inviteId, userId: invite.pendingUserId, email: invite.email, expiresAt: invite.expiresAt, codeHash: invite.codeHash || null, ...(invite.deviceSetup ? { deviceSetup: invite.deviceSetup } : {}) }); // NEW
+        const reply = encodeBlock('REPLY', { schema: 2, protocolVersion: 4, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId, publicKey: keys.publicKey, inviteId: invite.inviteId, userId: invite.pendingUserId, email: invite.email, expiresAt: invite.expiresAt, codeHash: invite.codeHash || null, ...(invite.deviceSetup ? { deviceSetup: invite.deviceSetup } : {}) }); // NEW
         return { reply, diagramPath: canvas.diagramPath }; // NEW
     } // NEW
     async function requestMembership(callerId, input) { // CHANGE
@@ -885,11 +883,11 @@ export function createSyncthingService(options) {
     } // NEW
     async function applyMembership(canvas) {
         const dir = path.join(canvas.folderPath, '.trellis', 'membership');
-        const names = (await fs.readdir(dir).catch(() => [])).filter(name => /^\d{12}\.json$/.test(name)).sort(); // CHANGE: replay the signed coordinator chain in order.
-        for (const name of names) {
-            const record = await readJson(path.join(dir, name)) /* CHANGE */;
+        for (let applied = 0; applied < 30; applied++) { // CHANGE: routine polling follows only the next indexed membership position, with bounded catch-up work.
+            const name = String((canvas.membershipVersion || 0) + 1).padStart(12, '0') + '.json'; // NEW
+            const record = await readJson(path.join(dir, name)).catch(error => { if (error.code === 'ENOENT') return null; throw error; }); // CHANGE
+            if (!record) break; // NEW: missing predecessors remain pending until transport delivers them.
             const payload = record.payload;
-            if (payload.version <= canvas.membershipVersion) continue; // NEW
             if (!verifyRecord(record, canvas.coordinatorPublicKey) || payload.shareId !== canvas.shareId || payload.diagramId !== canvas.diagramId || payload.coordinatorDeviceId !== canvas.coordinatorDeviceId || !Array.isArray(payload.members)) throw new Error('Invalid canvas membership signature.');
             if (payload.version !== canvas.membershipVersion + 1) throw new Error('Waiting for a predecessor membership record.'); // CHANGE
             if (new Set(payload.members.map(entry => entry.deviceId)).size !== payload.members.length) throw new Error('Duplicate canvas membership devices.');
@@ -958,7 +956,7 @@ export function createSyncthingService(options) {
                     const eligibleMembers = canvas.members.filter(member => !identitySync?.revokedSyncthingIds?.includes(member.deviceId) && (!state || hasCanvasAccess(state, member.userId, now()))); // NEW
                     const seeds = canvas.paused || canvas.revoked ? 0 : await countProjectSeeds({ members: eligibleMembers, deviceId, connections, hasLocalCopy: !!state, completion: peerId => api('db/completion?folder=' + encodeURIComponent(canvas.folderId) + (peerId === deviceId ? '' : '&device=' + encodeURIComponent(peerId))) }); // NEW
                     if (stopped || generation !== lifecycleGeneration) return; // NEW
-                    statuses.set(canvas.shareId, { state: canvas.revoked ? 'revoked' : canvas.pending ? 'awaitingApproval' : canvas.paused ? 'paused' : db.state === 'idle' && !db.needTotalItems ? 'upToDate' : 'syncing', folderSequence: Number.isSafeInteger(db.sequence) ? db.sequence : null, connectedCollaborators: users.size, collaborators: [...users.values()], connectedPeers: canvas.members.filter(m => m.deviceId !== deviceId && connections[m.deviceId]?.connected).length, seeds, collaboration, protocolVersion: 3, coordinatorConnected: canvas.coordinatorDeviceId === deviceId || !!connections[canvas.coordinatorDeviceId]?.connected, historyWarning, reason: '' }); // CHANGE: folder sequence also detects assets transferred entirely between status ticks.
+                    statuses.set(canvas.shareId, { state: canvas.revoked ? 'revoked' : canvas.pending ? 'awaitingApproval' : canvas.paused ? 'paused' : db.state === 'idle' && !db.needTotalItems ? 'upToDate' : 'syncing', folderSequence: Number.isSafeInteger(db.sequence) ? db.sequence : null, connectedCollaborators: users.size, collaborators: [...users.values()], connectedPeers: canvas.members.filter(m => m.deviceId !== deviceId && connections[m.deviceId]?.connected).length, seeds, collaboration, protocolVersion: 4, coordinatorConnected: canvas.coordinatorDeviceId === deviceId || !!connections[canvas.coordinatorDeviceId]?.connected, historyWarning, reason: '' }); // CHANGE: folder sequence also detects assets transferred entirely between status ticks.
                 } catch (err) { if (stopped || generation !== lifecycleGeneration) return; statuses.set(canvas.shareId, { state: 'unavailable', connectedCollaborators: null, reason: err.message }); } // CHANGE
             }
             emit();
@@ -1029,7 +1027,7 @@ export function createSyncthingService(options) {
     const historyTransports = new Map(); // NEW
     function historyTransport(canvas) { // NEW
         if (!options.historyService) throw new Error('Document history service is unavailable.');
-        if (!historyTransports.has(canvas.shareId)) historyTransports.set(canvas.shareId, createHistoryTransport({ canvas, deviceId: deviceId || canvas.localDeviceId, keys, profile, history: options.historyService, writeImmutable }));
+        if (!historyTransports.has(canvas.shareId)) historyTransports.set(canvas.shareId, createHistoryTransport({ canvas, deviceId: deviceId || canvas.localDeviceId, keys, profile, history: options.historyService, writeImmutable, writeAtomic }));
         return historyTransports.get(canvas.shareId);
     }
     async function exportHistory(callerId, input) { // CHANGE
@@ -1041,7 +1039,7 @@ export function createSyncthingService(options) {
     }
     async function importHistory(callerId, input) { // CHANGE
         const canvas = canvasById(input.shareId); authorizeCanvas(callerId, canvas);
-        return historyTransport(canvas).importAll(input.knownIds || []);
+        return input.archive === true ? historyTransport(canvas).importAll(input.knownIds || []) : historyTransport(canvas).maintain(); // CHANGE: polling reads current signed heads; explicit history browsing may request the archive.
     }
     async function historyStorage(callerId, input) { // NEW
         const canvas = canvasById(input.shareId); authorizeCanvas(callerId, canvas);
@@ -1059,7 +1057,7 @@ export function createSyncthingService(options) {
         sessions.set(callerId, { ...session, diagramPath: path.join(old.folderPath, 'recovery-source.drawio') });
         const source = sessions.get(callerId).diagramPath;
         await writeAtomic(source, xml);
-        try { const result = await setupCanvas(callerId, { diagramPath: source, diagramId: old.diagramId, filename: old.filename, xml, protocolVersion: 3, replacesShareId: old.shareId }); await persist(); return result; } // CHANGE
+        try { const result = await setupCanvas(callerId, { diagramPath: source, diagramId: old.diagramId, filename: old.filename, xml, protocolVersion: 4, replacesShareId: old.shareId }); await persist(); return result; } // CHANGE
         catch (err) { sessions.set(callerId, session); old.paused = wasPaused; await configureCanvas(old); await persist(); throw err; }
         finally { await fs.rm(source, { force: true }); }
     }

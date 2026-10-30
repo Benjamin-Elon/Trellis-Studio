@@ -7519,6 +7519,13 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function openIrrigationMode(moduleCell, options) {
+        const guardedModes = window.Trellis?.interactionModes; // NEW
+        if (guardedModes?.getActive()?.mode === 'structure-footprint') { // NEW
+            const requested = moduleCell || findGardenModuleAncestor(graph.getSelectionCell()); // NEW
+            if (!requested || !isGardenModule(requested)) return null; // NEW
+            const ownerId = 'irrigation:' + (requested.id || 'module'); // NEW
+            return guardedModes.requestAsync(IRRIGATION_INTERACTION_MODE_ID, ownerId, { close: () => closeIrrigationMode() }).then(granted => granted ? openIrrigationMode(requested, options) : null); // NEW
+        } // NEW
         const selection = graph.getSelectionCell && graph.getSelectionCell();
         const targetModule = moduleCell || findGardenModuleAncestor(selection) || selection;
         irrigationDebug("openIrrigationMode:start", {

@@ -4,7 +4,7 @@ const fs = require('node:fs'); // NEW
 const path = require('node:path'); // NEW
 const assert = require('node:assert/strict'); // NEW
 const project = path.resolve(__dirname, '../..'), output = path.join(project, '.test-artifacts', 'garden-dialog', String(process.pid)); // NEW
-fs.mkdirSync(output, { recursive: true }); app.disableHardwareAcceleration(); // NEW
+fs.mkdirSync(output, { recursive: true }); app.setPath('userData', path.join(output, 'profile')); app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); // CHANGE: isolate captures from the user's running app and match the other restricted-host renderer fixtures.
 const deadline = setTimeout(() => { console.error('Dialog renderer test timed out'); app.exit(1); }, 60000); // NEW
 app.whenReady().then(async () => { // NEW
     const window = new BrowserWindow({ width: 1100, height: 850, show: false, webPreferences: { backgroundThrottling: false } }); // NEW
@@ -46,9 +46,34 @@ app.whenReady().then(async () => { // NEW
     await run(`testUi.__trellisGardenHome.projectsBody.scrollTop=0;const menu=testUi.__trellisGardenHome.communitiesRows.querySelector('.trellis-project-menu');menu.open=true;testUi.__trellisGardenHome.searchControl.click();if(menu.open)throw new Error('Outside click did not close actions');`); // NEW
     await run(`const picker=testUi.__trellisGardenHome.referenceHost.querySelector('.trellis-city-picker');picker.open=true;const search=picker.querySelector('input');search.value='Canada';search.dispatchEvent(new Event('input'));`); // NEW
     await capture('city-picker.png'); // NEW
-    await run(`testUi.__trellisGardenHome.referenceHost.querySelector('.trellis-city-picker').open=false`); window.setSize(500, 750); // NEW
+    await run(`testUi.__trellisGardenHome.referenceHost.querySelector('.trellis-city-picker').open=false; // CHANGE
+        window.accountFind=label=>[...testUi.__trellisGardenHome.accountHost.querySelectorAll('button')].find(button=>button.textContent===label); // NEW
+        window.accountSummary=testUi.__trellisGardenHome.accountHost.querySelector('summary'); // NEW
+        trellisIdentity.getDevices=async()=>Array.from({length:30},(_,index)=>({id:'device'+index,name:'Paired computer '+(index+1),kind:'desktop'})); // NEW
+        testUi.__trellisGardenHome.projectsBody.scrollTop=120;window.accountScroll=testUi.__trellisGardenHome.projectsBody.scrollTop;accountSummary.click();void 0;`); // NEW
+    await capture('account-overview.png'); // NEW
+    await run(`accountFind('Change password').click();void 0;`); await capture('account-password.png'); // NEW
+    assert.equal(await run(`document.activeElement===testUi.__trellisGardenHome.accountHost.querySelector('input')`), true); // NEW
+    await run(`document.activeElement.value='discard this draft';document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0;`); // NEW
+    assert.equal(await run(`document.activeElement===accountSummary&&!accountSummary.parentNode.open&&!testUi.__trellisGardenHome.accountHost.querySelector('input')`), true); // NEW
+    await run(`accountSummary.click();accountFind('Manage devices').click();new Promise(resolve=>setTimeout(resolve,20));`); // NEW
+    await capture('account-devices.png'); // NEW
+    const accountBounds = await run(`(()=>{const panel=document.querySelector('.trellis-account-panel'),bounds=panel.getBoundingClientRect(),root=testUi.__trellisGardenHome.projectsRoot.getBoundingClientRect();return {inside:bounds.left>=root.left&&bounds.right<=root.right&&bounds.bottom<=root.bottom,scrolls:panel.scrollHeight>panel.clientHeight,count:panel.querySelectorAll('.trellis-account-device').length,projectScroll:testUi.__trellisGardenHome.projectsBody.scrollTop===accountScroll};})()`); // NEW
+    assert.deepEqual(accountBounds, { inside: true, scrolls: true, count: 30, projectScroll: true }); // NEW
+    await run(`accountSummary.click();void 0;`); window.setSize(500, 750); // CHANGE
     await capture('narrow.png'); // NEW
     const narrow = await run(`(()=>{const root=testUi.__trellisGardenHome.projectsRoot,body=testUi.__trellisGardenHome.projectsBody;return {overflow:body.scrollWidth>body.clientWidth+1 || document.documentElement.scrollWidth>innerWidth+1,width:root.getBoundingClientRect().width,viewport:innerWidth};})()`); // NEW
-    assert.equal(narrow.overflow, false); assert.ok(narrow.width <= narrow.viewport); console.log('DIALOG_RENDER_OK', output); console.log('DIALOG_MEASURES',JSON.stringify(await run('dialogMeasures'))); console.log('DIALOG_TIMING', JSON.stringify(await run('dialogTimings'))); // CHANGE
+    assert.equal(narrow.overflow, false); assert.ok(narrow.width <= narrow.viewport); // CHANGE
+    window.setSize(380, 500); await run(`accountSummary.click();accountFind('Manage devices').click();new Promise(resolve=>setTimeout(resolve,20));`); // NEW
+    await capture('account-narrow.png'); // NEW
+    assert.equal(await run(`(()=>{const panel=document.querySelector('.trellis-account-panel'),bounds=panel.getBoundingClientRect(),root=testUi.__trellisGardenHome.projectsRoot.getBoundingClientRect();return bounds.left>=root.left&&bounds.right<=root.right&&bounds.bottom<=root.bottom&&panel.scrollWidth<=panel.clientWidth+1&&document.documentElement.scrollWidth<=innerWidth;})()`), true); // NEW
+    await run(`accountSummary.click();accountSummary.click();accountFind('Change password').click();window.accountSubmissions=0;trellisIdentity.changePassword=()=>{accountSubmissions++;return new Promise(resolve=>window.finishAccountPassword=resolve);};document.activeElement.value='current';void 0;`); // NEW
+    window.webContents.focus(); window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); window.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' }); // NEW: verify Chromium's real implicit form submission rather than dispatching a submit event.
+    await run('new Promise(resolve=>setTimeout(resolve,20))'); assert.equal(await run('accountSubmissions'), 1); // NEW
+    assert.equal(await run(`testUi.__trellisGardenHome.accountHost.contains(document.activeElement)`), true); // NEW
+    window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); // NEW
+    await run(`finishAccountPassword({});new Promise(resolve=>setTimeout(resolve,20));`); // NEW
+    assert.equal(await run(`!accountSummary.parentNode.open&&testUi.__trellisGardenHome.projectsRoot.isConnected&&document.activeElement===accountSummary`), true); // NEW
+    console.log('DIALOG_RENDER_OK', output); console.log('DIALOG_MEASURES',JSON.stringify(await run('dialogMeasures'))); console.log('DIALOG_TIMING', JSON.stringify(await run('dialogTimings'))); // CHANGE
     clearTimeout(deadline); window.destroy(); app.exit(0); // NEW
 }).catch(error => { console.error(error); clearTimeout(deadline); app.exit(1); }); // NEW

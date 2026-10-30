@@ -15,8 +15,7 @@ Draw.loadPlugin(function (ui) {
     let dialog = null;
     let savedQueue = Promise.resolve();
     let saveOperationSequence = 0; // NEW: diagnostic IDs carry no document or invitation contents.
-    const importedIds = new Set();
-    const publishedIds = new Set();
+    const publishedIds = new Set(); // CHANGE: only recent UI receipts; signed transport heads own durable deduplication.
     const queuedHistory = new Map();
     let localRecovery = null;
     let remoteBaselinePending = false; // NEW: imported history may arrive after its diagram replacement.
@@ -336,7 +335,7 @@ Draw.loadPlugin(function (ui) {
         if (current.fileObject && current.fileObject.path) await saveCurrent();
         else current.data = ui.getFileData();
         await synchronizeContext();
-        result = await bridge.setupCanvas({ ...context(), protocolVersion: 3, filename: current.getTitle && current.getTitle() || 'Garden.drawio', xml: current.getData() });
+        result = await bridge.setupCanvas({ ...context(), protocolVersion: 4, filename: current.getTitle && current.getTitle() || 'Garden.drawio', xml: current.getData() });
         await adoptCanvas(result);
         return result;
     }
@@ -366,8 +365,15 @@ Draw.loadPlugin(function (ui) {
     function historyRecorded(event) {
         const entry = event.detail;
         if (!graph.__trellisSharingApplying) remoteBaselinePending = false; // NEW: imported history must not erase a newer local edit baseline.
-        if (info && info.managed && entry && entry.revision.diagramHistoryId === info.diagramId && !graph.__trellisSharingApplying) queuedHistory.set(entry.revision.id, entry);
+        if (info && info.managed && entry && entry.revision.diagramHistoryId === info.diagramId && !graph.__trellisSharingApplying) { // CHANGE
+            queuedHistory.set(entry.revision.id, entry); // CHANGE
+            while (queuedHistory.size > 100) queuedHistory.delete(queuedHistory.keys().next().value); // NEW: old private intermediates remain in local history, outside the save queue.
+        } // NEW
     }
+    function rememberPublished(id) { // NEW
+        publishedIds.add(id); // NEW
+        while (publishedIds.size > 100) publishedIds.delete(publishedIds.values().next().value); // NEW
+    } // NEW
     async function publishSavedHistory(savedXml, checkpoint, isCurrent) { // CHANGE
         if (!info || !info.managed || graph.__trellisSharingApplying) return; // CHANGE
         const entries = checkpoint ? [checkpoint] : []; // CHANGE: a newer recorder event cannot substitute or bundle a different saved version.
@@ -378,34 +384,24 @@ Draw.loadPlugin(function (ui) {
         const savedHash = await hash(savedXml); if (!isCurrent()) return; // NEW
         const historyResult = await bridge.exportHistory({ shareId, savedHash, entries }); // CHANGE
         if (!isCurrent()) return; // NEW
-        graph.__ccSharedHistoryStorage = historyResult && historyResult.storage || null; // CHANGE
-        if (history()?.refresh) await history().refresh(); // NEW: reset/pruning may have changed the local generation.
-        if (document.querySelector('.trellis-history-storage-details[open]')) await window.Trellis.sharing.refreshHistoryStorage(); // NEW: avoid scanning the collaboration journal on ordinary autosaves.
-        entries.forEach(entry => { publishedIds.add(entry.revision.id); queuedHistory.delete(entry.revision.id); });
+        if (historyResult?.storage) graph.__ccSharedHistoryStorage = historyResult.storage; // CHANGE: preserve the last explicitly inspected disk totals.
+        if (historyResult?.generation && historyResult.generation !== checkpoint.revision.generation && history()?.refresh) await history().refresh(); // CHANGE: unchanged generations do not reload the entire timeline on save.
+        // CHANGE: an open storage panel must not turn ordinary publication into an archive scan; its explicit inspection refresh owns disk accounting.
+        entries.forEach(entry => { rememberPublished(entry.revision.id); queuedHistory.delete(entry.revision.id); }); // CHANGE
     }
     function savedCheckpoint(entry) {
         if (!entry || publishedIds.has(entry.revision.id) || info && info.createdAt && entry.revision.timestamp < info.createdAt) return null;
-        const revisions = new Map((history().list ? history().list() : []).map(revision => [revision.id, revision]));
-        for (const item of queuedHistory.values()) revisions.set(item.revision.id, item.revision);
-        let parent = entry.revision.parentRevisionId;
-        const visited = new Set();
-        // A shared checkpoint links to its nearest published ancestor, not private unsaved intermediates.
-        while (parent && !publishedIds.has(parent)) {
-            if (visited.has(parent)) { parent = null; break; }
-            visited.add(parent);
-            parent = revisions.get(parent)?.parentRevisionId || null;
-        }
-        return { ...entry, revision: { ...entry.revision, parentRevisionId: parent || null } };
+        return entry; // CHANGE: main-process transport assigns the published parent directly, without traversing private revision history.
     }
     async function importNewHistory() {
         if (!info || !info.managed || importRunning || !history() || !history().importShared) return;
         importRunning = true;
         try {
-            const capturedInfo = info, result = await bridge.importHistory({ shareId: info.shareId, knownIds: Array.from(importedIds) }); // CHANGE
+            const capturedInfo = info, result = await bridge.importHistory({ shareId: info.shareId }); // CHANGE: indexed transport heads replace lifetime receipt arrays.
             if (info !== capturedInfo) return; // NEW
-            if (result.generation && result.generation !== graph.__ccImportedHistoryGeneration) { importedIds.clear(); publishedIds.clear(); queuedHistory.clear(); graph.__ccImportedHistoryGeneration = result.generation; } // NEW
-            if (history().refresh) await history().refresh(); // NEW: transport has already persisted the verified records.
-            for (const entry of result.entries || []) { await history().importShared(entry); importedIds.add(entry.revision.id); publishedIds.add(entry.revision.id); }
+            if (result.generation && result.generation !== graph.__ccImportedHistoryGeneration) { publishedIds.clear(); queuedHistory.clear(); graph.__ccImportedHistoryGeneration = result.generation; } // CHANGE
+            if (history().refreshStorage) await history().refreshStorage(); // CHANGE: background import does not reload the entire timeline.
+            for (const entry of result.entries || []) { await history().importShared(entry); rememberPublished(entry.revision.id); } // CHANGE
             if (remoteBaselinePending && (result.entries || []).length && file() && !file().isModified() && history().applyRemoteBaseline) { // NEW: never replace the baseline after local work has begun.
                 remoteBaselinePending = !history().applyRemoteBaseline();
             }
@@ -490,13 +486,13 @@ Draw.loadPlugin(function (ui) {
     let collaborationBaseline = null, observedXml = null, localSessionId = null, acquiring = false, editingForm = null; // NEW
     let collaboration = null, collaborationSave = Promise.resolve(), contextGeneration = 0; // NEW
     let recoveryQueue = Promise.resolve(), recoveryFailure = null, retryRecovery = null, saveFence = Promise.resolve(); const unsavedActions = [], recoveringTargets = new Map(); // CHANGE
-    const isCollaborative = () => !!(info && info.protocolVersion === 3 && bridge.collaborationAction); // NEW
+    const isCollaborative = () => !!(info && info.protocolVersion === 4 && bridge.collaborationAction); // NEW
     const holdEditors = window.TrellisEditingHolds?.create(ui, { isCollaborative, status, claim: targets => coordinate({ kind: 'claim', targets }), release: releaseHolds, lose: recoverLostHolds }); // NEW
     function describeStatus(state = lastStatus) { // NEW
         if (info?.localOnly || state?.localOnly) return 'Local only · Sharing off'; // CHANGE
         if (!state) return 'Not shared'; // NEW
         if (state.pending) return 'Awaiting approval'; // NEW
-        if (info && info.protocolVersion === 3 && ['upToDate', 'syncing', 'unavailable'].includes(state.state) && ((state.connectedPeers ?? state.connectedCollaborators) === 0 || state.state === 'unavailable')) return 'Working locally'; // NEW: local work must not conceal pause, revocation, or approval states.
+        if (info && info.protocolVersion === 4 && ['upToDate', 'syncing', 'unavailable'].includes(state.state) && ((state.connectedPeers ?? state.connectedCollaborators) === 0 || state.state === 'unavailable')) return 'Working locally'; // NEW: local work must not conceal pause, revocation, or approval states.
         return ({ upToDate: 'Up to date', syncing: 'Syncing', paused: 'Paused', awaitingApproval: 'Awaiting approval', revoked: 'Access removed', unavailable: 'Unavailable' })[state.state] || 'Checking connection'; // CHANGE
     } // NEW
     function collaborationSummary() { // NEW
@@ -769,7 +765,7 @@ Draw.loadPlugin(function (ui) {
             current.__trellisSaveBatch = batch; saveProgress(current, 'queued'); // NEW
             const started = window.performance.now(); // NEW
             const operation = async () => { // CHANGE
-                timings({ operationId: batch.id, phase: 'save queue', durationMs: window.performance.now() - started }); // NEW
+                timings({ operationId: batch.id, phase: 'save queue', automatic: batch.automatic, durationMs: window.performance.now() - started }); // CHANGE: diagnostics distinguish native autosave execution from an explicit save.
                 if (batch.automatic && background) { saveProgress(current, 'waiting for an editing pause'); await background.waitForQuiet(() => batch.automatic); } // NEW: edits made after a follow-up was queued still reset its quiet period.
                 saveProgress(current, 'waiting for editing access'); // NEW
                 const claimStarted = window.performance.now(); // NEW
@@ -819,7 +815,7 @@ Draw.loadPlugin(function (ui) {
                     return new Promise((resolve, reject) => current.fileSaved(result.resolution.baseXml, null, resolve, reject)); // NEW
                 } // NEW
                 current.stat = stat; current.data = explicitMode ? captured : result.xml; // CHANGE
-                for (const [key, fingerprint] of capturedObjects) { savedObjects.set(key, fingerprint); dirtyObjects.add(key); } current.__trellisConflict = null; // NEW: compare newer edits against exactly the objects captured by this completed save.
+                for (const [key, fingerprint] of capturedObjects) { if (fingerprint === null) savedObjects.delete(key); else savedObjects.set(key, fingerprint); dirtyObjects.add(key); } current.__trellisConflict = null; // CHANGE: deleted objects have an absent baseline; completed deletions do not accumulate in renderer bookkeeping.
                 for (let index = unsavedActions.length - 1; index >= 0; index--) if (unsavedActions[index].revision <= capturedRevision) unsavedActions.splice(index, 1); // NEW: accepted actions are no longer eligible for expiry rollback.
                 if (explicitMode) { collaborationBaseline = captured; current.setModified(!unchanged()); if (unchanged()) observedXml = captured; pendingHash = null; } // NEW: newer typing and unseen objects remain exactly as displayed.
                 else if (unchanged()) { collaborationBaseline = result.xml; if (captured !== result.xml) applyRemote(result.xml, current, current.stat); else { current.setModified(false); observedXml = captured; } } // CHANGE
@@ -1009,7 +1005,7 @@ Draw.loadPlugin(function (ui) {
         const pinned = holdEditors?.pinnedTargets() || [], targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); // NEW
         if (targets.length) await coordinate({ kind: 'release', targets }); // NEW
     } // NEW
-    window.Trellis.sharing = { ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: config => holdEditors?.register(config), getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE
+    window.Trellis.sharing = { ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: config => holdEditors?.register(config), getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE
     /** Authenticate, initialize the remembered base, then claim and save the same account transition. */ // NEW
     window.Trellis.sharing.finishIdentityJoin = async function (options) { // NEW
         if (identityJoinInProgress) throw new Error('This invitation is already being completed.'); // NEW
@@ -1201,7 +1197,7 @@ Draw.loadPlugin(function (ui) {
     ui.editor.addListener('fileLoaded', () => { window.TrellisContentPolicy?.resetDocument(); contextGeneration++; modelRevision++; holdEditors?.reset(); labelEditorRegistration = null; unsavedActions.length = 0; recoveringTargets.clear(); recoveryQueue = Promise.resolve(); recoveryFailure = null; retryRecovery = null; saveFence = Promise.resolve(); // CHANGE
          background?.dispose(); background = null; backgroundFile = null; savedObjects.clear(); dirtyObjects.clear(); conflictDialog?.remove(); conflictDialog = null; // NEW
          invalidateDocumentReady(); classifiedFile = null; // CHANGE
-         delete graph.__trellisSharedPolicy; remoteReadTask = null; window.clearTimeout(formActivityTimer); closeDialog(); acquiring = false; pendingEdits = []; acquisitionObjects.clear(); info = null; collaborationBaseline = null; observedXml = null; localSessionId = null; collaboration = null; viewIdentity = null; pendingHash = null; incoming?.reset(); refreshingTargets.clear(); formTargets = []; closeObjectPopover(); localRecovery = null; remoteBaselinePending = false; queuedHistory.clear(); importedIds.clear(); publishedIds.clear(); installFileHooks(); refresh(); }); // CHANGE
+         delete graph.__trellisSharedPolicy; remoteReadTask = null; window.clearTimeout(formActivityTimer); closeDialog(); acquiring = false; pendingEdits = []; acquisitionObjects.clear(); info = null; collaborationBaseline = null; observedXml = null; localSessionId = null; collaboration = null; viewIdentity = null; pendingHash = null; incoming?.reset(); refreshingTargets.clear(); formTargets = []; closeObjectPopover(); localRecovery = null; remoteBaselinePending = false; queuedHistory.clear(); publishedIds.clear(); installFileHooks(); refresh(); }); // CHANGE
     installFileHooks();
     refresh();
     if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisGardenToolsReady')); // NEW: notify document startup after installing this tool's API.

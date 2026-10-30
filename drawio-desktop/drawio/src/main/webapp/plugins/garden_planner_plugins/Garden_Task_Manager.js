@@ -328,7 +328,7 @@ function isUserTouchedSchedulerCard(source) {
         !!String(readAttributeValue(source, CARD_NOTE_ATTR) || '').trim() ||
         readAttributeValue(source, TASK_INSTRUCTION_OVERRIDE_ATTR) != null || // CHANGE: retain instruction edits when a scheduler rule disappears.
         isSchedulerDateLocked(source) ||
-        hasTaskAssignees(source);
+        hasTaskAssignees(source) || Object.keys(readTaskPlanningOverride(source)).length > 0 || readAttributeValue(source, 'task_equipment_ids') != null; // CHANGE
 }
 
 function isUserTouchedSchedulerRecord(record) {
@@ -343,7 +343,7 @@ function isUserTouchedSchedulerRecord(record) {
         !!String(readAttributeValue(source, CARD_NOTE_ATTR) || '').trim() ||
         readAttributeValue(source, TASK_INSTRUCTION_OVERRIDE_ATTR) != null || // CHANGE: includes explicitly cleared instructions.
         isSchedulerDateLocked(source) ||
-        hasTaskAssignees(source);
+        hasTaskAssignees(source) || Object.keys(readTaskPlanningOverride(source)).length > 0 || readAttributeValue(source, 'task_equipment_ids') != null; // CHANGE
 }
 
 function buildWorkflowPatch(source, action, context) {
@@ -906,6 +906,37 @@ function buildInitialCardDateAttributes(startISO, endISO) { // NEW: scheduler ou
     };
 }
 
+/** Parse occurrence planning choices without treating an explicit empty tool list as inheritance. */ // NEW
+function readTaskPlanningOverride(source) { // CHANGE
+    try { // CHANGE
+        const value = JSON.parse(readAttributeValue(source, 'task_planning_override_json') || '{}'); // CHANGE
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; // CHANGE
+    } catch (_) { return {}; } // CHANGE
+} // CHANGE
+
+/** Completed planning choices are historical facts even when their source rule changes. */ // NEW
+function isCompletedPlanningTask(source) { // CHANGE
+    return getEffectiveWorkflowState(source, null) === 'DONE' || !!readAttributeValue(source, 'completed') || /ARCHIV/i.test(readAttributeValue(source, 'status') || ''); // CHANGE
+} // CHANGE
+
+/** Preserve only explicit local planning state; series projections are regenerated from the rule. */ // NEW
+function preservedPlanningAttributes(source) { // CHANGE
+    const result = {}; // CHANGE
+    for (const key of ['task_planning_override_json', 'task_quantity_basis', 'task_quantity_value', 'task_estimated_hours', 'task_equipment_estimate_note']) { // CHANGE
+        const value = readAttributeValue(source, key); // CHANGE
+        if (value != null) result[key] = value; // CHANGE
+    } // CHANGE
+    const overrides = readTaskPlanningOverride(source); // CHANGE
+    if (overrides.taskTypeId) result.task_type_id = overrides.taskTypeId; // CHANGE
+    if (Object.prototype.hasOwnProperty.call(overrides, 'equipmentIds')) result.task_equipment_ids = overrides.equipmentIds == null ? null : JSON.stringify(overrides.equipmentIds); // CHANGE
+    else if (readAttributeValue(source, 'task_planning_override_json') == null && readAttributeValue(source, 'task_equipment_ids') != null) { // CHANGE
+        const raw = readAttributeValue(source, 'task_equipment_ids'); // CHANGE
+        let ids; try { ids = JSON.parse(raw); } catch (_) { ids = String(raw).split(',').map(id => id.trim()).filter(Boolean); } // CHANGE
+        if (Array.isArray(ids)) { result.task_equipment_ids = JSON.stringify(ids); result.task_planning_override_json = JSON.stringify({ equipmentIds: ids }); } // CHANGE
+    } // CHANGE
+    return result; // CHANGE
+} // CHANGE
+
 function buildSchedulerTaskMetadataAttributes(task) {
     const source = task && typeof task === 'object' ? task : {};
     const attrs = {};
@@ -945,11 +976,18 @@ function buildGeneratedTaskSyncAttributes(task) {
     const dates = buildInitialCardDateAttributes(source.startISO, source.endISO);
     if (dates) Object.assign(attrs, dates);
     Object.assign(attrs, buildSchedulerTaskMetadataAttributes(source));
+    attrs.task_equipment_ids = Array.isArray(source.equipmentIds) ? JSON.stringify(source.equipmentIds) : null; // NEW
+    attrs.task_planning_override_json = '{}'; // NEW
     return attrs;
 }
 
 function buildGeneratedTaskSyncAttributesForExisting(existingSource, task) {
     const attrs = buildGeneratedTaskSyncAttributes(task);
+    Object.assign(attrs, preservedPlanningAttributes(existingSource)); // NEW
+    if (readAttributeValue(existingSource, 'task_planning_override_json') == null && !Object.prototype.hasOwnProperty.call(preservedPlanningAttributes(existingSource), 'task_planning_override_json')) delete attrs.task_planning_override_json; // NEW: leave unchanged legacy cards untouched.
+    if (isCompletedPlanningTask(existingSource)) { // NEW
+        for (const name of ['task_type_id', 'task_equipment_ids']) attrs[name] = readAttributeValue(existingSource, name); // CHANGE
+    } // CHANGE
     attrs[TASK_SCHEDULER_MISSING_ATTR] = null;
     if (isSchedulerDateLocked(existingSource)) {
         delete attrs.start;
@@ -1036,9 +1074,12 @@ function planTaskAssignmentReplacement(existingRecords, tasks) { // NEW: full re
         const source = record && (record.source || record);
         const roleIds = normalizeTaskAssigneeRoleIds(readAttributeValue(source, TASK_ASSIGNEE_ROLE_IDS_ATTR));
         const instructionOverride = readAttributeValue(source, TASK_INSTRUCTION_OVERRIDE_ATTR); // CHANGE
-        if (!roleIds.length && instructionOverride == null) return; // CHANGE: full replacement also preserves local instruction edits.
+        if (isCompletedPlanningTask(source)) { retainMissing.push(record); return; } // NEW
+        const planningAttributes = preservedPlanningAttributes(source); // NEW
+        const hasPlanning = Object.keys(readTaskPlanningOverride(source)).length > 0 || readAttributeValue(source, 'task_equipment_ids') != null || readAttributeValue(source, 'task_quantity_value') != null; // NEW
+        if (!roleIds.length && instructionOverride == null && !hasPlanning) return; // CHANGE: full replacement also preserves local instruction edits.
         const key = existingKey(record);
-        if (key && existingCounts.get(key) === 1 && incomingCounts.get(key) === 1) preserved.push({ key, roleIds, ...(instructionOverride != null ? { instructionOverride } : {}) }); // CHANGE
+        if (key && existingCounts.get(key) === 1 && incomingCounts.get(key) === 1) preserved.push({ key, roleIds, ...(Object.keys(planningAttributes).length ? { planningAttributes } : {}), ...(instructionOverride != null ? { instructionOverride } : {}) }); // CHANGE
         else retainMissing.push(record); // NEW: unsafe mappings remain explicit instead of silently losing user assignments
     });
     return { preserved, retainMissing };
@@ -1483,6 +1524,7 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         buildStackSchedulePlan: SchedulePolicyCore.buildStackSchedulePlan,
         getTaskDateRange,
         buildInitialCardDateAttributes,
+        readTaskPlanningOverride, preservedPlanningAttributes, isCompletedPlanningTask, // NEW
         buildSchedulerTaskMetadataAttributes,
         getSchedulerTaskKey,
         buildGeneratedTaskSyncAttributes,
@@ -3355,7 +3397,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 if (board) affectedBoards.set(board.id, board);
 
                 if (preserveCardIds.has(String(c.id || (c.getId && c.getId()) || ''))) {
-                    markGeneratedTaskCardMissing(c, affectedBoards); // NEW: retain unsafe or removed assignment occurrences as one scheduler user-touch transaction
+                    if (!opts?.retainedMatchedCardIds?.has(String(c.id))) markGeneratedTaskCardMissing(c, affectedBoards); // CHANGE: completed matched tasks are preserved, not marked missing.
                     continue;
                 }
 
@@ -3403,6 +3445,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const reflow = !opts || opts.reflow !== false;
         const assignmentIdsByTaskKey = opts && opts.assignmentIdsByTaskKey;
         const instructionOverridesByTaskKey = opts && opts.instructionOverridesByTaskKey; // CHANGE
+        const planningByTaskKey = opts && opts.planningByTaskKey; // NEW
         const attributionByTaskKey = opts && opts.attributionByTaskKey; // NEW
         const insideUpdate = !!(opts && opts.insideUpdate);
         const focusCreated = !opts || opts.focusCreated !== false; // NEW: scheduler saves can create cards without stealing graph focus
@@ -3440,6 +3483,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 if (typeof t.instructions === 'string') setAttrNoUndo(card, 'task_instructions', t.instructions); // CHANGE
                 if (t.instructionProvenance) setAttrNoUndo(card, 'task_instruction_provenance_json', JSON.stringify(t.instructionProvenance)); // CHANGE
                 const schedulerTaskKey = String(schedulerAttrs.scheduler_task_key || '');
+                setAttrNoUndo(card, 'task_planning_override_json', '{}', true); // NEW
+                if (Array.isArray(t.equipmentIds)) setAttrNoUndo(card, 'task_equipment_ids', JSON.stringify(t.equipmentIds), true); // NEW
+                for (const [key, value] of Object.entries(planningByTaskKey?.get(schedulerTaskKey) || {})) setAttrNoUndo(card, key, value, true); // NEW
                 if (attributionByTaskKey?.has(schedulerTaskKey)) context?.recreated.add(card); // NEW: an older logical task with unknown creation time must keep that time unknown.
                 for (const [key, value] of Object.entries(attributionByTaskKey?.get(schedulerTaskKey) || {})) setAttrNoUndo(card, key, value); // NEW: recreation retains an unambiguous logical task's original creator.
                 if (instructionOverridesByTaskKey && instructionOverridesByTaskKey.has(schedulerTaskKey)) setAttrNoUndo(card, TASK_INSTRUCTION_OVERRIDE_ATTR, instructionOverridesByTaskKey.get(schedulerTaskKey)); // CHANGE
@@ -3447,6 +3493,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 if (preservedAssignees && preservedAssignees.length) setAttrNoUndo(card, TASK_ASSIGNEE_ROLE_IDS_ATTR, serializeTaskAssigneeRoleIds(preservedAssignees), true);
 
                 if (grp) linkBothWays(grp, card);
+                refreshSelectedToolEstimate(card); // NEW: restored choices use the current saved task context.
                 updateBadgeForLane(card, getAttr(parentLane, 'lane_key'));
 
                 out.push({ cellId: card.id, title: t.title });
@@ -3605,9 +3652,13 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const preservation = planTaskAssignmentReplacement(source && source.records, normalizedTasks);
             const assignmentIdsByTaskKey = new Map(preservation.preserved.map(entry => [entry.key, entry.roleIds]));
             const instructionOverridesByTaskKey = new Map(preservation.preserved.filter(entry => entry.instructionOverride != null).map(entry => [entry.key, entry.instructionOverride])); // CHANGE
+            const planningByTaskKey = new Map(preservation.preserved.map(entry => [entry.key, entry.planningAttributes])); // NEW
             const preserveCardIds = new Set(preservation.retainMissing.map(record => String(record.card && (record.card.id || (record.card.getId && record.card.getId())) || '')));
-            removeTasksLinkedOnlyTo(targetGroupId, { reflow: !normalizedTasks.length, preserveCardIds, insideUpdate: !!options.insideUpdate });
-            return normalizedTasks.length ? createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey, instructionOverridesByTaskKey, attributionByTaskKey, insideUpdate: !!options.insideUpdate, focusCreated: options.focusCreated !== false }) : []; // CHANGE
+            const retainedMatchedCardIds = new Set(preservation.retainMissing.filter(record => isCompletedPlanningTask(record.source || record.card?.value) && normalizedTasks.filter(task => String(task.scheduler_task_key || task.schedulerTaskKey || '') === getSchedulerTaskKey(record.source || record.card?.value)).length === 1).map(record => String(record.card.id))); // NEW
+            removeTasksLinkedOnlyTo(targetGroupId, { reflow: !normalizedTasks.length, preserveCardIds, retainedMatchedCardIds, insideUpdate: !!options.insideUpdate }); // CHANGE
+            const retainedKeys = new Set(preservation.retainMissing.map(record => getSchedulerTaskKey(record.source || record.card?.value || record))); // NEW
+            const recreations = normalizedTasks.filter(task => !retainedKeys.has(String(task.scheduler_task_key || task.schedulerTaskKey || ''))); // NEW
+            return recreations.length ? createTasks(recreations, targetGroupId, { reflow: true, assignmentIdsByTaskKey, instructionOverridesByTaskKey, planningByTaskKey, attributionByTaskKey, insideUpdate: !!options.insideUpdate, focusCreated: options.focusCreated !== false }) : []; // CHANGE
         };
         if (options.insideUpdate) return operation();
         return runTrellisHistoryTransaction({ category: "Tasks", action: "replace", origin: "Garden_Task_Manager", title: "Replace linked tasks", affectedCellIds: [targetGroupId].filter(Boolean) }, operation);
@@ -3616,6 +3667,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     function applyGeneratedTaskAttributesToCard(card, task, lanes) {
         const attributes = buildGeneratedTaskSyncAttributesForExisting(card.value, task);
         model.setValue(card, cloneCardValueWithAttributes(card, attributes));
+        refreshSelectedToolEstimate(card); // NEW
         if (!isSchedulerDateLocked(card.value)) putInLane(card, lanes, decideUpcomingLaneKey(task.startISO), true);
         refreshCardLabel(card, true);
     }
@@ -4701,6 +4753,16 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         };
     }
 
+    /** Equipment estimates are planning metadata, not a request to reclassify or repack booked cards. */ // NEW
+    function isPlanningOnlyCardChange(change) { // CHANGE
+        const before = change.previous, after = change.cell?.value; // CHANGE
+        if (!isKanbanCard(change.cell) || !before?.getAttribute || !after?.getAttribute) return false; // CHANGE
+        const fields = new Set(['task_type_id', 'task_equipment_ids', 'task_planning_override_json', 'task_quantity_basis', 'task_quantity_value', 'task_estimated_hours', 'task_equipment_estimate_note']); // CHANGE
+        const names = new Set([...Array.from(before.attributes, attribute => attribute.name), ...Array.from(after.attributes, attribute => attribute.name)]); // CHANGE
+        const changed = [...names].filter(name => before.getAttribute(name) !== after.getAttribute(name)); // CHANGE
+        return changed.some(name => fields.has(name)) && changed.every(name => fields.has(name) || name === 'lastEditedAt' || name === 'lastEditedByUserId'); // CHANGE
+    } // CHANGE
+
     function collectChangedKanbanCards(edit) {
         const out = new Set();
         const boards = new Set();
@@ -4738,6 +4800,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                     continue; // CHANGE: skip same-lane reorder while retaining cross-board moves to equivalent lanes
                 }
             } else if (ch instanceof mxValueChange) {
+                if (isPlanningOnlyCardChange(ch)) continue; // NEW
                 cell = ch.cell;
             } else if (ch instanceof mxStyleChange) {
                 cell = ch.cell;
@@ -6165,6 +6228,138 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return changedCount;
     }
 
+    /** Planning sources are explicit planting links, never whichever object happens to be selected. */ // NEW
+    function taskPlanningSeriesInfo(card) { // CHANGE
+        const sources = getLinkedCellsOf(card).filter(cell => getAttr(cell, 'tiler_group') === '1' && getLinkSet(cell).has(String(card.id))); // CHANGE: only reciprocal links can authorize a source-rule edit.
+        const source = sources.length === 1 ? sources[0] : null; // CHANGE
+        const ruleId = getAttr(card, 'scheduler_rule_id'); // CHANGE
+        const cards = source && ruleId ? getLinkedCellsOf(source).filter(cell => isKanbanCard(cell) && getAttr(cell, 'scheduler_rule_id') === ruleId && getLinkSet(cell).has(String(source.id))) : []; // CHANGE
+        let rule = null; // CHANGE
+        try { const matches = JSON.parse(getAttr(source, 'task_template_json') || '{}').rules?.filter(item => item.id === ruleId) || []; if (matches.length === 1) rule = matches[0]; } catch (_) { /* A legacy source may need scheduler resolution. */ } // CHANGE
+        return { source, rule, ruleId, cards, recurring: !!source && !!ruleId && (rule?.repeatMode === 'interval' || rule?.repeat === true || cards.length > 1), // CHANGE
+            reason: !source ? 'A series change needs one linked planting.' : !ruleId ? 'The source rule is unknown.' : '' }; // CHANGE
+    } // CHANGE
+
+    function canEditTaskPlanning(card) { // NEW
+        const users = graph.__trellisUsers || window.Trellis?.users; // CHANGE
+        return !!card && model.getCell(card.id) === card && isKanbanCard(card) && !isCompletedPlanningTask(card.value) // CHANGE
+            && (!graph.isEnabled || graph.isEnabled()) && (!users?.canEditTaskDetails || users.canEditTaskDetails(card)); // CHANGE
+    } // CHANGE
+
+    /** Tasks can live in a linked Task Module, outside the garden's graph ancestry. */ // NEW
+    function gardenForPlanningTask(card) { // CHANGE
+        const sources = getLinkedCellsOf(card).filter(cell => getAttr(cell, 'tiler_group') === '1'); // CHANGE
+        const gardens = new Set(sources.map(findGardenModuleAncestor).filter(Boolean)); // CHANGE
+        if (gardens.size === 1) return [...gardens][0]; // CHANGE
+        if (gardens.size > 1) return null; // CHANGE
+        const board = findBoardAncestor(card), matches = []; // CHANGE
+        const root = model.getRoot(); // CHANGE
+        (function visit(cell) { // CHANGE
+            if (!cell) return; // CHANGE
+            if ((getAttr(cell, 'garden_module') === '1' || getAttr(cell, 'trellis_garden_module') === '1' || getAttr(cell, 'module_type') === 'garden') && listBoardsForGarden(cell).includes(board)) matches.push(cell); // CHANGE
+            immediateChildren(cell).forEach(visit); // CHANGE
+        })(root); // CHANGE
+        return matches.length === 1 ? matches[0] : findGardenModuleAncestor(card); // CHANGE
+    } // CHANGE
+
+    function listEquipmentPlanningTasks(garden) { // NEW
+        const users = graph.__trellisUsers || window.Trellis?.users; // CHANGE
+        return [...new Set(listBoardsForGarden(garden).flatMap(board => collectBoardCards(board).map(entry => entry.card)))].filter(card => !isScheduleBreakCard(card) && !isCompletedPlanningTask(card.value) // CHANGE
+            && (!users?.canReadCell || users.canReadCell(card)) && gardenForPlanningTask(card) === garden); // CHANGE
+    } // CHANGE
+
+    /** Prepare detached task values and estimates before opening a single undoable transaction. */ // NEW
+    function prepareTaskPlanningValue(card, patch, series, editedCard, inheritedTypeId) { // CHANGE
+        const overrides = { ...readTaskPlanningOverride(card.value) }, attributes = {}; // CHANGE
+        for (const key of ['taskTypeId', 'equipmentIds']) { // CHANGE
+            if (!Object.prototype.hasOwnProperty.call(patch, key)) continue; // CHANGE
+            if (series && card !== editedCard && Object.prototype.hasOwnProperty.call(overrides, key)) continue; // CHANGE
+            if (series || key === 'taskTypeId' && patch[key] === null) delete overrides[key]; else overrides[key] = patch[key]; // CHANGE
+            attributes[key === 'taskTypeId' ? 'task_type_id' : 'task_equipment_ids'] = key === 'taskTypeId' ? patch[key] ?? inheritedTypeId : patch[key] == null ? null : JSON.stringify(patch[key]); // CHANGE
+        } // CHANGE
+        if (!Object.keys(attributes).length && card !== editedCard) return null; // CHANGE
+        attributes.task_planning_override_json = JSON.stringify(overrides); // CHANGE
+        if (card === editedCard && Object.prototype.hasOwnProperty.call(patch, 'quantityValue')) { // CHANGE
+            attributes.task_quantity_basis = patch.quantityBasis; attributes.task_quantity_value = String(patch.quantityValue); // CHANGE
+        } // CHANGE
+        const equipment = graph.__trellisEquipment; // CHANGE
+        const detached = Object.create(card); detached.value = cloneCardValueWithAttributes(card, attributes); // CHANGE
+        const result = equipment.recommendForTask(detached, equipment.planningGarden(card)); // CHANGE
+        if (Object.prototype.hasOwnProperty.call(attributes, 'task_type_id') && !result.context.taskType) throw new Error('This task type is unavailable in an affected task’s reference version.'); // CHANGE
+        if (Object.prototype.hasOwnProperty.call(attributes, 'task_equipment_ids') && Array.isArray(patch.equipmentIds)) { // CHANGE
+            const existing = readTaskPlanningOverride(card.value); // NEW: stale saved IDs remain removable without blocking unrelated additions.
+            const existingIds = equipment.readEquipmentIds(Object.prototype.hasOwnProperty.call(existing, 'equipmentIds') ? existing.equipmentIds : getAttr(card, 'task_equipment_ids')) || []; // NEW
+            if (patch.equipmentIds.some(id => !existingIds.includes(id) && !result.context.inventory.some(eq => eq.id === id))) throw new Error('A selected tool is unavailable in an affected task’s reference version.'); // CHANGE
+        } // NEW
+        if (result.estimate.estimatedHours != null) attributes.task_estimated_hours = String(result.estimate.estimatedHours); // CHANGE
+        attributes.task_equipment_estimate_note = result.estimate.estimatedHours == null ? 'Previous estimate retained: ' + result.estimate.problems.join(' ') : result.estimate.problems.join(' ') || null; // CHANGE
+        return { card, before: card.value, next: cloneCardValueWithAttributes(card, attributes) }; // CHANGE
+    } // CHANGE
+
+    /** Reconciliation recalculates authored equipment choices, leaving manually entered estimates alone otherwise. */ // NEW
+    function refreshSelectedToolEstimate(card) { // CHANGE
+        if (!graph.__trellisEquipment || isCompletedPlanningTask(card.value)) return; // CHANGE
+        if (!Object.keys(readTaskPlanningOverride(card.value)).length && getAttr(card, 'task_equipment_ids') == null) return; // CHANGE
+        try { // CHANGE
+            const prepared = prepareTaskPlanningValue(card, {}, false, card); // CHANGE
+            if (prepared && prepared.next.outerHTML !== card.value.outerHTML) model.setValue(card, prepared.next); // CHANGE
+        } catch (error) { // CHANGE
+            model.setValue(card, cloneCardValueWithAttributes(card, { task_equipment_estimate_note: 'Previous estimate retained: ' + error.message })); // CHANGE
+        } // CHANGE
+    } // CHANGE
+
+    /** Apply occurrence or source-rule choices atomically without repacking any calendar bookings. */ // NEW
+    async function applyTaskPlanningChange(card, patch, scope = 'occurrence') { // CHANGE
+        if (!canEditTaskPlanning(card)) throw new Error('You cannot edit planning details for this task.'); // CHANGE
+        if (!graph.__trellisEquipment) throw new Error('Equipment planning is unavailable.'); // CHANGE
+        const allowed = ['taskTypeId', 'equipmentIds', 'quantityBasis', 'quantityValue']; // CHANGE
+        if (!patch || Object.keys(patch).some(key => !allowed.includes(key))) throw new Error('Unsupported task planning change.'); // CHANGE
+        if (patch.taskTypeId != null && (typeof patch.taskTypeId !== 'string' || !patch.taskTypeId.trim())) throw new Error('Choose a task type.'); // CHANGE
+        if (Object.prototype.hasOwnProperty.call(patch, 'equipmentIds') && patch.equipmentIds !== null && (!Array.isArray(patch.equipmentIds) || patch.equipmentIds.some(id => typeof id !== 'string' || !id.trim()))) throw new Error('Choose valid tools.'); // CHANGE
+        if (patch.equipmentIds) patch = { ...patch, equipmentIds: [...new Set(patch.equipmentIds)] }; // CHANGE
+        if (Object.prototype.hasOwnProperty.call(patch, 'quantityValue') && (!Number.isFinite(Number(patch.quantityValue)) || Number(patch.quantityValue) < 0 || !['plants', 'm2', 'row_meters', 'beds', 'harvest_kg', 'tasks', 'irrigation_zones'].includes(patch.quantityBasis))) throw new Error('Enter a non-negative job quantity and a supported unit.'); // CHANGE
+        const series = scope === 'series', info = taskPlanningSeriesInfo(card); // CHANGE
+        if (series && (info.reason || !info.recurring)) throw new Error(info.reason || 'This task has no recurring source rule.'); // CHANGE
+        const users = graph.__trellisUsers || window.Trellis?.users; // CHANGE
+        const actor = users?.getCurrentUser?.()?.id, root = model.getRoot(); // CHANGE
+        const affected = series ? info.cards.filter(item => !isCompletedPlanningTask(item.value)) : [card]; // CHANGE
+        if (!affected.includes(card)) affected.push(card); // CHANGE
+        if (affected.some(item => !canEditTaskPlanning(item))) throw new Error('You need task-detail permission for every affected occurrence.'); // CHANGE
+        if (series && users?.canManagePlanting && !users.canManagePlanting(info.source)) throw new Error('You cannot edit the source planting.'); // CHANGE
+        const before = new Map(affected.map(item => [item, item.value])); // CHANGE
+        const sourceChange = series ? await window.USL?.scheduler?.taskPlanning?.prepareSeries(info.source, card, patch) : null; // CHANGE
+        if (series && !sourceChange) throw new Error('The scheduler cannot update this source rule.'); // CHANGE
+        if (root !== model.getRoot() || actor !== users?.getCurrentUser?.()?.id || affected.some(item => model.getCell(item.id) !== item || item.value !== before.get(item))) throw new Error('The task, plan or active user changed. Open the selection again.'); // CHANGE
+        if (series && (model.getCell(info.source.id) !== info.source || info.source.value !== sourceChange.before || taskPlanningSeriesInfo(card).cards.map(item => item.id).sort().join(',') !== info.cards.map(item => item.id).sort().join(','))) throw new Error('The recurring series changed. Open the selection again.'); // CHANGE
+        let inheritedTypeId; // NEW
+        if (Object.prototype.hasOwnProperty.call(patch, 'taskTypeId') && patch.taskTypeId === null) { // CHANGE
+            const rule = series ? JSON.parse(sourceChange.templateJson).rules.find(rule => rule.id === info.ruleId) : info.rule; // CHANGE
+            if (!rule) throw new Error('The source task type is unavailable.'); // CHANGE
+            inheritedTypeId = window.USL?.scheduler?.taskPlanning?.resolveType?.(rule) || rule.taskTypeId; // CHANGE
+            if (!inheritedTypeId) throw new Error('The source task type is unavailable.'); // CHANGE
+        } // CHANGE
+        const values = affected.map(item => prepareTaskPlanningValue(item, patch, series, card, inheritedTypeId)).filter(Boolean); // CHANGE
+        const commit = () => { // CHANGE
+            if (values.some(item => !canEditTaskPlanning(item.card) || item.card.value !== item.before)) throw new Error('Task details changed before saving. Try again.'); // CHANGE
+            if (series && (info.source.value !== sourceChange.before || users?.canManagePlanting && !users.canManagePlanting(info.source))) throw new Error('The source planting changed or is read only.'); // CHANGE
+            return runTrellisHistoryTransaction({ category: 'Tasks', action: 'planning', origin: 'Garden_Task_Manager', title: series ? 'Change task series planning' : 'Change task planning', affectedCellIds: values.map(item => item.card.id) }, () => taskTransactions.runModelUpdate({}, () => { // CHANGE
+                const edit = model.currentEdit, start = edit?.changes?.length || 0; // CHANGE
+                try { // CHANGE
+                    if (series) model.setValue(info.source, cloneCardValueWithAttributes(info.source, { task_template_json: sourceChange.templateJson })); // CHANGE
+                    values.forEach(item => { model.setValue(item.card, item.next); graph.refresh(item.card); }); // CHANGE
+                    return true; // CHANGE
+                } catch (error) { // CHANGE
+                    if (edit?.changes) for (const change of edit.changes.splice(start).reverse()) change.execute(); // CHANGE
+                    throw error; // CHANGE
+                } // CHANGE
+            })); // CHANGE
+        }; // CHANGE
+        const editContext = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+        const result = editContext ? editContext.run('manual', { id: 'task-planning:' + card.id, title: 'Task planning', cells: () => series ? [info.source, ...affected] : affected, deferredValue: false, retry: () => graph.setSelectionCell(card) }, commit) : commit(); // CHANGE
+        if (result === false) throw new Error('A related editor is active. Close it and save this selection again.'); // CHANGE
+        return result; // CHANGE
+    } // CHANGE
+
     function createTaskCommandRuntime({ boardLayout, transactions }) { // CHANGE: command seam for UI, events, and menu entrypoints
         function replaceTasks(targetGroupId, tasks, opts) {
             return replaceTasksPreservingAssignments(targetGroupId, tasks, opts);
@@ -6193,6 +6388,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             applySchedulerTaskReplacement,
             applyDifferentialTaskSync,
             commitCardPatch,
+            applyTaskPlanningChange, // NEW
             applyCardDateOverride,
             resetCardDates,
             resetCardDatesForCards,
@@ -6294,6 +6490,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     } // NEW
 
     graph.__trellisTaskManager = Object.assign({}, graph.__trellisTaskManager || {}, {
+        listPlanningTasks: listEquipmentPlanningTasks, gardenForTask: gardenForPlanningTask, canEditTaskPlanning, taskPlanningSeriesInfo, applyTaskPlanningChange, // NEW
+        validPlanningAssigneeIds: card => resolveCardAssigneeProfiles(card, findBoardAncestor(card)).filter(profile => profile.eligible).map(profile => profile.id), // NEW
         getRepeatLinkVisibility, revealLinkedTaskOccurrence, // NEW: late-bound connector policy and normal task navigation
         createRoadmapTaskInBoard, getBoardRoleRoster, linkRoadmapAssigneesToBoard, // NEW
         listBoardsInTaskModule: function (moduleCell) { const boards = findBoardsIn(moduleCell); return [boards.main].concat(boards.secondary).filter(Boolean).map(board => ({ id: String(board.id), name: getAttr(board, 'label') || graph.convertValueToString(board), role: board === boards.main ? 'main' : 'secondary' })); }, // NEW
@@ -7605,7 +7803,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         if (!host) return;
         const overlay = document.createElement('div');
         overlay.className = 'trellis-task-selected-day-lane-actions';
-        overlay.style.cssText = 'position:absolute;display:none;flex-direction:column;align-items:stretch;gap:4px;background:#fff;border:1px solid #111;padding:4px;font:12px Arial,sans-serif;pointer-events:auto;';
+        overlay.style.cssText = 'position:absolute;display:none;flex-direction:column;align-items:stretch;gap:4px;background:#fff;border:1px solid #111;padding:4px;font:12px Arial,sans-serif;pointer-events:auto;max-height:80vh;overflow:auto;box-sizing:border-box;'; // CHANGE
         overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
         host.appendChild(overlay);
         registerTaskOverlayGestureElement(overlay);
@@ -8157,6 +8355,126 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             search.focus();
         }
 
+        const planning = document.createElement('div'); // NEW
+        planning.className = 'trellis-task-planning-controls'; // CHANGE
+        planning.style.cssText = 'display:flex;flex-direction:column;gap:5px;width:300px;max-width:calc(100vw - 32px);font:12px Arial,sans-serif;'; // CHANGE
+        ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'click', 'dblclick', 'keydown', 'keypress', 'keyup'].forEach(type => planning.addEventListener(type, stopDomPropagation)); // NEW: keep native input focus and keyboard behaviour.
+        planning.addEventListener('toggle', () => requestRefresh(), true); // NEW: remeasure expanded controls.
+        planning.addEventListener('keydown', event => { if (event.key === 'Escape') { planningSignature = ''; requestRefresh(); } }); // NEW
+        overlay.appendChild(planning); // CHANGE
+        let planningSignature = '', planningCard = null; // CHANGE
+
+        /** Keep an open checkbox draft and keyboard focus during unrelated graph/view refreshes. */ // NEW
+        function renderPlanningControls(card) { // CHANGE
+            if (!card || !graph.__trellisEquipment) { planning.style.display = 'none'; planningSignature = ''; planningCard = null; return; } // CHANGE
+            const equipment = graph.__trellisEquipment; // CHANGE
+            let result; // CHANGE
+            try { result = equipment.recommendForTask(card); } // CHANGE
+            catch (error) { planning.replaceChildren(); planning.textContent = 'Equipment planning unavailable: ' + error.message; planning.style.display = ''; return; } // CHANGE
+            const context = result.context; // CHANGE
+            const signature = JSON.stringify([card.id, card.value?.outerHTML, context.taskTypeId, context.quantity, context.crewSize, context.bedConditions, context.cropId, context.inventory, result.candidates.map(item => [item.equipment.id, item.unmet, item.unknown]), canEditTaskPlanning(card)]); // CHANGE
+            planning.style.display = 'flex'; // CHANGE
+            if (planningCard === card && planningSignature === signature) return; // CHANGE
+            planningCard = card; planningSignature = signature; planning.replaceChildren(); // CHANGE
+            const editable = canEditTaskPlanning(card), originalValue = card.value; // CHANGE
+            const message = document.createElement('div'); message.setAttribute('role', 'status'); message.style.cssText = 'font-size:11px;max-width:320px;white-space:normal;'; // CHANGE
+            function button(label, action, parent = planning) { // CHANGE
+                const node = document.createElement('button'); node.type = 'button'; node.textContent = label; // CHANGE
+                applyTaskButtonStyle(node, 'neutral', { compact: true }); node.addEventListener('click', event => { consumeDomEvent(event); action(); }); // CHANGE
+                parent.appendChild(node); return node; // CHANGE
+            } // CHANGE
+            async function save(patch, scope) { // CHANGE
+                if (model.getCell(card.id) !== card || card.value !== originalValue || selectedKanbanCards().length !== 1 || selectedKanbanCards()[0] !== card) { message.textContent = 'The selected task changed. Open the selection again.'; return; } // CHANGE
+                try { // CHANGE
+                    planning.querySelectorAll('button,select,input').forEach(node => { node.disabled = true; }); // CHANGE
+                    await applyTaskPlanningChange(card, patch, scope); // CHANGE
+                    planningSignature = ''; requestRefresh(); // CHANGE
+                } catch (error) { // CHANGE
+                    message.textContent = error.message; // CHANGE
+                    planningSignature = ''; // Allow the next model refresh to rebuild permission-sensitive controls. // CHANGE
+                    planning.querySelectorAll('button,select,input').forEach(node => { node.disabled = !editable || node.dataset.unavailable === 'true'; }); // CHANGE
+                } // CHANGE
+            } // CHANGE
+            function chooseScope(patch, parent) { // CHANGE
+                const info = taskPlanningSeriesInfo(card); // CHANGE
+                if (!info.recurring) { void save(patch, 'occurrence'); return; } // CHANGE
+                planning.querySelector('.trellis-task-planning-scope')?.remove(); // CHANGE
+                const scope = document.createElement('div'); scope.className = 'trellis-task-planning-scope'; scope.setAttribute('role', 'group'); scope.setAttribute('aria-label', 'Apply planning change to'); // CHANGE
+                scope.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;padding:6px 0;'; // CHANGE
+                const note = document.createElement('div'); note.textContent = 'Apply to this occurrence or the series?'; note.style.width = '100%'; scope.appendChild(note); // CHANGE
+                button('This occurrence', () => void save(patch, 'occurrence'), scope); // CHANGE
+                const series = button('Series', () => void save(patch, 'series'), scope); // CHANGE
+                const users = graph.__trellisUsers || window.Trellis?.users; // CHANGE
+                series.disabled = !!info.reason || !window.USL?.scheduler?.taskPlanning || !!(users?.canManagePlanting && !users.canManagePlanting(info.source)); // CHANGE
+                if (series.disabled) series.title = info.reason || 'Source planting editing is unavailable or not permitted.'; // CHANGE
+                button('Cancel', () => { planningSignature = ''; requestRefresh(); }, scope); // CHANGE
+                parent.appendChild(scope); scope.querySelector('button')?.focus(); // CHANGE
+            } // CHANGE
+            const typeLabel = document.createElement('label'); typeLabel.textContent = 'Task type'; // CHANGE
+            const typeSelect = document.createElement('select'); typeSelect.setAttribute('aria-label', 'Task type'); typeSelect.style.cssText = 'display:block;box-sizing:border-box;width:100%;font:inherit;padding:4px;'; // CHANGE
+            const taskTypes = context.moduleCell ? equipment.readTaskTypeRegistry(context.scope) : []; // CHANGE
+            const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Choose task type'; typeSelect.appendChild(placeholder); // CHANGE
+            taskTypes.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(type => { const option = document.createElement('option'); option.value = type.id; option.textContent = type.name; typeSelect.appendChild(option); }); // CHANGE
+            if (context.taskTypeId && !taskTypes.some(type => type.id === context.taskTypeId)) { // CHANGE
+                const missing = document.createElement('option'); missing.value = context.taskTypeId; missing.textContent = 'Unavailable type: ' + context.taskTypeId; typeSelect.appendChild(missing); // CHANGE
+            } // CHANGE
+            if (readTaskPlanningOverride(card.value).taskTypeId && taskPlanningSeriesInfo(card).rule) { // NEW
+                const inherit = document.createElement('option'); inherit.value = '__inherit__'; inherit.textContent = 'Use source task type'; typeSelect.appendChild(inherit); // CHANGE
+            } // CHANGE
+            typeSelect.value = context.taskTypeId || ''; typeSelect.disabled = !editable || !taskTypes.length; // CHANGE
+            typeSelect.addEventListener('change', () => { if (typeSelect.value) chooseScope({ taskTypeId: typeSelect.value === '__inherit__' ? null : typeSelect.value }, planning); }); // CHANGE
+            typeLabel.appendChild(typeSelect); planning.appendChild(typeLabel); // CHANGE
+            const tools = document.createElement('details'); tools.className = 'trellis-task-equipment-dropdown'; // CHANGE
+            const heading = document.createElement('summary'); heading.style.cssText = 'cursor:pointer;padding:4px;border:1px solid #aaa;border-radius:3px;'; // CHANGE
+            const names = result.selected.map(item => item.equipment.name); // CHANGE
+            heading.textContent = result.selection === null ? 'Suggested tools (' + result.available.length + ')' : 'Selected tools: ' + (names.length ? names.slice(0, 2).join(', ') + (names.length > 2 ? ' +' + (names.length - 2) : '') : 'No tools'); // CHANGE
+            tools.appendChild(heading); // CHANGE
+            const list = document.createElement('div'); list.style.cssText = 'max-height:240px;overflow:auto;padding:5px;'; tools.appendChild(list); // CHANGE
+            const draft = new Set(result.selection || []), displayed = new Set(); // CHANGE
+            const note = document.createElement('div'); note.textContent = 'Choose tools and Apply to use them in the estimate. Only the best independent saving applies; marked rules can combine. Each selected tool adds its setup and cleanup time.'; list.appendChild(note); // CHANGE
+            const estimate = document.createElement('div'); estimate.className = 'trellis-task-equipment-preview'; estimate.style.cssText = 'font-size:11px;padding:5px 0;white-space:normal;'; // CHANGE
+            function updateEstimate() { // CHANGE
+                const preview = equipment.estimatePlanningSelection(context, [...draft]); // CHANGE
+                estimate.textContent = preview.estimatedHours == null ? 'Previous estimate retained. ' + preview.problems.join(' ') : 'Estimated workload: ' + Math.round(preview.estimatedHours * 60) + ' minutes. ' + preview.problems.join(' '); // CHANGE
+            } // CHANGE
+            function group(label, entries, opportunities) { // CHANGE
+                const pending = entries.filter(item => !displayed.has(item.equipment.id)); if (!pending.length) return; // CHANGE
+                const title = document.createElement('strong'); title.textContent = label; title.style.cssText = 'display:block;margin-top:8px;'; list.appendChild(title); // CHANGE
+                pending.forEach(item => { // CHANGE
+                    displayed.add(item.equipment.id); // CHANGE
+                    const row = document.createElement('label'); row.style.cssText = 'display:flex;gap:5px;align-items:flex-start;margin:6px 0;white-space:normal;'; // CHANGE
+                    const check = document.createElement('input'); check.type = 'checkbox'; check.value = item.equipment.id; check.checked = draft.has(item.equipment.id); // CHANGE
+                    check.dataset.unavailable = String(!!opportunities && !check.checked); check.disabled = !editable || check.dataset.unavailable === 'true'; // CHANGE
+                    check.setAttribute('aria-label', item.equipment.name); // CHANGE
+                    check.addEventListener('change', () => { if (check.checked) draft.add(check.value); else draft.delete(check.value); updateEstimate(); }); // CHANGE
+                    const text = document.createElement('span'), name = document.createElement('strong'); name.textContent = item.equipment.name; text.appendChild(name); // CHANGE
+                    const reasons = document.createElement('div'); reasons.style.fontSize = '11px'; reasons.textContent = [...item.reasons, ...item.unmet, ...item.unknown, ...(!item.relevant ? ['Does not match this task type.'] : [])].join(' '); text.appendChild(reasons); // CHANGE
+                    row.appendChild(check); row.appendChild(text); list.appendChild(row); // CHANGE
+                }); // CHANGE
+            } // CHANGE
+            group('Current selections', result.selected, false); // CHANGE
+            group('Suggested tools', result.available, false); // CHANGE
+            group('Opportunities — make available or resolve requirements first', result.opportunities, true); // CHANGE
+            if (!result.candidates.length && !result.selected.length) { const empty = document.createElement('div'); empty.textContent = context.taskType ? 'No matching tools. Link this task type under Helps with in Equipment.' : 'Choose a task type to see tools.'; list.appendChild(empty); } // CHANGE
+            list.appendChild(estimate); updateEstimate(); // CHANGE
+            const actions = document.createElement('div'); actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;'; tools.appendChild(actions); // CHANGE
+            button('Apply tools', () => chooseScope({ equipmentIds: [...draft] }, tools), actions).disabled = !editable; // CHANGE
+            button('No tools', () => chooseScope({ equipmentIds: [] }, tools), actions).disabled = !editable; // CHANGE
+            button('Use suggestions', () => chooseScope({ equipmentIds: null }, tools), actions).disabled = !editable; // CHANGE
+            planning.appendChild(tools); // CHANGE
+            const quantity = document.createElement('details'), quantityLabel = document.createElement('summary'); quantityLabel.textContent = 'Set job quantity'; quantityLabel.style.cursor = 'pointer'; quantity.appendChild(quantityLabel); // CHANGE
+            const units = document.createElement('select'); units.setAttribute('aria-label', 'Job quantity unit'); // CHANGE
+            (context.taskType?.allowedQuantityBases || ['plants', 'm2', 'row_meters', 'beds', 'harvest_kg', 'tasks', 'irrigation_zones']).forEach(unit => { const option = document.createElement('option'); option.value = unit; option.textContent = unit.replace(/_/g, ' '); units.appendChild(option); }); // CHANGE
+            units.value = context.quantity?.unit || getAttr(card, 'task_quantity_basis') || context.taskType?.defaultQuantityBasis || 'tasks'; units.disabled = !editable; // CHANGE
+            const amount = document.createElement('input'); amount.type = 'number'; amount.min = '0'; amount.step = 'any'; amount.setAttribute('aria-label', 'Job quantity'); amount.style.width = '80px'; amount.value = context.quantity?.value ?? getAttr(card, 'task_quantity_value') ?? ''; amount.disabled = !editable; // CHANGE
+            quantity.appendChild(amount); quantity.appendChild(units); // CHANGE
+            button('Save quantity', () => { if (amount.value === '' || !amount.checkValidity()) { message.textContent = 'Enter a non-negative job quantity.'; return; } void save({ quantityBasis: units.value, quantityValue: Number(amount.value) }, 'occurrence'); }, quantity).disabled = !editable; // CHANGE
+            planning.appendChild(quantity); // CHANGE
+            if (getAttr(card, 'task_equipment_estimate_note')) message.textContent = getAttr(card, 'task_equipment_estimate_note'); // CHANGE
+            if (!editable) message.textContent = isCompletedPlanningTask(card.value) ? 'Completed task planning is preserved.' : 'Read only — task-detail editing is not permitted.'; // CHANGE
+            planning.appendChild(message); // CHANGE
+        } // CHANGE
+
         const editBtn = add('Edit', cards => cards.length === 1 ? taskDialogs.showEditCardDialog(cards[0]) : taskDialogs.showBulkEditCardsDialog(cards), 'open');
         editBtn.title = "Edit the selected task cards."; // CHANGE: explicit action tooltip.
         const guideBtn = add('Guide', cards => { const guide = window.USL && window.USL.guide; if (cards.length === 1 && guide) guide.open(cards[0]); else ui.alert('The Task Guide plugin is unavailable.'); }, 'open'); // CHANGE
@@ -8186,7 +8504,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const cards = selectedKanbanCards();
             const assignmentContext = getAssignmentSelectionContext(cards);
             if (assignmentPicker && assignmentContextSignature(assignmentContext) !== assignmentPickerSignature) closeAssignmentPicker(false);
-            if (!cards.length) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; }
+            if (!cards.length) { closeAssignmentPicker(false); renderPlanningControls(null); overlay.style.display = 'none'; return; } // CHANGE
+            renderPlanningControls(cards.length === 1 ? cards[0] : null); // NEW
             const bounds = getCellStateBounds(cards, overlay.parentNode);
             if (!bounds) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; }
             if (assignmentPicker) {
@@ -8222,12 +8541,17 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             resetBtn.style.display = single ? (canEditCardDates(card) && hasCardDateOverride(card) ? '' : 'none') : (cards.some(hasCardDateOverride) ? '' : 'none');
             clearBtn.style.display = single ? (getCardNote(card) ? '' : 'none') : (cards.some(getCardNote) ? '' : 'none');
             if (!positionDomOverlayFromBounds(overlay, bounds, true, false, TASK_ACTION_OVERLAY_EXTRA_Y, TASK_ACTION_OVERLAY_EXTRA_X)) overlay.style.display = 'none';
+            const rect = overlay.getBoundingClientRect(); // NEW
+            if (rect.width && rect.right > window.innerWidth - 8) overlay.style.left = Math.max(0, parseFloat(overlay.style.left) - (rect.right - window.innerWidth + 8)) + 'px'; // NEW
+            if (rect.height && rect.bottom > window.innerHeight - 8 && bounds.y > rect.height + 6) overlay.style.top = Math.max(0, bounds.y - rect.height - 6) + 'px'; // NEW
         }
 
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh);
         graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh);
         bindTeamPermissionModeOverlayRefresh(requestRefresh); // NEW
         addGraphViewRefreshListener(requestRefresh);
+        ['trellisEquipmentPluginReady', 'trellisEquipmentChanged', 'trellisTaskTypesChanged', 'trellisEquipmentCapabilitiesChanged', 'trellisWorkloadAssumptionsChanged'].forEach(name => document.addEventListener(name, requestRefresh)); // CHANGE
+        ['trellisReferencesChanged', 'trellisUsersSessionChanged', 'trellisUsersStoreChanged'].forEach(name => window.addEventListener(name, requestRefresh)); // NEW // NEW
         document.addEventListener('mousedown', function (evt) { if (assignmentPicker && !assignmentPicker.contains(evt.target) && evt.target !== assignBtn) closeAssignmentPicker(); }, true);
         document.addEventListener('keydown', function (evt) { if (assignmentPicker && (evt.key === 'Escape' || evt.keyCode === 27)) { consumeDomEvent(evt); closeAssignmentPicker(); } });
         requestRefresh();

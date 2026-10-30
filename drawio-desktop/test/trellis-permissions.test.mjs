@@ -183,3 +183,20 @@ test('standalone first-save wrapping preserves object authority and journal vali
     assert.equal(C.authorizePendingCreation(snapshot, after, 'gardener', 'edit', key('new'), 1001, { policy: snapshot }).allowed, false); // NEW
     assert.equal(C.authorizePendingCreation(snapshot, snapshot, 'admin', 'edit', key('foreign'), 1001, { policy: snapshot }).allowed, false); // NEW
 }); // NEW
+
+
+test('task planning attributes use task-detail permissions and cannot authorize a foreign task or planting', () => { // NEW
+    const before = fixture(); // NEW
+    function planning(taskId) { // NEW
+        const state = inspectDiagram(before), cell = state.cells.find(cell => cell.id === taskId); // NEW
+        for (const [name, value] of Object.entries({ task_type_id: 'pruning', task_equipment_ids: '["pruners"]', task_planning_override_json: JSON.stringify({ equipmentIds: ['pruners'] }), task_quantity_basis: 'plants', task_quantity_value: '20', task_estimated_hours: '1.5', task_equipment_estimate_note: 'Check operator skill.' })) cell.node.setAttribute(name, value); // NEW
+        return state.document.serialize(); // NEW
+    } // NEW
+    assert.equal(validatePermissionChanges(before, planning('own-task'), 'gardener', 1001).allowed, true); // NEW
+    assert.equal(validatePermissionChanges(before, planning('linked-task'), 'gardener', 1001).allowed, true); // NEW
+    assert.equal(validatePermissionChanges(before, planning('foreign-task'), 'gardener', 1001).allowed, false); // NEW
+    assert.equal(validatePermissionChanges(before, planning('own-task'), 'visitor', 1001).allowed, false); // NEW
+    const mixed = inspectDiagram(planning('own-task')); // NEW
+    mixed.cells.find(cell => cell.id === 'foreign').node.setAttribute('task_template_json', '{"version":2,"rules":[]}'); // NEW
+    assert.equal(validatePermissionChanges(before, mixed.document.serialize(), 'gardener', 1001).allowed, false); // NEW
+}); // NEW

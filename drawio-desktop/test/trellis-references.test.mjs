@@ -182,3 +182,13 @@ test('signed gardener proposals reuse reference approval while unrelated bundled
     const mixed = after.replace('id="garden" ', 'id="garden" label="Forbidden garden rename" '), changed = { ...transaction, ...diffObjects(before, mixed) }; // NEW
     assert.deepEqual(replay(before, [claim, changed], 2000).accepted, []); // NEW
 }); // NEW
+
+
+test('recipe equipment selections are portable dependencies and retain explicit empty or suggested modes', () => { // NEW
+    const base = C.putCatalogBatch(fixture(), { equipment_inventory_json: { version: 1, items: [{ id: 'hoe', name: 'Hoe' }] }, task_type_registry_json: { version: 1, items: [{ id: 'weeding', name: 'Weeding' }] }, task_recipe_library_json: { version: 1, items: [{ id: 'recipe', name: 'Weed', template: { version: 2, rules: [{ id: 'weed', taskTypeId: 'weeding', equipmentIds: ['hoe'] }, { id: 'manual', equipmentIds: [] }, { id: 'suggested', equipmentIds: null }] } }] } }); // NEW
+    const recipe = Object.values(base.manifests[base.current].heads).map(id => base.revisions[id]).find(revision => revision.kind === 'task_recipe_library_json' && revision.data.item?.id === 'recipe'); // NEW: inspect the published portable revision rather than its intermediate draft.
+    assert.equal(C.references(recipe.data).length, 2); // NEW
+    const rules = C.catalog(base, 'task_recipe_library_json').items[0].template.rules; // NEW
+    assert.deepEqual(rules[0].equipmentIds, ['hoe']); assert.deepEqual(rules[1].equipmentIds, []); assert.equal(rules[2].equipmentIds, null); // NEW
+    assert.equal(C.putCatalog(base, 'task_recipe_library_json', C.catalog(base, 'task_recipe_library_json')).current, base.current); // NEW
+}); // NEW

@@ -12,7 +12,7 @@ const intersects = (a, b) => a === '*' || b === '*' || a === b; // NEW
 
 /** Ownership is advisory coordination; content permissions and base hashes remain authoritative. */ // NEW
 export function createActivityService({ canvas, deviceId, keys, sessionFor, writeAtomic, authorize = () => true, canClaim = () => true, monotonic = () => performance.now(), now = Date.now, onChange = () => {} }) { // CHANGE
-    const directory = path.join(canvas.folderPath, '.trellis', 'activity-v3'), entries = new Map(), local = new Map(); // NEW
+    const directory = path.join(canvas.folderPath, '.trellis', 'activity-v4'), entries = new Map(), local = new Map(); // NEW
     let watcher, timer, scanTask, scanAgain = false, closed = false, fingerprint = '', notifyTimer, initializing; // NEW
     const keyFor = value => value.deviceId + ':' + value.sessionId; // NEW
     function targets(values = []) { // NEW
@@ -25,7 +25,7 @@ export function createActivityService({ canvas, deviceId, keys, sessionFor, writ
         }))].sort(); // NEW
     } // NEW
     function validate(value) { // NEW
-        if (value?.schema !== 3 || value.shareId !== canvas.shareId || value.diagramId !== canvas.diagramId || !Number.isSafeInteger(value.sequence) || value.sequence < 1 || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error('Invalid activity identity or revision.'); // NEW
+        if (value?.schema !== 4 || value.shareId !== canvas.shareId || value.diagramId !== canvas.diagramId || !Number.isSafeInteger(value.sequence) || value.sequence < 1 || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error('Invalid activity identity or revision.'); // NEW
         safeId(value.deviceId); safeId(value.sessionId); safeId(value.userId); // NEW
         for (const field of ['viewing', 'editing', 'pending']) targets(value[field]); // NEW
         if (!Array.isArray(value.requests) || value.requests.length > MAX_TARGETS || value.requests.some(request => !request || typeof request.key !== 'string' || typeof request.claimId !== 'string' || !Number.isFinite(request.at))) throw new Error('Invalid activity requests.'); // NEW
@@ -51,7 +51,7 @@ export function createActivityService({ canvas, deviceId, keys, sessionFor, writ
             const deadline = requests.length ? Math.min(...requests.map(request => request.at + 300000)) : null; // NEW
             if (!deadline || now() < deadline) holds.push({ ...candidate, requested: !!deadline, requesters: requests, expiresAt: deadline ? Math.min(candidate.expiresAt, deadline) : candidate.expiresAt }); // NEW
         } // NEW
-        return { protocolVersion: 3, sessionId, holds, reservations: [], presence, pendingChanges, sessions }; // NEW
+        return { protocolVersion: 4, sessionId, holds, reservations: [], presence, pendingChanges, sessions }; // NEW
     } // NEW
     function announce() { // NEW
         if (closed) return; // NEW
@@ -105,7 +105,7 @@ export function createActivityService({ canvas, deviceId, keys, sessionFor, writ
         await start(); if (closed) throw new Error('Activity service is closed.'); // NEW
         const sessionId = sessionFor(callerId, userId), key = String(callerId) + ':' + userId; // NEW
         let value = local.get(key); // NEW
-        if (!value) { value = { schema: 3, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId, userId, sessionId, sequence: 1, revision: 0, viewing: [], editing: [], pending: [], requests: [], saveState: 'saved', online: true }; local.set(key, value); } // NEW
+        if (!value) { value = { schema: 4, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId, userId, sessionId, sequence: 1, revision: 0, viewing: [], editing: [], pending: [], requests: [], saveState: 'saved', online: true }; local.set(key, value); } // NEW
         if (input.kind === 'snapshot') return { ok: true, collaboration: snapshot(sessionId) }; // NEW
         if (input.kind === 'claim') { // NEW
             const requested = targets(input.targets), state = snapshot(sessionId); // NEW

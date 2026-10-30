@@ -312,6 +312,7 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'gardenAllocate': 'plugins/garden_planner_plugins/Allocate_Planner.js',                       // NEW
     'gardenScale': 'plugins/garden_planner_plugins/Garden_Scale.js',                             // CHANGE
     'gardenBeds': 'plugins/garden_planner_plugins/Garden_Beds.js',
+    'gardenStructures': 'plugins/garden_planner_plugins/Garden_Structures.js', // NEW
 	'gardenEquipment': 'plugins/garden_planner_plugins/Garden_Equipment.js',                              // CHANGE
     'gardenIrrigationPlanner': 'plugins/garden_planner_plugins/Garden_Irrigation_Planner.js' }; // NEW
 
@@ -343,6 +344,7 @@ App.publicPlugin = [
     'gardenAllocate',                                         // NEW
     'gardenScale',                                            // CHANGE
     'gardenBeds',                                              // CHANGE
+    'gardenStructures', // NEW
 	'gardenEquipment',
     'gardenIrrigationPlanner'                                  // NEW
 ];

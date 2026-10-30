@@ -20,20 +20,21 @@ async function fixture(t, options = {}) { // NEW
     const store = createHistoryService({ Database: DatabaseSync, dbPath: ':memory:', ...options }); // NEW
     await store.run('initialize', { diagramId: canvas.diagramId, xml: xml() });
     const writeImmutable = async (filename, value) => { await fs.mkdir(path.dirname(filename), { recursive: true }); const text = JSON.stringify(value); try { await fs.writeFile(filename, text, { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST' || await fs.readFile(filename, 'utf8') !== text) throw e; } };
-    const transport = createHistoryTransport({ canvas, deviceId: 'device-a', keys, history: () => store, profile: root, writeImmutable });
+    const writeAtomic = async (filename, contents) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename + '.tmp', contents); await fs.rename(filename + '.tmp', filename); }; // NEW
+    const transport = createHistoryTransport({ canvas, deviceId: 'device-a', keys, history: () => store, profile: root, writeImmutable, writeAtomic });
     t.after(async () => { store.close(); await fs.rm(root, { recursive: true, force: true }); });
-    return { root, canvas, store, transport, keys, writeImmutable };
+    return { root, canvas, store, transport, keys, writeImmutable, writeAtomic };
 }
 
-test('reset is durable, rejects replay, deletes legacy exports and preserves live content and journals', async t => {
+test('reset is durable, rejects forgery, and preserves legacy exports, live content and journals', async t => {
     const f = await fixture(t), legacy = path.join(f.canvas.folderPath, '.trellis', 'history'), journal = path.join(f.canvas.folderPath, '.trellis', 'collaboration-v3');
     await fs.mkdir(legacy, { recursive: true }); await fs.writeFile(path.join(legacy, 'old.json'), 'old'); await fs.mkdir(journal); await fs.writeFile(path.join(journal, 'genesis.json'), 'keep');
     const result = await f.transport.importAll();
     assert.equal(await fs.readFile(f.canvas.diagramPath, 'utf8'), xml()); assert.equal(await fs.readFile(path.join(journal, 'genesis.json'), 'utf8'), 'keep');
-    await assert.rejects(fs.stat(legacy), /ENOENT/);
+    assert.equal(await fs.readFile(path.join(legacy, 'old.json'), 'utf8'), 'old'); // CHANGE: engine replacement preserves prior history artifacts.
     const before = await f.store.run('list', { diagramId: 'document-a' }); await f.transport.importAll();
     assert.equal((await f.store.run('list', { diagramId: 'document-a' }))[0].id, before[0].id);
-    await fs.mkdir(legacy); await fs.writeFile(path.join(legacy, 'delayed.json'), 'old'); await f.transport.importAll(); await assert.rejects(fs.stat(legacy), /ENOENT/);
+    await fs.writeFile(path.join(legacy, 'delayed.json'), 'old'); await f.transport.importAll(); assert.equal(await fs.readFile(path.join(legacy, 'delayed.json'), 'utf8'), 'old'); // CHANGE
     const markerPath = path.join(f.canvas.folderPath, '.trellis', 'history-v2', 'reset.json'), marker = JSON.parse(await fs.readFile(markerPath)); marker.payload.generation = 'forged'; await fs.writeFile(markerPath, JSON.stringify(marker));
     await assert.rejects(f.transport.importAll(), /verified/);
     assert.equal((await f.store.run('statistics', { diagramId: 'document-a' })).generation, result.generation);
@@ -55,7 +56,7 @@ test('shared exports use published bases and reject a revision that differs from
 
 test('a noncoordinator waits without deleting old history until a signed reset is available', async t => {
     const f = await fixture(t), peerStore = createHistoryService({ Database: DatabaseSync, dbPath: ':memory:' }); t.after(() => peerStore.close());
-    const peer = createHistoryTransport({ canvas: f.canvas, deviceId: 'device-b', keys: crypto.generateKeyPairSync('ed25519'), history: () => peerStore, profile: f.root, writeImmutable: f.writeImmutable });
+    const peer = createHistoryTransport({ canvas: f.canvas, deviceId: 'device-b', keys: crypto.generateKeyPairSync('ed25519'), history: () => peerStore, profile: f.root, writeImmutable: f.writeImmutable, writeAtomic: f.writeAtomic });
     assert.equal((await peer.importAll()).waitingForCoordinator, true);
     const reset = await f.transport.importAll(); const result = await peer.importAll(); assert.equal(result.generation, reset.generation);
 });
@@ -64,7 +65,7 @@ test('a verified coordinator handover preserves the original signed reset author
     const f = await fixture(t); const reset = await f.transport.importAll(), successor = crypto.generateKeyPairSync('ed25519');
     f.canvas.coordinatorHistory = [{ deviceId: 'device-a', publicKey: f.keys.publicKey, version: 1 }];
     f.canvas.coordinatorDeviceId = 'device-b'; f.canvas.coordinatorPublicKey = successor.publicKey; f.canvas.membershipVersion = 1; f.canvas.members = [{ deviceId: 'device-b', publicKey: successor.publicKey }];
-    const transport = createHistoryTransport({ canvas: f.canvas, deviceId: 'device-b', keys: successor, history: () => f.store, profile: f.root, writeImmutable: f.writeImmutable });
+    const transport = createHistoryTransport({ canvas: f.canvas, deviceId: 'device-b', keys: successor, history: () => f.store, profile: f.root, writeImmutable: f.writeImmutable, writeAtomic: f.writeAtomic });
     assert.equal((await transport.importAll()).generation, reset.generation);
 }); // NEW
 
@@ -84,11 +85,12 @@ test('shared pruning anchors only published history, preserves peer private bran
     const root = path.join(f.canvas.folderPath, '.trellis', 'history-v2', reset.generation), firstPath = path.join(root, 'records', first.id + '.json'), delayed = await fs.readFile(firstPath);
     const archive = path.join(f.canvas.folderPath, '.stversions', '.trellis', 'history-v2', reset.generation, 'records'); await fs.mkdir(archive, { recursive: true }); await fs.writeFile(path.join(archive, first.id + '~20261022-000000.json'), delayed); // NEW
     const peerStore = createHistoryService({ Database: DatabaseSync, dbPath: ':memory:' }); t.after(() => peerStore.close());
-    const peer = createHistoryTransport({ canvas: f.canvas, deviceId: 'device-b', keys: crypto.generateKeyPairSync('ed25519'), history: () => peerStore, profile: f.root, writeImmutable: f.writeImmutable });
+    const peer = createHistoryTransport({ canvas: f.canvas, deviceId: 'device-b', keys: crypto.generateKeyPairSync('ed25519'), history: () => peerStore, profile: f.root, writeImmutable: f.writeImmutable, writeAtomic: f.writeAtomic });
     await peer.importAll(); await peerStore.run('baseline', { diagramId: 'document-a', xml: xml('First save') });
     const privatePeer = await peerStore.run('record', { diagramId: 'document-a', xml: xml('Peer private'), metadata: { id: 'peer-private' } });
     for (let i = 2; i < 112; i++) await record('Private ' + i, 'private-' + i);
     const last = await record('Final save', 'saved-last'); await f.transport.publish(xml('Final save'), [last.id]);
+    await f.transport.prune(); // CHANGE: destructive archive maintenance is explicitly requested, never part of an ordinary save.
     const anchors = await fs.readdir(path.join(root, 'anchors'));
     assert.deepEqual(await fs.readdir(archive), []); // NEW: version archives must not defeat physical reclamation.
     assert.ok(anchors.length > 0); assert.ok(anchors.every(name => name.startsWith('saved-last-')));
@@ -98,4 +100,40 @@ test('shared pruning anchors only published history, preserves peer private bran
     assert.equal((await peerStore.run('read', { revisionId: last.id })).xml, normalizeDocument(xml('Final save')));
     await fs.writeFile(firstPath, delayed); await peer.importAll(); await assert.rejects(fs.stat(firstPath), /ENOENT/);
     assert.ok(!(await peerStore.run('list', { diagramId: 'document-a' })).some(item => item.id === first.id));
+}); // NEW
+
+test('current history maintenance reads signed heads without listing retained revisions or archived files', async t => { // NEW
+    const f = await fixture(t); await f.transport.maintain(); // NEW
+    const revision = await f.store.run('record', { diagramId: f.canvas.diagramId, xml: xml('Latest') }); // NEW
+    await f.transport.publish(xml('Latest'), [revision.id]); // NEW
+    const original = f.store.run; // NEW
+    f.store.run = (method, input) => { assert.notEqual(method, 'list', 'Background maintenance must not list the timeline.'); return original(method, input); }; // NEW
+    const root = path.join(f.canvas.folderPath, '.trellis', 'history-v2', (await original('statistics', { diagramId: f.canvas.diagramId })).generation); // NEW
+    await fs.rename(path.join(root, 'records'), path.join(root, 'unavailable-records')); // NEW
+    assert.deepEqual((await f.transport.maintain()).errors, []); // NEW
+    assert.deepEqual((await f.transport.maintain()).entries, []); // NEW
+}); // NEW
+
+test('cached reset verification is invalidated when its trusted coordinator key changes', async t => { // NEW
+    const f = await fixture(t); await f.transport.maintain(); // NEW
+    f.canvas.coordinatorPublicKey = crypto.generateKeyPairSync('ed25519').publicKey; // NEW
+    await assert.rejects(f.transport.maintain(), /verified/); // NEW
+}); // NEW
+
+test('maintenance completes a previously received pending delta when its dependency arrives', async t => { // NEW
+    const f = await fixture(t); await f.transport.maintain(); // NEW
+    const first = await f.store.run('record', { diagramId: f.canvas.diagramId, xml: xml('First'), metadata: { id: 'first' } }); // NEW
+    await f.transport.publish(xml('First'), [first.id]); // NEW
+    const second = await f.store.run('record', { diagramId: f.canvas.diagramId, xml: xml('Second'), metadata: { id: 'second' } }); // NEW
+    await f.transport.publish(xml('Second'), [second.id]); // NEW
+    const result = await f.transport.importAll(), entry = result.entries.find(item => item.revision.id === second.id); // NEW
+    assert.equal(entry.record.kind, 'delta'); // NEW
+    const peerStore = createHistoryService({ Database: DatabaseSync, dbPath: ':memory:' }); t.after(() => peerStore.close()); // NEW
+    const peer = createHistoryTransport({ canvas: f.canvas, deviceId: 'device-b', keys: crypto.generateKeyPairSync('ed25519'), history: () => peerStore, profile: f.root, writeImmutable: f.writeImmutable, writeAtomic: f.writeAtomic }); // NEW
+    await peerStore.run('reset', { diagramId: f.canvas.diagramId, generation: result.generation, baselineId: result.reset.revision.id, xml: xml() }); // NEW
+    await peerStore.run('import', { diagramId: f.canvas.diagramId, entry }); // NEW
+    assert.equal((await peerStore.run('describe', { diagramId: f.canvas.diagramId, revisionId: second.id })).pending, true); // NEW
+    assert.deepEqual((await peer.maintain()).errors, []); // NEW
+    assert.equal((await peerStore.run('describe', { diagramId: f.canvas.diagramId, revisionId: second.id })).pending, false); // NEW
+    assert.equal((await peerStore.run('read', { revisionId: second.id })).xml, normalizeDocument(xml('Second'))); // NEW
 }); // NEW

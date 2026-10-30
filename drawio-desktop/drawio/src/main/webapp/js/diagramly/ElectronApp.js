@@ -156,6 +156,12 @@ mxStencilRegistry.allowEval = false;
 			mxSettings.setPlugins(plugins); mxSettings.save(); // NEW
 			localStorage.setItem('.trellisObjectDetailsDefault.v1', '1'); // NEW: preserve a later deliberate removal.
 		} // NEW
+		if (localStorage.getItem('.trellisGardenStructuresDefault.v1') == null) { // NEW: expose structures for existing desktop profiles once.
+			plugins = (plugins || []).slice(); // NEW
+			if (!plugins.some(plugin => /(?:^|\/)Garden_Structures\.js$/.test(plugin) || plugin === 'gardenStructures')) plugins.push(App.pluginRegistry.gardenStructures); // NEW
+			mxSettings.setPlugins(plugins); mxSettings.save(); // NEW
+			localStorage.setItem('.trellisGardenStructuresDefault.v1', '1'); // NEW: preserve a later deliberate removal.
+		} // NEW
 		App.pluginRegistry.trellisApiKeys = 'plugins/garden_planner_plugins/Trellis_API_Keys.js'; // NEW: desktop-only credential settings, including production builds.
 		if (App.publicPlugin.indexOf('trellisApiKeys') < 0) App.publicPlugin.push('trellisApiKeys'); // NEW
 		if (localStorage.getItem('.trellisApiKeysDefault.v1') == null) { // NEW: preserve other saved plugins and later deliberate removal.

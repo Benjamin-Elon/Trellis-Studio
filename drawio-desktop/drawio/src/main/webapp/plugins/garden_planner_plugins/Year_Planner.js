@@ -63,9 +63,10 @@ Draw.loadPlugin(function (ui) {
             } catch (_) { }
         }
 
-        function closeActive(reason) {
+        function closeActive(reason, approved) { // CHANGE: guarded drafts must approve user-initiated exits.
             const previous = active;
             if (!previous) return false;
+            if (!approved && previous.hooks?.beforeClose) { closeActiveAsync(reason); return false; } // NEW
             active = null;
             try {
                 if (previous.hooks && typeof previous.hooks.close === "function") previous.hooks.close({ reason: reason || "closed" });
@@ -74,6 +75,14 @@ Draw.loadPlugin(function (ui) {
             }
             return true;
         }
+
+        /** Await draft approval without releasing ownership while the confirmation is open. */ // NEW
+        async function closeActiveAsync(reason) { // NEW
+            const previous = active; if (!previous) return true; // NEW
+            if (previous.hooks?.beforeClose && !(await previous.hooks.beforeClose({ reason: reason || 'closed' }))) return false; // NEW
+            if (active !== previous) return false; // NEW
+            return closeActive(reason, true); // NEW
+        } // NEW
 
         const api = {
             __trellisInteractionModeController: true,
@@ -86,18 +95,25 @@ Draw.loadPlugin(function (ui) {
                     return { mode: active.mode, ownerId: active.ownerId };
                 }
                 const previous = active;
+                if (previous?.hooks?.beforeClose) return null; // NEW: guarded callers must use requestAsync before starting their session.
                 if (previous) closeActive("replaced");
                 active = { mode: nextMode, ownerId: nextOwner, hooks: hooks || {} };
                 dispatchChanged(previous, active);
                 return { mode: active.mode, ownerId: active.ownerId };
             },
+            async requestAsync(mode, ownerId, hooks) { // NEW
+                if (!normalizeId(mode)) throw new Error("Interaction mode requires a mode id."); // NEW
+                if (active && (active.mode !== normalizeId(mode) || active.ownerId !== (normalizeId(ownerId) || normalizeId(mode))) && !(await closeActiveAsync('replaced'))) return null; // NEW
+                return api.request(mode, ownerId, hooks); // NEW
+            }, // NEW
             release(mode, ownerId, reason) {
                 const requestedMode = normalizeId(mode);
                 const requestedOwner = normalizeId(ownerId) || requestedMode;
                 if (!active || active.mode !== requestedMode || active.ownerId !== requestedOwner) return false;
-                return closeActive(reason || "released");
+                return closeActive(reason || "released", true); // CHANGE: completed owner cleanup never prompts again.
             },
             closeActive,
+            closeActiveAsync, // NEW
             getActive() {
                 return active ? { mode: active.mode, ownerId: active.ownerId } : null;
             },

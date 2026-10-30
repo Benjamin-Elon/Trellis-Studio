@@ -454,18 +454,6 @@ Draw.loadPlugin(function (ui) {
 
     const CANONICAL_TASK_TYPE_IDS = new Set(DEFAULT_TASK_TYPES.map(function (tt) { return tt.id; }));
 
-    const FALLBACK_BED_CONDITION_GROUPS = [
-        conditionGroup("sunExposure", "Sun exposure", [["full_sun", "Full sun"], ["part_sun", "Part sun"], ["part_shade", "Part shade"], ["shade", "Shade"]]),
-        conditionGroup("drainage", "Drainage", [["fast", "Fast drainage"], ["normal", "Normal drainage"], ["slow", "Slow drainage"]]),
-        conditionGroup("soilTexture", "Soil texture", [["sandy", "Sandy"], ["loamy", "Loamy"], ["clay", "Clay"], ["mixed", "Mixed"], ["amended", "Amended"]]),
-        conditionGroup("fertility", "Fertility", [["low", "Low"], ["medium", "Medium"], ["high", "High"]]),
-        conditionGroup("trellis", "Trellis", [["none", "None"], ["available", "Available"], ["required_structure", "Structure required"]]),
-        conditionGroup("seasonExtension", "Season extension", [["none", "None"], ["row_cover", "Row cover"], ["low_tunnel", "Low tunnel"], ["cold_frame", "Cold frame"], ["greenhouse", "Greenhouse"], ["high_tunnel", "High tunnel"], ["heated_greenhouse", "Heated greenhouse"]]),
-        conditionGroup("cropProtection", "Crop protection", [["none", "None"], ["shade_cloth", "Shade cloth"], ["insect_netting", "Insect netting"], ["bird_netting", "Bird netting"], ["hail_netting", "Hail netting"]]),
-        conditionGroup("windExposure", "Wind exposure", [["sheltered", "Sheltered"], ["moderate", "Moderate"], ["exposed", "Exposed"]]),
-        conditionGroup("bedUse", "Bed use", [["annuals", "Annuals"], ["perennials", "Perennials"], ["nursery", "Nursery"], ["seed_starting", "Seed starting"], ["mixed", "Mixed"], ["resting", "Resting"]])
-    ];
-
     // -------------------------------------------------------------------------
     // Default factories
     // -------------------------------------------------------------------------
@@ -542,16 +530,6 @@ Draw.loadPlugin(function (ui) {
             maximumScale: null,
             stackable: false,
             notes: ""
-        };
-    }
-
-    function conditionGroup(fieldKey, label, options) {
-        return {
-            id: fieldKey,
-            name: label,
-            options: (options || []).map(function (pair) {
-                return { id: fieldKey + ":" + pair[0], fieldKey: fieldKey, value: pair[0], name: pair[1], category: label };
-            })
         };
     }
 
@@ -730,8 +708,8 @@ Draw.loadPlugin(function (ui) {
         out.maximumUsefulScale = Object.assign({ value: 0, unit: "tasks" }, out.maximumUsefulScale || {});
         out.minimumUsefulScale.value = coerceNumber(out.minimumUsefulScale.value, 0);
         out.maximumUsefulScale.value = coerceNumber(out.maximumUsefulScale.value, 0);
-        out.crewSizeMin = Math.max(1, coerceNumber(out.crewSizeMin, 1));
-        out.crewSizeMax = Math.max(out.crewSizeMin, coerceNumber(out.crewSizeMax, out.crewSizeMin));
+        out.crewSizeMin = Math.max(1, coerceWholeYears(out.crewSizeMin, 1)); // CHANGE
+        out.crewSizeMax = Math.max(out.crewSizeMin, coerceWholeYears(out.crewSizeMax, out.crewSizeMin)); // CHANGE
         out.skillLevelRequired = SKILL_LEVELS.indexOf(out.skillLevelRequired) >= 0 ? out.skillLevelRequired : "basic";
         out.availability = Object.assign({ mode: "always", from: "", to: "" }, out.availability || {});
         out.usesConsumables = Array.isArray(out.usesConsumables) ? out.usesConsumables : [];
@@ -849,17 +827,14 @@ Draw.loadPlugin(function (ui) {
     function validateEquipmentState(inventory, taskTypes, capabilities) {
         const report = { errors: 0, warnings: 0, items: [] };
         const taskIds = buildRegistrySet(taskTypes);
-        const capabilityIds = buildRegistrySet(capabilities);
         validateUniqueIds(inventory, "Equipment", report);
         validateUniqueIds(taskTypes, "Task type", report);
-        validateUniqueIds(capabilities, "Capability", report);
 
         (inventory || []).forEach(function (eq) {
             if (eq.purchaseDate && !isIsoDate(eq.purchaseDate)) pushValidation(report, "error", `${eq.name} has an invalid purchase date.`);
             if (eq.replacementDate && !isIsoDate(eq.replacementDate)) pushValidation(report, "error", `${eq.name} has an invalid replacement date.`);
-            (eq.capabilities || []).forEach(function (id) {
-                if (!capabilityIds.has(id)) pushValidation(report, "error", `${eq.name} references missing capability '${id}'.`);
-            });
+            const minimum = eq.crewSizeMin ?? 1, maximum = eq.crewSizeMax ?? minimum; // NEW
+            if (!Number.isInteger(minimum) || minimum < 1 || !Number.isInteger(maximum) || maximum < minimum) pushValidation(report, 'error', `${eq.name} needs a whole-number operator range with maximum at least minimum.`); // NEW
             (eq.relevantTaskTypes || []).forEach(function (id) {
                 if (!taskIds.has(id)) pushValidation(report, "error", `${eq.name} references missing task type '${id}'.`);
             });
@@ -876,11 +851,6 @@ Draw.loadPlugin(function (ui) {
             if ((tt.allowedQuantityBases || []).indexOf(tt.defaultQuantityBasis) < 0) pushValidation(report, "error", `${tt.name} default quantity basis is not allowed.`);
             validateNumberMap(tt.baseHoursPerUnit, `${tt.name} base hours`, report);
             validateNumberMap(tt.complexityModifiers, `${tt.name} complexity`, report);
-            ["requiredCapabilities", "optionalCapabilities", "recommendedCapabilities"].forEach(function (fieldName) {
-                (tt[fieldName] || []).forEach(function (id) {
-                    if (!capabilityIds.has(id)) pushValidation(report, "error", `${tt.name} ${fieldName} references missing capability '${id}'.`);
-                });
-            });
         });
 
         return report;
@@ -1003,18 +973,30 @@ Draw.loadPlugin(function (ui) {
         return true;
     }
 
+    /** Materialize legacy links once per definition; explicit empty lists stay empty after conversion. No graph writes. */ // NEW
+    function normalizePlanningEquipment(record, taskTypes) { // NEW
+        const item = normalizeEquipment(record); // NEW
+        if (item.taskTypeLinksVersion === 1) return item; // NEW
+        const capabilities = new Set(item.capabilities); // NEW
+        const inherited = (taskTypes || []).filter(type => [type.requiredCapabilities, type.optionalCapabilities, type.recommendedCapabilities].some(ids => splitCsv(ids).some(id => capabilities.has(id)))).map(type => type.id); // NEW
+        item.relevantTaskTypes = uniqueStrings([...item.relevantTaskTypes, ...item.efficiencyEffects.map(effect => effect.taskTypeId), ...inherited]); // NEW
+        item.taskTypeLinksVersion = 1; // NEW
+        return item; // NEW
+    } // NEW
+
     function readEquipmentInventory(moduleCell) {
         const raw = readJsonAttr(moduleCell, ATTRS.EQUIPMENT_INVENTORY_JSON, null);
         const items = Array.isArray(raw && raw.items) ? raw.items : Array.isArray(raw) ? raw : null;
-        if (!items) return clone(DEFAULT_EQUIPMENT).map(normalizeEquipment).sort(byName);
-        return uniqueById(items.map(normalizeEquipment)).sort(byName);
+        const taskTypes = readTaskTypeRegistry(moduleCell); // NEW: derive only from this accepted or pinned registry.
+        return uniqueById((items || clone(DEFAULT_EQUIPMENT)).map(item => normalizePlanningEquipment(item, taskTypes))).sort(byName); // CHANGE
     }
 
     function writeEquipmentInventory(moduleCell, inventory) {
+        const taskTypes = readTaskTypeRegistry(moduleCell); // NEW
         const payload = {
             version: PLUGIN_VERSION,
             updatedAt: Date.now(),
-            items: uniqueById((inventory || []).map(normalizeEquipment)).sort(byName)
+            items: uniqueById((inventory || []).map(item => normalizePlanningEquipment(item, taskTypes))).sort(byName) // CHANGE
         };
         writeJsonAttr(moduleCell, ATTRS.EQUIPMENT_INVENTORY_JSON, payload);
         fireTrellisEvent(EVENTS.EQUIPMENT_CHANGED, { moduleCell, inventory: payload.items });
@@ -1118,12 +1100,14 @@ Draw.loadPlugin(function (ui) {
         return true;
     }
 
+    /** Legacy integration helper retained for older consumers; active planning uses direct task-type links. */ // NEW
     function findAvailableEquipmentByCapability(capabilityId, inventory) {
         return (inventory || []).filter(function (item) {
             return isEquipmentAvailable(item) && item.capabilities.indexOf(capabilityId) >= 0;
         });
     }
 
+    /** Legacy capability result shape remains available without affecting suggestions, warnings, or estimates. */ // NEW
     function checkCapabilities(taskType, inventory) {
         const required = taskType ? taskType.requiredCapabilities || [] : [];
         const optional = taskType ? taskType.optionalCapabilities || [] : [];
@@ -1160,82 +1144,16 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
+    /** Warnings describe saved choices and known task context, never inferred equipment requirements. */ // CHANGE
     function buildTaskEquipmentWarnings(taskCell, moduleCell) {
-        if (graph.__trellisReferences && getCellAttr(moduleCell, 'trellis_references_json')) moduleCell = graph.__trellisReferences.scopeForConsumer(moduleCell, taskCell); // NEW
-        const inventory = readEquipmentInventory(moduleCell);
-        const taskTypes = readTaskTypeRegistry(moduleCell);
-        const capabilityNames = registryNameMap(readCapabilityRegistry(moduleCell));
-        const taskTypeId = getCellAttr(taskCell, TASK_ATTRS.TASK_TYPE_ID);
-        const taskType = taskTypes.find(function (tt) { return tt.id === taskTypeId; });
-        const warnings = [];
-
-        if (!taskTypeId) {
-            warnings.push({
-                type: "missing_task_type",
-                severity: "info",
-                taskCell,
-                message: "Task has no task type assigned."
-            });
-            return warnings;
-        }
-
-        if (!taskType) {
-            warnings.push({
-                type: "unknown_task_type",
-                severity: "warning",
-                taskCell,
-                taskTypeId,
-                message: `Task type '${taskTypeId}' is not in the registry.`
-            });
-            return warnings;
-        }
-
-        const checks = checkCapabilities(taskType, inventory);
-
-        checks.missingRequired.forEach(function (m) {
-            warnings.push({
-                type: "missing_required_equipment",
-                severity: "error",
-                taskCell,
-                taskTypeId,
-                capabilityId: m.capabilityId,
-                message: `${taskType.name} requires ${lookupName(capabilityNames, m.capabilityId)}, but no available equipment provides it.`
-            });
+        const result = recommendForTask(taskCell, moduleCell); // CHANGE
+        const warnings = result.context.problems.map(message => ({ type: 'planning_context', severity: 'warning', taskCell, taskTypeId: result.context.taskTypeId, message })); // CHANGE
+        result.selected.forEach(item => { // CHANGE
+            const conditions = [...item.unmet, ...item.unknown]; // CHANGE
+            if (!item.relevant) conditions.push('Does not match this task type.'); // CHANGE
+            if (conditions.length) warnings.push({ type: 'selected_equipment_condition', severity: item.unmet.length || !item.relevant ? 'warning' : 'info', taskCell, taskTypeId: result.context.taskTypeId, equipmentIds: [item.equipment.id], message: item.equipment.name + ': ' + conditions.join(' ') }); // CHANGE
         });
-
-        checks.optionalAvailable.forEach(function (m) {
-            warnings.push({
-                type: "optional_equipment_available",
-                severity: "info",
-                taskCell,
-                taskTypeId,
-                capabilityId: m.capabilityId,
-                equipmentIds: m.equipment.map(function (eq) { return eq.id; }),
-                message: `${taskType.name} can use optional equipment for ${lookupName(capabilityNames, m.capabilityId)}: ${m.equipment.map(function (eq) { return eq.name; }).join(", ")}.`
-            });
-        });
-
-        checks.recommendedMissing.forEach(function (m) {
-            warnings.push({
-                type: "recommended_equipment_missing",
-                severity: "warning",
-                taskCell,
-                taskTypeId,
-                capabilityId: m.capabilityId,
-                message: `${taskType.name} would likely improve with ${lookupName(capabilityNames, m.capabilityId)}, but no available equipment provides it.`
-            });
-        });
-
         return warnings;
-    }
-
-    function findSchedulerTaskCells() {
-        const root = model.getRoot && model.getRoot();
-        const out = [];
-        walkCells(root, function (cell) {
-            if (cell && getCellAttr(cell, TASK_ATTRS.TASK_TYPE_ID)) out.push(cell);
-        });
-        return out;
     }
 
     function walkCells(cell, visitor) {
@@ -1246,17 +1164,18 @@ Draw.loadPlugin(function (ui) {
     }
 
     function buildAllWarnings(moduleCell) {
-        const taskCells = findSchedulerTaskCells();
+        const taskCells = listPlanningTasks(moduleCell); // CHANGE: warnings stay in the current garden.
         const warnings = [];
         taskCells.forEach(function (taskCell) {
-            warnings.push.apply(warnings, buildTaskEquipmentWarnings(taskCell, moduleCell));
+            try { warnings.push.apply(warnings, buildTaskEquipmentWarnings(taskCell, moduleCell)); } // CHANGE
+            catch (error) { warnings.push({ type: 'equipment_context_unavailable', severity: 'warning', taskCell, message: 'Task references unavailable: ' + error.message }); } // NEW
         });
         return warnings;
     }
 
     function chooseBestEquipmentEffect(taskType, quantity, inventory) {
         const taskTypeId = taskType && taskType.id;
-        const available = (inventory || []).filter(isEquipmentAvailable);
+        const available = (inventory || []).filter(item => isEquipmentAvailable(item) && (item.relevantTaskTypes || []).includes(taskTypeId)); // CHANGE: inactive rules never contribute savings.
         const effects = [];
 
         available.forEach(function (item) {
@@ -1312,9 +1231,9 @@ Draw.loadPlugin(function (ui) {
         const min = effectRecord.minimumScale;
         const max = effectRecord.maximumScale;
 
-        if (min && min.unit && min.unit !== unit) return false;
+        if (min && min.value > 0 && min.unit && min.unit !== unit) return false; // CHANGE: zero is an unrestricted bound.
         if (min && value < coerceNumber(min.value, 0)) return false;
-        if (max && max.unit && max.unit !== unit) return false;
+        if (max && max.value > 0 && max.unit && max.unit !== unit) return false; // CHANGE
         if (max && coerceNumber(max.value, 0) > 0 && value > coerceNumber(max.value, 0)) return false;
         return true;
     }
@@ -1330,47 +1249,21 @@ Draw.loadPlugin(function (ui) {
         return total;
     }
 
-    function estimateTaskHours(taskInput, context) {
-        let moduleCell = context && context.moduleCell ? context.moduleCell : getActiveGardenModule(); // CHANGE
-        if (taskInput.cell && graph.__trellisReferences && getCellAttr(moduleCell, 'trellis_references_json')) moduleCell = graph.__trellisReferences.scopeForConsumer(moduleCell, taskInput.cell); // NEW
-        if (!moduleCell) return { estimatedHours: null, warnings: [{ type: "missing_module", message: "No garden module found." }] };
-
-        const inventory = context && context.inventory ? context.inventory : readEquipmentInventory(moduleCell);
-        const taskTypes = context && context.taskTypes ? context.taskTypes : readTaskTypeRegistry(moduleCell);
-        const taskTypeId = taskInput.taskTypeId || (taskInput.cell ? getCellAttr(taskInput.cell, TASK_ATTRS.TASK_TYPE_ID) : "");
-        const taskType = taskTypes.find(function (tt) { return tt.id === taskTypeId; });
-
-        if (!taskType) {
-            return { estimatedHours: null, warnings: [{ type: "unknown_task_type", message: "Unknown task type." }] };
-        }
-
-        const quantity = {
-            unit: taskInput.quantityBasis || (taskInput.cell ? getCellAttr(taskInput.cell, TASK_ATTRS.TASK_QUANTITY_BASIS) : "") || taskType.defaultQuantityBasis,
-            value: coerceNumber(taskInput.quantityValue || (taskInput.cell ? getCellAttr(taskInput.cell, TASK_ATTRS.TASK_QUANTITY_VALUE) : 0), 1)
-        };
-
-        const complexity = taskInput.complexity || (taskInput.cell ? getCellAttr(taskInput.cell, TASK_ATTRS.TASK_COMPLEXITY) : "") || "normal";
-        const base = coerceNumber(taskType.baseHoursPerUnit[quantity.unit], taskType.baseHoursPerUnit[taskType.defaultQuantityBasis] || 0.5);
-        const complexityMultiplier = coerceNumber(taskType.complexityModifiers[complexity], 1);
-        const equipmentEffect = chooseBestEquipmentEffect(taskType, quantity, inventory);
-
-        const workHours = base * quantity.value * complexityMultiplier * equipmentEffect.hoursMultiplier;
-        const estimatedHours = workHours +
-            taskType.defaultSetupTimeHours +
-            taskType.defaultCleanupTimeHours +
-            equipmentEffect.setupTime +
-            equipmentEffect.cleanupTime +
-            equipmentEffect.allocatedMaintenanceTime;
-
-        return {
-            estimatedHours,
-            workHours,
-            quantity,
-            complexity,
-            taskType,
-            equipmentEffect,
-            warnings: taskInput.cell ? buildTaskEquipmentWarnings(taskInput.cell, moduleCell) : []
-        };
+    /** Public estimates use explicit selections; merely having a tool never applies its savings. */ // CHANGE
+    function estimateTaskHours(taskInput, options = {}) { // CHANGE
+        const moduleCell = options.moduleCell || (taskInput.cell && planningGarden(taskInput.cell)) || getActiveGardenModule(); // CHANGE
+        if (!moduleCell) return { estimatedHours: null, warnings: [{ type: 'missing_module', message: 'No garden module found.' }] }; // CHANGE
+        const original = taskInput.cell; // CHANGE
+        const node = original?.value?.cloneNode?.(true) || document.createElement('object'); // CHANGE
+        const inputs = { taskTypeId: TASK_ATTRS.TASK_TYPE_ID, quantityBasis: TASK_ATTRS.TASK_QUANTITY_BASIS, quantityValue: TASK_ATTRS.TASK_QUANTITY_VALUE, complexity: TASK_ATTRS.TASK_COMPLEXITY }; // CHANGE
+        Object.entries(inputs).forEach(([key, attribute]) => { if (taskInput[key] != null) node.setAttribute(attribute, String(taskInput[key])); }); // CHANGE
+        if (taskInput.taskTypeId != null) { const override = readPlanningOverride(original); delete override.taskTypeId; node.setAttribute(TASK_ATTRS.TASK_PLANNING_OVERRIDE, JSON.stringify(override)); } // CHANGE
+        const task = original ? Object.create(original) : { parent: moduleCell, getParent: () => moduleCell }; // CHANGE
+        task.value = node; // CHANGE
+        const context = resolvePlanningContext(task, moduleCell, options); // CHANGE
+        const ids = Object.prototype.hasOwnProperty.call(taskInput, 'equipmentIds') ? readEquipmentIds(taskInput.equipmentIds) : readEquipmentIds(context.equipmentIds); // CHANGE
+        const estimate = estimatePlanningSelection(context, ids || []); // CHANGE
+        return { ...estimate, warnings: original ? buildTaskEquipmentWarnings(original, moduleCell) : context.problems.map(message => ({ type: 'planning_context', message })) }; // CHANGE
     }
 
     // -------------------------------------------------------------------------
@@ -1378,200 +1271,199 @@ Draw.loadPlugin(function (ui) {
     // -------------------------------------------------------------------------
 
     /** Read legacy comma-separated IDs as well as the current JSON array representation. */ // NEW
-    function readEquipmentIds(value) {
-        if (value == null) return null;
-        if (Array.isArray(value)) return uniqueStrings(value);
-        try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) return uniqueStrings(parsed); } catch (_) { /* Legacy list. */ }
-        return splitCsv(value);
-    }
+    function readEquipmentIds(value) { // CHANGE
+        if (value == null) return null; // CHANGE
+        if (Array.isArray(value)) return uniqueStrings(value); // CHANGE
+        try { const parsed = JSON.parse(value); if (parsed === null) return null; if (Array.isArray(parsed)) return uniqueStrings(parsed); } catch (_) { /* Legacy list. */ } // CHANGE
+        return splitCsv(value); // CHANGE
+    } // CHANGE
 
     /** Occurrence overrides distinguish inheritance, suggestions (null), and explicitly no tools ([]). */ // NEW
-    function readPlanningOverride(cell) {
-        try {
-            const value = JSON.parse(getCellAttr(cell, TASK_ATTRS.TASK_PLANNING_OVERRIDE) || '{}');
-            return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-        } catch (_) { return {}; }
-    }
+    function readPlanningOverride(cell) { // CHANGE
+        try { // CHANGE
+            const value = JSON.parse(getCellAttr(cell, TASK_ATTRS.TASK_PLANNING_OVERRIDE) || '{}'); // CHANGE
+            return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; // CHANGE
+        } catch (_) { return {}; } // CHANGE
+    } // CHANGE
 
     /** Resolve an existing graph cell without creating boards, changing selection, or reading another page. */ // NEW
-    function planningCell(id) {
-        if (model.getCell) return model.getCell(id);
-        let result = null;
-        walkCells(model.getRoot(), cell => { if (String(cell.id) === String(id)) result = cell; });
-        return result;
-    }
+    function planningCell(id) { // CHANGE
+        if (model.getCell) return model.getCell(id); // CHANGE
+        let result = null; // CHANGE
+        walkCells(model.getRoot(), cell => { if (String(cell.id) === String(id)) result = cell; }); // CHANGE
+        return result; // CHANGE
+    } // CHANGE
 
     function gardenAncestor(cell) { // NEW
-        const seen = new Set();
-        for (let current = cell; current && !seen.has(current); current = model.getParent(current)) {
-            seen.add(current);
-            if (getCellAttr(current, 'garden_module') === '1' || getCellAttr(current, 'trellis_garden_module') === '1' || getCellAttr(current, 'module_type') === 'garden') return current;
-        }
-        return null;
-    }
+        const seen = new Set(); // CHANGE
+        for (let current = cell; current && !seen.has(current); current = model.getParent(current)) { // CHANGE
+            seen.add(current); // CHANGE
+            if (getCellAttr(current, 'garden_module') === '1' || getCellAttr(current, 'trellis_garden_module') === '1' || getCellAttr(current, 'module_type') === 'garden') return current; // CHANGE
+        } // CHANGE
+        return null; // CHANGE
+    } // CHANGE
 
     /** Multiple planting links are intentionally unresolved: combining their quantities would invent a job. */ // NEW
-    function linkedPlanningSources(taskCell, moduleCell) {
-        return splitCsv(getCellAttr(taskCell, 'linkedTo')).map(planningCell).filter(cell => cell && getCellAttr(cell, 'tiler_group') === '1' && (!moduleCell || gardenAncestor(cell) === moduleCell));
-    }
+    function linkedPlanningSources(taskCell, moduleCell) { // CHANGE
+        return splitCsv(getCellAttr(taskCell, 'linkedTo')).map(planningCell).filter(cell => cell && getCellAttr(cell, 'tiler_group') === '1' && (!moduleCell || gardenAncestor(cell) === moduleCell)); // CHANGE
+    } // CHANGE
 
     function planningGarden(taskCell) { // NEW
-        const direct = gardenAncestor(taskCell);
-        if (direct) return direct;
-        const sources = linkedPlanningSources(taskCell);
-        const gardens = Array.from(new Set(sources.map(gardenAncestor).filter(Boolean)));
-        return gardens.length === 1 ? gardens[0] : graph.__trellisTaskManager?.gardenForTask?.(taskCell) || null;
-    }
+        const direct = gardenAncestor(taskCell); // CHANGE
+        if (direct) return direct; // CHANGE
+        const sources = linkedPlanningSources(taskCell); // CHANGE
+        const gardens = Array.from(new Set(sources.map(gardenAncestor).filter(Boolean))); // CHANGE
+        return gardens.length === 1 ? gardens[0] : graph.__trellisTaskManager?.gardenForTask?.(taskCell) || null; // CHANGE
+    } // CHANGE
 
     /** Only authored facts enter recommendation context; generic climate/bed defaults are not evidence. */ // NEW
-    function resolvePlanningContext(taskCell, moduleCell, options = {}) {
-        moduleCell = moduleCell || planningGarden(taskCell);
-        if (!moduleCell) return { taskCell, moduleCell: null, problems: ['The task is not linked to one garden.'], taskType: null, quantity: null, inventory: [] };
-        const scope = graph.__trellisReferences?.scopeForConsumer(moduleCell, taskCell) || moduleCell;
-        const taskTypes = options.taskTypes || readTaskTypeRegistry(scope);
-        const overrides = readPlanningOverride(taskCell);
-        const taskTypeId = overrides.taskTypeId || getCellAttr(taskCell, TASK_ATTRS.TASK_TYPE_ID) || '';
-        const taskType = taskTypes.find(item => item.id === taskTypeId);
-        const sources = linkedPlanningSources(taskCell, moduleCell);
-        const source = sources.length === 1 ? sources[0] : null;
-        const problems = [];
-        if (!taskType) problems.push('Choose an available task type.');
-        if (sources.length > 1) problems.push('Multiple linked plantings; crop, bed and job size need checking.');
-        let bed = null;
-        if (source) {
-            for (let parent = model.getParent(source); parent && parent !== moduleCell; parent = model.getParent(parent)) {
-                if (window.TrellisGardenBeds?.isGardenBed?.(parent) || getCellAttr(parent, 'garden_bed') === '1') { bed = parent; break; }
-            }
-            if (!bed) {
-                const tiler = window.USL?.plantingGroup || window.USL?.tiler;
-                const footprint = tiler?.readPlantingFootprint?.(source);
-                const center = footprint && { x: footprint.x + footprint.width / 2, y: footprint.y + footprint.height / 2 };
-                const beds = tiler?.listGardenBeds?.(moduleCell) || [];
-                bed = center && beds.map(entry => entry.cell || entry).filter(cell => {
-                    const geo = cell.getGeometry?.() || model.getGeometry?.(cell);
-                    return geo && center.x >= geo.x && center.x <= geo.x + geo.width && center.y >= geo.y && center.y <= geo.y + geo.height;
-                }).sort((a, b) => { const ga = a.getGeometry?.() || model.getGeometry(a), gb = b.getGeometry?.() || model.getGeometry(b); return ga.width * ga.height - gb.width * gb.height; })[0] || null;
-            }
-        }
-        const rawConditions = bed && getCellAttr(bed, 'bed_conditions_json');
-        let bedConditions = null;
-        try { if (rawConditions) bedConditions = JSON.parse(rawConditions); } catch (_) { problems.push('Bed conditions could not be read.'); }
-        const quantities = { tasks: 1 };
-        if (bed) quantities.beds = 1;
-        const actualCount = source && (getCellAttr(source, 'plant_count_actual') ?? getCellAttr(source, 'plant_count'));
-        if (actualCount != null && actualCount !== '' && Number.isFinite(Number(actualCount)) && Number(actualCount) >= 0) quantities.plants = Number(actualCount);
-        const footprint = source && (window.USL?.plantingGroup || window.USL?.tiler)?.readPlantingFootprint?.(source);
-        if (footprint && footprint.width >= 0 && footprint.height >= 0) quantities.m2 = footprint.width * footprint.height / (90 * 90); // Existing tiler scale: 5 px/cm × 0.18.
-        const explicitBasis = getCellAttr(taskCell, TASK_ATTRS.TASK_QUANTITY_BASIS);
-        const explicitValue = getCellAttr(taskCell, TASK_ATTRS.TASK_QUANTITY_VALUE);
-        const hasExplicitQuantity = explicitValue != null && explicitValue !== '';
-        const basis = explicitBasis || taskType?.defaultQuantityBasis;
-        const value = hasExplicitQuantity ? Number(explicitValue) : quantities[basis];
-        const quantity = basis && value != null && Number.isFinite(value) && value >= 0 ? { unit: basis, value } : null;
-        if (hasExplicitQuantity && explicitBasis && quantity) quantities[explicitBasis] = value;
-        let assignees = [];
-        try { assignees = JSON.parse(getCellAttr(taskCell, 'task_assignee_role_ids_json') || '[]'); } catch (_) { /* Unknown crew. */ }
-        const validAssignees = Array.isArray(assignees) ? uniqueStrings(assignees).filter(id => planningCell(id)) : [];
-        return { taskCell, moduleCell, scope, source, sources, bed, bedConditions, cropId: source && getCellAttr(source, 'plant_id'), taskType, taskTypeId,
-            quantities, quantity, crewSize: validAssignees.length || null, problems,
-            inventory: options.inventory || readEquipmentInventory(scope),
-            equipmentIds: Object.prototype.hasOwnProperty.call(overrides, 'equipmentIds') ? overrides.equipmentIds : readEquipmentIds(getCellAttr(taskCell, TASK_ATTRS.TASK_EQUIPMENT_IDS)),
-            draftPreview: !!options.draftPreview };
-    }
+    function resolvePlanningContext(taskCell, moduleCell, options = {}) { // CHANGE
+        moduleCell = moduleCell || planningGarden(taskCell); // CHANGE
+        if (!moduleCell) return { taskCell, moduleCell: null, problems: ['The task is not linked to one garden.'], taskType: null, quantity: null, inventory: [] }; // CHANGE
+        const providedModule = moduleCell; // NEW
+        moduleCell = gardenAncestor(moduleCell) || moduleCell; // NEW
+        const scope = providedModule !== moduleCell ? providedModule : graph.__trellisReferences?.scopeForConsumer(moduleCell, taskCell) || moduleCell; // CHANGE
+        const taskTypes = options.taskTypes || readTaskTypeRegistry(scope); // CHANGE
+        const overrides = readPlanningOverride(taskCell); // CHANGE
+        const taskTypeId = overrides.taskTypeId || getCellAttr(taskCell, TASK_ATTRS.TASK_TYPE_ID) || ''; // CHANGE
+        const taskType = taskTypes.find(item => item.id === taskTypeId); // CHANGE
+        const sources = linkedPlanningSources(taskCell, moduleCell); // CHANGE
+        const source = sources.length === 1 ? sources[0] : null; // CHANGE
+        const problems = []; // CHANGE
+        if (!taskType) problems.push('Choose an available task type.'); // CHANGE
+        if (sources.length > 1) problems.push('Multiple linked plantings; bed and job size need checking.'); // CHANGE
+        let bed = null; // CHANGE
+        if (source) { // CHANGE
+            for (let parent = model.getParent(source); parent && parent !== moduleCell; parent = model.getParent(parent)) { // CHANGE
+                if (window.TrellisGardenBeds?.isGardenBed?.(parent) || getCellAttr(parent, 'garden_bed') === '1') { bed = parent; break; } // CHANGE
+            } // CHANGE
+            if (!bed) { // CHANGE
+                const tiler = window.USL?.plantingGroup || window.USL?.tiler; // CHANGE
+                const footprint = tiler?.readPlantingFootprint?.(source); // CHANGE
+                const center = footprint && { x: footprint.x + footprint.width / 2, y: footprint.y + footprint.height / 2 }; // CHANGE
+                const beds = tiler?.listGardenBeds?.(moduleCell) || []; // CHANGE
+                bed = center && beds.map(entry => entry.cell || entry).filter(cell => { // CHANGE
+                    const geo = cell.getGeometry?.() || model.getGeometry?.(cell); // CHANGE
+                    return geo && center.x >= geo.x && center.x <= geo.x + geo.width && center.y >= geo.y && center.y <= geo.y + geo.height; // CHANGE
+                }).sort((a, b) => { const ga = a.getGeometry?.() || model.getGeometry(a), gb = b.getGeometry?.() || model.getGeometry(b); return ga.width * ga.height - gb.width * gb.height; })[0] || null; // CHANGE
+            } // CHANGE
+        } // CHANGE
+        const directBeds = splitCsv(getCellAttr(taskCell, 'linkedTo')).map(planningCell).filter(cell => cell && gardenAncestor(cell) === moduleCell && (window.TrellisGardenBeds?.isGardenBed?.(cell) || getCellAttr(cell, 'garden_bed') === '1')); // NEW
+        if (!bed && directBeds.length === 1) bed = directBeds[0]; // NEW
+        else if (directBeds.length > 1 || bed && directBeds.some(cell => cell !== bed)) { bed = null; problems.push('Multiple bed links; bed quantity needs checking.'); } // CHANGE
+        const rawConditions = bed && getCellAttr(bed, 'bed_conditions_json'); // CHANGE
+        let bedConditions = null; // CHANGE
+        try { if (rawConditions) bedConditions = JSON.parse(rawConditions); } catch (_) { /* Legacy metadata is optional and does not affect matching. */ } // CHANGE
+        const quantities = { tasks: 1 }; // CHANGE
+        if (bed) quantities.beds = 1; // CHANGE
+        const actualCount = source && (getCellAttr(source, 'plant_count_actual') ?? getCellAttr(source, 'plant_count')); // CHANGE
+        if (actualCount != null && actualCount !== '' && Number.isFinite(Number(actualCount)) && Number(actualCount) >= 0) quantities.plants = Number(actualCount); // CHANGE
+        const footprint = source ? (window.USL?.plantingGroup || window.USL?.tiler)?.readPlantingFootprint?.(source) : bed && (bed.getGeometry?.() || model.getGeometry?.(bed)); // CHANGE
+        const tiler = window.USL?.plantingGroup || window.USL?.tiler; // NEW
+        if (footprint && footprint.width >= 0 && footprint.height >= 0 && tiler?.graphUnitsToCm) quantities.m2 = tiler.graphUnitsToCm(footprint.width) * tiler.graphUnitsToCm(footprint.height) / 10000; // CHANGE: reuse canonical geometry conversion.
+        const explicitBasis = getCellAttr(taskCell, TASK_ATTRS.TASK_QUANTITY_BASIS); // CHANGE
+        const explicitValue = getCellAttr(taskCell, TASK_ATTRS.TASK_QUANTITY_VALUE); // CHANGE
+        const hasExplicitQuantity = explicitValue != null && explicitValue !== ''; // CHANGE
+        const basis = explicitBasis || taskType?.defaultQuantityBasis; // CHANGE
+        const value = hasExplicitQuantity ? Number(explicitValue) : quantities[basis]; // CHANGE
+        const quantity = basis && value != null && Number.isFinite(value) && value >= 0 ? { unit: basis, value } : null; // CHANGE
+        if (hasExplicitQuantity && explicitBasis && quantity) quantities[explicitBasis] = value; // CHANGE
+        let assignees = []; // CHANGE
+        try { assignees = JSON.parse(getCellAttr(taskCell, 'task_assignee_role_ids_json') || '[]'); } catch (_) { /* Unknown crew. */ } // CHANGE
+        const validAssignees = graph.__trellisTaskManager?.validPlanningAssigneeIds ? graph.__trellisTaskManager.validPlanningAssigneeIds(taskCell) // CHANGE
+            : Array.isArray(assignees) ? uniqueStrings(assignees).filter(id => { const cell = planningCell(id); return cell && (getCellAttr(cell, 'role_card') === '1' || /(?:^|;)role_card=1(?:;|$)/.test(cell.getStyle?.() || cell.style || '')); }) : []; // CHANGE
+        return { taskCell, moduleCell, scope, source, sources, bed, bedConditions, cropId: getCellAttr(taskCell, 'plant_id') || source && getCellAttr(source, 'plant_id'), taskType, taskTypeId, // CHANGE
+            quantities, quantity, crewSize: validAssignees.length || null, problems, // CHANGE
+            inventory: (options.inventory || readEquipmentInventory(scope)).map(item => normalizePlanningEquipment(item, taskTypes)), // CHANGE
+            capabilityNames: {}, // NEW
+            equipmentIds: Object.prototype.hasOwnProperty.call(overrides, 'equipmentIds') ? overrides.equipmentIds : readEquipmentIds(getCellAttr(taskCell, TASK_ATTRS.TASK_EQUIPMENT_IDS)), // CHANGE
+            draftPreview: !!options.draftPreview }; // CHANGE
+    } // CHANGE
 
-    /** Shared suitability assessment. Relevance is a preference; unmet requirements never masquerade as savings. */ // NEW
-    function assessPlanningTool(eq, context) {
-        const taskType = context.taskType;
-        const reasons = [], unmet = [], unknown = [];
-        if (!taskType) return { equipment: eq, relevant: false, reasons, unmet, unknown, preferenceMatches: 0 };
-        const capabilities = uniqueStrings([...(taskType.requiredCapabilities || []), ...(taskType.optionalCapabilities || []), ...(taskType.recommendedCapabilities || [])]);
-        const matches = (eq.capabilities || []).filter(id => capabilities.includes(id));
-        const effectMatch = (eq.efficiencyEffects || []).some(effect => effect.taskTypeId === taskType.id);
-        const relevant = matches.length > 0 || (eq.relevantTaskTypes || []).includes(taskType.id) || effectMatch;
-        if (matches.length) reasons.push('Provides a capability used by ' + taskType.name + '.');
-        if ((eq.relevantTaskTypes || []).includes(taskType.id)) reasons.push('Listed for ' + taskType.name + '.');
-        if (effectMatch) reasons.push('Has a time rule for this task type.');
-        if (!isEquipmentAvailable(eq)) unmet.push('Currently ' + labelize(eq.status).toLowerCase() + '.');
-        if (eq.retired || eq.retiredAt) unmet.push('This tool definition is retired.');
-        const availability = eq.availability || {};
-        const taskDate = getCellAttr(context.taskCell, 'assigned_day') || getCellAttr(context.taskCell, 'start');
-        if (availability.from || availability.to) {
-            if (!taskDate) unknown.push('Check availability on the task date.');
-            else if (availability.from && taskDate < availability.from || availability.to && taskDate > availability.to) unmet.push('Unavailable on the task date.');
-        }
-        if (eq.crewSizeMin > 1) {
-            if (context.crewSize == null) unknown.push('Requires ' + eq.crewSizeMin + ' people; crew not assigned.');
-            else if (context.crewSize < eq.crewSizeMin) unmet.push('Requires ' + eq.crewSizeMin + ' people; ' + context.crewSize + ' assigned.');
-        }
-        if (eq.skillLevelRequired && eq.skillLevelRequired !== 'none') unknown.push('Check operator skill: ' + labelize(eq.skillLevelRequired) + '.');
-        for (const [key, comparison, label] of [['minimumUsefulScale', (a, b) => a < b, 'below'], ['maximumUsefulScale', (a, b) => a > b, 'above']]) {
-            const bound = eq[key];
-            if (!(bound?.value > 0)) continue;
-            const value = context.quantities[bound.unit];
-            if (value == null) unknown.push('Check job size: ' + labelize(bound.unit) + ' needed.');
-            else if (comparison(value, bound.value)) unmet.push('Job size is ' + label + ' this tool’s useful range.');
-        }
-        let preferenceMatches = 0;
-        if (eq.relevantCropIds?.length) {
-            if (!context.cropId) unknown.push('Crop preference needs checking.');
-            else if (eq.relevantCropIds.includes(context.cropId)) { preferenceMatches++; reasons.push('Matches the planned crop.'); }
-        }
-        if (eq.relevantBedConditions?.length) {
-            if (!context.bedConditions) unknown.push('Bed preferences need checking.');
-            else if (eq.relevantBedConditions.some(token => { const split = token.indexOf(':'); return String(context.bedConditions[token.slice(0, split)]) === token.slice(split + 1); })) {
-                preferenceMatches++; reasons.push('Matches the bed conditions.');
-            }
-        }
-        return { equipment: eq, relevant, reasons, unmet: uniqueStrings(unmet), unknown: uniqueStrings(unknown), preferenceMatches };
-    }
+    /** Direct task links establish relevance; availability, crew and scale explain whether a tool can be used. */ // CHANGE
+    function assessPlanningTool(eq, context) { // CHANGE
+        const taskType = context.taskType; // CHANGE
+        const reasons = [], unmet = [], unknown = []; // CHANGE
+        if (!taskType) return { equipment: eq, relevant: false, reasons, unmet, unknown, preferenceMatches: 0 }; // CHANGE
+        const effectMatch = (eq.efficiencyEffects || []).some(effect => effect.taskTypeId === taskType.id); // CHANGE
+        const relevant = (eq.relevantTaskTypes || []).includes(taskType.id); // CHANGE
+        if ((eq.relevantTaskTypes || []).includes(taskType.id)) reasons.push('Listed for ' + taskType.name + '.'); // CHANGE
+        if (relevant && effectMatch) { // CHANGE
+            reasons.push('Has a time rule for this task type.'); // CHANGE
+            if (!context.quantity) unknown.push('Set job quantity to check the time rule.'); // CHANGE
+            else if (!eq.efficiencyEffects.some(effect => effect.taskTypeId === taskType.id && effectAppliesToQuantity(effect, context.quantity))) reasons.push('Its time-saving rule does not apply at this job size or unit.'); // CHANGE
+        } // CHANGE
+        if (!isEquipmentAvailable(eq)) unmet.push('Currently ' + labelize(eq.status).toLowerCase() + '.'); // CHANGE
+        if (eq.retired || eq.retiredAt) unmet.push('This tool definition is retired.'); // CHANGE
+        const availability = eq.availability || {}; // CHANGE
+        const taskDate = getCellAttr(context.taskCell, 'assigned_day') || getCellAttr(context.taskCell, 'start'); // CHANGE
+        if (availability.from || availability.to) { // CHANGE
+            if (!taskDate) unknown.push('Check availability on the task date.'); // CHANGE
+            else if (availability.from && taskDate < availability.from || availability.to && taskDate > availability.to) unmet.push('Unavailable on the task date.'); // CHANGE
+        } // CHANGE
+        if (eq.crewSizeMin >= 1) { // CHANGE
+            if (context.crewSize == null) unknown.push('Requires ' + eq.crewSizeMin + (eq.crewSizeMin === 1 ? ' person' : ' people') + '; crew not assigned.'); // CHANGE
+            else if (context.crewSize < eq.crewSizeMin) unmet.push('Requires ' + eq.crewSizeMin + ' people; ' + context.crewSize + ' assigned.'); // CHANGE
+        } // CHANGE
+        if (eq.skillLevelRequired && eq.skillLevelRequired !== 'none') unknown.push('Check operator skill: ' + labelize(eq.skillLevelRequired) + '.'); // CHANGE
+        for (const [key, comparison, label] of [['minimumUsefulScale', (a, b) => a < b, 'below'], ['maximumUsefulScale', (a, b) => a > b, 'above']]) { // CHANGE
+            const bound = eq[key]; // CHANGE
+            if (!(bound?.value > 0)) continue; // CHANGE
+            const value = context.quantities[bound.unit]; // CHANGE
+            if (value == null) unknown.push('Check job size: ' + labelize(bound.unit) + ' needed.'); // CHANGE
+            else if (comparison(value, bound.value)) unmet.push('Job size is ' + label + ' this tool’s useful range.'); // CHANGE
+        } // CHANGE
+        return { equipment: eq, relevant, reasons, unmet: uniqueStrings(unmet), unknown: uniqueStrings(unknown), preferenceMatches: 0 }; // CHANGE: retained result field for compatibility.
+
+    } // CHANGE
 
     /** Estimate selected tools only. Extra tools do not imply extra efficiency or crew-based division. */ // NEW
-    function estimatePlanningSelection(context, ids) {
-        const type = context.taskType, quantity = context.quantity;
-        if (!type || !quantity || !Number.isFinite(Number(type.baseHoursPerUnit?.[quantity.unit]))) return { estimatedHours: null, problems: ['Set a supported job quantity to calculate hours.'] };
-        const selected = uniqueStrings(ids || []).map(id => context.inventory.find(eq => eq.id === id));
-        const assessments = selected.filter(Boolean).map(eq => assessPlanningTool(eq, context));
-        const problems = [...context.problems];
-        if (selected.some(eq => !eq)) problems.push('A selected tool is missing from this task’s reference version.');
-        const usable = assessments.filter(result => result.relevant && !result.unmet.length).map(result => result.equipment);
-        assessments.forEach(result => problems.push(...result.unmet, ...result.unknown, ...(!result.relevant ? ['Selected tool ' + result.equipment.name + ' does not match this task type.'] : [])));
-        const effect = chooseBestEquipmentEffect(type, quantity, usable);
-        const complexity = getCellAttr(context.taskCell, TASK_ATTRS.TASK_COMPLEXITY) || 'normal';
-        const baselineHours = Number(type.baseHoursPerUnit[quantity.unit]) * quantity.value * coerceNumber(type.complexityModifiers?.[complexity], 1)
-            + coerceNumber(type.defaultSetupTimeHours, 0) + coerceNumber(type.defaultCleanupTimeHours, 0);
-        const workHours = Number(type.baseHoursPerUnit[quantity.unit]) * quantity.value * coerceNumber(type.complexityModifiers?.[complexity], 1) * effect.hoursMultiplier;
-        const estimatedHours = workHours + coerceNumber(type.defaultSetupTimeHours, 0) + coerceNumber(type.defaultCleanupTimeHours, 0)
-            + sumUniqueEquipment(usable, 'setupTimeHours') + sumUniqueEquipment(usable, 'cleanupTimeHours');
-        return { estimatedHours, baselineHours, savingsHours: baselineHours - estimatedHours, selectedEquipment: usable, problems: uniqueStrings(problems) };
-    }
+    function estimatePlanningSelection(context, ids) { // CHANGE
+        const type = context.taskType, quantity = context.quantity; // CHANGE
+        if (!type || !quantity || !Number.isFinite(Number(type.baseHoursPerUnit?.[quantity.unit]))) return { estimatedHours: null, problems: ['Set a supported job quantity to calculate hours.'] }; // CHANGE
+        const selected = uniqueStrings(ids || []).map(id => context.inventory.find(eq => eq.id === id)); // CHANGE
+        const assessments = selected.filter(Boolean).map(eq => assessPlanningTool(eq, context)); // CHANGE
+        const problems = [...context.problems]; // CHANGE
+        if (selected.some(eq => !eq)) problems.push('A selected tool is missing from this task’s reference version.'); // CHANGE
+        const usable = assessments.filter(result => result.relevant && !result.unmet.length).map(result => result.equipment); // CHANGE
+        assessments.forEach(result => problems.push(...(result.unmet.length ? ['Not used in estimate: ' + result.equipment.name + '. ' + result.unmet.join(' ')] : []), ...result.unknown, ...(!result.relevant ? ['Selected tool ' + result.equipment.name + ' does not match this task type and is excluded from the estimate.'] : []))); // CHANGE
+        const effect = chooseBestEquipmentEffect(type, quantity, usable); // CHANGE
+        const complexity = getCellAttr(context.taskCell, TASK_ATTRS.TASK_COMPLEXITY) || 'normal'; // CHANGE
+        const baselineHours = Number(type.baseHoursPerUnit[quantity.unit]) * quantity.value * coerceNumber(type.complexityModifiers?.[complexity], 1) // CHANGE
+            + coerceNumber(type.defaultSetupTimeHours, 0) + coerceNumber(type.defaultCleanupTimeHours, 0); // CHANGE
+        const workHours = Number(type.baseHoursPerUnit[quantity.unit]) * quantity.value * coerceNumber(type.complexityModifiers?.[complexity], 1) * effect.hoursMultiplier; // CHANGE
+        const estimatedHours = workHours + coerceNumber(type.defaultSetupTimeHours, 0) + coerceNumber(type.defaultCleanupTimeHours, 0) // CHANGE
+            + sumUniqueEquipment(usable, 'setupTimeHours') + sumUniqueEquipment(usable, 'cleanupTimeHours'); // CHANGE
+        return { estimatedHours, workHours, equipmentEffect: { ...effect, setupTime: sumUniqueEquipment(usable, 'setupTimeHours'), cleanupTime: sumUniqueEquipment(usable, 'cleanupTimeHours') }, baselineHours, savingsHours: baselineHours - estimatedHours, selectedEquipment: usable, problems: uniqueStrings(problems) }; // CHANGE
+    } // CHANGE
 
     /** Deterministic advisory ranking, shared by task overlays and the equipment dialog. */ // NEW
-    function recommendForTask(taskCell, moduleCell, options = {}) {
-        const context = resolvePlanningContext(taskCell, moduleCell, options);
-        const candidates = context.inventory.map(eq => assessPlanningTool(eq, context)).filter(result => result.relevant);
-        candidates.forEach(result => { result.estimate = estimatePlanningSelection(context, [result.equipment.id]); });
-        candidates.sort((a, b) => (a.unmet.length > 0) - (b.unmet.length > 0) || (a.unknown.length > 0) - (b.unknown.length > 0)
-            || b.preferenceMatches - a.preferenceMatches || (a.estimate.estimatedHours ?? Infinity) - (b.estimate.estimatedHours ?? Infinity)
-            || byName(a.equipment, b.equipment) || a.equipment.id.localeCompare(b.equipment.id));
-        const selectedIds = readEquipmentIds(context.equipmentIds);
-        const selected = (selectedIds || []).map(id => candidates.find(result => result.equipment.id === id) || (context.inventory.find(eq => eq.id === id)
-            ? assessPlanningTool(context.inventory.find(eq => eq.id === id), context) : { equipment: { id, name: id }, relevant: false, reasons: [], unmet: ['Missing or retired tool in this task’s reference version.'], unknown: [] }));
-        return { context, candidates, available: candidates.filter(result => !result.unmet.length), opportunities: candidates.filter(result => result.unmet.length), selected,
-            selection: selectedIds, estimate: estimatePlanningSelection(context, selectedIds || []) };
-    }
+    function recommendForTask(taskCell, moduleCell, options = {}) { // CHANGE
+        const context = resolvePlanningContext(taskCell, moduleCell, options); // CHANGE
+        const candidates = context.inventory.map(eq => assessPlanningTool(eq, context)).filter(result => result.relevant); // CHANGE
+        candidates.forEach(result => { result.estimate = estimatePlanningSelection(context, [result.equipment.id]); }); // CHANGE
+        candidates.sort((a, b) => (a.unmet.length > 0) - (b.unmet.length > 0) || (a.unknown.length > 0) - (b.unknown.length > 0) // CHANGE
+            || (a.estimate.estimatedHours ?? Infinity) - (b.estimate.estimatedHours ?? Infinity) // CHANGE
+            || byName(a.equipment, b.equipment) || a.equipment.id.localeCompare(b.equipment.id)); // CHANGE
+        const selectedIds = readEquipmentIds(context.equipmentIds); // CHANGE
+        const selected = (selectedIds || []).map(id => candidates.find(result => result.equipment.id === id) || (context.inventory.find(eq => eq.id === id) // CHANGE
+            ? assessPlanningTool(context.inventory.find(eq => eq.id === id), context) : { equipment: { id, name: id }, relevant: false, reasons: [], unmet: ['Missing or retired tool in this task’s reference version.'], unknown: [] })); // CHANGE
+        return { context, candidates, available: candidates.filter(result => !result.unmet.length), opportunities: candidates.filter(result => result.unmet.length), selected, // CHANGE
+            selection: selectedIds, estimate: estimatePlanningSelection(context, selectedIds || []) }; // CHANGE
+    } // CHANGE
 
     /** Garden membership comes from task boards and planting links, rather than a whole-document scan. */ // NEW
-    function listPlanningTasks(moduleCell) {
-        const manager = graph.__trellisTaskManager;
-        if (manager?.listPlanningTasks) return manager.listPlanningTasks(moduleCell);
-        const result = [];
-        walkCells(model.getRoot(), cell => {
-            if (!getCellAttr(cell, TASK_ATTRS.TASK_TYPE_ID) || planningGarden(cell) !== moduleCell) return;
-            const state = getCellAttr(cell, 'task_workflow_state') || getCellAttr(cell, 'status') || '';
-            if (!/DONE|ARCHIV|COMPLETE/i.test(state) && !getCellAttr(cell, 'completed')) result.push(cell);
-        });
-        return result;
-    }
+    function listPlanningTasks(moduleCell) { // CHANGE
+        const manager = graph.__trellisTaskManager; // CHANGE
+        if (manager?.listPlanningTasks) return manager.listPlanningTasks(moduleCell); // CHANGE
+        const result = []; // CHANGE
+        walkCells(model.getRoot(), cell => { // CHANGE
+            if (!getCellAttr(cell, TASK_ATTRS.TASK_TYPE_ID) || planningGarden(cell) !== moduleCell) return; // CHANGE
+            const state = getCellAttr(cell, 'workflow_state') || getCellAttr(cell, 'task_workflow_state') || getCellAttr(cell, 'status') || ''; // CHANGE
+            if (!/DONE|ARCHIV|COMPLETE/i.test(state) && !getCellAttr(cell, 'completed')) result.push(cell); // CHANGE
+        }); // CHANGE
+        return result; // CHANGE
+    } // CHANGE
 
     function renderTaskTypeControls(container, taskCell, moduleCell, onChange) {
         if (!container || !taskCell || !moduleCell) return;
@@ -1615,64 +1507,6 @@ Draw.loadPlugin(function (ui) {
         container.appendChild(complexitySel);
     }
 
-    function requestCropOptions(state, render) {
-        const rootScheduler = typeof window !== 'undefined' && window.USL && window.USL.scheduler; // CHANGE
-        const scheduler = rootScheduler?.forGarden ? rootScheduler.forGarden(state.moduleCell) : rootScheduler; // NEW
-        if (!scheduler || typeof scheduler.listPlantOptions !== "function") {
-            state.cropOptionsStatus = "failed";
-            state.cropOptionsError = "Plant catalog is not available.";
-            return;
-        }
-        state.cropOptionsStatus = "loading";
-        Promise.resolve()
-            .then(function () { return scheduler.listPlantOptions(); })
-            .then(function (rows) {
-                state.cropOptions = normalizeCropOptions(rows);
-                state.cropOptionsStatus = "loaded";
-                state.cropOptionsError = "";
-                render();
-            })
-            .catch(function (err) {
-                state.cropOptions = [];
-                state.cropOptionsStatus = "failed";
-                state.cropOptionsError = err && err.message ? err.message : "Plant catalog failed to load.";
-                render();
-            });
-    }
-
-    function normalizeCropOptions(rows) {
-        return (Array.isArray(rows) ? rows : []).map(function (row) {
-            const id = trim(row && (row.id != null ? row.id : row.plant_id));
-            const name = trim(row && (row.name || row.plant_name || row.abbr || id));
-            if (!id || !name) return null;
-            return { id: id, name: name, category: cropLifecycleGroup(row) };
-        }).filter(Boolean).sort(byName);
-    }
-
-    function cropLifecycleGroup(row) {
-        if (Number(row && row.perennial) === 1) return "Perennials";
-        if (Number(row && row.biennial) === 1) return "Biennials";
-        if (Number(row && row.annual) === 1) return "Annuals";
-        return "Uncategorized";
-    }
-
-    function getBedConditionOptionGroups() {
-        const api = typeof window !== "undefined" && window.TrellisGardenBeds;
-        if (api && typeof api.listConditionOptionGroups === "function") {
-            return normalizeOptionGroups(api.listConditionOptionGroups());
-        }
-        return clone(FALLBACK_BED_CONDITION_GROUPS);
-    }
-
-    function sanitizeChecklistBackedSelections(state) {
-        const cropIds = state.cropOptionsStatus === "loaded" ? new Set(state.cropOptions.map(function (item) { return item.id; })) : null;
-        const conditionIds = new Set(flattenOptionGroups(state.bedConditionGroups).map(function (item) { return item.id; }));
-        (state.inventory || []).forEach(function (eq) {
-            if (cropIds) eq.relevantCropIds = (eq.relevantCropIds || []).filter(function (id) { return cropIds.has(id); });
-            eq.relevantBedConditions = (eq.relevantBedConditions || []).filter(function (id) { return conditionIds.has(id); });
-        });
-    }
-
     // -------------------------------------------------------------------------
     // UI
     // -------------------------------------------------------------------------
@@ -1684,23 +1518,25 @@ Draw.loadPlugin(function (ui) {
         style.textContent = `
 .trellis-eq-overlay { position: fixed; inset: 0; z-index: ${TRELLIS_DIALOG_Z}; background: rgba(0,0,0,0.28); display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .trellis-eq-dialog { width: min(1480px, calc(100vw - 52px)); height: min(920px, calc(100vh - 52px)); background: #fff; color: #172018; border-radius: 9px; box-shadow: 0 18px 50px rgba(0,0,0,.32); overflow: hidden; display: flex; flex-direction: column; }
-.trellis-eq-header { height: 54px; background: linear-gradient(90deg,#0f3f25,#0b2d1b); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; }
+.trellis-eq-header { min-height: 54px; background: linear-gradient(90deg,#0f3f25,#0b2d1b); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; } /* CHANGE */
 .trellis-eq-title { font-size: 18px; font-weight: 650; }
 .trellis-eq-close { border: 0; background: transparent; color: #fff; font-size: 24px; cursor: pointer; line-height: 1; }
-.trellis-eq-top { padding: 14px 20px; display: grid; grid-template-columns: 320px repeat(6, 1fr); gap: 14px; border-bottom: 1px solid #e6e9e6; background: #fafbfa; }
+.trellis-eq-top { padding: 14px 20px; display: grid; grid-template-columns: minmax(160px, 1.5fr) minmax(120px, 1fr) minmax(180px, 1fr); gap: 14px; border-bottom: 1px solid #e6e9e6; background: #fafbfa; } /* CHANGE */
 .trellis-eq-module-label { font-size: 12px; color: #526052; margin-bottom: 6px; }
 .trellis-eq-module-box { height: 36px; border: 1px solid #d8ded8; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; background: #fff; font-size: 14px; }
 .trellis-eq-tile { border: 1px solid #e0e4e0; border-radius: 7px; background: #fff; padding: 10px 12px; display: flex; gap: 10px; align-items: center; min-width: 0; }
 .trellis-eq-tile-icon { font-size: 25px; width: 30px; text-align: center; }
 .trellis-eq-tile-main { font-size: 20px; font-weight: 700; line-height: 1.1; }
 .trellis-eq-tile-sub { font-size: 12px; color: #405040; margin-top: 2px; }
-.trellis-eq-tabs { display: flex; gap: 22px; padding: 0 20px; border-bottom: 1px solid #dde3dd; background: #fff; height: 48px; align-items: flex-end; }
+.trellis-eq-tabs { flex-shrink: 0; display: flex; gap: 22px; padding: 0 20px; border-bottom: 1px solid #dde3dd; background: #fff; height: 48px; align-items: flex-end; } /* CHANGE */
 .trellis-eq-tab { height: 48px; display: flex; align-items: center; gap: 7px; border-bottom: 3px solid transparent; cursor: pointer; font-size: 14px; color: #263226; padding: 0 2px; white-space: nowrap; }
 .trellis-eq-tab.active { color: #0d7d35; border-bottom-color: #159447; font-weight: 650; }
-.trellis-eq-body { flex: 1; overflow: hidden; display: flex; background: #fff; }
-.trellis-eq-pane { flex: 1; display: flex; overflow: hidden; }
-.trellis-eq-list-panel { width: 560px; border-right: 1px solid #e3e7e3; padding: 18px; display: flex; flex-direction: column; overflow: hidden; }
-.trellis-eq-editor-panel { flex: 1; padding: 18px; overflow: auto; }
+.trellis-eq-body { flex: 1; min-height: 0; overflow: hidden; display: flex; background: #fff; } /* CHANGE */
+.trellis-eq-pane { flex: 1; min-height: 0; display: flex; overflow: hidden; } /* CHANGE */
+.trellis-eq-overview { flex-shrink: 0; } /* NEW */
+.trellis-eq-overview > summary { display: none; cursor: pointer; padding: 10px 18px; font-size: 13px; background: #fafbfa; border-bottom: 1px solid #e6e9e6; } /* NEW */
+.trellis-eq-list-panel { width: 40%; min-width: 300px; border-right: 1px solid #e3e7e3; padding: 18px; display: flex; flex-direction: column; overflow: hidden; } /* CHANGE */
+.trellis-eq-editor-panel { flex: 1; min-width: 0; padding: 18px; overflow: auto; } /* CHANGE */
 .trellis-eq-section-title { font-size: 18px; font-weight: 650; margin-bottom: 14px; }
 .trellis-eq-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .trellis-eq-btn { border: 1px solid #d5dcd5; background: #fff; color: #172018; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
@@ -1721,7 +1557,13 @@ Draw.loadPlugin(function (ui) {
 .trellis-eq-card { border: 1px solid #e0e5e0; border-radius: 8px; background: #fff; margin-bottom: 14px; }
 .trellis-eq-card-head { padding: 12px 14px; font-weight: 650; border-bottom: 1px solid #e8ece8; background: #fbfcfb; display: flex; align-items: center; justify-content: space-between; }
 .trellis-eq-card-body { padding: 14px; }
-.trellis-eq-form-grid { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 12px 18px; }
+.trellis-eq-section { border-top: 1px solid #e4e9e4; margin-top: 14px; } /* NEW */
+.trellis-eq-section > summary { cursor: pointer; padding: 12px 0; font-weight: 600; } /* NEW */
+.trellis-eq-section-body { padding-bottom: 12px; } /* NEW */
+.trellis-eq-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px 18px; } /* CHANGE */
+.trellis-eq-crew-range { min-width: 0; margin: 0; border: 1px solid #d5dcd5; border-radius: 6px; padding: 10px; } /* NEW */
+.trellis-eq-crew-range legend { font-size: 12px; color: #445044; } /* NEW */
+.trellis-eq-crew-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 8px; } /* NEW */
 .trellis-eq-form-grid.three { grid-template-columns: repeat(3, minmax(170px, 1fr)); }
 .trellis-eq-field label { display: block; font-size: 12px; color: #445044; margin-bottom: 5px; }
 .trellis-eq-field input, .trellis-eq-field select, .trellis-eq-field textarea { width: 100%; box-sizing: border-box; border: 1px solid #d5dcd5; border-radius: 6px; padding: 8px 9px; font: inherit; font-size: 13px; background: #fff; }
@@ -1730,7 +1572,7 @@ Draw.loadPlugin(function (ui) {
 .trellis-eq-editor-tabs { display: flex; gap: 18px; padding: 0 14px; border-bottom: 1px solid #e4e9e4; }
 .trellis-eq-editor-tab { padding: 11px 0 9px; border-bottom: 3px solid transparent; cursor: pointer; font-size: 13px; }
 .trellis-eq-editor-tab.active { border-bottom-color: #159447; color: #0d7d35; font-weight: 650; }
-.trellis-eq-footer { height: 54px; border-top: 1px solid #dde3dd; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; background: #fafbfa; }
+.trellis-eq-footer { flex-shrink: 0; min-height: 54px; flex-wrap: wrap; gap: 8px; border-top: 1px solid #dde3dd; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; background: #fafbfa; } /* CHANGE */
 .trellis-eq-footer-left, .trellis-eq-footer-right { display: flex; gap: 10px; align-items: center; }
 .trellis-eq-empty { padding: 28px; text-align: center; color: #657065; border: 1px dashed #d6ddd6; border-radius: 8px; background: #fbfcfb; }
 .trellis-eq-warning-list { padding: 18px; overflow: auto; width: 100%; }
@@ -1743,9 +1585,9 @@ Draw.loadPlugin(function (ui) {
 .trellis-eq-validation-title { font-weight: 650; margin-bottom: 4px; }
 .trellis-eq-validation ul { margin: 5px 0 0 18px; padding: 0; }
 .trellis-eq-row-editor { border: 1px solid #e0e5e0; border-radius: 7px; overflow: hidden; margin-top: 10px; }
-.trellis-eq-row { display: grid; grid-template-columns: repeat(6, minmax(100px, 1fr)) 70px; gap: 8px; align-items: end; padding: 10px; border-bottom: 1px solid #edf0ed; }
+.trellis-eq-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; align-items: end; padding: 10px; border-bottom: 1px solid #edf0ed; } /* CHANGE */
 .trellis-eq-row:last-child { border-bottom: 0; }
-.trellis-eq-row.compact { grid-template-columns: minmax(160px, 1.2fr) minmax(90px, .8fr) 70px; }
+.trellis-eq-row.compact { grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); } /* CHANGE */
 .trellis-eq-row label { display: block; font-size: 11px; color: #445044; margin-bottom: 4px; }
 .trellis-eq-row input, .trellis-eq-row select, .trellis-eq-row textarea { width: 100%; box-sizing: border-box; border: 1px solid #d5dcd5; border-radius: 6px; padding: 7px 8px; font: inherit; font-size: 12px; }
 .trellis-eq-checklist { border: 1px solid #dce2dc; border-radius: 7px; padding: 9px; background: #fff; max-height: 240px; overflow: auto; }
@@ -1761,7 +1603,8 @@ Draw.loadPlugin(function (ui) {
 .trellis-eq-table-subgroup td { background: #fbfcfb; color: #5f695f; font-size: 12px; font-weight: 650; }
 .trellis-eq-id-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .trellis-eq-id-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f3f5f3; border: 1px solid #dbe1db; border-radius: 5px; padding: 6px 8px; }
-@media (max-width: 1120px) { .trellis-eq-top { grid-template-columns: 1fr 1fr; } .trellis-eq-pane { flex-direction: column; } .trellis-eq-list-panel { width: auto; height: 42%; border-right: 0; border-bottom: 1px solid #e3e7e3; } }
+@media (max-width: 1120px) { .trellis-eq-overview > summary { display: list-item; } .trellis-eq-top { grid-template-columns: 1fr 1fr; max-height: 25vh; overflow: auto; } .trellis-eq-pane { flex-direction: column; } .trellis-eq-list-panel { width: auto; min-width: 0; height: 35%; flex-shrink: 0; border-right: 0; border-bottom: 1px solid #e3e7e3; } } /* CHANGE */
+@media (max-width: 700px) { .trellis-eq-dialog { width: calc(100vw - 20px); height: calc(100vh - 20px); } .trellis-eq-title { font-size: 16px; } .trellis-eq-header { padding: 0 14px; } .trellis-eq-pane { display: block; overflow: auto; } .trellis-eq-list-panel { height: auto; padding: 12px; } .trellis-eq-section-title { font-size: 16px; margin-bottom: 8px; } .trellis-eq-table-wrap { max-height: 130px; } .trellis-eq-editor-panel { padding: 12px; overflow: visible; } .trellis-eq-footer { padding: 8px 12px; } .trellis-eq-footer-right { flex-wrap: wrap; gap: 6px; } } /* NEW */
 `;
         document.head.appendChild(style);
     }
@@ -1785,34 +1628,44 @@ Draw.loadPlugin(function (ui) {
             activeTab: "inventory",
             sectionOpen: {}, // NEW: preserve disclosure state across editor refreshes.
             planningTaskLimit: 20, // NEW: long plans remain usable without omitting access to later tasks.
-            activeEquipmentEditorTab: "general",
             activeTaskTypeEditorTab: "general",
             selectedEquipmentId: null,
             selectedTaskTypeId: null,
-            selectedCapabilityId: null,
             filter: "",
-            capabilityFilter: "",
             taskTypeFilter: "",
-            cropFilter: "",
-            bedConditionFilter: "",
-            cropOptions: [],
-            cropOptionsStatus: "loading",
-            cropOptionsError: "",
-            bedConditionGroups: getBedConditionOptionGroups(),
             validationReport: null
         };
 
+        state.inventory = state.inventory.map(item => normalizePlanningEquipment(item, state.taskTypes)); // NEW: editor conversions remain detached until explicitly saved.
+        state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); // NEW
         if (state.inventory.length) state.selectedEquipmentId = state.inventory[0].id;
         if (state.taskTypes.length) state.selectedTaskTypeId = state.taskTypes[0].id;
-        if (state.capabilities.length) state.selectedCapabilityId = state.capabilities[0].id;
 
         const overlay = document.createElement("div");
         overlay.className = "trellis-eq-overlay";
         document.body.appendChild(overlay);
 
+        function refreshPreview() { // NEW
+            const target = overlay.querySelector('[data-section="plannedTasks"] .trellis-eq-section-body'); // CHANGE
+            const selected = state.inventory.find(eq => eq.id === state.selectedEquipmentId); // CHANGE
+            if (target && selected) { target.replaceChildren(); renderEquipmentPlannedTasks(target, selected, state, render); } // CHANGE
+        } // CHANGE
         function close() {
+            model.removeListener?.(refreshPreview); // NEW
+            window.removeEventListener('trellisReferencesChanged', refreshPreview); // NEW
             if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
         }
+        state.close = close; // NEW
+        state.openTask = task => { // NEW: task navigation cannot silently discard editor changes.
+            if (JSON.stringify([state.inventory, state.taskTypes, state.capabilities]) !== state.savedSnapshot) { // CHANGE
+                if (!confirm('Save equipment changes before opening this task? Cancel to keep editing.') || !saveAll()) return; // CHANGE
+            } // CHANGE
+            if (graph.__trellisTaskManager?.openTaskCard) graph.__trellisTaskManager.openTaskCard(task); // CHANGE
+            else { graph.setSelectionCell?.(task); graph.scrollCellToVisible?.(task); } // CHANGE
+            close(); // CHANGE
+        }; // CHANGE
+        model.addListener?.('change', refreshPreview); // NEW
+        window.addEventListener('trellisReferencesChanged', refreshPreview); // NEW
 
         function saveAll() {
             // Preserve unmatched legacy preference IDs; missing catalogs must not erase saved data. // CHANGE
@@ -1829,6 +1682,7 @@ Draw.loadPlugin(function (ui) {
             if (!proposed) { writeEquipmentInventory(state.moduleCell, state.inventory); writeTaskTypeRegistry(state.moduleCell, state.taskTypes); writeCapabilityRegistry(state.moduleCell, state.capabilities); } // CHANGE
             else fireTrellisEvent(EVENTS.WORKLOAD_ASSUMPTIONS_CHANGED, { moduleCell: state.moduleCell }); // NEW
             state.validationReport = null;
+            state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); // NEW
             return true;
         }
 
@@ -1837,6 +1691,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function render() {
+            overlay.querySelectorAll('.trellis-eq-section[data-section]').forEach(section => { state.sectionOpen[section.dataset.section] = section.open; }); // NEW: capture immediately, before native asynchronous toggle events can close a refreshed section.
             overlay.innerHTML = "";
             const dialog = div("trellis-eq-dialog");
             overlay.appendChild(dialog);
@@ -1851,7 +1706,6 @@ Draw.loadPlugin(function (ui) {
 
             if (state.activeTab === "inventory") body.appendChild(renderInventoryPane(state, render));
             else if (state.activeTab === "taskTypes") body.appendChild(renderTaskTypesPane(state, render));
-            else if (state.activeTab === "capabilities") body.appendChild(renderCapabilitiesPane(state, render));
             else if (state.activeTab === "efficiency") body.appendChild(renderEfficiencyPane(state, render));
             else if (state.activeTab === "maintenance") body.appendChild(renderMaintenancePane(state));
             else if (state.activeTab === "warnings") body.appendChild(renderWarningsPane(state));
@@ -1859,7 +1713,6 @@ Draw.loadPlugin(function (ui) {
             dialog.appendChild(renderFooter(state, render, saveAll, saveAndClose, close));
         }
 
-        requestCropOptions(state, render);
         render();
     }
 
@@ -1873,7 +1726,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     function renderTopSummary(state) {
+        const overview = document.createElement('details'); // NEW: the overview can collapse to leave editing room in compact windows.
+        overview.className = 'trellis-eq-overview'; overview.open = window.innerWidth > 1120; // NEW
+        const label = document.createElement('summary'); // NEW
+        label.textContent = getCellLabel(state.moduleCell) + ' · ' + state.inventory.length + ' tools · Overview'; overview.appendChild(label); // NEW
         const top = div("trellis-eq-top");
+        overview.appendChild(top); // NEW
         const moduleBox = div("");
         moduleBox.appendChild(textDiv("trellis-eq-module-label", "Garden Module:"));
         moduleBox.appendChild(textDiv("trellis-eq-module-box", "🌿  " + getCellLabel(state.moduleCell)));
@@ -1881,8 +1739,6 @@ Draw.loadPlugin(function (ui) {
 
         const summary = calculateSummary(state);
         top.appendChild(summaryTile("🧰", String(summary.itemCount), "Equipment Items", `${summary.ownedCount} owned`));
-        top.appendChild(summaryTile("⚠️", String(summary.missingRequiredCount), "Missing Required", "Capabilities"));
-        top.appendChild(summaryTile("★", String(summary.recommendedMissingCount), "Recommended", "Opportunities"));
         const costs = document.createElement('details'); // CHANGE
         const costsLabel = document.createElement('summary'); // NEW
         costsLabel.textContent = 'Maintenance & replacement summary'; costs.appendChild(costsLabel); // NEW
@@ -1890,16 +1746,13 @@ Draw.loadPlugin(function (ui) {
         costs.appendChild(summaryTile("$", "$" + summary.annualMaintenanceCost.toFixed(0), "Annual Maintenance", "Estimate", "Estimated yearly recurring maintenance cost from maintenance settings.")); // CHANGE
         costs.appendChild(summaryTile("$", "$" + summary.yearlyReplacementReserve.toFixed(0), "Yearly Replacement", "Reserve Estimate", "Estimated yearly reserve to replace owned equipment: replacement cost divided by expected lifespan.")); // CHANGE
         top.appendChild(costs); // NEW
-        return top;
+        return overview; // CHANGE
     }
 
     function calculateSummary(state) {
-        const warnings = buildAllWarnings(state.moduleCell);
         return {
             itemCount: state.inventory.length,
             ownedCount: state.inventory.filter(function (eq) { return eq.status === "owned"; }).length,
-            missingRequiredCount: warnings.filter(function (w) { return w.type === "missing_required_equipment"; }).length,
-            recommendedMissingCount: warnings.filter(function (w) { return w.type === "recommended_equipment_missing"; }).length,
             annualMaintenanceHours: state.inventory.reduce(function (sum, eq) { return sum + annualMaintenanceHours(eq); }, 0),
             annualMaintenanceCost: state.inventory.reduce(function (sum, eq) { return sum + annualMaintenanceCost(eq); }, 0),
             yearlyReplacementReserve: state.inventory.reduce(function (sum, eq) { return sum + yearlyReplacementReserve(eq); }, 0)
@@ -1944,9 +1797,9 @@ Draw.loadPlugin(function (ui) {
     function renderMainTabs(state, render) {
         const tabs = div("trellis-eq-tabs");
         tabs.appendChild(buttonEl('Equipment', 'trellis-eq-tab' + (state.activeTab === 'inventory' ? ' active' : ''), () => { state.activeTab = 'inventory'; render(); }, 'Configure tools and see their planned uses.', 'neutral')); // CHANGE
-        tabs.appendChild(buttonEl('Planning settings', 'trellis-eq-tab' + (state.activeTab !== 'inventory' ? ' active' : ''), () => { state.activeTab = state.activeTab === 'inventory' ? 'taskTypes' : 'inventory'; render(); }, 'Edit task types, capabilities and planning summaries.', 'neutral')); // NEW
+        tabs.appendChild(buttonEl('Planning settings', 'trellis-eq-tab' + (state.activeTab !== 'inventory' ? ' active' : ''), () => { state.activeTab = state.activeTab === 'inventory' ? 'taskTypes' : 'inventory'; render(); }, 'Edit task types and planning summaries.', 'neutral')); // NEW
         if (state.activeTab !== 'inventory') { // NEW
-            const select = selectInput([['taskTypes', 'Task Types'], ['capabilities', 'Capabilities'], ['efficiency', 'Time rules overview'], ['maintenance', 'Maintenance & Costs'], ['warnings', 'Equipment warnings']], state.activeTab, event => { state.activeTab = event.target.value; render(); }); // NEW
+            const select = selectInput([['taskTypes', 'Task Types'], ['efficiency', 'Time rules overview'], ['maintenance', 'Maintenance & Costs'], ['warnings', 'Equipment warnings']], state.activeTab, event => { state.activeTab = event.target.value; render(); }); // NEW
             select.setAttribute('aria-label', 'Planning settings'); tabs.appendChild(select); // NEW
         } // NEW
         return tabs;
@@ -1996,16 +1849,10 @@ Draw.loadPlugin(function (ui) {
         const preset = selectInput([['', 'Add from preset…'], ['custom', 'Custom tool'], ...DEFAULT_EQUIPMENT.map(eq => [eq.id, eq.name])], '', function () { // NEW
             if (!preset.value) return; // NEW
             const definition = DEFAULT_EQUIPMENT.find(eq => eq.id === preset.value); // NEW
-            const item = equipment(Object.assign({}, definition ? clone(definition) : {}, { id: makeId('eq', definition?.name || 'equipment'), name: definition?.name || 'New Equipment', status: 'wishlist', acquisitionMode: 'wishlist' })); // NEW
+            const item = normalizePlanningEquipment(equipment(Object.assign({}, definition ? clone(definition) : {}, { id: makeId('eq', definition?.name || 'equipment'), name: definition?.name || 'New Equipment', status: 'wishlist', acquisitionMode: 'wishlist' })), state.taskTypes); // CHANGE
             state.inventory.push(item); state.selectedEquipmentId = item.id; render(); // NEW
         }); // NEW
         preset.setAttribute('aria-label', 'Add equipment from preset'); toolbar.appendChild(preset); // NEW
-        toolbar.appendChild(buttonEl("＋ Add", "trellis-eq-btn primary", function () {
-            const item = equipment({ id: makeId("eq", "equipment"), name: "New Equipment", status: 'wishlist' }); // CHANGE: adding a definition must not claim ownership.
-            state.inventory.push(item);
-            state.selectedEquipmentId = item.id;
-            render();
-        }, "Add an equipment item to this garden's inventory.", "add")); // CHANGE: explicit action tooltip.
         toolbar.appendChild(buttonEl("Duplicate", "trellis-eq-btn", function () {
             const selected = state.inventory.find(function (eq) { return eq.id === state.selectedEquipmentId; });
             if (!selected) return;
@@ -2027,7 +1874,7 @@ Draw.loadPlugin(function (ui) {
         const search = document.createElement("input");
         search.className = "trellis-eq-search";
         search.placeholder = "Search equipment...";
-        applyTooltip(search, "Filter equipment by name, category, status, capability, or task type.");
+        applyTooltip(search, "Filter equipment by name, category, status, or task type."); // CHANGE
         search.value = state.filter;
         search.oninput = function () { state.filter = search.value; filterEquipmentRows(search); };
         toolbar.appendChild(search);
@@ -2038,26 +1885,26 @@ Draw.loadPlugin(function (ui) {
         const wrap = div("trellis-eq-table-wrap");
         const table = document.createElement("table");
         table.className = "trellis-eq-table";
-        table.innerHTML = "<thead><tr><th>Name</th><th>Category</th><th>Status</th><th>Key Capabilities</th></tr></thead>";
+        table.innerHTML = "<thead><tr><th>Name</th><th>Category</th><th>Status</th><th>Helps with</th></tr></thead>"; // CHANGE
         const tbody = document.createElement("tbody");
         const q = trim(state.filter).toLowerCase();
 
         state.inventory
             .filter(function (eq) {
                 if (!q) return true;
-                return [eq.name, eq.category, eq.status, eq.capabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(" "), eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")]
+                return [eq.name, eq.category, eq.status, eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")] // CHANGE
                     .join(" ").toLowerCase().indexOf(q) >= 0;
             })
             .sort(byName)
             .forEach(function (eq) {
                 const tr = document.createElement("tr");
-                tr.setAttribute("data-filter-text", [eq.name, eq.category, eq.status, eq.capabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(" "), eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")].join(" ").toLowerCase());
+                tr.setAttribute("data-filter-text", [eq.name, eq.category, eq.status, eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")].join(" ").toLowerCase()); // CHANGE
                 if (eq.id === state.selectedEquipmentId) tr.className = "selected";
                 tr.onclick = function () { state.selectedEquipmentId = eq.id; render(); };
                 tr.appendChild(td(eq.name));
                 tr.appendChild(td(labelize(eq.category)));
                 tr.appendChild(tdBadge(eq.status, eq.status === "owned" || eq.status === "borrowed" ? "" : eq.status === "unavailable" || eq.status === "needs_repair" ? "gray" : "warn"));
-                tr.appendChild(td(eq.capabilities.slice(0, 3).map(function (id) { return capabilityDisplayName(state, id); }).join(", ") || "—"));
+                tr.appendChild(td(eq.relevantTaskTypes.slice(0, 3).map(function (id) { return taskTypeDisplayName(state, id); }).join(", ") || "—")); // CHANGE
                 tbody.appendChild(tr);
             });
 
@@ -2066,71 +1913,132 @@ Draw.loadPlugin(function (ui) {
         return wrap;
     }
 
+    /** A single editor with meaningful disclosures replaces the nested tab hierarchy. */ // NEW
     function renderEquipmentEditor(state, selected, render) {
-        if (!selected) return textDiv("trellis-eq-empty", "No equipment selected.");
-
+        if (!selected) return textDiv("trellis-eq-empty", "Choose a preset or add a custom tool to get started."); // CHANGE
         const card = div("trellis-eq-card");
-        const head = div("trellis-eq-card-head");
-        head.appendChild(textNode(`Edit Equipment: ${selected.name}`));
-        card.appendChild(head);
-        card.appendChild(renderEditorTabs(state, "activeEquipmentEditorTab", [
-            ["general", "General"],
-            ["links", "Capabilities & Tasks"],
-            ["effects", "Efficiency Effects"],
-            ["maintenance", "Maintenance & Costs"],
-            ["notes", "Notes"]
-        ], render));
-
-        const body = div("trellis-eq-card-body");
-        card.appendChild(body);
-
-        if (state.activeEquipmentEditorTab === "general") renderEquipmentGeneral(body, selected, render);
-        else if (state.activeEquipmentEditorTab === "links") renderEquipmentLinks(body, selected, state, render);
-        else if (state.activeEquipmentEditorTab === "effects") renderEquipmentEffects(body, selected, state, render);
-        else if (state.activeEquipmentEditorTab === "maintenance") renderEquipmentMaintenance(body, selected, render);
-        else if (state.activeEquipmentEditorTab === "notes") renderEquipmentNotes(body, selected, render);
-
+        card.appendChild(textDiv("trellis-eq-card-head", "Tool: " + selected.name)); // CHANGE
+        const body = div("trellis-eq-card-body"); card.appendChild(body); // CHANGE
+        renderEquipmentGeneral(body, selected, render); // CHANGE
+        function section(key, label, summary, populate, initiallyOpen = false) { // CHANGE
+            const details = document.createElement('details'); details.className = 'trellis-eq-section'; details.dataset.section = key; // CHANGE
+            details.open = state.sectionOpen[key] ?? initiallyOpen; // CHANGE
+            const heading = document.createElement('summary'); heading.textContent = label + (summary ? ' — ' + summary : ''); details.appendChild(heading); // CHANGE
+            const content = div('trellis-eq-section-body'); details.appendChild(content); populate(content); // CHANGE
+            details.addEventListener('toggle', () => { state.sectionOpen[key] = details.open; }); body.appendChild(details); // CHANGE
+        } // CHANGE
+        section('plannedTasks', 'Planned tasks', 'Unfinished work in this garden', node => renderEquipmentPlannedTasks(node, selected, state, render), true); // CHANGE
+        section('taskTypes', 'Helps with', selected.relevantTaskTypes.slice(0, 3).map(id => taskTypeDisplayName(state, id)).join(', ') || 'Choose task types', node => renderEquipmentLinks(node, selected, state, render), !selected.relevantTaskTypes.length); // CHANGE
+        section('suitability', 'Fit for the job', equipmentSuitabilitySummary(selected), node => renderEquipmentSuitability(node, selected, state, render)); // CHANGE
+        section('effects', 'Time estimates', selected.efficiencyEffects.length + ' task rules; ' + formatHours(selected.setupTimeHours + selected.cleanupTimeHours) + ' setup/cleanup', node => { // CHANGE
+            node.appendChild(paragraph('Preset values are editable assumptions. Savings apply only after tools are selected for a task.')); // CHANGE
+            const grid = div('trellis-eq-form-grid'); // CHANGE
+            grid.appendChild(field('Setup (minutes)', numberInput(selected.setupTimeHours * 60, event => { selected.setupTimeHours = coerceNumber(event.target.value, 0) / 60; }))); // CHANGE
+            grid.appendChild(field('Cleanup (minutes)', numberInput(selected.cleanupTimeHours * 60, event => { selected.cleanupTimeHours = coerceNumber(event.target.value, 0) / 60; }))); // CHANGE
+            node.appendChild(grid); renderEquipmentEffects(node, selected, state, render); // CHANGE
+        }); // CHANGE
+        section('maintenance', 'Maintenance & costs', selected.purchaseCost || selected.maintenanceCost || selected.replacementCost ? 'Costs entered' : 'Optional', node => renderEquipmentMaintenance(node, selected, render)); // CHANGE
+        section('notes', 'Storage & notes', selected.storageNotes || selected.notes ? 'Notes entered' : 'Optional', node => renderEquipmentNotes(node, selected, render)); // CHANGE
+        body.addEventListener('change', event => { // CHANGE
+            if (!event.target.matches('input,textarea,select')) return; // CHANGE
+            body.querySelector('[data-section="suitability"] > summary').textContent = 'Fit for the job — ' + equipmentSuitabilitySummary(selected); // NEW
+            const preview = body.querySelector('[data-section="plannedTasks"] .trellis-eq-section-body'); // CHANGE
+            if (preview) { preview.replaceChildren(); renderEquipmentPlannedTasks(preview, selected, state, render); } // CHANGE
+        }); // CHANGE
+        body.addEventListener('input', event => { if (event.target.closest('.trellis-eq-crew-range')) body.querySelector('[data-section="suitability"] > summary').textContent = 'Fit for the job — ' + equipmentSuitabilitySummary(selected); }); // NEW: update the range without replacing the focused input.
         return card;
     }
 
-    function renderEquipmentGeneral(body, eq, render) {
+    function renderEquipmentGeneral(body, eq, render) { // CHANGE: only essential fields remain at the top.
         const grid = div("trellis-eq-form-grid");
-        grid.appendChild(field("Name", textInput(eq.name, function (e) { eq.name = e.target.value; }, render)));
-        grid.appendChild(field("Primary Category", selectInput(EQUIPMENT_CATEGORIES.map(optPair), eq.category, function (e) { eq.category = e.target.value; render(); })));
-        grid.appendChild(field("Status", selectInput(EQUIPMENT_STATUSES.map(optPair), eq.status, function (e) { eq.status = e.target.value; render(); })));
-        grid.appendChild(field("Skill Level Required", selectInput(SKILL_LEVELS.map(optPair), eq.skillLevelRequired, function (e) { eq.skillLevelRequired = e.target.value; render(); })));
-        grid.appendChild(field("Setup Time (hours)", numberInput(eq.setupTimeHours, function (e) { eq.setupTimeHours = coerceNumber(e.target.value, 0); })));
-        grid.appendChild(field("Cleanup Time (hours)", numberInput(eq.cleanupTimeHours, function (e) { eq.cleanupTimeHours = coerceNumber(e.target.value, 0); })));
-        grid.appendChild(field("Crew Size Min", numberInput(eq.crewSizeMin, function (e) { eq.crewSizeMin = coerceNumber(e.target.value, 1); })));
-        grid.appendChild(field("Crew Size Max", numberInput(eq.crewSizeMax, function (e) { eq.crewSizeMax = coerceNumber(e.target.value, 1); })));
-        grid.appendChild(field("Minimum Useful Scale Value", numberInput(eq.minimumUsefulScale.value, function (e) { eq.minimumUsefulScale.value = coerceNumber(e.target.value, 0); })));
-        grid.appendChild(field("Minimum Useful Scale Unit", selectInput(QUANTITY_BASES.map(optPair), eq.minimumUsefulScale.unit, function (e) { eq.minimumUsefulScale.unit = e.target.value; })));
-        grid.appendChild(field("Maximum Useful Scale Value", numberInput(eq.maximumUsefulScale.value, function (e) { eq.maximumUsefulScale.value = coerceNumber(e.target.value, 0); })));
-        grid.appendChild(field("Maximum Useful Scale Unit", selectInput(QUANTITY_BASES.map(optPair), eq.maximumUsefulScale.unit, function (e) { eq.maximumUsefulScale.unit = e.target.value; })));
+        grid.appendChild(field("Name", textInput(eq.name, event => { eq.name = event.target.value; }))); // CHANGE
+        grid.appendChild(field("Primary Category", selectInput(EQUIPMENT_CATEGORIES.map(optPair), eq.category, event => { eq.category = event.target.value; render(); }))); // CHANGE
+        grid.appendChild(field("Status", selectInput(EQUIPMENT_STATUSES.map(optPair), eq.status, event => { eq.status = event.target.value; render(); }))); // CHANGE
         body.appendChild(grid);
     }
 
-    function renderEquipmentLinks(body, eq, state, render) {
-        const grid = div("trellis-eq-form-grid");
-        grid.appendChild(field("Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, eq.capabilities, eq.category), eq.capabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { eq.capabilities = updateCheckedList(eq.capabilities, id, checked); render(); }, function (ids, checked) { eq.capabilities = updateCheckedLists(eq.capabilities, ids, checked); render(); })));
-        grid.appendChild(field("Relevant Task Types", renderGroupedChecklist(groupedTaskTypeOptions(state.taskTypes, eq.relevantTaskTypes, eq.category), eq.relevantTaskTypes, state.taskTypeFilter, function (value) { state.taskTypeFilter = value; }, function (id, checked) { eq.relevantTaskTypes = updateCheckedList(eq.relevantTaskTypes, id, checked); render(); }, function (ids, checked) { eq.relevantTaskTypes = updateCheckedLists(eq.relevantTaskTypes, ids, checked); render(); })));
-        grid.appendChild(field("Relevant Crops", renderRelevantCropsControl(eq, state, render)));
-        grid.appendChild(field("Relevant Bed Conditions", renderGroupedChecklist(state.bedConditionGroups, eq.relevantBedConditions, state.bedConditionFilter, function (value) { state.bedConditionFilter = value; }, function (id, checked) { eq.relevantBedConditions = updateCheckedList(eq.relevantBedConditions, id, checked); render(); }, function (ids, checked) { eq.relevantBedConditions = updateCheckedLists(eq.relevantBedConditions, ids, checked); render(); })));
-        body.appendChild(grid);
+    /** Direct task links are authoritative; keep keyboard focus when the checklist refreshes other sections. */ // CHANGE
+    function renderEquipmentLinks(body, eq, state, render) { // CHANGE
+        body.appendChild(paragraph('Choose the task types this tool helps with. Suggestions are advisory; different tools can help with different parts of the same task.')); // CHANGE
+        function changeLinks(ids, checked) { // CHANGE
+            const focused = document.activeElement?.value; // CHANGE
+            eq.relevantTaskTypes = updateCheckedLists(eq.relevantTaskTypes, ids, checked); // CHANGE
+            render(); // CHANGE
+            const checklist = document.querySelector('[data-section="taskTypes"] .trellis-eq-checklist'); // CHANGE
+            Array.from(checklist?.querySelectorAll('input') || []).find(input => input.value === focused)?.focus(); // CHANGE
+        } // CHANGE
+        body.appendChild(field('Helps with', renderGroupedChecklist(groupedTaskTypeOptions(state.taskTypes, eq.relevantTaskTypes, eq.category), eq.relevantTaskTypes, state.taskTypeFilter, value => { state.taskTypeFilter = value; }, (id, checked) => changeLinks([id], checked), changeLinks))); // CHANGE
+    } // CHANGE
 
-        const hint = div("trellis-eq-small-muted");
-        hint.textContent = "Prefer capability IDs over specific equipment names. Example: pruning_hand, bulk_material_hauling, irrigation_timer.";
-        body.appendChild(hint);
+    /** Shared disclosure summary reflects the current operator range and omits absent skill requirements. */ // NEW
+    function equipmentSuitabilitySummary(eq) { // NEW
+        const range = eq.crewSizeMin === eq.crewSizeMax ? eq.crewSizeMin + (eq.crewSizeMin === 1 ? ' operator' : ' operators') : eq.crewSizeMin + '–' + eq.crewSizeMax + ' operators'; // NEW
+        return range + (eq.skillLevelRequired === 'none' ? '' : '; ' + labelize(eq.skillLevelRequired) + ' skill'); // NEW
+    } // NEW
+
+    /** Operator range describes the tool; additional people assigned to the task are allowed. */ // NEW
+    function renderEquipmentCrewRange(eq) { // CHANGE
+        const group = document.createElement('fieldset'); group.className = 'trellis-eq-crew-range'; // CHANGE
+        const legend = document.createElement('legend'); legend.textContent = 'People required to operate this tool'; group.appendChild(legend); // CHANGE
+        const inputs = div('trellis-eq-crew-inputs'); group.appendChild(inputs); // CHANGE
+        let maximum; // CHANGE
+        const minimum = wholeNumberInput(eq.crewSizeMin, event => { // CHANGE
+            eq.crewSizeMin = Math.max(1, coerceWholeYears(event.target.value, 1)); minimum.value = eq.crewSizeMin; // CHANGE
+            eq.crewSizeMax = Math.max(eq.crewSizeMin, eq.crewSizeMax); maximum.value = eq.crewSizeMax; maximum.min = String(eq.crewSizeMin); // CHANGE
+        }); // CHANGE
+        maximum = wholeNumberInput(eq.crewSizeMax, event => { eq.crewSizeMax = Math.max(eq.crewSizeMin, coerceWholeYears(event.target.value, eq.crewSizeMin)); maximum.value = eq.crewSizeMax; }); // CHANGE
+        minimum.min = '1'; maximum.min = String(eq.crewSizeMin); // CHANGE
+        minimum.setAttribute('aria-label', 'Minimum people required to operate this tool'); maximum.setAttribute('aria-label', 'Maximum supported people operating this tool'); // CHANGE
+        inputs.appendChild(field('Minimum', minimum)); inputs.appendChild(field('Maximum', maximum)); // CHANGE
+        group.appendChild(textDiv('trellis-eq-small-muted', 'Maximum describes tool operators. Additional task assignees are allowed.')); // CHANGE
+        return group; // CHANGE
+    } // CHANGE
+
+    function renderEquipmentSuitability(body, eq, state, render) { // CHANGE
+        body.appendChild(paragraph('Zero size limits mean unrestricted. Operator skill needs checking.')); // CHANGE
+        const grid = div('trellis-eq-form-grid'); // CHANGE
+        grid.appendChild(renderEquipmentCrewRange(eq)); // CHANGE
+        grid.appendChild(field('Skill Level Required', selectInput(SKILL_LEVELS.map(optPair), eq.skillLevelRequired, event => { eq.skillLevelRequired = event.target.value; }))); // CHANGE
+        [['minimumUsefulScale', 'Minimum'], ['maximumUsefulScale', 'Maximum']].forEach(([key, label]) => { // CHANGE
+            grid.appendChild(field(label + ' useful job size', numberInput(eq[key].value, event => { eq[key].value = Math.max(0, coerceNumber(event.target.value, 0)); }))); // CHANGE
+            grid.appendChild(field(label + ' size unit', selectInput(QUANTITY_BASES.map(optPair), eq[key].unit, event => { eq[key].unit = event.target.value; }))); // CHANGE
+        }); // CHANGE
+        body.appendChild(grid); // CHANGE
+    } // CHANGE
+
+    /** A detached preview can use draft settings without writing task hours or bypassing reference acceptance. */ // NEW
+    function renderEquipmentPlannedTasks(body, eq, state, render) { // CHANGE
+        body.appendChild(paragraph('Preview with current editor settings. Saved tasks use their accepted reference version.')); // CHANGE
+        const matches = []; // CHANGE
+        for (const task of listPlanningTasks(state.moduleCell)) { // CHANGE
+            try { // CHANGE
+                const recommendation = recommendForTask(task, state.moduleCell, { inventory: [eq], taskTypes: state.taskTypes, draftPreview: true }); // CHANGE
+                const result = recommendation.candidates.find(entry => entry.equipment.id === eq.id) || recommendation.selected.find(entry => entry.equipment.id === eq.id); // CHANGE
+                if (result) { result.estimate = result.estimate || estimatePlanningSelection(recommendation.context, [eq.id]); matches.push({ task, result }); } // CHANGE
+            } catch (error) { body.appendChild(textDiv('trellis-eq-small-muted', 'Task references unavailable: ' + error.message)); } // CHANGE
+        } // CHANGE
+        if (!matches.length) body.appendChild(textDiv('trellis-eq-empty', 'No matching unfinished tasks. Choose a task type on a task card to connect it to equipment.')); // CHANGE
+        matches.slice(0, state.planningTaskLimit).forEach(({ task, result }) => { // CHANGE
+            const row = div('trellis-eq-warning'); // CHANGE
+            row.appendChild(buttonEl(getCellAttr(task, 'title') || getCellAttr(task, 'label') || 'Open task', 'trellis-eq-btn', () => { // CHANGE
+                state.openTask(task); // CHANGE
+            }, 'Open this task in the plan.', 'open')); // CHANGE
+            row.appendChild(paragraph([...result.reasons, ...result.unmet, ...result.unknown, ...(!result.relevant ? ['Selected for this task, but does not match its task type.'] : [])].join(' '))); // CHANGE
+            if (!result.unmet.length && result.estimate.estimatedHours != null) row.appendChild(textDiv('trellis-eq-small-muted', 'Estimated ' + formatHours(result.estimate.estimatedHours) + '; ' + Math.abs(Math.round(result.estimate.savingsHours * 60)) + (result.estimate.savingsHours >= 0 ? ' minutes saved' : ' additional minutes') + ', including setup and cleanup.')); // CHANGE
+            body.appendChild(row); // CHANGE
+        }); // CHANGE
+        if (matches.length > state.planningTaskLimit) body.appendChild(buttonEl('Show more tasks', 'trellis-eq-btn', () => { state.planningTaskLimit += 20; render(); }, 'Show the next matching tasks.', 'neutral')); // CHANGE
     }
 
     function renderEquipmentEffects(body, eq, state, render) {
+        const linkedTypes = state.taskTypes.filter(type => eq.relevantTaskTypes.includes(type.id)); // NEW
         const explanation = div("trellis-eq-small-muted");
-        explanation.textContent = "Effects reduce or increase task hours. Only hours multipliers are supported in this standalone editor.";
+        explanation.textContent = "Negative percentages reduce task time: -40% means 40% less time. Positive percentages add time. Setup and cleanup are added separately."; // CHANGE
         body.appendChild(explanation);
 
         const addBtn = buttonEl("Add Effect", "trellis-eq-btn primary", function () {
             eq.efficiencyEffects.push(normalizeEffect({
-                taskTypeId: state.taskTypes[0] && state.taskTypes[0].id || "",
+                taskTypeId: linkedTypes[0]?.id || "", // CHANGE
                 effectType: "hours_multiplier",
                 multiplier: 1,
                 minimumScale: { value: 0, unit: "tasks" },
@@ -2140,25 +2048,33 @@ Draw.loadPlugin(function (ui) {
             }));
             render();
         }, "Add a task-efficiency effect to this equipment item.", "add"); // CHANGE: explicit action tooltip.
+        addBtn.disabled = !linkedTypes.length; // NEW
         body.appendChild(addBtn);
+        if (!linkedTypes.length) body.appendChild(textDiv('trellis-eq-small-muted', 'Choose a task type under Helps with before adding a time rule.')); // NEW
 
         const editor = div("trellis-eq-row-editor");
         if (!eq.efficiencyEffects.length) editor.appendChild(textDiv("trellis-eq-empty", "No efficiency effects defined."));
         eq.efficiencyEffects.forEach(function (eff, index) {
+            const active = linkedTypes.some(type => type.id === eff.taskTypeId); // NEW
+            if (!active) editor.appendChild(textDiv('trellis-eq-small-muted', 'Inactive: ' + taskTypeDisplayName(state, eff.taskTypeId) + '. Link this type under Helps with to use its saved time rule.')); // NEW
             const row = div("trellis-eq-row");
-            row.appendChild(rowField("Task Type", selectInput(groupedTaskTypeSelectOptions(state.taskTypes, eq.category, eff.taskTypeId), eff.taskTypeId, function (e) { eff.taskTypeId = e.target.value; render(); })));
-            row.appendChild(rowField("Type", selectInput([["hours_multiplier", "Hours Multiplier"]], eff.effectType, function () { eff.effectType = "hours_multiplier"; })));
-            row.appendChild(rowField("Multiplier", numberInput(eff.multiplier, function (e) { eff.multiplier = coerceNumber(e.target.value, 1); })));
+            const typeSelect = selectInput(groupedTaskTypeSelectOptions(linkedTypes, eq.category, eff.taskTypeId), eff.taskTypeId, function (e) { eff.taskTypeId = e.target.value; render(); }); // CHANGE
+            if (!active) { const option = document.createElement('option'); option.value = eff.taskTypeId; option.textContent = taskTypeDisplayName(state, eff.taskTypeId) + ' (inactive)'; option.selected = true; option.disabled = true; typeSelect.appendChild(option); } // NEW
+            row.appendChild(rowField("Task Type", typeSelect)); // CHANGE
+            // Effect type is fixed; users edit the resulting percentage. // CHANGE
+            row.appendChild(rowField("Time change (%)", numberInput((eff.multiplier - 1) * 100, function (e) { eff.multiplier = Math.max(0.001, 1 + coerceNumber(e.target.value, 0) / 100); }))); // CHANGE
             row.appendChild(rowField("Minimum", numberInput(eff.minimumScale.value, function (e) { eff.minimumScale.value = coerceNumber(e.target.value, 0); })));
             row.appendChild(rowField("Unit", selectInput(QUANTITY_BASES.map(optPair), eff.minimumScale.unit, function (e) { eff.minimumScale.unit = e.target.value; render(); })));
-            row.appendChild(rowField("Stack", checkboxInput(eff.stackable, function (e) { eff.stackable = e.target.checked; })));
+            row.appendChild(rowField("Combine with other savings", checkboxInput(eff.stackable, function (e) { eff.stackable = e.target.checked; }))); // CHANGE
             row.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () { eq.efficiencyEffects.splice(index, 1); render(); }, "Remove this task-efficiency effect from the equipment item.", "danger")); // CHANGE: explicit action tooltip.
+            if (!active) row.querySelectorAll('input,select').forEach(input => { if (input !== typeSelect) input.disabled = true; }); // NEW
             editor.appendChild(row);
 
             const notesRow = div("trellis-eq-row compact");
             notesRow.appendChild(rowField("Notes", textInput(eff.notes, function (e) { eff.notes = e.target.value; })));
             notesRow.appendChild(rowField("Maximum Scale", numberInput(eff.maximumScale ? eff.maximumScale.value : 0, function (e) { setEffectMaximumScale(eff, e.target.value, eff.maximumScale && eff.maximumScale.unit || eff.minimumScale.unit); })));
             notesRow.appendChild(rowField("Max Unit", selectInput(QUANTITY_BASES.map(optPair), eff.maximumScale && eff.maximumScale.unit || eff.minimumScale.unit, function (e) { setEffectMaximumScale(eff, eff.maximumScale && eff.maximumScale.value || 0, e.target.value); render(); })));
+            if (!active) notesRow.querySelectorAll('input,select').forEach(input => { input.disabled = true; }); // NEW
             editor.appendChild(notesRow);
         });
         body.appendChild(editor);
@@ -2229,7 +2145,7 @@ Draw.loadPlugin(function (ui) {
         const wrap = div("trellis-eq-table-wrap");
         const table = document.createElement("table");
         table.className = "trellis-eq-table";
-        table.innerHTML = "<thead><tr><th>Name</th><th>Category</th><th>Quantity</th><th>Required</th></tr></thead>";
+        table.innerHTML = "<thead><tr><th>Name</th><th>Category</th><th>Quantity</th><th>Rate units</th></tr></thead>"; // CHANGE
         const tbody = document.createElement("tbody");
         groupedTaskTypesForRegistry(state.taskTypes).forEach(function (group) {
             tbody.appendChild(tableGroupRow(group.name, 4));
@@ -2251,7 +2167,7 @@ Draw.loadPlugin(function (ui) {
             tr.appendChild(td(tt.name));
             tr.appendChild(td(labelize(tt.category)));
             tr.appendChild(td(tt.defaultQuantityBasis));
-            tr.appendChild(td(tt.requiredCapabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(", ") || "—"));
+            tr.appendChild(td(Object.keys(tt.baseHoursPerUnit).map(unit => unit.replace(/_/g, " ")).join(", ") || "—")); // CHANGE
             tbody.appendChild(tr);
         });
     }
@@ -2262,7 +2178,7 @@ Draw.loadPlugin(function (ui) {
         const head = div("trellis-eq-card-head");
         head.appendChild(textNode(`Edit Task Type: ${tt.name}`));
         card.appendChild(head);
-        card.appendChild(renderEditorTabs(state, "activeTaskTypeEditorTab", [["general", "General"], ["rules", "Requirements & Rules"]], render));
+        card.appendChild(renderEditorTabs(state, "activeTaskTypeEditorTab", [["general", "General"], ["rules", "Time & quantity"]], render)); // CHANGE
         const body = div("trellis-eq-card-body");
         card.appendChild(body);
 
@@ -2277,83 +2193,12 @@ Draw.loadPlugin(function (ui) {
             body.appendChild(grid);
         } else {
             const grid = div("trellis-eq-form-grid");
-            grid.appendChild(field("Required Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.requiredCapabilities, tt.category), tt.requiredCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.requiredCapabilities = updateCheckedList(tt.requiredCapabilities, id, checked); render(); }, function (ids, checked) { tt.requiredCapabilities = updateCheckedLists(tt.requiredCapabilities, ids, checked); render(); })));
-            grid.appendChild(field("Optional Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.optionalCapabilities, tt.category), tt.optionalCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.optionalCapabilities = updateCheckedList(tt.optionalCapabilities, id, checked); render(); }, function (ids, checked) { tt.optionalCapabilities = updateCheckedLists(tt.optionalCapabilities, ids, checked); render(); })));
-            grid.appendChild(field("Recommended Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.recommendedCapabilities, tt.category), tt.recommendedCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.recommendedCapabilities = updateCheckedList(tt.recommendedCapabilities, id, checked); render(); }, function (ids, checked) { tt.recommendedCapabilities = updateCheckedLists(tt.recommendedCapabilities, ids, checked); render(); })));
             grid.appendChild(field("Complexity Modifiers", renderNumberMapEditor(tt.complexityModifiers, COMPLEXITY_KEYS, function (key, value) { tt.complexityModifiers[key] = coerceNumber(value, 1); }, null)));
             grid.appendChild(field("Default Setup Time", numberInput(tt.defaultSetupTimeHours, function (e) { tt.defaultSetupTimeHours = coerceNumber(e.target.value, 0); })));
             grid.appendChild(field("Default Cleanup Time", numberInput(tt.defaultCleanupTimeHours, function (e) { tt.defaultCleanupTimeHours = coerceNumber(e.target.value, 0); })));
             grid.appendChild(field("Notes", textareaInput(tt.notes, function (e) { tt.notes = e.target.value; }, false)));
             body.appendChild(grid);
         }
-        return card;
-    }
-
-    function renderCapabilitiesPane(state, render) {
-        const pane = div("trellis-eq-pane");
-        const listPanel = div("trellis-eq-list-panel");
-        const editorPanel = div("trellis-eq-editor-panel");
-        pane.appendChild(listPanel);
-        pane.appendChild(editorPanel);
-
-        listPanel.appendChild(textDiv("trellis-eq-section-title", "Capability Registry"));
-        const toolbar = div("trellis-eq-toolbar");
-        toolbar.appendChild(buttonEl("＋ Add", "trellis-eq-btn primary", function () {
-            const c = normalizeCapability({ id: makeId("cap", "custom"), name: "Custom Capability" });
-            state.capabilities.push(c);
-            state.selectedCapabilityId = c.id;
-            render();
-        }, "Add a custom capability to this garden's registry.", "add")); // CHANGE: explicit action tooltip.
-        toolbar.appendChild(buttonEl("Restore Defaults", "trellis-eq-btn", function () {
-            state.capabilities = mergeDefaults(state.capabilities, DEFAULT_CAPABILITIES, normalizeCapability);
-            render();
-        }, "Restore built-in capabilities; preserve custom IDs.", "danger")); // CHANGE: explicit action tooltip.
-        toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
-            if (!state.selectedCapabilityId) return;
-            if (deleteCapabilityId(state, state.selectedCapabilityId)) render();
-        }, "Delete the selected capability and remove its dependent references.", "danger")); // CHANGE: explicit action tooltip.
-        listPanel.appendChild(toolbar);
-        listPanel.appendChild(renderCapabilitiesTable(state, render));
-
-        const selected = state.capabilities.find(function (c) { return c.id === state.selectedCapabilityId; });
-        editorPanel.appendChild(renderCapabilityEditor(state, selected, render));
-        return pane;
-    }
-
-    function renderCapabilitiesTable(state, render) {
-        const wrap = div("trellis-eq-table-wrap");
-        const table = document.createElement("table");
-        table.className = "trellis-eq-table";
-        table.innerHTML = "<thead><tr><th>Name</th><th>Category</th><th>Description</th></tr></thead>";
-        const tbody = document.createElement("tbody");
-        state.capabilities.sort(byName).forEach(function (c) {
-            const tr = document.createElement("tr");
-            if (c.id === state.selectedCapabilityId) tr.className = "selected";
-            tr.onclick = function () { state.selectedCapabilityId = c.id; render(); };
-            tr.appendChild(td(c.name));
-            tr.appendChild(td(labelize(c.category)));
-            tr.appendChild(td(c.description || "—"));
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        wrap.appendChild(table);
-        return wrap;
-    }
-
-    function renderCapabilityEditor(state, c, render) {
-        if (!c) return textDiv("trellis-eq-empty", "No capability selected.");
-        const card = div("trellis-eq-card");
-        const head = div("trellis-eq-card-head");
-        head.appendChild(textNode(`Edit Capability: ${c.name}`));
-        card.appendChild(head);
-        const body = div("trellis-eq-card-body");
-        const grid = div("trellis-eq-form-grid");
-        grid.appendChild(field("ID", renderIdControl(c.id, function () { const next = prompt("New capability ID:", c.id); if (next != null && renameCapabilityId(state, c.id, next)) render(); })));
-        grid.appendChild(field("Name", textInput(c.name, function (e) { c.name = e.target.value; }, render)));
-        grid.appendChild(field("Category", textInput(c.category, function (e) { c.category = sanitizeId(e.target.value); })));
-        grid.appendChild(field("Description", textareaInput(c.description, function (e) { c.description = e.target.value; }, false)));
-        body.appendChild(grid);
-        card.appendChild(body);
         return card;
     }
 
@@ -2371,12 +2216,13 @@ Draw.loadPlugin(function (ui) {
         const tableWrap = div("trellis-eq-table-wrap");
         const table = document.createElement("table");
         table.className = "trellis-eq-table";
-        table.innerHTML = "<thead><tr><th>Equipment</th><th>Task Type</th><th>Effect Type</th><th>Multiplier</th><th>Scale</th></tr></thead>";
+        table.innerHTML = "<thead><tr><th>Equipment</th><th>Status</th><th>Task Type</th><th>Effect Type</th><th>Multiplier</th><th>Scale</th></tr></thead>"; // CHANGE
         const tbody = document.createElement("tbody");
         state.inventory.forEach(function (eq) {
             (eq.efficiencyEffects || []).forEach(function (eff) {
                 const tr = document.createElement("tr");
                 tr.appendChild(td(eq.name));
+                tr.appendChild(td(eq.relevantTaskTypes.includes(eff.taskTypeId) ? "Active" : "Inactive — link under Helps with")); // CHANGE
                 tr.appendChild(td(taskTypeDisplayName(state, eff.taskTypeId) || "—"));
                 tr.appendChild(td(labelize(eff.effectType || "hours_multiplier")));
                 tr.appendChild(td(String(eff.multiplier)));
@@ -2415,12 +2261,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     function renderWarningsPane(state) {
+        const warnings = buildAllWarnings(state.moduleCell); // CHANGE
         const pane = div("trellis-eq-warning-list");
         pane.appendChild(textDiv("trellis-eq-section-title", "Equipment Warnings"));
-        const warnings = buildAllWarnings(state.moduleCell);
 
         if (warnings.length === 0) {
-            pane.appendChild(textDiv("trellis-eq-empty", "No scheduler task equipment warnings found. Assign task_type_id to scheduler task cells to enable warnings."));
+            pane.appendChild(textDiv("trellis-eq-empty", "No equipment planning conditions to check.")); // CHANGE
             return pane;
         }
 
@@ -2452,19 +2298,18 @@ Draw.loadPlugin(function (ui) {
         const right = div("trellis-eq-footer-right");
 
         left.appendChild(buttonEl("⚙ Restore Defaults", "trellis-eq-btn", function () {
-            if (!confirm("Restore default equipment, task types, and capabilities? Custom records will be preserved when IDs differ.")) return;
-            state.inventory = mergeDefaults(state.inventory, DEFAULT_EQUIPMENT, normalizeEquipment);
+            if (!confirm("Restore default equipment and task types? Custom records will be preserved when IDs differ.")) return; // CHANGE
             state.taskTypes = mergeDefaults(state.taskTypes, DEFAULT_TASK_TYPES, normalizeTaskType);
-            state.capabilities = mergeDefaults(state.capabilities, DEFAULT_CAPABILITIES, normalizeCapability);
+            state.inventory = mergeDefaults(state.inventory, DEFAULT_EQUIPMENT, normalizeEquipment).map(item => normalizePlanningEquipment(item, state.taskTypes)); // CHANGE
             render();
-        }, "Restore built-in equipment, task types, and capabilities; preserve custom IDs.", "danger")); // CHANGE: explicit action tooltip.
+        }, "Restore built-in equipment and task types; preserve custom IDs.", "danger")); // CHANGE: explicit action tooltip.
 
         right.appendChild(buttonEl("Export…", "trellis-eq-btn", function () {
             exportJson(state);
-        }, "Export equipment, task types, and capabilities as JSON.", "neutral")); // CHANGE: explicit action tooltip.
+        }, "Export equipment and task types as JSON, preserving legacy data.", "neutral")); // CHANGE: explicit action tooltip.
         right.appendChild(buttonEl("Import…", "trellis-eq-btn", function () {
             importJson(state, render);
-        }, "Import equipment, task types, and capabilities from JSON.", "open")); // CHANGE: explicit action tooltip.
+        }, "Import equipment and task types from JSON, preserving legacy data.", "open")); // CHANGE: explicit action tooltip.
         right.appendChild(buttonEl("Save", "trellis-eq-btn", saveAll, "Save equipment changes to the selected garden module.", "add"));
         right.appendChild(buttonEl("Save & Close", "trellis-eq-btn", saveAndClose, "Save changes and close the equipment dialog.", "add"));
         right.appendChild(buttonEl("Cancel", "trellis-eq-btn", close, "Close without saving unsaved changes.", "close")); // CHANGE: equipment cancellation uses the red outline.
@@ -2520,7 +2365,6 @@ Draw.loadPlugin(function (ui) {
                     state.capabilities = preview.capabilities;
                     state.selectedEquipmentId = state.inventory[0] && state.inventory[0].id || null;
                     state.selectedTaskTypeId = state.taskTypes[0] && state.taskTypes[0].id || null;
-                    state.selectedCapabilityId = state.capabilities[0] && state.capabilities[0].id || null;
                     state.validationReport = preview.report.warnings ? preview.report : null;
                     render();
                 } catch (err) {
@@ -2543,16 +2387,17 @@ Draw.loadPlugin(function (ui) {
         const importedEquipment = Array.isArray(parsed.equipment) ? parsed.equipment.map(normalizeEquipment) : [];
         const importedTaskTypes = Array.isArray(parsed.taskTypes) ? parsed.taskTypes.map(normalizeTaskType) : [];
         const importedCapabilities = Array.isArray(parsed.capabilities) ? parsed.capabilities.map(normalizeCapability) : [];
-        const inventory = importedEquipment.length ? mergeImportedById(state.inventory, importedEquipment, normalizeEquipment) : state.inventory.map(normalizeEquipment);
+        let inventory = importedEquipment.length ? mergeImportedById(state.inventory, importedEquipment, normalizeEquipment) : state.inventory.map(normalizeEquipment); // CHANGE
         const taskTypes = importedTaskTypes.length ? mergeImportedById(state.taskTypes, importedTaskTypes, normalizeTaskType) : state.taskTypes.map(normalizeTaskType);
         const capabilities = importedCapabilities.length ? mergeImportedById(state.capabilities, importedCapabilities, normalizeCapability) : state.capabilities.map(normalizeCapability);
+        inventory = inventory.map(item => normalizePlanningEquipment(item, taskTypes)); // CHANGE
         const report = validateEquipmentState(inventory, taskTypes, capabilities);
         const message = [
             "Import and merge these records?",
             "",
             `${importedEquipment.length} equipment item(s)`,
             `${importedTaskTypes.length} task type(s)`,
-            `${importedCapabilities.length} capability record(s)`,
+            `${importedCapabilities.length} legacy capability record(s) preserved`, // CHANGE
             "",
             "Imported records replace existing records with the same ID."
         ].join("\n");
@@ -2627,21 +2472,6 @@ Draw.loadPlugin(function (ui) {
         return wrap;
     }
 
-    function registryNameMap(items) {
-        const out = Object.create(null);
-        (items || []).forEach(function (item) { if (item && item.id) out[item.id] = item.name || item.id; });
-        return out;
-    }
-
-    function lookupName(map, id) {
-        return map && map[id] ? map[id] : id;
-    }
-
-    function capabilityDisplayName(state, id) {
-        const item = (state.capabilities || []).find(function (capability) { return capability.id === id; });
-        return item ? item.name : id;
-    }
-
     function taskTypeDisplayName(state, id) {
         const item = (state.taskTypes || []).find(function (taskTypeRecord) { return taskTypeRecord.id === id; });
         return item ? item.name : id;
@@ -2661,12 +2491,6 @@ Draw.loadPlugin(function (ui) {
         const id = trim(item.id);
         if (!id) return null;
         return Object.assign({}, item, { id: id, name: trim(item.name) || id, category: trim(item.category) || "general" });
-    }
-
-    function flattenOptionGroups(groups) {
-        const out = [];
-        normalizeOptionGroups(groups).forEach(function (group) { out.push.apply(out, group.options); });
-        return out;
     }
 
     function groupedOptions(options, selectedIds, primaryCategory) {
@@ -2743,17 +2567,6 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
-    function renderRelevantCropsControl(eq, state, render) {
-        if (state.cropOptionsStatus === "loading") return textDiv("trellis-eq-empty", "Loading crop catalog...");
-        if (state.cropOptionsStatus !== "loaded") {
-            const wrap = div("");
-            wrap.appendChild(textDiv("trellis-eq-small-muted", state.cropOptionsError || "Crop catalog is unavailable; edit stored crop IDs directly."));
-            wrap.appendChild(textareaInput(eq.relevantCropIds.join(", "), function (e) { eq.relevantCropIds = splitCsv(e.target.value); }, false));
-            return wrap;
-        }
-        return renderGroupedChecklist(groupedOptions(state.cropOptions, eq.relevantCropIds, ""), eq.relevantCropIds, state.cropFilter, function (value) { state.cropFilter = value; }, function (id, checked) { eq.relevantCropIds = updateCheckedList(eq.relevantCropIds, id, checked); render(); }, function (ids, checked) { eq.relevantCropIds = updateCheckedLists(eq.relevantCropIds, ids, checked); render(); });
-    }
-
     function renderChecklist(options, selectedIds, filterValue, onFilter, onToggle) {
         return renderGroupedChecklist(groupedOptions(options, selectedIds, ""), selectedIds, filterValue, onFilter, onToggle, function (ids, checked) {
             ids.forEach(function (id) { onToggle(id, checked); });
@@ -2778,6 +2591,7 @@ Draw.loadPlugin(function (ui) {
             const head = document.createElement("label");
             head.className = "trellis-eq-check-group-head";
             const groupInput = checkboxInput(ids.length > 0 && checkedCount === ids.length, function (e) { onToggleGroup(ids, e.target.checked); });
+            groupInput.value = '__group__:' + group.id; // NEW: stable identity for keyboard focus restoration.
             groupInput.indeterminate = checkedCount > 0 && checkedCount < ids.length;
             applyTooltip(groupInput, `Select or clear all ${group.name || group.id || "group"} options.`);
             groupInput.setAttribute("aria-label", `Select or clear all ${group.name || group.id || "group"} options.`);
@@ -2791,6 +2605,7 @@ Draw.loadPlugin(function (ui) {
                 label.className = "trellis-eq-check-option";
                 label.setAttribute("data-filter-text", String(item.name || "").toLowerCase());
                 const input = checkboxInput(selected.has(item.id), function (e) { onToggle(item.id, e.target.checked); });
+                input.value = item.id; // NEW: direct task-link focus survives checklist refreshes.
                 const text = document.createElement("span");
                 text.textContent = item.name || item.id;
                 label.appendChild(input);
@@ -3100,9 +2915,12 @@ Draw.loadPlugin(function (ui) {
         buildTaskEquipmentWarnings: buildTaskEquipmentWarnings,
         buildAllWarnings: buildAllWarnings,
         estimateTaskHours: estimateTaskHours,
+        readEquipmentIds, readPlanningOverride, resolvePlanningContext, recommendForTask, estimatePlanningSelection, listPlanningTasks, planningGarden, // NEW
+
         renderTaskTypeControls: renderTaskTypeControls,
         __test: {
             normalizeEquipment: normalizeEquipment,
+            normalizePlanningEquipment, // NEW
             normalizeTaskType: normalizeTaskType,
             normalizeCapability: normalizeCapability,
             normalizeEffect: normalizeEffect,
@@ -3117,7 +2935,7 @@ Draw.loadPlugin(function (ui) {
             yearlyReplacementReserve: yearlyReplacementReserve
         },
         defaults: {
-            equipment: clone(DEFAULT_EQUIPMENT),
+            equipment: DEFAULT_EQUIPMENT.map(item => normalizePlanningEquipment(item, DEFAULT_TASK_TYPES)), // CHANGE
             taskTypes: clone(DEFAULT_TASK_TYPES),
             capabilities: clone(DEFAULT_CAPABILITIES)
         }

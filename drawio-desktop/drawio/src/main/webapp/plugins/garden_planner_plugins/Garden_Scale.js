@@ -153,6 +153,7 @@ Draw.loadPlugin(function (ui) {
         if (!cell) return null;
         if (isGardenModule(cell)) return cell; // CHANGE
         if (isGardenBed(cell)) return cell;
+        if (cell.getAttribute?.('garden_structure') === '1') return cell; // NEW: structures use the garden's unit-aware footprint dimensions.
         if (isTilerGroup(cell)) return cell;
         if (isPlantCircle(cell)) return findTilerGroupAncestor(cell);
         return null;

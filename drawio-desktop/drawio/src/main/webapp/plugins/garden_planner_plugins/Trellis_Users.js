@@ -54,7 +54,7 @@ Draw.loadPlugin(function (ui) {
         gardener: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS],
         coordinator: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS]
     };
-    const TASK_DETAIL_ATTRS = new Set(["label", "title", "notes", "card_note", "task_instruction_override", "trellis_details_html", "trellis_comments_json", "start", "end", "due", "assigned_day", "task_estimated_hours", "scheduler_dates_locked"]); // CHANGE: discussion uses the existing task-detail capability, with additional lifecycle authorization.
+    const TASK_DETAIL_ATTRS = new Set(["label", "title", "notes", "card_note", "task_instruction_override", "trellis_details_html", "trellis_comments_json", "start", "end", "due", "assigned_day", "task_estimated_hours", "task_type_id", "task_equipment_ids", "task_planning_override_json", "task_quantity_basis", "task_quantity_value", "task_equipment_estimate_note", "scheduler_dates_locked"]); // CHANGE: discussion uses the existing task-detail capability, with additional lifecycle authorization.
     const TASK_ASSIGNMENT_ATTRS = new Set(["task_assignee_role_ids_json"]);
     const SCOPE_GRANT_ATTRS = new Set([ATTR_ACCESS_USERS, ATTR_ACCESS_GRANTS, ATTR_ACCESS_OPEN]);
     const USER_ID_PREFIX = "user_";

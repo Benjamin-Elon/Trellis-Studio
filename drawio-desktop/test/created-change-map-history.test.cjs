@@ -379,6 +379,26 @@ test("history event targets accept explicit semantic bounds and union multi-cell
     assert.deepEqual(metadata.center, { x: 220, y: 330 });
 });
 
+test('history pages retain access to old revisions while recording stays bounded', async t => { // NEW
+    const h = loadPlugin({ instantTimers: true }); // NEW
+    t.after(() => { h.dbBridge.service.close(); h.context.window.close(); }); // NEW
+    await settle(); const api = h.context.window.Trellis.history, diagramId = api.getDiagramId(); // NEW
+    for (let index = 0; index < 125; index++) { // NEW
+        const xml = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="a" label="Edit '+index+'"><mxCell parent="1" vertex="1"/></object></root></mxGraphModel>'; // NEW
+        await h.dbBridge.service.run('record',{diagramId,xml,metadata:{id:'old-'+index,title:'Edit '+index,timestamp:1000+index}}); // NEW
+    } // NEW
+    await api.refresh(); assert.equal(api.list().length,100); // NEW
+    h.actions.trellisChangeMapHistory.funct(); await settle(); // NEW
+    const older = Array.from(h.document.querySelectorAll('button')).find(button => button.textContent === 'Older revisions'); // NEW
+    assert.ok(older); assert.equal(older.disabled,false); older.click(); await settle(); // NEW
+    assert.equal(h.graph.__ccHistoryOffset,100); assert.ok(api.list().some(revision => revision.id === 'old-0')); // NEW
+    const oldPage = api.list().map(revision => revision.id).join(','); // NEW
+    await api.createCheckpoint('New checkpoint while browsing'); // NEW
+    assert.equal(api.list().map(revision => revision.id).join(','),oldPage); // NEW
+    const newer = Array.from(h.document.querySelectorAll('button')).find(button => button.textContent === 'Newer revisions'); // NEW
+    newer.click(); await settle(); assert.equal(api.list().length,100); assert.ok(api.list().some(revision => revision.title === 'New checkpoint while browsing')); // NEW
+}); // NEW
+
 test("history panel filters revisions and restore loads the selected snapshot", async () => {
     const harness = loadPlugin({ instantTimers: true });
     const lifecycle = [];

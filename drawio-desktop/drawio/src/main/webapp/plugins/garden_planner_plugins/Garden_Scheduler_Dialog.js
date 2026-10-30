@@ -13233,10 +13233,10 @@ function createScheduler(ui, referenceScope = null) { // NEW
             instructionsInput.setAttribute('aria-label', 'Task instructions'); // CHANGE
             const instructionsRow = row('Instructions', instructionsInput).row; // CHANGE
             const customTaskRule = !isCanonicalTaskId(r.id);
-            const taskTypeState = customTaskRule ? getTaskTypeEditorOptions() : null;
-            const taskTypeSel = customTaskRule ? makeSelect(taskTypeState.options, r.taskTypeId || (taskTypeState.available ? "" : "general")) : null;
+            const taskTypeState = getTaskTypeEditorOptions(); // CHANGE
+            const taskTypeSel = makeSelect(taskTypeState.options, r.taskTypeId || (customTaskRule ? (taskTypeState.available ? "" : "general") : resolveTaskRuleTaskTypeId(r))); // CHANGE
             if (taskTypeSel && !taskTypeState.available) taskTypeSel.disabled = true;
-            const taskTypeRow = customTaskRule ? row("Task Type", taskTypeSel).row : null;
+            const taskTypeRow = row("Task Type", taskTypeSel).row; // CHANGE
 
             const startOffsetNum = makeNumber(r.startOffsetDays);
             const startOffsetDir = makeSelect([
@@ -13371,7 +13371,9 @@ function createScheduler(ui, referenceScope = null) { // NEW
                 try {
                     r.title = titleInput.value.trim();
                     if (instructionsInput.value !== (r.instructions || '')) { r.instructions = instructionsInput.value; r.instructionProvenance = { ...(r.instructionProvenance || {}), status: 'customized' }; } // CHANGE
-                    if (customTaskRule) r.taskTypeId = taskTypeSel.value || (taskTypeState.available ? "" : "general");
+                    if (taskTypeState.available && !taskTypeSel.value) throw new Error('Task type is required.'); // NEW
+                    const selectedTaskType = taskTypeSel.value || resolveTaskRuleTaskTypeId(r); // NEW
+                    if (customTaskRule || r.taskTypeId || selectedTaskType !== resolveTaskRuleTaskTypeId(r)) r.taskTypeId = selectedTaskType; // CHANGE: preserve implicit canonical defaults unless changed.
 
                     r.startOffsetDays = Number(startOffsetNum.value);
                     r.startOffsetDirection = startOffsetDir.value;
@@ -13841,8 +13843,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
     function resolveTaskRuleTaskTypeId(rule) {
         const normalized = normalizeTaskRule(rule);
         const id = String(normalized.id || "").trim();
-        if (isCanonicalTaskId(id)) return CANONICAL_TASK_TYPE_BY_RULE_ID[id] || "general";
-        return normalizeTaskTypeId(normalized.taskTypeId) || "general";
+        return normalizeTaskTypeId(normalized.taskTypeId) || CANONICAL_TASK_TYPE_BY_RULE_ID[id] || "general"; // CHANGE: explicit planning choices retain canonical rule identity.
     }
 
     function mergeMissingCanonicalRules(currentRules, defaultRules) {
@@ -14300,13 +14301,13 @@ function createScheduler(ui, referenceScope = null) { // NEW
         r.repeatUntilAnchorStage = String(r.repeatUntilAnchorStage || "HARVEST_END");
         r.repeatCutoffOffsetDays = Number(r.repeatCutoffOffsetDays ?? 0);
         r.repeatCutoffOffsetDirection = (r.repeatCutoffOffsetDirection === "before") ? "before" : "after";
-        if (isCanonicalTaskId(r.id)) {
-            delete r.taskTypeId;
-            delete r.task_type_id;
-        } else {
-            r.taskTypeId = normalizeTaskTypeId(r.taskTypeId || r.task_type_id);
-            delete r.task_type_id;
-        }
+        const explicitTaskType = normalizeTaskTypeId(r.taskTypeId || r.task_type_id); // CHANGE
+        if (explicitTaskType || !isCanonicalTaskId(r.id)) r.taskTypeId = explicitTaskType; // CHANGE
+        else delete r.taskTypeId; // CHANGE
+        delete r.task_type_id; // CHANGE
+        if (Object.prototype.hasOwnProperty.call(r, 'equipmentIds')) { // NEW
+            r.equipmentIds = Array.isArray(r.equipmentIds) ? Array.from(new Set(r.equipmentIds.map(String).map(id => id.trim()).filter(Boolean))) : null; // NEW
+        } // NEW
 
         return r;
     }
@@ -14712,6 +14713,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
                     variety_name: String(varietyName || '').trim(),
                     rule_id: rule.id || null,
                     task_type_id: resolveTaskRuleTaskTypeId(rule),
+                    equipmentIds: Array.isArray(rule.equipmentIds) ? [...rule.equipmentIds] : null, // NEW
                     scheduler_rule_id: rule.id || null,
                     scheduler_anchor_stage: rule.startAnchorStage,
                     scheduler_method_category_id: normId(methodCategoryId),
@@ -15169,6 +15171,19 @@ function createScheduler(ui, referenceScope = null) { // NEW
         }
 
         return { template: null, source: "none" };
+    } // CHANGE
+
+    /** Prepare a source-rule change without mutating shared recipes or regenerating task dates. */ // NEW
+    async function prepareTaskPlanningSeries(group, card, patch) { // CHANGE
+        const model = graph.getModel(), before = group.value; // CHANGE
+        const template = normalizeTaskTemplate((await resolveTaskTemplate({ cell: group, plantId: Number(group.getAttribute('plant_id')), varietyId: group.getAttribute('variety_id') || null, methodId: group.getAttribute('method_id') || '' })).template); // CHANGE
+        const matches = template.rules.filter(rule => rule.id === card.getAttribute('scheduler_rule_id')); // CHANGE
+        if (matches.length !== 1) throw new Error('This task does not identify exactly one source rule.'); // CHANGE
+        if (model.getCell(group.id) !== group || group.value !== before) throw new Error('The source planting changed. Open the tool selection again.'); // CHANGE
+        if (Object.prototype.hasOwnProperty.call(patch, 'taskTypeId')) { if (patch.taskTypeId == null) delete matches[0].taskTypeId; else matches[0].taskTypeId = patch.taskTypeId; } // CHANGE
+        if (Object.prototype.hasOwnProperty.call(patch, 'equipmentIds')) matches[0].equipmentIds = patch.equipmentIds; // CHANGE
+        referenceScope?.guard(); // CHANGE
+        return { source: group, before, templateJson: JSON.stringify(normalizeTaskTemplate(template)) }; // CHANGE
     }
 
     /** Resolve guidance without altering a planting's saved template or scheduled cards. */ // CHANGE
@@ -18042,6 +18057,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         openAllocationScheduleDialog,
         resolveAllocationDefaultStatus,
         persistAllocationReusableDefaults,
+        taskPlanning: { prepareSeries: prepareTaskPlanningSeries, resolveType: resolveTaskRuleTaskTypeId }, // NEW
         taskGuide: { resolveContext: resolveTaskGuideContext, readRecipes: readTaskRecipeLibrary, canUpdateRecipe: canUpdateTaskRecipe, saveRecipe: saveTaskGuideRecipe }, // CHANGE: narrow Guide integration reuses the existing recipe registry.
         layoutTools
     }; // CHANGE
@@ -18838,6 +18854,7 @@ Draw.loadPlugin(function (ui) { // NEW
     const facade = { ...window.USL.scheduler, forGarden }; // NEW
     for (const [name, fn] of Object.entries(rootApi)) if (typeof fn === 'function') facade[name] = function (...args) { const cell = target(name, args), garden = graph.__trellisReferences?.gardenFor(cell) || cell; if (/^open/.test(name) && garden?.getAttribute?.('trellis_references_json') && graph.__trellisReferences) return graph.__trellisReferences.restoreDraft(garden).then(() => forGarden(cell, { editable: true, draft: name === 'openPlantEditorDialog' })[name](...args)); return forGarden(cell, { editable: /^open|^persist|^save/.test(name) })[name](...args); }; // CHANGE: restore private work before opening an editor; ordinary scheduling still reads its accepted pin.
     facade.layoutTools = Object.fromEntries(Object.entries(rootApi.layoutTools).map(([name, fn]) => [name, typeof fn !== 'function' ? fn : function (...args) { const rows = args.find(Array.isArray) || args.find(value => value?.rows)?.rows || []; const cell = args.find(value => value?.getAttribute && !value.getModel) || rows.find(row => row?.cell)?.cell || rows.find(row => row?.sourceCell)?.sourceCell || graph.__trellisReferences?.activeGarden(); return forGarden(cell, { editable: /^save|^apply/.test(name) }).layoutTools[name](...args); }])); // NEW: spacing defaults use the same captured garden view as scheduling.
+    facade.taskPlanning = { resolveType: rootApi.taskPlanning.resolveType, prepareSeries: (group, card, patch) => forGarden(group).taskPlanning.prepareSeries(group, card, patch) }; // NEW
     facade.taskGuide = { ...rootApi.taskGuide, resolveContext: (group, card) => forGarden(group).taskGuide.resolveContext(group, card), readRecipes: cell => forGarden(cell).taskGuide.readRecipes(cell), saveRecipe: (cell, ...args) => forGarden(cell).taskGuide.saveRecipe(cell, ...args) }; // NEW
     window.USL.scheduler = facade; window.openUSLScheduleDialog = facade.openScheduleDialog; // NEW
 }); // NEW

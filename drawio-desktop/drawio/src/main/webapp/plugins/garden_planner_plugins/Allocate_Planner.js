@@ -1427,9 +1427,12 @@ Draw.loadPlugin(function (ui) {
         }
 
         async function open(moduleCell, year) {
-            close("reopened");
             const ownerId = "allocate:" + cellId(moduleCell);
-            ensureInteractionModes().request(MODE_ID, ownerId, { close: () => close("mode-closed") });
+            const modes = ensureInteractionModes(), hooks = { close: () => close("mode-closed") }; // CHANGE
+            const granted = await (modes.requestAsync ? modes.requestAsync(MODE_ID, ownerId, hooks) : modes.request(MODE_ID, ownerId, hooks)); // NEW
+            if (!granted) return null; // NEW: cancellation must not initialize or select an allocation session.
+            close("reopened"); // CHANGE
+            modes.request(MODE_ID, ownerId, hooks); // NEW: reopening may have released this owner during its old session cleanup.
             const state = {
                 moduleCell,
                 year: Number(year),

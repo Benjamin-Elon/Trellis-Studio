@@ -27,6 +27,6 @@ export function createSaveCache(limitBytes = 64 * 1024 * 1024, sharedBytes = nul
     return { get, set, clear() { if (sharedBytes) Atomics.sub(sharedBytes, 0, bytes); if (ownedBytes) Atomics.sub(ownedBytes, 0, bytes); entries.clear(); bytes = 0; }, stats: () => ({ bytes, entries: entries.size, hits, misses, evictions, limitBytes }) }; // CHANGE
 } // NEW
 
-// Reserve 16 MiB for main-process evidence and 48 MiB shared by transient replay workers. // CHANGE
+// Reserve 96 MiB for current main-process evidence and 48 MiB shared by transient replay workers. // CHANGE
 export const replayCacheBudget = isMainThread ? new SharedArrayBuffer(4) : workerData?.cacheBudget; // NEW
-export const saveCache = createSaveCache(isMainThread ? 16 * 1024 * 1024 : replayCacheBudget ? 48 * 1024 * 1024 : 0, !isMainThread && replayCacheBudget ? new Int32Array(replayCacheBudget) : null, !isMainThread && workerData?.cacheOwner ? new Int32Array(workerData.cacheOwner) : null); // CHANGE
+export const saveCache = createSaveCache(isMainThread ? 96 * 1024 * 1024 : replayCacheBudget ? 48 * 1024 * 1024 : 0, !isMainThread && replayCacheBudget ? new Int32Array(replayCacheBudget) : null, !isMainThread && workerData?.cacheOwner ? new Int32Array(workerData.cacheOwner) : null); // CHANGE: keep a bounded working set of current/base/proposed object indexes; no historical collaboration results are retained.

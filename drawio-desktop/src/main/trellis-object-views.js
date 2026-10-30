@@ -37,7 +37,7 @@ export function incomingGroups(viewXml, state, indexes) { // CHANGE
     const accepted = new Set(state.accepted || []);
     for (const record of state.records || []) if (record.kind === 'edit' && accepted.has(record.id)) {
         // Already-viewed historical transactions must not couple later independent edits forever. // NEW
-        const keys = record.changes.filter(change => pending.has(change.key) && (change.xml === after.get(change.key)?.xml || change.xml && objectContentHash(change.xml) === after.get(change.key)?.hash || !change.xml && !after.has(change.key))).map(change => change.key); // CHANGE
+        const keys = record.changes.filter(change => pending.has(change.key) && (change.hash && change.hash === after.get(change.key)?.hash || change.xml === after.get(change.key)?.xml || change.xml && objectContentHash(change.xml) === after.get(change.key)?.hash || !change.xml && !after.has(change.key))).map(change => change.key); // CHANGE
         if (!keys.length) continue;
         for (const key of keys.slice(1)) join(keys[0], key); // NEW
         for (const target of record.targets || []) nodes.get(keys[0]).targets.add(target); // NEW
@@ -129,7 +129,12 @@ export function createObjectViews({ profile, canvas, writeAtomic, now = Date.now
             xml = applyChanges(xml, selected);
             for (const change of selected) versions[change.key] = stamp;
         }
-        const next = { ...record, xml, hash: digest(xml), sequence: Math.max(stamp, record.sequence), floor: changes.some(change => change.key === '*') && xml === targetXml ? stamp : record.floor, versions }; // CHANGE
+        let floor = changes.some(change => change.key === '*') && xml === targetXml ? stamp : record.floor; // CHANGE
+        const pending = [...receipts.values()].filter(receipt => !receipt.committed && receipt.expires >= now() && JSON.parse(receipt.actor)[1] === actor.userId); // NEW
+        const oldest = pending.reduce((value, receipt) => Math.min(value, receipt.sequence), stamp); // NEW
+        floor = Math.max(floor || 0, oldest); // NEW: only outstanding acknowledgements can still need older per-object ordering.
+        for (const key of Object.keys(versions)) if (versions[key] <= floor) delete versions[key]; // NEW: deletion tombstones never accumulate with the project's lifetime edits.
+        const next = { ...record, xml, hash: digest(xml), sequence: Math.max(stamp, record.sequence), floor, versions }; // CHANGE
         await writeAtomic(filename(actor.userId), JSON.stringify(next)); remembered.set(actor.userId, next);
     }
 

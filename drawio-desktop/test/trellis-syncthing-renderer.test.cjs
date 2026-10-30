@@ -28,7 +28,7 @@ function harness(t, options = {}) {
         fileSaved(saved, descriptor, success) { success(); },
         save(revision, success, error) { originalSaves++; this.data = xml; this.modified = false; this.fileSaved(xml, null, success, error); }
     };
-    const info = { protocolVersion: options.localOnly ? 2 : 3, ok: true, managed: !options.localOnly, localOnly: !!options.localOnly, reason: options.localOnly ? 'Sharing is disabled for this old project.' : '', shareId: 'share', diagramId: 'diagram', diagramPath: 'C:/shared/Canvas.drawio', filename: 'Canvas.drawio', folderPath: 'C:/shared', assetBaseUrl: 'file:///C:/shared/' }; // CHANGE
+    const info = { protocolVersion: options.localOnly ? 2 : 4, ok: true, managed: !options.localOnly, localOnly: !!options.localOnly, reason: options.localOnly ? 'Sharing is disabled for this old project.' : '', shareId: 'share', diagramId: 'diagram', diagramPath: 'C:/shared/Canvas.drawio', filename: 'Canvas.drawio', folderPath: 'C:/shared', assetBaseUrl: 'file:///C:/shared/' }; // CHANGE
     const state = { ...info, state: options.localOnly ? 'localOnly' : 'upToDate', connectedCollaborators: options.localOnly ? 0 : 2 }; // CHANGE
     const users = { getCurrentUser: () => ({ id: 'alice' }), isAdmin: () => false, revalidateCurrentSession: () => calls.push({ revalidate: true }), listUsers: () => [] };
     const history = { getDiagramId: () => 'diagram', applyRemoteBaseline: () => calls.push({ baseline: true }), flushForSharing: async () => ({ revision: { id: 'saved-head', diagramHistoryId: 'diagram', actorUserId: 'alice' }, snapshot: { snapshotId: 'saved-snapshot' } }), importShared: async entry => calls.push({ imported: entry }) };
@@ -401,18 +401,27 @@ test('history arriving after remote XML refreshes the clean baseline but not new
     assert.equal(baselines(), withLocalWork);
 });
 
-test('saved history bypasses private intermediate parents and links to an imported ancestor', async t => { // NEW
+test('saved history delegates published ancestry to transport without scanning private history', async t => { // CHANGE
     const h = harness(t);
     await settle();
     h.bridge.importHistory = async () => ({ entries: [{ revision: { id: 'published' } }] });
     h.fireStatus();
     await settle();
-    h.history.list = () => [{ id: 'private', parentRevisionId: 'published' }];
+    h.history.list = () => { throw new Error('Saving must not scan private revision ancestry.'); }; // CHANGE
     h.history.flushForSharing = async () => ({ revision: { id: 'saved', diagramHistoryId: 'diagram', parentRevisionId: 'private' }, snapshot: {} });
     await new Promise((resolve, reject) => h.current.save(false, resolve, reject));
     for (let i = 0; i < 100 && !h.calls.some(call => call.export); i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(h.calls.find(call => call.export).export.entries[0].revision.parentRevisionId, 'published');
+    assert.equal(h.calls.find(call => call.export).export.entries[0].revision.parentRevisionId, 'private'); // CHANGE: the transport assigns its indexed published parent before signing.
 });
+
+test('saving with storage details open does not request recursive archive accounting', async t => { // NEW
+    const h = harness(t); await settle(); let inspections = 0; // NEW
+    const details = h.window.document.createElement('details'); details.className = 'trellis-history-storage-details'; details.open = true; h.window.document.body.appendChild(details); // NEW
+    h.bridge.historyStorage = async () => { inspections++; throw new Error('Unexpected archive inspection during save'); }; // NEW
+    const lastInspection = {historyBytes:1234}; h.graph.__ccSharedHistoryStorage = lastInspection; // NEW
+    await new Promise((resolve,reject) => h.current.save(false,resolve,reject)); await h.sharing.whenHistoryPublished(); // NEW
+    assert.equal(inspections,0); assert.equal(h.graph.__ccSharedHistoryStorage,lastInspection); // NEW
+}); // NEW
 
 // NEW: Shared projects save durably through the journal, including when the editor preference is off.
 test('v3 always autosaves through the journal and never invokes a competing raw file save', async t => { // NEW

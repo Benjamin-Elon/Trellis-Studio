@@ -2643,11 +2643,12 @@ test('purchased transplant built-in template backfills hardening off before tran
     }
 });
 
-test('task rule task type metadata is custom-only and canonical mappings are generated', () => {
+test('task rules retain explicit type overrides and otherwise use canonical mappings', () => { // NEW
     const custom = hooks.normalizeTaskRule({ id: 'water_weekly', title: 'Water', taskTypeId: 'Watering' });
     assert.equal(custom.taskTypeId, 'watering');
     const canonical = hooks.normalizeTaskRule({ id: 'sow', title: 'Sow', taskTypeId: 'watering' });
-    assert.equal(Object.hasOwn(canonical, 'taskTypeId'), false);
+    assert.equal(canonical.taskTypeId, 'watering'); // CHANGE
+    assert.equal(hooks.resolveTaskRuleTaskTypeId(canonical), 'watering'); // NEW
     assert.equal(hooks.resolveTaskRuleTaskTypeId({ id: 'prep', title: 'Prep' }), 'bed_preparation');
     assert.equal(hooks.resolveTaskRuleTaskTypeId({ id: 'start', title: 'Start' }), 'seedling_starting');
     assert.equal(hooks.resolveTaskRuleTaskTypeId({ id: 'harden', title: 'Harden' }), 'hardening_off');
@@ -4340,3 +4341,29 @@ test('scheduler crop picker suitability compares real today against the selected
     assert.doesNotMatch(refreshBody, /primaryDateISO:\s*startInput\.value\s*\|\|\s*displayPrimaryDateISO\(formState\.startISO\)/); // CHANGE: prevent start-field ordering regressions.
     assert.doesNotMatch(refreshBody, /seasonStartYear:\s*pickerToday\.getFullYear\(\)/); // CHANGE: prevent real-year window regressions.
 });
+
+
+test('canonical task type and equipment series choices compile without changing occurrence identities or dates', async () => { // NEW
+    const plant = makePlant({ plant_name: 'Carrot' }); // NEW
+    const result = hooks.computeScheduleResult(makeInputs({ plant, startISO: '2026-04-01' })); // NEW
+    const rule = { id: 'sow', title: 'Sow', startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 1, repeatMode: 'interval', repeatEveryDays: 2, repeatUntilMode: 'x_times', repeatTimes: 2 }; // NEW
+    const generate = taskRule => hooks.buildTasksForPlan({ plant, schedule: result.schedule, timelines: result.timelines, taskTemplate: { version: 2, rules: [taskRule] } }); // NEW
+    const before = await generate(rule), after = await generate({ ...rule, taskTypeId: 'watering', equipmentIds: ['timer', 'hose'] }); // NEW
+    assert.equal(after.length, 2); assert.equal(after.every(task => task.task_type_id === 'watering'), true); // NEW
+    assert.deepEqual(Array.from(after, task => [task.startISO, task.endISO, task.scheduler_task_key, task.scheduler_rule_id]), Array.from(before, task => [task.startISO, task.endISO, task.scheduler_task_key, task.scheduler_rule_id])); // NEW
+    assert.deepEqual(Array.from(after[0].equipmentIds), ['timer', 'hose']); // NEW
+    after[0].equipmentIds.push('extra'); assert.equal(after[1].equipmentIds.length, 2); // NEW
+    assert.deepEqual(Array.from(hooks.normalizeTaskRule({ ...rule, equipmentIds: [] }).equipmentIds), []); // NEW
+    assert.equal(hooks.normalizeTaskRule({ ...rule, equipmentIds: null }).equipmentIds, null); // NEW
+}); // NEW
+
+test('planning overrides preserve explicit choices and completed task values through scheduler reconciliation', () => { // NEW
+    const incoming = { title: 'Water', task_type_id: 'watering', equipmentIds: ['hose'] }; // NEW
+    const local = { task_type_id: 'pruning', task_equipment_ids: '[]', task_planning_override_json: JSON.stringify({ taskTypeId: 'pruning', equipmentIds: [] }) }; // NEW
+    const patch = taskHooks.buildGeneratedTaskSyncAttributesForExisting(local, incoming); // NEW
+    assert.equal(patch.task_type_id, 'pruning'); assert.equal(patch.task_equipment_ids, '[]'); // NEW
+    const done = taskHooks.buildGeneratedTaskSyncAttributesForExisting({ task_type_id: 'pruning', task_equipment_ids: '["pruners"]', workflow_state: 'DONE' }, incoming); // NEW
+    assert.equal(done.task_type_id, 'pruning'); assert.equal(done.task_equipment_ids, '["pruners"]'); // NEW
+    const unsafe = taskHooks.planTaskAssignmentReplacement([{ source: local, schedulerTaskKey: 'duplicate' }], [{ scheduler_task_key: 'duplicate' }, { scheduler_task_key: 'duplicate' }]); // NEW
+    assert.equal(unsafe.retainMissing.length, 1); assert.equal(unsafe.preserved.length, 0); // NEW
+}); // NEW
