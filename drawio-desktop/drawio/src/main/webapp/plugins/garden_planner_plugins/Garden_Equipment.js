@@ -1377,6 +1377,202 @@ Draw.loadPlugin(function (ui) {
     // Public scheduler-control helper
     // -------------------------------------------------------------------------
 
+    /** Read legacy comma-separated IDs as well as the current JSON array representation. */ // NEW
+    function readEquipmentIds(value) {
+        if (value == null) return null;
+        if (Array.isArray(value)) return uniqueStrings(value);
+        try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) return uniqueStrings(parsed); } catch (_) { /* Legacy list. */ }
+        return splitCsv(value);
+    }
+
+    /** Occurrence overrides distinguish inheritance, suggestions (null), and explicitly no tools ([]). */ // NEW
+    function readPlanningOverride(cell) {
+        try {
+            const value = JSON.parse(getCellAttr(cell, TASK_ATTRS.TASK_PLANNING_OVERRIDE) || '{}');
+            return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+        } catch (_) { return {}; }
+    }
+
+    /** Resolve an existing graph cell without creating boards, changing selection, or reading another page. */ // NEW
+    function planningCell(id) {
+        if (model.getCell) return model.getCell(id);
+        let result = null;
+        walkCells(model.getRoot(), cell => { if (String(cell.id) === String(id)) result = cell; });
+        return result;
+    }
+
+    function gardenAncestor(cell) { // NEW
+        const seen = new Set();
+        for (let current = cell; current && !seen.has(current); current = model.getParent(current)) {
+            seen.add(current);
+            if (getCellAttr(current, 'garden_module') === '1' || getCellAttr(current, 'trellis_garden_module') === '1' || getCellAttr(current, 'module_type') === 'garden') return current;
+        }
+        return null;
+    }
+
+    /** Multiple planting links are intentionally unresolved: combining their quantities would invent a job. */ // NEW
+    function linkedPlanningSources(taskCell, moduleCell) {
+        return splitCsv(getCellAttr(taskCell, 'linkedTo')).map(planningCell).filter(cell => cell && getCellAttr(cell, 'tiler_group') === '1' && (!moduleCell || gardenAncestor(cell) === moduleCell));
+    }
+
+    function planningGarden(taskCell) { // NEW
+        const direct = gardenAncestor(taskCell);
+        if (direct) return direct;
+        const sources = linkedPlanningSources(taskCell);
+        const gardens = Array.from(new Set(sources.map(gardenAncestor).filter(Boolean)));
+        return gardens.length === 1 ? gardens[0] : graph.__trellisTaskManager?.gardenForTask?.(taskCell) || null;
+    }
+
+    /** Only authored facts enter recommendation context; generic climate/bed defaults are not evidence. */ // NEW
+    function resolvePlanningContext(taskCell, moduleCell, options = {}) {
+        moduleCell = moduleCell || planningGarden(taskCell);
+        if (!moduleCell) return { taskCell, moduleCell: null, problems: ['The task is not linked to one garden.'], taskType: null, quantity: null, inventory: [] };
+        const scope = graph.__trellisReferences?.scopeForConsumer(moduleCell, taskCell) || moduleCell;
+        const taskTypes = options.taskTypes || readTaskTypeRegistry(scope);
+        const overrides = readPlanningOverride(taskCell);
+        const taskTypeId = overrides.taskTypeId || getCellAttr(taskCell, TASK_ATTRS.TASK_TYPE_ID) || '';
+        const taskType = taskTypes.find(item => item.id === taskTypeId);
+        const sources = linkedPlanningSources(taskCell, moduleCell);
+        const source = sources.length === 1 ? sources[0] : null;
+        const problems = [];
+        if (!taskType) problems.push('Choose an available task type.');
+        if (sources.length > 1) problems.push('Multiple linked plantings; crop, bed and job size need checking.');
+        let bed = null;
+        if (source) {
+            for (let parent = model.getParent(source); parent && parent !== moduleCell; parent = model.getParent(parent)) {
+                if (window.TrellisGardenBeds?.isGardenBed?.(parent) || getCellAttr(parent, 'garden_bed') === '1') { bed = parent; break; }
+            }
+            if (!bed) {
+                const tiler = window.USL?.plantingGroup || window.USL?.tiler;
+                const footprint = tiler?.readPlantingFootprint?.(source);
+                const center = footprint && { x: footprint.x + footprint.width / 2, y: footprint.y + footprint.height / 2 };
+                const beds = tiler?.listGardenBeds?.(moduleCell) || [];
+                bed = center && beds.map(entry => entry.cell || entry).filter(cell => {
+                    const geo = cell.getGeometry?.() || model.getGeometry?.(cell);
+                    return geo && center.x >= geo.x && center.x <= geo.x + geo.width && center.y >= geo.y && center.y <= geo.y + geo.height;
+                }).sort((a, b) => { const ga = a.getGeometry?.() || model.getGeometry(a), gb = b.getGeometry?.() || model.getGeometry(b); return ga.width * ga.height - gb.width * gb.height; })[0] || null;
+            }
+        }
+        const rawConditions = bed && getCellAttr(bed, 'bed_conditions_json');
+        let bedConditions = null;
+        try { if (rawConditions) bedConditions = JSON.parse(rawConditions); } catch (_) { problems.push('Bed conditions could not be read.'); }
+        const quantities = { tasks: 1 };
+        if (bed) quantities.beds = 1;
+        const actualCount = source && (getCellAttr(source, 'plant_count_actual') ?? getCellAttr(source, 'plant_count'));
+        if (actualCount != null && actualCount !== '' && Number.isFinite(Number(actualCount)) && Number(actualCount) >= 0) quantities.plants = Number(actualCount);
+        const footprint = source && (window.USL?.plantingGroup || window.USL?.tiler)?.readPlantingFootprint?.(source);
+        if (footprint && footprint.width >= 0 && footprint.height >= 0) quantities.m2 = footprint.width * footprint.height / (90 * 90); // Existing tiler scale: 5 px/cm × 0.18.
+        const explicitBasis = getCellAttr(taskCell, TASK_ATTRS.TASK_QUANTITY_BASIS);
+        const explicitValue = getCellAttr(taskCell, TASK_ATTRS.TASK_QUANTITY_VALUE);
+        const hasExplicitQuantity = explicitValue != null && explicitValue !== '';
+        const basis = explicitBasis || taskType?.defaultQuantityBasis;
+        const value = hasExplicitQuantity ? Number(explicitValue) : quantities[basis];
+        const quantity = basis && value != null && Number.isFinite(value) && value >= 0 ? { unit: basis, value } : null;
+        if (hasExplicitQuantity && explicitBasis && quantity) quantities[explicitBasis] = value;
+        let assignees = [];
+        try { assignees = JSON.parse(getCellAttr(taskCell, 'task_assignee_role_ids_json') || '[]'); } catch (_) { /* Unknown crew. */ }
+        const validAssignees = Array.isArray(assignees) ? uniqueStrings(assignees).filter(id => planningCell(id)) : [];
+        return { taskCell, moduleCell, scope, source, sources, bed, bedConditions, cropId: source && getCellAttr(source, 'plant_id'), taskType, taskTypeId,
+            quantities, quantity, crewSize: validAssignees.length || null, problems,
+            inventory: options.inventory || readEquipmentInventory(scope),
+            equipmentIds: Object.prototype.hasOwnProperty.call(overrides, 'equipmentIds') ? overrides.equipmentIds : readEquipmentIds(getCellAttr(taskCell, TASK_ATTRS.TASK_EQUIPMENT_IDS)),
+            draftPreview: !!options.draftPreview };
+    }
+
+    /** Shared suitability assessment. Relevance is a preference; unmet requirements never masquerade as savings. */ // NEW
+    function assessPlanningTool(eq, context) {
+        const taskType = context.taskType;
+        const reasons = [], unmet = [], unknown = [];
+        if (!taskType) return { equipment: eq, relevant: false, reasons, unmet, unknown, preferenceMatches: 0 };
+        const capabilities = uniqueStrings([...(taskType.requiredCapabilities || []), ...(taskType.optionalCapabilities || []), ...(taskType.recommendedCapabilities || [])]);
+        const matches = (eq.capabilities || []).filter(id => capabilities.includes(id));
+        const effectMatch = (eq.efficiencyEffects || []).some(effect => effect.taskTypeId === taskType.id);
+        const relevant = matches.length > 0 || (eq.relevantTaskTypes || []).includes(taskType.id) || effectMatch;
+        if (matches.length) reasons.push('Provides a capability used by ' + taskType.name + '.');
+        if ((eq.relevantTaskTypes || []).includes(taskType.id)) reasons.push('Listed for ' + taskType.name + '.');
+        if (effectMatch) reasons.push('Has a time rule for this task type.');
+        if (!isEquipmentAvailable(eq)) unmet.push('Currently ' + labelize(eq.status).toLowerCase() + '.');
+        if (eq.retired || eq.retiredAt) unmet.push('This tool definition is retired.');
+        const availability = eq.availability || {};
+        const taskDate = getCellAttr(context.taskCell, 'assigned_day') || getCellAttr(context.taskCell, 'start');
+        if (availability.from || availability.to) {
+            if (!taskDate) unknown.push('Check availability on the task date.');
+            else if (availability.from && taskDate < availability.from || availability.to && taskDate > availability.to) unmet.push('Unavailable on the task date.');
+        }
+        if (eq.crewSizeMin > 1) {
+            if (context.crewSize == null) unknown.push('Requires ' + eq.crewSizeMin + ' people; crew not assigned.');
+            else if (context.crewSize < eq.crewSizeMin) unmet.push('Requires ' + eq.crewSizeMin + ' people; ' + context.crewSize + ' assigned.');
+        }
+        if (eq.skillLevelRequired && eq.skillLevelRequired !== 'none') unknown.push('Check operator skill: ' + labelize(eq.skillLevelRequired) + '.');
+        for (const [key, comparison, label] of [['minimumUsefulScale', (a, b) => a < b, 'below'], ['maximumUsefulScale', (a, b) => a > b, 'above']]) {
+            const bound = eq[key];
+            if (!(bound?.value > 0)) continue;
+            const value = context.quantities[bound.unit];
+            if (value == null) unknown.push('Check job size: ' + labelize(bound.unit) + ' needed.');
+            else if (comparison(value, bound.value)) unmet.push('Job size is ' + label + ' this tool’s useful range.');
+        }
+        let preferenceMatches = 0;
+        if (eq.relevantCropIds?.length) {
+            if (!context.cropId) unknown.push('Crop preference needs checking.');
+            else if (eq.relevantCropIds.includes(context.cropId)) { preferenceMatches++; reasons.push('Matches the planned crop.'); }
+        }
+        if (eq.relevantBedConditions?.length) {
+            if (!context.bedConditions) unknown.push('Bed preferences need checking.');
+            else if (eq.relevantBedConditions.some(token => { const split = token.indexOf(':'); return String(context.bedConditions[token.slice(0, split)]) === token.slice(split + 1); })) {
+                preferenceMatches++; reasons.push('Matches the bed conditions.');
+            }
+        }
+        return { equipment: eq, relevant, reasons, unmet: uniqueStrings(unmet), unknown: uniqueStrings(unknown), preferenceMatches };
+    }
+
+    /** Estimate selected tools only. Extra tools do not imply extra efficiency or crew-based division. */ // NEW
+    function estimatePlanningSelection(context, ids) {
+        const type = context.taskType, quantity = context.quantity;
+        if (!type || !quantity || !Number.isFinite(Number(type.baseHoursPerUnit?.[quantity.unit]))) return { estimatedHours: null, problems: ['Set a supported job quantity to calculate hours.'] };
+        const selected = uniqueStrings(ids || []).map(id => context.inventory.find(eq => eq.id === id));
+        const assessments = selected.filter(Boolean).map(eq => assessPlanningTool(eq, context));
+        const problems = [...context.problems];
+        if (selected.some(eq => !eq)) problems.push('A selected tool is missing from this task’s reference version.');
+        const usable = assessments.filter(result => result.relevant && !result.unmet.length).map(result => result.equipment);
+        assessments.forEach(result => problems.push(...result.unmet, ...result.unknown, ...(!result.relevant ? ['Selected tool ' + result.equipment.name + ' does not match this task type.'] : [])));
+        const effect = chooseBestEquipmentEffect(type, quantity, usable);
+        const complexity = getCellAttr(context.taskCell, TASK_ATTRS.TASK_COMPLEXITY) || 'normal';
+        const baselineHours = Number(type.baseHoursPerUnit[quantity.unit]) * quantity.value * coerceNumber(type.complexityModifiers?.[complexity], 1)
+            + coerceNumber(type.defaultSetupTimeHours, 0) + coerceNumber(type.defaultCleanupTimeHours, 0);
+        const workHours = Number(type.baseHoursPerUnit[quantity.unit]) * quantity.value * coerceNumber(type.complexityModifiers?.[complexity], 1) * effect.hoursMultiplier;
+        const estimatedHours = workHours + coerceNumber(type.defaultSetupTimeHours, 0) + coerceNumber(type.defaultCleanupTimeHours, 0)
+            + sumUniqueEquipment(usable, 'setupTimeHours') + sumUniqueEquipment(usable, 'cleanupTimeHours');
+        return { estimatedHours, baselineHours, savingsHours: baselineHours - estimatedHours, selectedEquipment: usable, problems: uniqueStrings(problems) };
+    }
+
+    /** Deterministic advisory ranking, shared by task overlays and the equipment dialog. */ // NEW
+    function recommendForTask(taskCell, moduleCell, options = {}) {
+        const context = resolvePlanningContext(taskCell, moduleCell, options);
+        const candidates = context.inventory.map(eq => assessPlanningTool(eq, context)).filter(result => result.relevant);
+        candidates.forEach(result => { result.estimate = estimatePlanningSelection(context, [result.equipment.id]); });
+        candidates.sort((a, b) => (a.unmet.length > 0) - (b.unmet.length > 0) || (a.unknown.length > 0) - (b.unknown.length > 0)
+            || b.preferenceMatches - a.preferenceMatches || (a.estimate.estimatedHours ?? Infinity) - (b.estimate.estimatedHours ?? Infinity)
+            || byName(a.equipment, b.equipment) || a.equipment.id.localeCompare(b.equipment.id));
+        const selectedIds = readEquipmentIds(context.equipmentIds);
+        const selected = (selectedIds || []).map(id => candidates.find(result => result.equipment.id === id) || (context.inventory.find(eq => eq.id === id)
+            ? assessPlanningTool(context.inventory.find(eq => eq.id === id), context) : { equipment: { id, name: id }, relevant: false, reasons: [], unmet: ['Missing or retired tool in this task’s reference version.'], unknown: [] }));
+        return { context, candidates, available: candidates.filter(result => !result.unmet.length), opportunities: candidates.filter(result => result.unmet.length), selected,
+            selection: selectedIds, estimate: estimatePlanningSelection(context, selectedIds || []) };
+    }
+
+    /** Garden membership comes from task boards and planting links, rather than a whole-document scan. */ // NEW
+    function listPlanningTasks(moduleCell) {
+        const manager = graph.__trellisTaskManager;
+        if (manager?.listPlanningTasks) return manager.listPlanningTasks(moduleCell);
+        const result = [];
+        walkCells(model.getRoot(), cell => {
+            if (!getCellAttr(cell, TASK_ATTRS.TASK_TYPE_ID) || planningGarden(cell) !== moduleCell) return;
+            const state = getCellAttr(cell, 'task_workflow_state') || getCellAttr(cell, 'status') || '';
+            if (!/DONE|ARCHIV|COMPLETE/i.test(state) && !getCellAttr(cell, 'completed')) result.push(cell);
+        });
+        return result;
+    }
+
     function renderTaskTypeControls(container, taskCell, moduleCell, onChange) {
         if (!container || !taskCell || !moduleCell) return;
         const taskTypes = readTaskTypeRegistry(moduleCell);
@@ -1587,6 +1783,8 @@ Draw.loadPlugin(function (ui) {
             taskTypes: graph.__trellisReferences?.catalog(moduleCell, ATTRS.TASK_TYPE_REGISTRY_JSON, { draft: true })?.items || readTaskTypeRegistry(moduleCell), // CHANGE
             capabilities: graph.__trellisReferences?.catalog(moduleCell, ATTRS.CAPABILITY_REGISTRY_JSON, { draft: true })?.items || readCapabilityRegistry(moduleCell), // CHANGE
             activeTab: "inventory",
+            sectionOpen: {}, // NEW: preserve disclosure state across editor refreshes.
+            planningTaskLimit: 20, // NEW: long plans remain usable without omitting access to later tasks.
             activeEquipmentEditorTab: "general",
             activeTaskTypeEditorTab: "general",
             selectedEquipmentId: null,
@@ -1617,7 +1815,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function saveAll() {
-            sanitizeChecklistBackedSelections(state);
+            // Preserve unmatched legacy preference IDs; missing catalogs must not erase saved data. // CHANGE
             if (!canSaveState(state)) {
                 render();
                 alert("Fix equipment validation errors before saving.");
@@ -1667,7 +1865,7 @@ Draw.loadPlugin(function (ui) {
 
     function renderHeader(close) {
         const header = div("trellis-eq-header");
-        header.appendChild(textDiv("trellis-eq-title", "Garden Equipment & Workload Assumptions"));
+        header.appendChild(textDiv("trellis-eq-title", "Equipment & Workload Planning")); // CHANGE
         const button = buttonEl("×", "trellis-eq-close", close, "Close", "close"); // CHANGE
         button.title = "Close";
         header.appendChild(button);
@@ -1685,9 +1883,13 @@ Draw.loadPlugin(function (ui) {
         top.appendChild(summaryTile("🧰", String(summary.itemCount), "Equipment Items", `${summary.ownedCount} owned`));
         top.appendChild(summaryTile("⚠️", String(summary.missingRequiredCount), "Missing Required", "Capabilities"));
         top.appendChild(summaryTile("★", String(summary.recommendedMissingCount), "Recommended", "Opportunities"));
-        top.appendChild(summaryTile("🔧", formatHours(summary.annualMaintenanceHours), "Annual Maintenance", "Estimate"));
-        top.appendChild(summaryTile("$", "$" + summary.annualMaintenanceCost.toFixed(0), "Annual Maintenance", "Estimate", "Estimated yearly recurring maintenance cost from maintenance settings."));
-        top.appendChild(summaryTile("$", "$" + summary.yearlyReplacementReserve.toFixed(0), "Yearly Replacement", "Reserve Estimate", "Estimated yearly reserve to replace owned equipment: replacement cost divided by expected lifespan."));
+        const costs = document.createElement('details'); // CHANGE
+        const costsLabel = document.createElement('summary'); // NEW
+        costsLabel.textContent = 'Maintenance & replacement summary'; costs.appendChild(costsLabel); // NEW
+        costs.appendChild(summaryTile("🔧", formatHours(summary.annualMaintenanceHours), "Annual Maintenance", "Estimate")); // CHANGE
+        costs.appendChild(summaryTile("$", "$" + summary.annualMaintenanceCost.toFixed(0), "Annual Maintenance", "Estimate", "Estimated yearly recurring maintenance cost from maintenance settings.")); // CHANGE
+        costs.appendChild(summaryTile("$", "$" + summary.yearlyReplacementReserve.toFixed(0), "Yearly Replacement", "Reserve Estimate", "Estimated yearly reserve to replace owned equipment: replacement cost divided by expected lifespan.")); // CHANGE
+        top.appendChild(costs); // NEW
         return top;
     }
 
@@ -1741,24 +1943,12 @@ Draw.loadPlugin(function (ui) {
 
     function renderMainTabs(state, render) {
         const tabs = div("trellis-eq-tabs");
-        [
-            ["inventory", "▣", "Inventory"],
-            ["taskTypes", "☷", "Task Types"],
-            ["capabilities", "☰", "Capabilities"],
-            ["efficiency", "↕", "Efficiency Rules"],
-            ["maintenance", "⚙", "Maintenance & Costs"],
-            ["warnings", "⚠", "Warnings"]
-        ].forEach(function (tab) {
-            const t = textDiv("trellis-eq-tab" + (state.activeTab === tab[0] ? " active" : ""), `${tab[1]}  ${tab[2]}`);
-            applyTooltip(t, `Open ${tab[2]} tab.`);
-            t.setAttribute("role", "button");
-            t.setAttribute("aria-label", `Open ${tab[2]} tab.`);
-            t.onclick = function () {
-                state.activeTab = tab[0];
-                render();
-            };
-            tabs.appendChild(t);
-        });
+        tabs.appendChild(buttonEl('Equipment', 'trellis-eq-tab' + (state.activeTab === 'inventory' ? ' active' : ''), () => { state.activeTab = 'inventory'; render(); }, 'Configure tools and see their planned uses.', 'neutral')); // CHANGE
+        tabs.appendChild(buttonEl('Planning settings', 'trellis-eq-tab' + (state.activeTab !== 'inventory' ? ' active' : ''), () => { state.activeTab = state.activeTab === 'inventory' ? 'taskTypes' : 'inventory'; render(); }, 'Edit task types, capabilities and planning summaries.', 'neutral')); // NEW
+        if (state.activeTab !== 'inventory') { // NEW
+            const select = selectInput([['taskTypes', 'Task Types'], ['capabilities', 'Capabilities'], ['efficiency', 'Time rules overview'], ['maintenance', 'Maintenance & Costs'], ['warnings', 'Equipment warnings']], state.activeTab, event => { state.activeTab = event.target.value; render(); }); // NEW
+            select.setAttribute('aria-label', 'Planning settings'); tabs.appendChild(select); // NEW
+        } // NEW
         return tabs;
     }
 
@@ -1803,8 +1993,15 @@ Draw.loadPlugin(function (ui) {
 
     function renderInventoryToolbar(state, render) {
         const toolbar = div("trellis-eq-toolbar");
+        const preset = selectInput([['', 'Add from preset…'], ['custom', 'Custom tool'], ...DEFAULT_EQUIPMENT.map(eq => [eq.id, eq.name])], '', function () { // NEW
+            if (!preset.value) return; // NEW
+            const definition = DEFAULT_EQUIPMENT.find(eq => eq.id === preset.value); // NEW
+            const item = equipment(Object.assign({}, definition ? clone(definition) : {}, { id: makeId('eq', definition?.name || 'equipment'), name: definition?.name || 'New Equipment', status: 'wishlist', acquisitionMode: 'wishlist' })); // NEW
+            state.inventory.push(item); state.selectedEquipmentId = item.id; render(); // NEW
+        }); // NEW
+        preset.setAttribute('aria-label', 'Add equipment from preset'); toolbar.appendChild(preset); // NEW
         toolbar.appendChild(buttonEl("＋ Add", "trellis-eq-btn primary", function () {
-            const item = equipment({ id: makeId("eq", "equipment"), name: "New Equipment" });
+            const item = equipment({ id: makeId("eq", "equipment"), name: "New Equipment", status: 'wishlist' }); // CHANGE: adding a definition must not claim ownership.
             state.inventory.push(item);
             state.selectedEquipmentId = item.id;
             render();
