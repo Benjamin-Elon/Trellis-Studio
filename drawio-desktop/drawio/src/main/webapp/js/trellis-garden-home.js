@@ -41,6 +41,14 @@
     async function openPath(ui, filename, options = {}) { // CHANGE
         if (options.isActive && !options.isActive()) return false; // NEW
         if (!(options.replacementApproved && options.previousFile === ui.getCurrentFile()) && !await mayReplace(ui)) return false; // CHANGE
+        if (root.trellisGardenLibrary?.prepareOpen) { // NEW: the library stays mounted during worker verification.
+            const status = ui.__trellisGardenHome?.projectsStatus; // NEW
+            if (status?.isConnected) status.textContent = 'Checking garden…'; // NEW
+            const prepared = await root.trellisGardenLibrary.prepareOpen({ path: filename }); // NEW
+            if (options.isActive && !options.isActive()) return false; // NEW
+            if (status?.isConnected) status.textContent = ''; // NEW
+            if (prepared?.path) filename = prepared.path; // NEW: naming may complete during the serialized preparation.
+        } // NEW
         let opened = false; // NEW
         await new Promise((resolve, reject) => ui.readGraphFile((entry, data, stat, name, modified) => {
             if (options.isActive && !options.isActive()) { resolve(); return; } // NEW: a closed/replaced browser cannot navigate on a late read result.
@@ -503,7 +511,8 @@
         state.focus = options.focus || 'open'; state.mode = 'idle'; state.opening = true; // NEW
         const panel = element('section', null, 'trellis-projects-root'); panel.setAttribute('aria-label', 'Garden Projects'); state.view = 'active'; // CHANGE
         const header = element('header', null, 'trellis-projects-header'), top = element('div', null, 'trellis-projects-top'), heading = element('h2', 'Garden Projects'), account = element('div', null, 'trellis-projects-account'), body = element('div', null, 'trellis-projects-body'); // CHANGE
-        top.append(heading, account); header.append(top); panel.append(header, body); state.projectsBody = body; state.accountHost = account; // CHANGE
+        top.append(heading, button('Inventories ▾', event => root.TrellisInventories?.showMenu(event.currentTarget, { ui }), 'open'), button('The Grand Exchange', () => root.TrellisInventories?.openExchange({ ui }), 'open'), account); // CHANGE
+         header.append(top); panel.append(header, body); state.projectsBody = body; state.accountHost = account; // CHANGE
         const identity = element('section', null, 'trellis-home-panel'); identity.setAttribute('aria-label', 'Identity'); identity.hidden = true; identity.addEventListener('click', () => { identity.hidden = false; }, true); // CHANGE
         const reference = element('div', null, 'trellis-projects-reference'); // NEW
         const search = input('Search garden projects'); search.control.value = state.search; // NEW
@@ -542,7 +551,7 @@
         installLoadHeader(ui, state, 'trash', trashSection.querySelector('h3')); state.trashRows = element('div'); trashSection.append(state.trashRows); body.append(trashSection); state.trashSection = trashSection; // CHANGE
         const folder = element('div', null, 'trellis-home-muted'); state.folderLabel = folder; // NEW
         const footer = element('div', null, 'trellis-home-row'); // NEW
-        footer.append(button('Change folder…', async () => { try { const result = await root.trellisGardenLibrary.selectLocalFolder(); if (result.ok) await refreshProjects(ui, state, { only: ['local'] }); } catch (error) { status.textContent = error.message; } }, 'neutral'), button('Browse files…', () => browseLocalFiles(ui, state), 'open'), button('Close', () => ui.hideDialog(true), 'close')); // CHANGE
+        footer.append(button('Change folder…', async () => { try { const result = await root.trellisGardenLibrary.selectLocalFolder(); if (result.ok) await refreshProjects(ui, state, { only: ['local'] }); } catch (error) { status.textContent = error.message; } }, 'neutral'), button('Browse files…', event => browseLocalFiles(ui, state, event.currentTarget), 'open'), button('Close', () => ui.hideDialog(true), 'close')); // CHANGE: retain the Browse control for focus restoration after an opening error.
         panel.dataset.quickstartSurface = 'projects'; // NEW
         body.append(folder, footer); const removePopoverListeners = installProjectPopovers(panel); // CHANGE
         ui.showDialog(panel, Math.max(240, Math.min(760, (root.innerWidth || 1000) - 40)), Math.max(180, Math.min(710, (root.innerHeight || 900) - 70)), true, true, cancel => { // NEW
@@ -567,11 +576,18 @@
             node.textContent = (state.session ? 'Logged in as ' + state.session.username : 'Not logged in') + (count ? ' · ' + count + (count === 1 ? ' pending invitation' : ' pending invitations') : ''); // CHANGE
         } // NEW
     } // NEW
-    async function browseLocalFiles(ui, state) { // NEW
+    /** Report opening failures above the mounted library; cancellation remains silent. */ // NEW
+    async function browseLocalFiles(ui, state, trigger) { // CHANGE
+        const library = state.projectsRoot; // NEW: a later library must not inherit this operation's focus callback.
         try { // NEW
             const paths = await request({ action: 'showOpenDialog', properties: ['openFile'], filters: [{ name: 'Garden project', extensions: ['drawio'] }] }); // NEW
             if (paths?.length) await openPath(ui, paths[0]); // NEW
-        } catch (error) { state.projectsStatus.textContent = error.message; } // NEW
+        } catch (error) { // CHANGE
+            const failure = typeof error?.message === 'string' && error.message.trim() ? error : new Error(typeof error === 'string' && error.trim() ? error : 'The file could not be opened. Try again or choose another file.'); // NEW: IPC failures may contain only a string or no useful message.
+            ui.handleError(failure, 'Couldn’t open this file', () => root.setTimeout(() => { // NEW: reuse the existing stacked error dialog for every Browse failure.
+                if (state.projectsRoot === library && trigger?.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true }); // NEW: preserve the current library and its scroll position.
+            }, 0), true); // NEW: restore focus after either button or dialog dismissal.
+        } // CHANGE
     } // NEW
     /** Seed only this newly created project, through the same module mechanics as New Diagram. */ // NEW
     const starterInitializations = new WeakMap(); // NEW: concurrent submissions share this exact file's initializer.
@@ -1220,6 +1236,7 @@
         locations.append(element('summary', 'Locations (' + (project.moduleCities || []).length + ' garden modules)'), element('span', (project.moduleCities || []).map(city => city.name).join(', ') || 'No resolved city coordinates', 'trellis-home-muted')); info.append(locations); // NEW
         const open = button(project.available ? 'Open' : 'Download & open', async () => { // CHANGE
             const browser = state.projectsRoot, identityId = state.session?.identityId; // NEW
+            open.disabled = true; // NEW: repeated activation shares the selected garden's operation.
             try { // NEW
                 if (project.available) { // CHANGE
                     if (await openPath(ui, project.path, { isActive: () => browser.isConnected && identityId === state.session?.identityId })) { // NEW
@@ -1227,7 +1244,7 @@
                     } // NEW
                 } // NEW
                 else await downloadAndOpen(ui, project.diagramId, state); // NEW
-            } catch (error) { if (state.projectsStatus?.isConnected) state.projectsStatus.textContent = error.message; else ui.handleError(error); } // NEW
+            } catch (error) { open.textContent = 'Retry opening'; if (state.projectsStatus?.isConnected) state.projectsStatus.textContent = error.message; else ui.handleError(error); } finally { if (open.isConnected) open.disabled = false; } // CHANGE: failed verification keeps the library and a concrete retry control available.
         }, 'open'); // CHANGE
         open.setAttribute('data-project-focus', key + ':open'); open.disabled = !!project.departing || !project.available && project.source === 'local'; controls.append(open); // CHANGE
         if (project.localOnly) { row.append(info, controls); state.projectRowNodes.set(nodeKey, { token, row }); return row; } // CHANGE

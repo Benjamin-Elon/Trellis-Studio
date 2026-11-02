@@ -6,8 +6,8 @@ import { canonical, digest } from './trellis-share-protocol.js'; // NEW
 export function reviewDraft(baseXml, draftXml, acceptedXml) { // NEW
     const before = objects(baseXml), accepted = objects(acceptedXml), mine = objects(draftXml); // NEW
     const groups = incomingGroups(baseXml, { xml: draftXml, records: [], accepted: [] }).map(group => { // NEW
-        const alreadyApplied = group.structural ? draftXml === acceptedXml : group.keys.every(key => (mine.get(key)?.hash || null) === (accepted.get(key)?.hash || null)); // NEW
-        const changed = group.targets.includes('*') ? acceptedXml !== baseXml : group.targets.some(key => (before.get(key)?.hash || null) !== (accepted.get(key)?.hash || null)); // NEW
+        const alreadyApplied = group.structural ? !diffObjects(draftXml, acceptedXml).changes.length : group.keys.every(key => (mine.get(key)?.hash || null) === (accepted.get(key)?.hash || null)); // CHANGE: XML spelling and local viewport settings are not concurrent content.
+        const changed = group.targets.includes('*') ? !!diffObjects(baseXml, acceptedXml).changes.length : group.targets.some(key => (before.get(key)?.hash || null) !== (accepted.get(key)?.hash || null)); // CHANGE
         let conflict = !alreadyApplied && changed; // NEW
         if (!conflict && !alreadyApplied) try { applyChanges(acceptedXml, group.changes); } catch (_) { conflict = true; } // NEW
         const details = group.keys.map(key => { const base = fields(before.get(key)), theirs = fields(accepted.get(key)), draft = fields(mine.get(key)); return { key, fields: [...new Set([...Object.keys(base), ...Object.keys(theirs), ...Object.keys(draft)])].filter(name => base[name] !== draft[name] || base[name] !== theirs[name]).map(name => ({ name, before: base[name] || '', accepted: theirs[name] || '', mine: draft[name] || '' })) }; }); // NEW

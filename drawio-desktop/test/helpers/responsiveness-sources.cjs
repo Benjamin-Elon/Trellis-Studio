@@ -13,6 +13,7 @@ function captureSources(project, destination) { // CHANGE
     fs.mkdirSync(destination, { recursive: false }); // CHANGE
     for (const [source, target] of [['src/main', 'main'], ['drawio/src/main/webapp/js', 'browser-js'], ['drawio/src/main/webapp/plugins/garden_planner_plugins', 'plugins'], ['test/helpers', 'helpers']]) fs.cpSync(path.join(project, source), path.join(destination, target), { recursive: true }); // CHANGE
     fs.copyFileSync(path.join(project, 'drawio/src/main/webapp/mxgraph/mxClient.js'), path.join(destination, 'mxClient.js')); // CHANGE
+    fs.copyFileSync(path.join(project, 'drawio/src/main/webapp/index.html'), path.join(destination, 'index.html')); // NEW: bind the shared-contract production loader to qualification.
     for (const name of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(project, name), path.join(destination, name)); // CHANGE
     manifestSources(destination); return destination; // CHANGE
 } // CHANGE

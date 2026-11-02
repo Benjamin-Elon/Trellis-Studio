@@ -1,0 +1,109 @@
+✔ seed conversions require estimates for weight and packets (2.3613ms)
+✔ current-stock initialization baselines historical work; reopening and recompleting remain reversible (1.7695ms)
+✔ sowing completion survives repeated delivery, restart, reopen and corrected recompletion (0.7917ms)
+✔ negative balances are retained and shortages remain visible (0.4768ms)
+✔ published needs aggregate growth stages before subtracting completed work once (1.8848ms)
+✔ competing acceptances cannot reserve protected or already reserved stock (0.7253ms)
+✔ barter source lines combine; handover and receipt each affect stock exactly once (0.4778ms)
+✔ copies preserve definitions and conversions while resetting all operational records (0.3829ms)
+✔ priority levels fill in order with proportional equal-level shortages and capped demand (0.9523ms)
+✔ season quotes use eligible scheduled pickups and preserve original currency (7.5093ms)
+✔ plant requirements round per member and shortages rotate to seasonally underserved members (26.6413ms)
+✔ PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields (32.1544ms)
+✔ PlanningCore assigns CSA components the plan channel level (17.4765ms)
+✔ PlanningCore coverage week summaries expose canonical week start dates (12.0889ms)
+✔ PlanningCore recommends the smallest whole plant count for reachable shortage (26.9073ms)
+✔ PlanSchema normalizes weekStartDow to an integer from zero through six (10.7378ms)
+✖ PlanSchema adds default demand channels only when the collection is absent (3.6433ms)
+✔ Planting-method SQL starts directly with SQL text (0.4725ms)
+✔ PlanSchema detects duplicate crop identities and validates invalid units (4.1531ms)
+✔ PlanSchema rejects duplicate crop package units (3.1783ms)
+✔ PlanSchema clears demand-like units that are not crop packages (2.5345ms)
+✔ PlanSchema strips legacy demand prices from persisted plans (2.4916ms)
+✔ PlanSchema exposes CSA validation independently from the full plan (4.7005ms)
+✔ PlanSchema rejects reversed demand and effective CSA date ranges (3.8016ms)
+✔ PlanMath excludes reversed demand ranges while retaining explicit valid CSA components (5.7974ms)
+✔ PlanMath ignores manual harvest windows for supply and validation still rejects reversed dates (6.0382ms)
+✔ PlanRepository round-trips plans, templates, defaults, and leap-day shifts (10.9695ms)
+✔ PlanRepository migrates legacy root maps on the first diagram-level write (2.8034ms)
+✔ DiagramPlanReader aggregates perennial and cross-year tiler facts with one crop key (3.4535ms)
+✔ DiagramPlanReader resolves legacy variety names and rejects malformed harvest ranges (6.547ms)
+✔ DiagramPlanReader reports ambiguous planned legacy variety matches (8.8003ms)
+✔ DiagramPlanReader returns normalized garden crop candidates and ignores groups without plant identity (2.0473ms)
+✔ PlanRuntimeService recalculation is idempotent and preserves manual harvest dates (12.2807ms)
+✔ PlanRuntimeService derives actual harvest windows and returns calculation warnings (5.0725ms)
+✔ PlanRuntimeService defaults legacy crops to sowing-window estimate only without actual harvest records (5.8351ms)
+✔ PlanRuntimeService does not default sowing-window estimate when actual harvest records exist (4.6808ms)
+✔ PlanRuntimeService keeps harvest windows independent from actual-only supply (25.8808ms)
+✔ PlanRuntimeService does not synthesize prior-year saved harvest windows as supply (5.3533ms)
+✔ PlanMath inventory uses conservative weekly shelf-life buckets and FIFO consumption (6.5172ms)
+✔ PlanMath tracks planting source provenance through FIFO inventory (8.1395ms)
+✔ PlanningCore keeps diagram planting provenance JSON-safe after allocation refresh (24.6581ms)
+✔ PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors (7.1581ms)
+✔ PlanMath allocates CSA then splits equal sales levels proportionally, ignoring obsolete line priorities (12.9533ms)
+✔ PlanMath derives CSA box value and prorates CSA revenue by component fulfillment (12.1169ms)
+✔ PlanMath counts missing CSA component prices as zero with a non-blocking warning (7.2702ms)
+✔ PlanMath counts missing self-use and demand prices as zero with non-blocking warnings (7.3026ms)
+✔ PlanMath requires explicit packages for built-in unit names (4.2157ms)
+✔ PlanMath resolves standard package weight bases to kg (2.2288ms)
+✔ PlanMath still blocks demand-like rows when package quantity conversion is invalid (5.7389ms)
+✔ PlanMath prices demand from package unit matches only (6.243ms)
+✔ PlanMath splits equal-priority shortages equally despite channel order (7.7882ms)
+✔ PlanMath keeps raw harvest stable and never pools inventory across crops (26.1127ms)
+✔ PlanMath builds filtered and aggregate chart models with additive flow summaries (2.2528ms)
+✔ CropTimeline orders solid bars by value and keeps raw harvest in front (7.4609ms)
+✔ PlanRuntimeService syncs demand to harvest dates and collapses legacy shelf extensions (2.5978ms)
+✔ YearPlanDashboard aggregates shortage and surplus without netting crops (3.5737ms)
+✔ YearPlanDashboard classifies weekly timing and avoids inventory snapshot surplus double-counting (8.7169ms)
+✔ YearPlanDashboard treats zero supply as a full shortage and validation errors as missing data (4.2966ms)
+✔ YearPlanDashboard promotes a missing harvest window to missing data when demand exists (3.1222ms)
+✔ crop dots attribute linked validation to exact rows and keep shared setup global (4.8267ms)
+✔ crop dot issues deduplicate validations but retain distinct repair destinations (9.0183ms)
+✔ crop dots collect active price and nutrition warnings by identity without persisting them (24.2781ms)
+✔ disabled demand sections contribute no linked validation or price warnings to crop dots (9.485ms)
+✔ crop stage and package warnings override no demand and disappear when repaired (3.2661ms)
+✔ YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines (6.803ms)
+✔ YearPlanDashboard builds compact status and CSA summaries without timezone parsing (7.4806ms)
+✔ YearPlanDashboard expands checks only when blocking errors first appear (2.4738ms)
+✔ YearPlanDashboard resolves selection after crop removal and preserves unknown methods (5.2227ms)
+✔ PlanSchema infers method category for legacy dotted crop methods (2.2755ms)
+✔ Self Sufficiency demand expands separately from sales demand (5.4983ms)
+✔ disabled self-use, commercial channels, and CSA stay saved but leave demand totals (22.0118ms)
+✔ Harvest allocation satisfies Self Sufficiency before CSA and sales (9.6855ms)
+✔ Required plants and Plan Check default to combined demand (6.914ms)
+✔ NutritionPlanner calculates requested and fulfilled self-use nutrition (8.0522ms)
+✔ YearPlanDashboard opens Self Sufficiency strip on first self-use validation errors (3.3394ms)
+✔ growth stages allow the same variety while rejecting duplicate stage identities (2.8794ms)
+✔ stage-specific diagram supply cannot cover another stage's demand (31.4806ms)
+✔ companion count overrides include lost supply and never mutate saved groups, including same-crop additions (83.804ms)
+ℹ tests 78
+ℹ suites 0
+ℹ pass 77
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1242.7196
+
+✖ failing tests:
+
+test at test\year-planner.test.cjs:324:1
+✖ PlanSchema adds default demand channels only when the collection is absent (3.6433ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  3 !== 2
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\year-planner.test.cjs:332:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 3,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

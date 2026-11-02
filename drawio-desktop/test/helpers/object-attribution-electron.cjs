@@ -51,6 +51,20 @@ app.whenReady().then(async () => { // NEW
         assert.equal((await run('snapshot()')).badges.length, 0);
         await run('graph.setSelectionCell(cell);void 0;'); await settle(); // CHANGE
         assert.equal((await run('snapshot()')).badges.length, 1);
+        await run('ui.alert=()=>{}; graph.model.addListener(mxEvent.UNDO,(_sender,event)=>ui.editor.undoManager.undoableEditHappened(event.getProperty("edit")));'); // NEW
+        await run(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Modules_Standalone.js'), 'utf8')); // NEW
+        await run('window.garden=graph.__trellisModules.createModuleAtPoint({x:140,y:300},"garden");void 0;'); await settle(); // NEW
+        assert.equal((await run('snapshot()')).badges.length, 0); // NEW
+        await run('graph.clearSelection();void 0;'); // NEW
+        const starterPoint = await run('(()=>{const state=graph.view.getState(garden);return{x:Math.round(state.x+40),y:Math.round(state.y+20)};})()'); // NEW
+        win.webContents.sendInputEvent({ type: 'mouseMove', ...starterPoint }); await settle(); // NEW
+        assert.equal((await run('snapshot()')).badges.length, 0); // NEW
+        await run('graph.setSelectionCell(garden);ui.editor.undoManager.clear();const edited=garden.value.cloneNode(true);edited.setAttribute("label","My garden");graph.model.setValue(garden,edited);void 0;'); await settle(); // NEW
+        assert.equal((await run('snapshot()')).badges.length, 1); // NEW
+        await run('ui.editor.undoManager.undo();void 0;'); await settle(); // NEW
+        assert.equal((await run('snapshot()')).badges.length, 0); // NEW
+        await run('ui.editor.undoManager.redo();void 0;'); await settle(); // NEW
+        assert.equal((await run('snapshot()')).badges.length, 1); // NEW
         console.log('Native object attribution checks passed'); win.destroy(); app.exit(0);
     } catch (error) { console.error(error); win.destroy(); app.exit(1); }
 });

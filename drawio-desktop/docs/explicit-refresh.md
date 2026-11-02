@@ -95,6 +95,30 @@ edits still persist, including undo/redo. Refresh/restore replace authored bases
 and reapply personal folding. The two-expanded-clusters policy stays in force.
 Existing signed object hashes and journal records remain unchanged. <!-- NEW -->
 
+Planting circles/summary folding uses a separate `trellis.local-planting-folds.v1:`
+preference for the same document, user, page, and cell identity. The top-left
+folding control and top-right growth badge follow the planting's rotated header
+corners while remaining upright and fixed in screen size. Viewers and users of
+locked plantings can fold without acquiring edit rights. Folding produces no
+save, dirty notification, attribution, collaboration change, or Undo/Redo entry.
+The plus/minus button reverses the view choice. <!-- NEW -->
+
+The local adapter journals reversible tiler presentation changes separately from
+authored attributes and child cells. Encoding, cloning, real edits, and incoming
+updates use the authored base; afterward personal detail is reapplied. Manual
+circle positions and disabled slots remain authored content. Existing saved
+detail is the default when no personal preference exists. Circle limits still
+apply: an expansion blocked by current limits stays remembered and can reappear
+when space becomes available, without displacing another planting's detail.
+Unreadable or unavailable local storage leaves the control usable for the
+session. <!-- NEW -->
+
+Image and PDF artwork reflects the current planting detail. The isolated exporter
+receives `__trellisPlantingProjection` separately from canonical diagram XML, so
+embedded editable data and saved `.drawio` files retain authored state. Folding
+controls and the existing DOM growth badges remain editor overlays. Ordinary
+container-fold export behavior is unchanged. <!-- NEW -->
+
 Shared history captures accepted state through `history-state`, including unseen
 objects. Mixed displayed views are never published as shared snapshots. Restores
 remain explicit authorized edits subject to freshness and holds; other windows

@@ -1,0 +1,24 @@
+✔ seed conversions require estimates for weight and packets (5.1097ms)
+✔ current-stock initialization baselines historical work; reopening and recompleting remain reversible (3.4384ms)
+✔ sowing completion survives repeated delivery, restart, reopen and corrected recompletion (0.7227ms)
+✔ negative balances are retained and shortages remain visible (0.5108ms)
+✔ published needs aggregate growth stages before subtracting completed work once (1.1836ms)
+✔ competing acceptances cannot reserve protected or already reserved stock (0.9978ms)
+✔ barter source lines combine; handover and receipt each affect stock exactly once (0.5981ms)
+✔ copies preserve definitions and conversions while resetting all operational records (0.4267ms)
+✔ priority levels fill in order with proportional equal-level shortages and capped demand (1.5043ms)
+✔ season quotes use eligible scheduled pickups and preserve original currency (11.8201ms)
+✔ plant requirements round per member and shortages rotate to seasonally underserved members (47.178ms)
+✔ accepted sowing effects include germination, reopening, correction and retransmission (71.9048ms)
+✔ historical completed sowings baseline current stock; transplant tasks never deduct (9.5214ms)
+✔ ledger forgery is rejected even for administrators; automatic effects cannot authorize stock edits (33.6309ms)
+✔ real signed saves retain seed effects across duplicate delivery and coordinator restart (627.4654ms)
+✔ multiple unsaved complete/reopen transitions are independently validated as one accepted save (49.113ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1168.8095

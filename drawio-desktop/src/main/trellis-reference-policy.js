@@ -8,7 +8,7 @@ function under(cell, garden) { const seen = new Set(); for (let current = cell; 
 function validateConsumers(before, after, garden, nextGarden, decisions, at) { // NEW
     const accepted = decisions.filter(item => item.status === 'accepted'); if (!accepted.length) return; // NEW
     const ids = accepted.flatMap(item => item.plantingIds || []), selected = new Set(ids); if (selected.size !== ids.length) throw new Error('A planting was selected more than once.'); // NEW
-    const oldStore = C.validate(JSON.parse(garden.node.getAttribute(C.ATTR))), nextStore = C.validate(JSON.parse(nextGarden.node.getAttribute(C.ATTR))); // NEW
+    const oldStore = C.resolveReference(garden.node.getAttribute(C.ATTR)), nextStore = C.resolveReference(nextGarden.node.getAttribute(C.ATTR)); // CHANGE: signed pointers resolve through the project's verified snapshot owner.
     const nextPage = after.cells.filter(item => item.node.ownerDocument === nextGarden.node.ownerDocument); // NEW
     const children = before.cells.filter(cell => cell !== garden && under(cell, garden)); // NEW
     for (const cell of children) { // NEW

@@ -9,5 +9,6 @@ test('growth circles, badges and dashboard checkbox work in the real Chromium re
     assert.equal(result.error, undefined, result.stderr || result.stdout); // NEW
     assert.equal(result.status, 0, result.stderr || result.stdout); // NEW
     assert.match(result.stdout, /GROWTH_RESULT:/); // NEW
+    assert.match(result.stdout, /PLANTING_EXPORT_RESULT: PNG and PDF rendering preserve canonical editable data/); // NEW
     process.stdout.write(result.stdout.match(/GROWTH_RESULT:[^\n]*/)[0] + '\n'); // NEW: preserve the Chromium diagnostic summary in the test report.
 }); // NEW

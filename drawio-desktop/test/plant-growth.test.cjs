@@ -119,6 +119,16 @@ test('garden checkbox controls dashed outlines regardless of selection while pre
     } finally { h.close(); } // NEW
 }); // NEW
 
+test('unchanged growth refresh retains glyphs while harvest outline changes still repaint', () => { // NEW
+    const h = fixture(); // NEW
+    try { // NEW
+        h.group('stable-growth'); h.growth.refresh(); const renderer = h.graph.cellRenderer, redraw = renderer.redraw; let redraws = 0; // NEW
+        renderer.redraw = function () { redraws++; return redraw.apply(this, arguments); }; // NEW
+        h.growth.refresh(); h.growth.refresh(); assert.equal(redraws, 0); // NEW
+        h.growth.setShowHarvestSize(h.moduleCell, true); h.growth.refresh(); assert.ok(redraws > 0); // NEW
+    } finally { h.close(); } // NEW
+}); // NEW
+
 test('small markers stay visible, collapsed groups do not expand, hidden badges disappear and disposal cleans up', () => { // NEW
     const h = fixture(); // NEW
     try { // NEW

@@ -1,3 +1,4 @@
+window.TrellisStartupUI?.install(); // NEW: all host classes exist before App.main constructs its sidebar.
 window.TrellisContentPolicy?.install(); // NEW: also protects the shipped compiled runtime before App.main.
 // Trellis changes: desktop plugin filtering, duplicate file-watch prevention, and developer-build update gating. // CHANGE
 /**
@@ -176,6 +177,11 @@ mxStencilRegistry.allowEval = false;
 			if (!plugins.some(plugin => /(?:^|\/)Garden_Quickstart\.js$/.test(plugin) || plugin === 'gardenQuickstart')) plugins.push(App.pluginRegistry.gardenQuickstart); // NEW
 			mxSettings.setPlugins(plugins); mxSettings.save(); localStorage.setItem('.trellisQuickstartDefault.v1', '1'); // NEW
 		} // NEW
+        if (localStorage.getItem('.trellisInventoriesDefault.v1') == null) { // NEW
+            plugins = (plugins || []).slice(); // NEW
+            if (!plugins.some(plugin => /(?:^|\/)Trellis_Inventories\.js$/.test(plugin) || plugin === 'trellisInventories')) plugins.push(App.pluginRegistry.trellisInventories); // NEW
+            mxSettings.setPlugins(plugins); mxSettings.save(); localStorage.setItem('.trellisInventoriesDefault.v1', '1'); // NEW
+        } // NEW
 		App.initPluginCallback();
 
 		if (plugins != null && plugins.length > 0)
@@ -224,7 +230,8 @@ mxStencilRegistry.allowEval = false;
 
 						try
 						{
-							mxscript(plugins[i]);
+                            var inventoryId = App.inventoryPluginId(plugins[i]); // NEW
+                            if (inventoryId) App.loadInventoryPlugin(inventoryId); else mxscript(plugins[i]); // CHANGE
 						}
 						catch (e)
 						{
@@ -1472,6 +1479,17 @@ mxStencilRegistry.allowEval = false;
 		});
 	};
 
+	/** Prepare native Browse, recent-file and tray opening before choosing the projection path or its drafts. */ // NEW
+	var readVerifiedGraphFile = App.prototype.readGraphFile; // NEW
+	App.prototype.readGraphFile = function(fn, fnErr, path, noDraftCheck) { // NEW
+		if (!/\.drawio$/i.test(path) || !window.trellisGardenLibrary?.prepareOpen) return readVerifiedGraphFile.apply(this, arguments); // NEW
+		var previousFile = this.getCurrentFile(), previousStatus = this.editor.status; this.editor.setStatus('Checking garden…'); // NEW
+		return window.trellisGardenLibrary.prepareOpen({ path: path }).then(prepared => { // NEW
+			if (this.editor.status === 'Checking garden…') this.editor.setStatus(previousStatus); // NEW
+			if (this.getCurrentFile() !== previousFile) throw new Error('The document changed while checking this garden. Retry opening it.'); // NEW
+			return readVerifiedGraphFile.call(this, fn, fnErr, prepared?.path || path, noDraftCheck); // NEW
+		}).catch(error => { if (this.editor.status === 'Checking garden…') this.editor.setStatus(previousStatus); fnErr(error); }); // NEW
+	}; // NEW
 	// Disables temp files in Electron
 	var LocalFileCtor = LocalFile;
 	
@@ -1794,6 +1812,10 @@ mxStencilRegistry.allowEval = false;
 	{
 		try
 		{
+			await window.Trellis?.sharing?.whenDocumentReady?.(); // NEW: classification may still be restoring an existing managed project.
+			if (this.ui.getCurrentFile && this.ui.getCurrentFile() !== this) throw new Error('The diagram changed before Save As could begin.'); // NEW: readiness belongs to the initiating file.
+			const portableCopy = this.ui.editor.graph.__trellisProjectFormat === 2 || window.Trellis?.sharing?.getInfo?.()?.managed === true; // CHANGE
+			const capturedXml = portableCopy ? await window.Trellis.sharing.portableXml(this.ui.getFileData()) : null; // NEW: capture a complete revision before opening the destination dialog.
 			var lastDir = (this.fileObject != null && this.fileObject.path != null) ?
 				await requestSync({action: 'dirname', path: this.fileObject.path}) :
 				localStorage.getItem('.lastSaveDir');
@@ -1813,12 +1835,20 @@ mxStencilRegistry.allowEval = false;
 			
 			var path = await requestSync({
 				action: 'showSaveDialog',
+				...(portableCopy ? { title: 'Save a portable copy' } : {}), // NEW: the managed project remains open with its independent save and recovery state.
 				defaultPath: (lastDir || (await requestSync('getDocumentsFolder'))) + '/' + name,
 				filters: this.ui.createFileSystemFilters(ext)
 			});
 
 			if (path != null)
 			{
+				if (portableCopy) { // NEW
+					let destination = String(path).replace(/\\/g, '/'), current = String(this.fileObject?.path || '').replace(/\\/g, '/'); // NEW
+					if (mxClient.IS_WIN) { destination = destination.toLowerCase(); current = current.toLowerCase(); } // NEW
+					if (destination === current) throw new Error('Choose a different destination for the portable copy. Use Save to save this project.'); // NEW
+					await requestSync({ action: 'writeFile', path, data: capturedXml, enc: 'utf-8' }); // NEW
+					if (typeof success === 'function') success({ portableCopy: true }); return; // NEW: exporting a copy neither accepts conflicts nor marks the project saved.
+				} // NEW
 				localStorage.setItem('.lastSaveDir', await requestSync({action: 'dirname', path: path}));
 				this.fileObject = new Object();
 				this.fileObject.path = path;
@@ -1953,8 +1983,9 @@ mxStencilRegistry.allowEval = false;
 			{
 				let oldFileObject = file.fileObject;
 
-				file.saveAs(null, mxUtils.bind(this, function()
+				file.saveAs(null, mxUtils.bind(this, function(result) // CHANGE
 				{
+					if (result?.portableCopy) { this.editor.setStatus('Portable copy saved'); return; } // NEW: preserve the managed project's draft and modified state.
 					if (EditorUi.enableDrafts)
 					{
 						//Workaround to delete the correct draft as the file object is updated in place
@@ -2293,6 +2324,7 @@ mxStencilRegistry.allowEval = false;
 	
 	EditorUi.prototype.saveData = async function(filename, format, data, mimeType, base64Encoded)
 	{
+		if (format === 'xml' && this.editor.graph.__trellisProjectFormat === 2) { try { data = await window.Trellis.sharing.portableXml(base64Encoded ? new TextDecoder().decode(Uint8Array.from(atob(data), value => value.charCodeAt(0))) : data); base64Encoded = false; } catch (error) { this.handleError(error); return; } } // CHANGE: materialize one captured revision before opening the export destination dialog.
 		var resume = (this.spinner != null && this.spinner.pause != null) ? this.spinner.pause() : function() {};
 		var lastDir = localStorage.getItem('.lastExpDir');
 		

@@ -27,7 +27,7 @@ app.whenReady().then(async () => {
         const { createCollaborationStore } = await import(pathToFileURL(path.join(project, 'src/main/trellis-collaboration-store.js')));
         const { generateKeyPairSync } = crypto, pair = generateKeyPairSync('ed25519');
         const keys = { publicKey: pair.publicKey.export({ type: 'spki', format: 'pem' }), privateKey: pair.privateKey };
-        const canvas = { shareId: 'native-refresh', diagramId: 'native-diagram', filename: 'Canvas.drawio', folderPath: path.join(directory, 'share'), diagramPath: path.join(directory, 'share/Canvas.drawio'), coordinatorDeviceId: 'device', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'device', publicKey: keys.publicKey }] };
+        const canvas = { protocolVersion: 4, shareId: 'native-refresh', diagramId: 'native-diagram', filename: 'Canvas.drawio', folderPath: path.join(directory, 'share'), diagramPath: path.join(directory, 'share/Canvas.drawio'), coordinatorDeviceId: 'device', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'device', publicKey: keys.publicKey }] }; // CHANGE: renderer and native fixture use the same supported legacy protocol.
         const writeAtomic = async (filename, contents) => {
             if (failCheckpoint && filename.includes('object-views')) throw new Error('Simulated checkpoint failure');
             await fs.mkdir(path.dirname(filename), { recursive: true }); const temporary = filename + '.tmp'; await fs.writeFile(temporary, contents); await fs.rename(temporary, filename);
@@ -58,11 +58,11 @@ app.whenReady().then(async () => {
             graph.model.addListener(mxEvent.CHANGE,()=>{if(!graph.__trellisSharingApplying)current.modified=true});
             graph.__trellisModules={clusters:{getCluster:()=>({id:'garden-cluster',modules:[a,b]}),revealCell(){}}};
             window.Trellis={users:{getCurrentUser:()=>({id:'alice'}),revalidateCurrentSession(){}}};
-            const {ipcRenderer}=require('electron');window.fixtureClaims=0;window.trellisShare={setContext:async()=>{},getStatus:async()=>({canvases:[{protocolVersion:3,shareId:'native-refresh',diagramPath:current.fileObject.path,state:'upToDate'}]}),getSyncthingShareInfo:async()=>({ok:true,managed:true,protocolVersion:3,shareId:'native-refresh',diagramId:'native-diagram',diagramPath:current.fileObject.path}),collaborationAction:async input=>{if(input.kind==='claim')fixtureClaims++;try{return await ipcRenderer.invoke('fixture-action',input)}finally{if(input.kind==='claim')fixtureClaims--}},saveRecoveryCopy:input=>ipcRenderer.invoke('fixture-recovery',input),onStatus:()=>()=>{},importHistory:async()=>({entries:[]})}; // CHANGE
+            const {ipcRenderer}=require('electron');window.fixtureClaims=0;window.trellisShare={setContext:async()=>{},getStatus:async()=>({canvases:[{protocolVersion:4,shareId:'native-refresh',diagramPath:current.fileObject.path,state:'upToDate'}]}),getSyncthingShareInfo:async()=>({ok:true,managed:true,protocolVersion:4,shareId:'native-refresh',diagramId:'native-diagram',diagramPath:current.fileObject.path}),collaborationAction:async input=>{if(input.kind==='claim')fixtureClaims++;try{return await ipcRenderer.invoke('fixture-action',input)}finally{if(input.kind==='claim')fixtureClaims--}},saveRecoveryCopy:input=>ipcRenderer.invoke('fixture-recovery',input),onStatus:()=>()=>{},importHistory:async()=>({entries:[]})}; // CHANGE
             window.electron={request:(_input,done)=>done({mtimeMs:1})};window.Draw={loadPlugin:fn=>fn(ui)};
             ipcRenderer.invoke('fixture-initialize',current.data);
         `);
-        for (const file of ['js/trellis-local-view.js', 'js/trellis-incoming-changes.js', 'js/trellis-editing-holds.js', 'plugins/garden_planner_plugins/Trellis_Syncthing.js']) await evaluate(await fs.readFile(path.join(webapp, file), 'utf8')); // CHANGE
+        for (const file of ['js/trellis-sync-contract.js', 'js/trellis-local-view.js', 'js/trellis-incoming-changes.js', 'js/trellis-editing-holds.js', 'plugins/garden_planner_plugins/Trellis_Syncthing.js']) await evaluate(await fs.readFile(path.join(webapp, file), 'utf8')); // CHANGE
         await until("window.Trellis.sharing?.isExplicitRefresh() && !window.Trellis.sharing.isPendingCell(a)");
         const output = path.join(project, '.test-artifacts/explicit-refresh'); await fs.mkdir(output, { recursive: true }); // CHANGE
         if (!benchmark) { // NEW: keep the large workload separate from the small failure/race scenarios.

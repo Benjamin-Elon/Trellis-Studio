@@ -102,6 +102,38 @@ test('ordinary unrelated cell edits do not schedule a whole-graph roadmap refres
     await new Promise(resolve => h.w.requestAnimationFrame(() => h.w.requestAnimationFrame(resolve))); assert.equal(refreshes, 0); // CHANGE
 }); // CHANGE
 
+test('unrelated planting hierarchy edits retain the roadmap projection cache', async t => { // NEW
+    const h = harness(t); await frame(h); const projection = h.api.getLayout(h.board); // NEW
+    const bed = h.graph.insertVertex(h.graph.getDefaultParent(), 'unrelated-bed', 'Bed', 900, 650, 150, 300); // NEW
+    const planting = h.graph.insertVertex(bed, 'unrelated-planting', 'Dill', 0, 0, 50, 50); await frame(h); // NEW
+    assert.equal(h.api.getLayout(h.board), projection, 'planting insertion must not invalidate unrelated roadmap layout'); // NEW
+    h.model.add(h.graph.getDefaultParent(), planting); await frame(h); assert.equal(h.api.getLayout(h.board), projection); // NEW
+    h.graph.removeCells([planting, bed]); await frame(h); assert.equal(h.api.getLayout(h.board), projection); // NEW
+}); // NEW
+test('generic containers carrying a roadmap still invalidate projections when inserted and removed', async t => { // NEW
+    const h = harness(t); await frame(h); const before = h.api.getLayout(h.board); // NEW
+    const wrapper = new h.w.mxCell('Wrapper', new h.w.mxGeometry(900, 650, 800, 500)); wrapper.setVertex(true); // NEW
+    const clone = h.graph.cloneCells([h.board])[0]; clearIdsForDecodedPaste(h, clone); wrapper.insert(clone); h.model.add(h.graph.getDefaultParent(), wrapper); await frame(h); // NEW
+    const inserted = h.api.getLayout(h.board); assert.notEqual(inserted, before, 'a nested board must enter the roadmap registry'); // NEW
+    h.graph.removeCells([wrapper]); await frame(h); assert.notEqual(h.api.getLayout(h.board), inserted, 'removing the container must invalidate its nested board'); // NEW
+}); // NEW
+for (const roadmapLink of [false, true]) test((roadmapLink ? 'roadmap-linked' : 'planting-linked') + ' task edits invalidate only their dependent projection', async t => { // NEW
+    const h = harness(t), planting = h.graph.insertVertex(h.graph.getDefaultParent(), 'linked-planting', 'Dill', 900, 650, 50, 50); await frame(h); // NEW
+    const before = h.api.getLayout(h.board), value = h.w.mxUtils.createXmlDocument().createElement('object'); value.setAttribute('linkedTo', roadmapLink ? h.object.id : planting.id); // NEW
+    const task = h.graph.insertVertex(h.graph.getDefaultParent(), 'linked-task', value, 900, 720, 50, 50); await frame(h); // NEW
+    const inserted = h.api.getLayout(h.board); assert.equal(inserted === before, !roadmapLink); // NEW
+    const updated = task.value.cloneNode(true); updated.setAttribute('label', 'Updated task'); h.model.setValue(task, updated); await frame(h); // NEW
+    const edited = h.api.getLayout(h.board); assert.equal(edited === inserted, !roadmapLink); // NEW
+    h.graph.removeCells([task]); await frame(h); assert.equal(h.api.getLayout(h.board) === edited, !roadmapLink); // NEW
+}); // NEW
+
+test('roadmap refresh invalidates its own view without redrawing unrelated garden cells', async t => { // NEW
+    const h = harness(t); await new Promise(resolve => h.w.requestAnimationFrame(resolve)); // NEW
+    const unrelated = h.graph.insertVertex(h.graph.getDefaultParent(), 'unrelated', 'Planting', 900, 650, 40, 30); await new Promise(resolve => h.w.requestAnimationFrame(resolve)); // NEW
+    const state = h.graph.view.getState(unrelated), shape = state.shape; let redraws = 0; const redraw = shape.redraw; shape.redraw = function () { redraws++; return redraw.apply(this, arguments); }; // NEW
+    h.api.refresh(); await new Promise(resolve => h.w.requestAnimationFrame(() => h.w.requestAnimationFrame(resolve))); assert.equal(redraws, 0); // NEW
+}); // NEW
+
 test('Main creation is usable, idempotent, inclusive, and gives secondary projects unused names', t => {
     const h = harness(t); assert.ok(h.board, h.alerts.join('\n'));
     assert.equal(h.api.ensureMainRoadmapInRoadmapModule(h.module), h.board);

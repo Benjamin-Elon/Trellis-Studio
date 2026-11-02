@@ -1,11 +1,14 @@
 // NEW: Pure parsing and integrity rules shared by the desktop sharing service and tests.
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks'; // NEW: verification-local parsing reuse never exposes cached mutable DOMs.
+import '../../drawio/src/main/webapp/js/trellis-sync-contract.js'; // NEW
 import '../../drawio/src/main/webapp/js/trellis-permission-core.js'; // NEW
 import zlib from 'node:zlib';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { policy, LIMITS, parseJson, validateJson, textLimit } from './trellis-input-policy.js'; // NEW
 
 export const SHARE_SCHEMA = 1;
+export const SYNC_PROTOCOL = globalThis.TrellisSyncContract; // NEW: main and renderer consume the same immutable wire contract.
 export const SYNCTHING_VERSION = '2.1.6';
 export const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 export const makeId = () => crypto.randomUUID();
@@ -41,9 +44,29 @@ export function parseXml(xml) {
     policy.validateNode(doc.documentElement, false); return doc; // CHANGE
 }
 const serialize = node => new XMLSerializer().serializeToString(node);
+const diagramInspections = new AsyncLocalStorage(); // NEW
+/** A verification pass can reuse validated XML; callers always receive independent DOMs. */ // NEW
+export function withDiagramInspectionCache(operation) { return diagramInspections.run({ entries: new Map(), bytes: 0 }, operation); } // NEW
+function decodedDocument(outer, pages) { // NEW
+    return { pages, serialize() { // NEW
+        for (const page of pages) if (page.container) { // NEW
+            while (page.container.firstChild) page.container.removeChild(page.container.firstChild); // NEW
+            const text = serialize(page.doc.documentElement); // NEW
+            if (page.compressed) page.container.appendChild(outer.createTextNode(zlib.deflateRawSync(Buffer.from(encodeURIComponent(text))).toString('base64'))); // NEW
+            else page.container.appendChild(outer.importNode(page.doc.documentElement, true)); // NEW
+        } // NEW
+        return serialize(outer); // NEW
+    } }; // NEW
+} // NEW
+function cloneDecoded(cached) { // NEW
+    const outer = cached.outer.cloneNode(true), containers = Array.from(outer.getElementsByTagName('diagram')); // NEW
+    return decodedDocument(outer, cached.pages.map((page, index) => ({ doc: page.container ? page.doc.cloneNode(true) : outer, container: page.container ? containers[index] : null, compressed: page.compressed }))); // NEW
+} // NEW
 /** Decode every page, retaining the original compressed/uncompressed representation. */
 export function diagramDocument(xml, maximum = LIMITS.diagram) { // CHANGE: consumers may impose a smaller aggregate budget.
     maximum = Math.min(LIMITS.diagram, maximum);
+    textLimit(xml); const cache = diagramInspections.getStore(), cached = cache?.entries.get(xml); // NEW
+    if (cached) { if (cached.decodedBytes > maximum) policy.fail('INPUT_LIMIT', 'Decoded diagram exceeds its total byte limit.'); return cloneDecoded(cached); } // NEW
     const outer = parseXml(xml);
     const pages = []; let decodedBytes = 0; // CHANGE
     const accept = page => { const text = serialize(page.doc.documentElement); decodedBytes += Buffer.byteLength(text); if (decodedBytes > maximum) policy.fail('INPUT_LIMIT', 'Decoded diagram exceeds its total byte limit.'); policy.validateModel(page.doc.documentElement); pages.push(page); }; // NEW
@@ -60,18 +83,16 @@ export function diagramDocument(xml, maximum = LIMITS.diagram) { // CHANGE: cons
     }
     if (!pages.length) throw new Error('Only XML .drawio canvases can be shared.');
     policy.validatePageIds(pages.map(page => page.container?.getAttribute('id'))); // CHANGE: reject names inherited by native page dictionaries too.
-    return {
-        pages,
-        serialize() {
-            for (const page of pages) if (page.container) {
-                while (page.container.firstChild) page.container.removeChild(page.container.firstChild);
-                const text = serialize(page.doc.documentElement);
-                if (page.compressed) page.container.appendChild(outer.createTextNode(zlib.deflateRawSync(Buffer.from(encodeURIComponent(text))).toString('base64')));
-                else page.container.appendChild(outer.importNode(page.doc.documentElement, true));
-            }
-            return serialize(outer);
-        }
-    };
+    if (cache) { // NEW: cache only after complete structural and budget validation succeeds.
+        const size = xml.length * 8 + decodedBytes * 4, limit = 32 * 1024 * 1024; // NEW: bounded per-verification working set.
+        if (size <= limit) { // NEW
+            while (cache.bytes + size > limit && cache.entries.size) { const key = cache.entries.keys().next().value; cache.bytes -= cache.entries.get(key).size; cache.entries.delete(key); } // NEW
+            const privateOuter = outer.cloneNode(true); // NEW
+            cache.entries.set(xml, { outer: privateOuter, pages: pages.map(page => ({ ...page, doc: page.container ? page.doc.cloneNode(true) : privateOuter })), decodedBytes, size }); cache.bytes += size; // NEW
+        } // NEW
+    } // NEW
+    return decodedDocument(outer, pages); // CHANGE
+
 }
 function jsonAttr(node, key, fallback) {
     const raw = node.getAttribute(key);
@@ -137,7 +158,7 @@ export function decodeBlock(kind, text) {
     const raw = text.slice(text.indexOf(start) + start.length, text.indexOf(end)).trim();
     if (!text.includes(start) || !text.includes(end) || !/^[A-Za-z0-9+/=\s]+$/.test(raw)) throw new Error('Paste the complete Trellis sharing block.');
     const result = parseJson(Buffer.from(raw, 'base64').toString(), LIMITS.invitation); // CHANGE
-    if (result.schema !== 2 || result.protocolVersion !== 4) throw new Error('Unsupported Trellis sharing protocol. Only version 4 invitations and replies are supported.'); // CHANGE
+    if (result.schema !== 2 || !SYNC_PROTOCOL.supportedGardens.includes(result.protocolVersion)) throw new Error('Unsupported Trellis sharing protocol. Only version 4 and 5 invitations and replies are supported.'); // CHANGE
     safeId(result.shareId);
     safeId(result.diagramId);
     if (typeof result.deviceId !== 'string' || !/^[A-Z2-7-]{63}$/.test(result.deviceId)) throw new Error('Invalid Syncthing device ID.');

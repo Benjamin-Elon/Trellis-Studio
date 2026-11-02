@@ -3,7 +3,7 @@ import { parseJson, listBounded, readJson as readBoundedJson, readBounded, LIMIT
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
 import crypto from 'node:crypto'; // NEW
-import { decodeBlock, encodeBlock, inspectDiagram, hasCanvasAccess, safeId } from './trellis-share-protocol.js'; // CHANGE
+import { SYNC_PROTOCOL, decodeBlock, encodeBlock, inspectDiagram, hasCanvasAccess, safeId } from './trellis-share-protocol.js'; // CHANGE
 
 /** Extract exactly one invitation, including normal quoted plain-text email formatting. */ // NEW
 export function parseGardenInvitation(text, now = Date.now(), allowExpired = false) { // CHANGE
@@ -14,7 +14,7 @@ export function parseGardenInvitation(text, now = Date.now(), allowExpired = fal
     safeId(invite.inviteId); safeId(invite.pendingUserId); // NEW
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invite.email || '') || (!invite.code && !invite.deviceSetup)) throw new Error('The invitation is incomplete. Ask the sender for a new invitation.'); // NEW
     if (!Number.isFinite(invite.expiresAt) || !allowExpired && invite.expiresAt <= now) throw new Error('This invitation has expired. Ask the sender for a new invitation.'); // CHANGE
-    if (invite.folderId !== 'trellis-v3-' + invite.shareId || !invite.coordinatorPublicKey || path.basename(invite.filename || '') !== invite.filename || !/\.drawio$/i.test(invite.filename)) throw new Error('The invitation contains invalid project details.'); // NEW
+    if (invite.folderId !== SYNC_PROTOCOL.gardenFolder(invite.shareId, invite.protocolVersion) || !invite.coordinatorPublicKey || path.basename(invite.filename || '') !== invite.filename || !/\.drawio$/i.test(invite.filename)) throw new Error('The invitation contains invalid project details.'); // NEW
     return invite; // NEW
 } // NEW
 

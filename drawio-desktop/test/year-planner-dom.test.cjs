@@ -24,6 +24,88 @@ function addDemand(plan, overrides = {}) {
     return line;
 }
 
+/** Exercise both production plugins so navigation, cleanup, and committed-plan reload share one window. */ // CHANGE
+test("Allocate opens its Year Plan and Save & Close returns once after cleanup with fresh plan data", async t => { // CHANGE
+    const h = createYearPlannerHarness({ allocate: true }), usl = h.window.USL, returns = []; // CHANGE
+    t.after(() => { usl.allocate.close('test'); h.dom.window.close(); }); // CHANGE
+    savePlan(h, 2026); // CHANGE
+    usl.scheduler = { resolveCityForModule: async () => ({ ok: true, city: {} }) }; // CHANGE
+    usl.tiler = { listGardenBeds: () => [], listPlantingFootprints: () => [] }; // CHANGE
+    const loadedYields = [], loadPlan = usl.planningCore.loadPlanForYear; // CHANGE
+    usl.planningCore.loadPlanForYear = (...args) => { const plan = loadPlan(...args); loadedYields.push(plan?.crops[0]?.kgPerPlant); return plan; }; // CHANGE: observe the actual plan reloaded by Allocate after the committed save.
+    const allocation = await usl.allocate.open(h.moduleCell, 2026); // CHANGE
+    const oldHud = allocation.hud, oldOverlay = allocation.overlayHost; // CHANGE
+    allocation.hudRefs.openYearPlan.click(); await h.settle(); // CHANGE
+    assert.equal(allocation.closed, true); assert.equal(usl.allocate.isActive(), false); // CHANGE
+    assert.equal(oldHud.isConnected, false); assert.equal(oldOverlay.isConnected, false); // CHANGE
+    assert.equal(h.graph.__trellisPlantingPreviewDrafts.size, 0); // CHANGE
+    assert.ok(h.document.querySelector('.yp-modal-card')); // CHANGE
+    h.setControlValue(h.document.querySelector('[data-year-plan-field="kgPerPlant"]'), 2); // CHANGE
+    h.window.addEventListener('usl:allocatePlanRequested', event => { // CHANGE
+        assert.equal(h.document.querySelector('.yp-modal-card'), null); // CHANGE
+        returns.push(JSON.parse(JSON.stringify(event.detail))); // CHANGE
+    }); // CHANGE
+    const saveClose = h.findButton('Save & Close'); assert.ok(saveClose); saveClose.click(); await h.settle(); // CHANGE
+    assert.deepEqual(returns, [{ moduleCellId: h.moduleCell.id, year: 2026 }]); // CHANGE
+    assert.equal(usl.allocate.isActive(), true); // CHANGE
+    assert.deepEqual(loadedYields, [1, 2]); // CHANGE
+    const reopenedHud = h.document.querySelector('.trellis-allocate-hud'); assert.ok(reopenedHud); // CHANGE
+    assert.notEqual(reopenedHud, oldHud); assert.match(reopenedHud.textContent, /No demand to allocate/); // CHANGE
+    const button = Array.from(reopenedHud.querySelectorAll('button')).find(node => node.textContent === 'Open Year Plan'); // CHANGE
+    assert.ok(button); assert.notEqual(button.style.display, 'none'); // CHANGE
+    assert.equal(h.api.PlanRepository.loadPlanForYear(h.moduleCell, 2026).crops[0].kgPerPlant, 2); // CHANGE
+    saveClose.click(); await h.settle(); assert.equal(returns.length, 1); // CHANGE: detached save buttons cannot repeat an old session's return.
+}); // CHANGE
+
+test("Year Plan return context applies only to committed Save & Close in its own session", async t => { // CHANGE
+    for (const scenario of [ // CHANGE
+        { name: 'ordinary Save', action: 'Save', remainsOpen: true }, // CHANGE
+        { name: 'draft Save', action: 'Save draft', draft: true, remainsOpen: true }, // CHANGE
+        { name: 'draft Save & Close', action: 'Save draft & Close', draft: true }, // CHANGE
+        { name: 'Close with dirty work', action: 'Close', dirty: true }, // CHANGE
+        { name: 'Discard', action: 'Discard', dirty: true }, // CHANGE
+        { name: 'normal opening', action: 'Save & Close', normal: true }, // CHANGE
+        { name: 'replaced session', action: 'Save & Close', replace: true } // CHANGE
+    ]) await t.test(scenario.name, async t => { // CHANGE
+        const h = createYearPlannerHarness(), returns = []; t.after(() => h.dom.window.close()); // CHANGE
+        if (!scenario.draft) savePlan(h, 2026); // CHANGE
+        h.window.addEventListener('usl:allocatePlanRequested', event => returns.push(event.detail)); // CHANGE
+        const session = h.api.YearPlanModalController.open(h.moduleCell, 2026, { returnToAllocate: !scenario.normal }); await h.settle(); // CHANGE
+        if (scenario.dirty) session.plan.selfSufficiency.adults = 3; // CHANGE
+        if (scenario.replace) await h.openModal(2026); // CHANGE
+        const action = h.findButton(scenario.action); assert.ok(action); action.click(); await h.settle(); // CHANGE
+        assert.equal(returns.length, 0); // CHANGE
+        assert.equal(!!h.document.querySelector('.yp-modal-card'), !!scenario.remainsOpen); // CHANGE
+    }); // CHANGE
+}); // CHANGE
+
+test("Year Plan returns to the original year after saving a different year", async t => { // CHANGE
+    const h = createYearPlannerHarness(), returns = []; t.after(() => h.dom.window.close()); // CHANGE
+    savePlan(h, 2026); savePlan(h, 2027, plan => { plan.crops[0].harvestStart = '2027-06-01'; plan.crops[0].harvestEnd = '2027-09-30'; }); // CHANGE
+    h.api.YearPlanModalController.open(h.moduleCell, 2026, { returnToAllocate: true }); await h.settle(); // CHANGE
+    h.window.addEventListener('usl:allocatePlanRequested', event => { // CHANGE
+        assert.equal(h.document.querySelector('.yp-modal-card'), null); returns.push(JSON.parse(JSON.stringify(event.detail))); // CHANGE
+    }); // CHANGE
+    h.setControlValue(h.document.querySelector('[data-trellis-quickstart="plan-year"]'), 2027, 'change'); await h.settle(); // CHANGE
+    h.setControlValue(h.document.querySelector('[data-year-plan-field="kgPerPlant"]'), 3); // CHANGE
+    h.findButton('Save & Close').click(); await h.settle(); // CHANGE
+    assert.deepEqual(returns, [{ moduleCellId: h.moduleCell.id, year: 2026 }]); // CHANGE
+    assert.equal(h.api.PlanRepository.loadPlanForYear(h.moduleCell, 2027).crops[0].kgPerPlant, 3); // CHANGE
+    assert.equal(h.api.PlanRepository.loadPlanForYear(h.moduleCell, 2026).crops[0].kgPerPlant, 1); // CHANGE
+}); // CHANGE
+
+test("Year Plan persistence failures do not close the modal or return to Allocate", async t => { // CHANGE
+    const h = createYearPlannerHarness(), returns = [], failures = []; t.after(() => h.dom.window.close()); // CHANGE
+    savePlan(h, 2026); const session = h.api.YearPlanModalController.open(h.moduleCell, 2026, { returnToAllocate: true }); await h.settle(); // CHANGE
+    h.window.addEventListener('usl:allocatePlanRequested', event => returns.push(event.detail)); // CHANGE
+    h.window.addEventListener('error', event => { failures.push(event.error); event.preventDefault(); }); // CHANGE
+    h.api.PlanRepository.savePlanForYear = () => { throw new Error('Save failed'); }; // CHANGE
+    h.findButton('Save & Close').click(); await h.settle(); // CHANGE
+    assert.equal(failures.length, 1); assert.match(failures[0].message, /Save failed/); // CHANGE
+    assert.equal(returns.length, 0); assert.equal(h.api.SessionController.isActive(session), true); // CHANGE
+    assert.ok(h.document.querySelector('.yp-modal-card')); // CHANGE
+}); // CHANGE
+
 function findStrip(document, id) {
     return document.querySelector(`[data-year-plan-strip="${id}"]`);
 }
@@ -1727,7 +1809,7 @@ test("debounced Demand typing preserves the focused control", async t => {
         addDemand(plan);
     });
     const session = await harness.openModal(2026);
-    const qty = findStripDetails(harness.document, "demand").querySelector('input[type="number"]');
+    const qty = findDemandLine(harness.document).querySelector('input[type="number"]'); // CHANGE: channel level is independent of line quantity.
     qty.focus();
     harness.setControlValue(qty, 7);
     await harness.settle(130);
@@ -1795,7 +1877,7 @@ test("Demand lines collapse to operational summaries without losing edits", asyn
     assert.match(collapsedLine.textContent, /Crop\s*Tomato/);
     assert.match(collapsedLine.textContent, /Qty\s*7 kg \/ week/);
     assert.match(collapsedLine.textContent, /Dates\s*Jun 01-Jun 07/);
-    assert.match(collapsedLine.textContent, /Priority\s*Target/);
+    assert.match(collapsedLine.textContent, /Priority\s*Level 3/);
     assert.match(collapsedLine.textContent, /Demand\s*7\.0 kg/);
     assert.match(collapsedLine.textContent, /Short\s*7\.0 kg/);
     assert.match(collapsedLine.textContent, /Potential\s*\$14\.00/);

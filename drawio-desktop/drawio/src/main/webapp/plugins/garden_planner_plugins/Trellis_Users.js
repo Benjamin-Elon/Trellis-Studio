@@ -48,7 +48,7 @@ Draw.loadPlugin(function (ui) {
     const CAP_EDIT_TASK_DETAILS = "edit_task_details";
     const CAP_MANAGE_SCOPE_CONTENT = "manage_scope_content";
     const CAP_MANAGE_ACCESS = "manage_access";
-    const DOMAIN_CAPABILITIES = [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS];
+    const DOMAIN_CAPABILITIES = [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS, "manage_seed_exchange", "manage_csa"]; // CHANGE: separately delegated Exchange capabilities.
     const PRESET_CAPABILITIES = {
         visitor: [],
         gardener: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS],
@@ -496,7 +496,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function normalizeCapabilities(capabilities, preset) {
-        return normalizeCapabilityList(PRESET_CAPABILITIES[normalizePreset(preset)]);
+        return normalizeCapabilityList([...PRESET_CAPABILITIES[normalizePreset(preset)], ...(Array.isArray(capabilities) ? capabilities : []).filter(value => ['manage_seed_exchange', 'manage_csa'].includes(value))]); // CHANGE: preserve independently delegated Exchange authority.
     }
 
     function presetRank(preset) {
@@ -1168,7 +1168,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function directCapabilitiesForCell(cell, userId) { // CHANGE
-        try { const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)); return new Set(window.TrellisPermissionCore.directCapabilities(snapshot, userId, permissionFacts(cell).key)); } catch (_) { return new Set(); } // CHANGE
+        try { const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)); return new Set(window.TrellisPermissionCore.directCapabilities(snapshot, userId, permissionCellKey(cell))); } catch (_) { return new Set(); } // CHANGE
     } // CHANGE
 
     function roleCardsForUser(userId) {
@@ -1482,29 +1482,34 @@ Draw.loadPlugin(function (ui) {
         return policy && policy.diagramId === diagram && policy.cells.has(JSON.stringify(['', id])) && !policy.cells.has(JSON.stringify([page, id])) ? '' : page; // CHANGE
     } // NEW
     /** Capture plain graph facts; native changes are reversed only in private copies. */ // NEW
+    function permissionCellKey(cell) { return JSON.stringify([permissionPageId(), String(cellStableId(cell))]); } // NEW: identity queries must never serialize object content or reference catalogs.
+    let operationFacts = null; // CHANGE: transaction-local memoization cannot outlive a direct model mutation.
     function permissionFacts(cell) { // NEW
+        if (operationFacts?.has(cell)) return operationFacts.get(cell); // CHANGE
         const pageId = permissionPageId(); // CHANGE
         const id = String(cellStableId(cell)), keyFor = value => value ? JSON.stringify([pageId, String(cellStableId(value))]) : null; // NEW
         const attributes = cell?.value?.nodeType === 1 ? Object.fromEntries(Array.from(cell.value.attributes).map(attribute => [attribute.name, attribute.value])) : { label: typeof cell?.value === 'string' ? cell.value : '' }; // NEW
         const parent = model.getParent ? model.getParent(cell) : cell.parent; // NEW
         const geometry = cell.geometry || cell.getGeometry?.(); // NEW
-        return { key: keyFor(cell), id, pageId, parent: keyFor(parent), root: cell === model.getRoot(), layer: cell === graph.getDefaultParent(), attributes, valueContent: permissionValueContent(cell?.value), style: getStyle(cell), vertex: !!(cell.isVertex ? cell.isVertex() : cell.vertex), edge: !!(cell.isEdge ? cell.isEdge() : cell.edge), geometry: geometry ? JSON.stringify(geometry) : '', source: String(cellStableId(cell.source) || ''), target: String(cellStableId(cell.target) || ''), collapsed: cell.collapsed ? '1' : '', visible: cell.visible === false ? '0' : '' }; // NEW
+        const fact = { key: keyFor(cell), id, pageId, parent: keyFor(parent), root: cell === model.getRoot(), layer: cell === graph.getDefaultParent(), attributes: Object.freeze(attributes), valueContent: permissionValueContent(cell?.value), style: getStyle(cell), vertex: !!(cell.isVertex ? cell.isVertex() : cell.vertex), edge: !!(cell.isEdge ? cell.isEdge() : cell.edge), geometry: geometry ? JSON.stringify(geometry) : '', source: String(cellStableId(cell.source) || ''), target: String(cellStableId(cell.target) || ''), collapsed: cell.collapsed ? '1' : '', visible: cell.visible === false ? '0' : '' }; // CHANGE
+        const freeze = value => { if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }; freeze(fact); operationFacts?.set(cell, fact); return fact; // CHANGE
     } // NEW
 
     /** The accepted policy is independent of the represented canvas; no internal flag selects its authority. */ // NEW
     function permissionSnapshotFor(changes, previous, includeDetached = false) { // CHANGE // NEW
-        const core = window.TrellisPermissionCore, cells = new Map(), extras = new Map(); // NEW
+        const core = window.TrellisPermissionCore, cells = new Map(), extras = new Map(), absent = new Set(); // CHANGE: ancestor reconstruction must not resurrect children absent before this transaction. // NEW
         traverseCells(model.getRoot(), cell => { const fact = permissionFacts(cell); if (fact.root || fact.parent) cells.set(fact.key, fact); }); // CHANGE
         for (const change of changes || []) { const cell = cellFromChange(change); if (cell) traverseCells(cell, item => { const fact = permissionFacts(item); extras.set(fact.key, fact); }); } // NEW
         if (includeDetached) for (const [key, fact] of extras) if (!cells.has(key)) cells.set(key, fact); // NEW
         if (previous) for (const change of [...(changes || [])].reverse()) { // NEW
             const cell = cellFromChange(change); if (!cell) continue; // NEW
-            const key = permissionFacts(cell).key, fact = cells.get(key) || extras.get(key), name = change.constructor?.name; if (!fact) continue; // NEW
+            const key = permissionCellKey(cell), fact = cells.get(key) || extras.get(key), name = change.constructor?.name; if (!fact) continue; // NEW
             const old = { ...fact, attributes: { ...fact.attributes } }; // NEW
             if (name === 'mxChildChange') { // NEW
-                if (!change.previous) { cells.delete(key); continue; } // NEW
-                old.parent = permissionFacts(change.previous).key; // NEW
-                traverseCells(cell, item => { const child = permissionFacts(item); if (!cells.has(child.key)) cells.set(child.key, child); }); // NEW
+                if (!change.previous) { cells.delete(key); absent.add(key); continue; } // CHANGE
+                absent.delete(key); // CHANGE: reversing an earlier removal restores a genuinely pre-existing object. // NEW
+                old.parent = permissionCellKey(change.previous); // NEW
+                traverseCells(cell, item => { const child = permissionFacts(item); if (!cells.has(child.key) && !absent.has(child.key)) cells.set(child.key, child); }); // NEW
             } else if (name === 'mxValueChange') { old.attributes = change.previous?.nodeType === 1 ? Object.fromEntries(Array.from(change.previous.attributes).map(attribute => [attribute.name, attribute.value])) : { label: typeof change.previous === 'string' ? change.previous : '' }; old.valueContent = permissionValueContent(change.previous); } // CHANGE: reverse every part of the XML value.
             else if (name === 'mxCellAttributeChange') { const attribute = change.attribute || change.key; if (change.previous == null) delete old.attributes[attribute]; else old.attributes[attribute] = String(change.previous); } // NEW
             else if (name === 'mxStyleChange') old.style = change.previous || ''; // NEW
@@ -1551,21 +1556,32 @@ Draw.loadPlugin(function (ui) {
     function pendingPermissionChanges(changes = []) { // NEW: existing unsaved native edits prove creation across commands until publication finishes.
         return [...new Set([...(graph.__trellisSharing?.permissionChanges?.() || []), ...changes])]; // NEW
     } // NEW
+    let pendingPermissionRevision = 0, pendingPermissionCache = null; // NEW
+    model.addListener(mxEvent.CHANGE, () => { pendingPermissionRevision++; pendingPermissionCache = null; }); // NEW: root replacement, rollback, undo, and content edits invalidate derived creation evidence.
+    function pendingCreationSnapshots(changes) { // NEW
+        const pageId = permissionPageId(), cached = pendingPermissionCache; // NEW
+        if (!model.updateLevel && cached?.revision === pendingPermissionRevision && cached.pageId === pageId && cached.changes.length === changes.length && changes.every((change, index) => cached.changes[index] === change)) return cached; // NEW
+        const previousFacts = operationFacts; operationFacts = previousFacts || new WeakMap(); // NEW
+        let result; try { result = { before: permissionSnapshotFor(changes, true), after: permissionSnapshotFor(changes, false) }; } finally { operationFacts = previousFacts; } // NEW
+        if (!model.updateLevel) pendingPermissionCache = { ...result, revision: pendingPermissionRevision, pageId, changes: changes.slice() }; // NEW: in-flight transactions always capture fresh facts.
+        return result; // NEW
+    } // NEW
     function permissionDecision(action, cell) { // NEW
         try { // NEW
+            for (let ancestor = cell; ancestor; ancestor = parentOf(ancestor)) if (graph.__trellisReferenceUnavailable?.[ancestor.id]) return { allowed: false, reason: graph.__trellisReferenceUnavailable[ancestor.id].reason }; // CHANGE: unavailable dependencies disable affected controls before a mutation is attempted.
             const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)), actor = currentUser(); // NEW
-            const core = window.TrellisPermissionCore, key = cell ? permissionFacts(cell).key : null, at = nowMs(); // CHANGE
+            const core = window.TrellisPermissionCore, key = cell ? permissionCellKey(cell) : null, at = nowMs(); // CHANGE
             const result = core.authorize(snapshot, actor?.id || '', action, key, at); // CHANGE
             if (!result.allowed && cell && !snapshot.cells[key] && permissionTransaction) return core.authorizePendingCreation(permissionTransaction.before, permissionTransaction.after, actor?.id || '', action, key, at, { policy: snapshot }); // NEW
             if (result.allowed || !cell || snapshot.cells[key]) return result; // CHANGE
             const changes = pendingPermissionChanges(model.updateLevel ? model.currentEdit?.changes || [] : []); if (!changes.length) return result; // CHANGE
-            const before = permissionSnapshotFor(changes, true), after = permissionSnapshotFor(changes, false); // NEW
+            const { before, after } = pendingCreationSnapshots(changes); // CHANGE: redraw queries reuse immutable evidence until actual model content changes.
             return core.authorizePendingCreation(before, after, actor?.id || '', action, key, at, { policy: snapshot }); // NEW: actual pending native creation, never an internal flag or proposed grant.
         } catch (_) { return { allowed: false, reason: 'Invalid permission data.' }; } // NEW
     } // NEW
 
     function effectiveCapabilitiesForCell(cell, userId) { // CHANGE
-        try { const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)); return window.TrellisPermissionCore.effectiveCapabilities(snapshot, userId || currentUser()?.id || '', permissionFacts(cell).key, nowMs()); } catch (_) { return []; } // CHANGE
+        try { const snapshot = permissionOperation || acceptedPermissionSnapshot(() => permissionQuerySnapshot(cell)); return window.TrellisPermissionCore.effectiveCapabilities(snapshot, userId || currentUser()?.id || '', permissionCellKey(cell), nowMs()); } catch (_) { return []; } // CHANGE
     } // CHANGE
 
     function hasCapability(cell, capability) { // CHANGE
@@ -2641,7 +2657,7 @@ Draw.loadPlugin(function (ui) {
             previousParent: debugCellRef(previousParent),
             nearestOwnedScope: debugOwnedScope(cell),
             effectiveCapabilities: cell && user ? effectiveCapabilitiesForCell(cell, user.id) : [],
-            pendingCreation: { decision: permissionDecision('edit', cell), pending: graph.__trellisSharing?.isPendingCell?.(cell), before: !!permissionTransaction?.before.cells[permissionFacts(cell).key], after: !!permissionTransaction?.after.cells[permissionFacts(cell).key], page: permissionPageId() }, // NEW: distinguish prior-authority rejection from operational freshness in existing opt-in diagnostics.
+            pendingCreation: { decision: permissionDecision('edit', cell), pending: graph.__trellisSharing?.isPendingCell?.(cell), before: !!permissionTransaction?.before.cells[permissionCellKey(cell)], after: !!permissionTransaction?.after.cells[permissionCellKey(cell)], page: permissionPageId() }, // NEW: distinguish prior-authority rejection from operational freshness in existing opt-in diagnostics.
             decisions: {
                 canCreatePlantingAtCurrentParent: canCreatePlanting(currentParent),
                 canManagePlanting: canManagePlanting(cell),
@@ -2915,6 +2931,7 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     function changeAllowed(change, context) {
+        for (let cell = cellFromChange(change); cell; cell = parentOf(cell)) if (graph.__trellisReferenceUnavailable?.[cell.id]) return false; // CHANGE: missing definitions make only the dependent garden read-only.
         const referencePermission = graph.__trellisReferences?.changeAllowed(change, context); // NEW
         if (referencePermission === false) return false; // NEW: apply before administrator shortcuts.
         const namingAttrs = changedAttributeNames(change); // NEW
@@ -2980,8 +2997,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     function rejectEdit(edit, reason, context) {
+        if (usersDebugEnabled()) { // CHANGE: bounded structural evidence excludes values, catalogs, credentials and user names.
+            const traces = window.__trellisRejectedEdits || (window.__trellisRejectedEdits = []); // CHANGE
+            traces.push({ at: Date.now(), reason, changes: (edit?.changes || []).slice(0, 16).map(change => ({ type: change.constructor?.name, id: String(cellStableId(cellFromChange(change))), fields: changedAttributeNames(change), kind: editContext?.kindOf(change) || 'manual', stack: change.__trellisOriginStack || '' })) }); if (traces.length > 32) traces.shift(); // CHANGE
+        } // CHANGE
         logRejectedEdit(edit, reason);
-        if (edit) { edit.__trellisUsersRejected = true; edit.__trellisUsersRejectedReason = reason || 'Change rejected by user permissions.'; } // CHANGE: retain the actual transaction failure for initiating commands.
+        if (edit) { edit.__trellisUsersRejected = true; edit.__trellisUsersRejectedReason = reason || 'Change rejected by user permissions.'; edit.ignoreEdit = true; } // CHANGE: retain the failure for the factory; native file listeners must not dirty or autosave the rejected edit or its rollback notification.
         graph[REJECT_FLAG] = true;
         graph[INTERNAL_FLAG] = true;
         try {
@@ -3001,25 +3022,41 @@ Draw.loadPlugin(function (ui) {
         return new Set(changes.filter(change => { const names = changedAttributeNames(change); return names.length && names.every(name => fields.has(name)) && guard.changeAllowed(change, {}) === true; }).map(change => permissionFacts(cellFromChange(change)).key)); // NEW
     } // NEW
 
+    /** Native seed effects join this undo edit; accepted saves independently derive and validate them again. */ // NEW
+    function prepareSeedEffects(edit, changes) { // NEW
+        const core = window.TrellisSeedsCore; if (!core || graph.__trellisSharingApplying || graph.__trellisLocalViewChanging || graph.__ccHistoryRestoring) return new Set(); // NEW
+        if (!changes.some(change => { const cell = cellFromChange(change); return ['direct_sowing', 'seedling_starting'].includes(getAttr(cell, 'task_type_id')) || changedAttributeNames(change).includes(core.ATTR); })) return new Set(); // NEW: ordinary edits never scan task accounting.
+        const before = permissionSnapshotFor(changes, true), after = permissionSnapshotFor(changes, false), result = core.transition(before, after); // NEW
+        for (const update of result.updates) { // NEW
+            const cell = model.getCell(JSON.parse(update.key)[1]); // NEW
+            if (!cell || !cell.value?.cloneNode) throw new Error('The seed garden is unavailable.'); // NEW
+            const node = cell.value.cloneNode(true); node.setAttribute(core.ATTR, JSON.stringify(update.value)); // NEW
+            const change = new mxValueChange(model, cell, node); change.execute(); edit.add(change); // NEW
+        } // NEW
+        return result.automatic; // NEW
+    } // NEW
+
     /** Validate one native transaction against captured prior authority, then retain the existing stamping/undo mechanics. */ // NEW
     function inspectModelChange(_sender, evt) { // CHANGE
         if (graph[REJECT_FLAG] || (ui && ui.openingFile) || graphXmlLoading > 0) return; // CHANGE
         const edit = evt?.getProperty?.('edit'); if (edit && (edit.undone || edit.redone)) return; // CHANGE
         const changes = edit?.changes || []; if (!changes.length) return; // CHANGE
         try { // CHANGE
+            const seedEffects = prepareSeedEffects(edit, changes); // NEW
+            operationFacts = new WeakMap(); // CHANGE: seed effects finish mutating before current facts become immutable.
             const pending = pendingPermissionChanges(changes), before = permissionSnapshotFor(pending, true), after = permissionSnapshotFor(pending, false); // CHANGE
             permissionOperation = acceptedPermissionSnapshot(window.TrellisPermissionCore.snapshot({ store: after.store, cells: Object.values({ ...before.cells, ...after.cells }), provisionalUsers: after.provisionalUsers })); // CHANGE: native heuristics can inspect newly created and just-removed objects.
             const priorPolicy = acceptedPermissionSnapshot(before); permissionTransaction = { before, after }; // CHANGE
             if (!graph[INTERNAL_FLAG] && isEnabled()) { // CHANGE: internal commands skip native heuristics, never the shared validator.
                 if (!isLoggedIn()) { rejectEdit(edit, 'Log in before editing this diagram.', { action: 'login' }); return; } // CHANGE
                 const context = editPermissionContext(changes); // CHANGE
-                for (let i = 0; i < changes.length; i++) if (!changeAllowed(changes[i], context)) { logDeniedChange(changes[i], i); rejectEdit(edit, 'Change rejected by Trellis user permissions.', { cell: cellFromChange(changes[i]) }); return; } // CHANGE
+                for (let i = 0; i < changes.length; i++) if (!(seedEffects.size && cellFromChange(changes[i]) && seedEffects.has(permissionFacts(cellFromChange(changes[i])).key) && changedAttributeNames(changes[i]).length === 1 && changedAttributeNames(changes[i])[0] === 'trellis_seeds_json') && !changeAllowed(changes[i], context)) { logDeniedChange(changes[i], i); rejectEdit(edit, 'Change rejected by Trellis user permissions.', { cell: cellFromChange(changes[i]) }); return; } // CHANGE
             } // CHANGE
             const referenceEffects = referencePermissionEffects(pending); // CHANGE
-            const result = window.TrellisPermissionCore.validateTransition(before, after, currentUserId, nowMs(), { policy: priorPolicy, referenceChangeAllowed: (old, next, names) => { const core = window.TrellisReferenceCore; return referenceEffects.has(old.key) && !!(old.attributes[core.ATTR] || next.attributes[core.ATTR] || old.attributes[core.PROPOSALS] || next.attributes[core.PROPOSALS]) && names.every(name => [core.ATTR, core.PROPOSALS, ...core.CATALOGS].includes(name)); }, commentsChangeAllowed: (a, b, actor, at) => window.TrellisDetailsCore?.commentsChangeAllowed(a, b, actor, at) || false }); // NEW
+            const result = window.TrellisPermissionCore.validateTransition(before, after, currentUserId, nowMs(), { policy: priorPolicy, seedChangeAllowed: (old, next, names) => names.length === 1 && names[0] === 'trellis_seeds_json' && window.TrellisSeedsCore?.validate(window.TrellisSeedsCore.normalize(old.attributes.trellis_seeds_json), window.TrellisSeedsCore.normalize(next.attributes.trellis_seeds_json), window.TrellisSeedsCore.sowings(after.cells, next.key)), referenceChangeAllowed: (old, next, names) => { const core = window.TrellisReferenceCore; return referenceEffects.has(old.key) && !!(old.attributes[core.ATTR] || next.attributes[core.ATTR] || old.attributes[core.PROPOSALS] || next.attributes[core.PROPOSALS]) && names.every(name => [core.ATTR, core.PROPOSALS, ...core.CATALOGS].includes(name)); }, commentsChangeAllowed: (a, b, actor, at) => window.TrellisDetailsCore?.commentsChangeAllowed(a, b, actor, at) || false }); // NEW
             if (!result.allowed) { rejectEdit(edit, result.reason, { cell: cellFromChange(changes[0]) }); return; } // NEW
             if (!graph[INTERNAL_FLAG]) stampAcceptedActorMetadata(edit, changes); // CHANGE
-        } catch (_) { rejectEdit(edit, 'Invalid permission data.', { cell: cellFromChange(changes[0]) }); } finally { permissionOperation = null; permissionTransaction = null; } // CHANGE
+        } catch (_) { rejectEdit(edit, 'Invalid permission data.', { cell: cellFromChange(changes[0]) }); } finally { permissionOperation = null; permissionTransaction = null; operationFacts = null; } // CHANGE
     } // CHANGE
 
     function makeButton(label, onClick, variant, tooltip) { // CHANGE: explicit help describes permission and account consequences.
@@ -3343,6 +3380,7 @@ Draw.loadPlugin(function (ui) {
                 if (!draft) { // NEW
                     status.textContent = "Preparing the complete invitation…"; // NEW
                     const sharing = window.Trellis && window.Trellis.sharing; // NEW
+                    if (sharing?.getInfo?.()?.capabilities?.peerProposals === false) throw new Error('Peer synchronization is unavailable until coordinator qualification is complete. The invitation has not been sent.'); // NEW: delivery cannot advertise an incomplete joining workflow.
                     const prepared = sharing ? await sharing.prepareInvite(result, { onProgress: progress }) : result.emailDraft; // NEW: preserve legacy delivery without the sharing plugin.
                     if (!shell.overlay.isConnected) return; // NEW
                     if (!prepared || !prepared.to || !prepared.body) throw new Error("The complete invitation could not be prepared. Choose Retry Email."); // NEW
@@ -3966,6 +4004,18 @@ Draw.loadPlugin(function (ui) {
         return archivedGardenRoleCardForUi(garden, userId) ? "Inactive/restorable" : "Missing";
     }
 
+    /** Exchange authority remains independent of Visitor/Gardener/Coordinator editing presets. */ // NEW
+    function appendExchangeGrants(host, garden, userId, grant) { // NEW
+        if (!isGardenModule(garden) || !canManageScopeGrants(garden)) return; // NEW
+        const controls = document.createElement('div'); controls.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;padding:4px 0;font-size:12px;'; // NEW
+        for (const [capability, title] of [['manage_seed_exchange', 'Seed trading'], ['manage_csa', 'CSA management']]) { // NEW
+            const label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.checked = !!grant?.capabilities?.includes(capability); input.setAttribute('aria-label', title + ' for ' + userId); // NEW
+            input.addEventListener('change', () => { const current = gardenGrantForUser(garden, userId) || { preset: 'visitor', capabilities: [] }, caps = new Set(current.capabilities || []); if (input.checked) caps.add(capability); else caps.delete(capability); const result = setScopeGrant(garden, { userId, preset: current.preset, capabilities: [...caps] }); if (!result.ok) showStatus(result.reason); }); // NEW
+            label.append(input, document.createTextNode(title)); controls.append(label); // NEW
+        } // NEW
+        host.appendChild(controls); // NEW
+    } // NEW
+
     function gardenAccessMatchesSearch(garden) {
         const query = String(gardenAccessSearchText || "").trim().toLowerCase();
         if (!query) return true;
@@ -4043,7 +4093,7 @@ Draw.loadPlugin(function (ui) {
             accessRow.appendChild(gardenName);
             const presetSelect = makePresetSelect((grant && grant.preset) || archivedGardenPresetForUi(garden, user.id), function (preset) {
                 if (!checkbox.checked) return;
-                const result = setScopeGrant(garden, { userId: user.id, preset });
+                const result = setScopeGrant(garden, { userId: user.id, preset, capabilities: gardenGrantForUser(garden, user.id)?.capabilities }); // CHANGE
                 if (!result.ok) showStatus(result.reason);
             });
             accessRow.appendChild(presetSelect);
@@ -4057,6 +4107,7 @@ Draw.loadPlugin(function (ui) {
                 if (!result.ok) showStatus(result.reason);
             });
             popover.appendChild(accessRow);
+            if (grant) appendExchangeGrants(popover, garden, user.id, grant); // NEW
         });
         if (!visibleGardens.length) {
             const empty = document.createElement("div");
@@ -4649,12 +4700,13 @@ Draw.loadPlugin(function (ui) {
             if (access.inheritedSource) appendInheritedBadge(name, access.inheritedSource, access.inheritedGrant);
             head.appendChild(name);
             const presetSelect = makePresetSelect(grant.preset, function (preset) { // CHANGE
-                const result = setScopeGrant(cell, { userId: user.id, preset });
+                const result = setScopeGrant(cell, { userId: user.id, preset, capabilities: getAccessSummary(cell).directGrants?.find(grant => grant.userId === user.id)?.capabilities }); // CHANGE
                 if (!result.ok) showStatus(result.reason);
             }); // CHANGE
             presetSelect.disabled = teamDerived; // NEW
             presetSelect.title = teamDerived ? "Team-derived access is edited from team permission mode." : ""; // NEW
             head.appendChild(presetSelect); // CHANGE
+            if (directlyGranted) appendExchangeGrants(row, cell, user.id, getScopeGrants(cell).find(grant => grant.userId === user.id)); // NEW
             const actionButton = makeButton(directlyGranted ? "Remove" : (teamDerived ? "Team" : "Apply"), function () { // CHANGE
                 if (teamDerived) { showStatus("Team-derived access is edited from team permission mode."); return; } // NEW
                 const result = directlyGranted ? removeScopeGrant(cell, user.id) : setScopeGrant(cell, { userId: user.id, preset: grant.preset || "visitor" });
@@ -5169,6 +5221,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     model.addListener(mxEvent.CHANGE, inspectModelChange);
+    const undoManager = ui.editor?.undoManager; // CHANGE
+    if (typeof undoManager?.undoableEditHappened === 'function') { // CHANGE: native UNDO notification follows CHANGE inspection, even when that edit has already been rolled back.
+        const record = undoManager.undoableEditHappened; // CHANGE
+        undoManager.undoableEditHappened = function (edit) { if (!edit?.__trellisUsersRejected) return record.apply(this, arguments); }; // CHANGE: reject before insertion so creation rollback cannot leave an actionable Undo entry or trim valid Redo history.
+    } // CHANGE
     if (graph.addListener && mxEvent && mxEvent.ADD_CELLS) graph.addListener(mxEvent.ADD_CELLS, function (_sender, evt) {
         const cells = evt && evt.getProperty ? (evt.getProperty("cells") || []) : [];
         cells.forEach(autoLinkGardenBoardMemberships);
@@ -5293,7 +5350,8 @@ Draw.loadPlugin(function (ui) {
             moveTasks: CAP_MOVE_TASKS,
             editTaskDetails: CAP_EDIT_TASK_DETAILS,
             manageScopeContent: CAP_MANAGE_SCOPE_CONTENT,
-            manageAccess: CAP_MANAGE_ACCESS
+            manageAccess: CAP_MANAGE_ACCESS, // CHANGE
+            seedTrading: "manage_seed_exchange", csaManagement: "manage_csa" // NEW
         },
         _test: {
             readStore,

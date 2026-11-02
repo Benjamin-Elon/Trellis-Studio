@@ -1,8 +1,8 @@
 /** Signed community directories. Garden coordinators attest access; community roles never grant it. */ // NEW
-import { canonical, digest, safeId, verifyRecord } from './trellis-share-protocol.js'; // NEW
+import { SYNC_PROTOCOL, canonical, digest, safeId, verifyRecord } from './trellis-share-protocol.js'; // NEW
 import { cityRecord } from './trellis-project-summary.js'; // NEW
 
-export const COMMUNITY_VERSION = 1; // NEW
+export const COMMUNITY_VERSION = SYNC_PROTOCOL.community; // NEW
 export const COMMUNITY_PRESETS = Object.freeze({ visitor: [], gardener: ['create_plantings', 'manage_own_plantings', 'move_tasks', 'edit_task_details'], coordinator: ['create_plantings', 'manage_own_plantings', 'move_tasks', 'edit_task_details', 'manage_scope_content', 'manage_access'] }); // NEW
 export const communityHash = record => digest(canonical(record)); // NEW
 export function communityText(value, maximum, required = false) { // NEW

@@ -502,6 +502,14 @@ function createGardenCluster(harness) { // NEW
     }; // NEW
 } // NEW
 
+/** Check every starter descendant, rather than only the four workspace roots. */ // NEW
+function assertStarterAttributionPending(harness, roots = harness.root.children) { // NEW
+    for (const cell of roots) { // NEW
+        assert.equal(cell.getAttribute('trellis_starter_attribution_pending'), '1', cell.id); // NEW
+        assertStarterAttributionPending(harness, cell.children || []); // NEW
+    } // NEW
+} // NEW
+
 function makeCell(harness, attrs, geometry, style = "") {
     const cell = new TestCell(makeValue(harness.document, attrs), geometry, style);
     cell.vertex = true;
@@ -593,8 +601,8 @@ function assertStarterTeamContent(harness, team) { // NEW
     assert.equal(roles.length, 1); // NEW
     assert.match(roles[0].style, /(?:^|;)role_card_version=2(?:;|$)/); // NEW
     assert.equal(roles[0].getAttribute("trellis_role_user_id"), null); // NEW
-    assert.equal(roles[0].children.find(child => styleHas(child, "role_name=1")).value, ""); // NEW
-    assert.equal(roles[0].children.find(child => styleHas(child, "role_title=1")).value, ""); // NEW
+    assert.equal(cellText(roles[0].children.find(child => styleHas(child, "role_name=1"))), ""); // CHANGE: persisted starter metadata may wrap empty text in XML.
+    assert.equal(cellText(roles[0].children.find(child => styleHas(child, "role_title=1"))), ""); // CHANGE
     assert.equal(roleCardsUnder(unassignedSections[0]).length, 0); // NEW
     return { starterTeam: normalSections[0], starterRole: roles[0], unassigned: unassignedSections[0] }; // NEW
 } // NEW
@@ -704,6 +712,7 @@ test("createModuleAtPoint creates garden neighbor modules including roadmap when
     assert.equal(roadmap.getAttribute("roadmap_team_module_id"), team.id); // NEW
     assertStarterTeamContent(harness, team); // NEW
     assert.equal(ensuredRoadmaps.at(-1), roadmap); // NEW
+    assertStarterAttributionPending(harness); // NEW
 }); // NEW
 
 test("garden creation falls back to partial cluster when roadmap manager is unavailable", () => { // NEW
@@ -715,6 +724,7 @@ test("garden creation falls back to partial cluster when roadmap manager is unav
     assertStarterTeamContent(harness, team); // NEW
     assert.equal(garden.getAttribute("roadmap_module_id"), null); // NEW
     assert.deepEqual(harness.alerts, ["Roadmap Manager is unavailable. The Garden remains usable; create its Roadmap companion after the plugin is loaded."]); // NEW
+    assertStarterAttributionPending(harness); // NEW
 }); // NEW
 
 test("new blank diagram fileLoaded auto-creates a focused garden cluster", async () => { // NEW
@@ -731,6 +741,18 @@ test("new blank diagram fileLoaded auto-creates a focused garden cluster", async
     assert.ok(harness.model.getCell(garden.getAttribute("roadmap_module_id"))); // NEW
     const settingsEvents = harness.firedEvents.filter(event => event.name === "usl:gardenModuleNeedsSettings"); // NEW
     assert.equal(settingsEvents.at(-1).getProperty("focusAfterSettingsClose"), true); // NEW
+    assertStarterAttributionPending(harness); // NEW
+}); // NEW
+
+test('new garden suppression excludes existing objects and later companion repairs', () => { // NEW
+    const harness = makeHarness(); // NEW
+    const standalone = ['regular', 'team', 'task'].map(type => harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, type)); // NEW
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 900, y: 40 }, 'garden'); // NEW
+    for (const cell of standalone) assert.equal(cell.getAttribute('trellis_starter_attribution_pending'), null); // NEW
+    assertStarterAttributionPending(harness, [garden, harness.model.getCell(garden.getAttribute('trellis_team_module_id')), harness.model.getCell(garden.getAttribute('trellis_task_module_id'))]); // NEW
+    installRoadmapCreationStub(harness); // NEW
+    const repaired = harness.graph.__trellisModules.ensureGardenRoadmapModule(garden); // NEW
+    assert.equal(repaired.getAttribute('trellis_starter_attribution_pending'), null); // NEW
 }); // NEW
 
 test("new blank diagram seeder ignores unflagged or nonempty diagrams", async () => { // NEW
@@ -1397,14 +1419,29 @@ test("module external margin API stores spacing and pushes neighbors", () => {
     assert.equal(right.geometry.x, 280); // NEW
 });
 
-test("created modules push neighboring modules to maintain external margins", () => {
+test("created modules find free space without moving existing modules", () => { // CHANGE
     const harness = makeHarness();
     const existing = harness.graph.__trellisModules.createModuleAtPoint({ x: 200, y: 0 }, "regular");
     harness.graph.__trellisModules.setModuleExternalMargin(existing, 80);
     const created = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
-    assert.equal(created.geometry.x, 0);
-    assert.equal(existing.geometry.x, 240); // NEW
+    assert.equal(existing.geometry.x, 200); assert.equal(existing.geometry.y, 0); // CHANGE
+    const a = created.geometry, b = existing.geometry; assert.ok(a.x + a.width + 80 <= b.x || b.x + b.width + 80 <= a.x || a.y + a.height + 80 <= b.y || b.y + b.height + 80 <= a.y); // CHANGE
 });
+test('creation placement is deterministic in a dense layout and respects every existing margin', () => { // CHANGE
+    function run() { // CHANGE
+        const h = makeHarness(); for (let row = -8; row <= 8; row++) for (let column = -8; column <= 8; column++) h.model.add(h.root, makeCell(h, { label: 'Existing' }, new TestGeometry(column * 180, row * 120, 160, 100), 'swimlane;module=1;module_external_margin=20;')); // CHANGE
+        const previous = new Map(h.root.children.map(cell => [cell, JSON.stringify(cell.geometry)])), created = h.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, 'regular'); // CHANGE
+        for (const [cell, geometry] of previous) { assert.equal(JSON.stringify(cell.geometry), geometry); const a = created.geometry, b = cell.geometry; assert.ok(a.x + a.width + 40 <= b.x || b.x + b.width + 40 <= a.x || a.y + a.height + 40 <= b.y || b.y + b.height + 40 <= a.y); } // CHANGE
+        const result = [created.geometry.x, created.geometry.y]; h.dom.window.close(); return result; // CHANGE
+    } // CHANGE
+    assert.deepEqual(run(), run()); // CHANGE
+}); // CHANGE
+test('new garden cluster moves as a complete unit around protected collapsed modules', () => { // CHANGE
+    const h = makeHarness(); h.graph.__trellisTaskManager = { ensureMainBoardInTaskModule() {} }; const old = makeCell(h, { label: 'Protected', trellis_owner_user_id: 'other' }, new TestGeometry(0, 0, 500, 500), 'swimlane;module=1;module_external_margin=80;'); old.collapsed = true; h.model.add(h.root, old); // CHANGE
+    const before = JSON.stringify(old.geometry), garden = h.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, 'garden'), roots = h.root.children.filter(cell => cell !== old); assert.equal(JSON.stringify(old.geometry), before); assert.ok(roots.length >= 3); // CHANGE
+    for (const cell of roots) { const a = cell.geometry, b = old.geometry; assert.ok(a.x + a.width + 80 <= b.x || b.x + b.width + 80 <= a.x || a.y + a.height + 80 <= b.y || b.y + b.height + 80 <= a.y); } // CHANGE
+    assert.equal(h.model.getCell(garden.getAttribute('trellis_team_module_id')).getAttribute('trellis_garden_module_id'), garden.id); h.dom.window.close(); // CHANGE
+}); // CHANGE
 
 test("moved modules push neighbors using the move vector", () => {
     const harness = makeHarness();
@@ -1512,7 +1549,8 @@ test("empty canvas click renders root module overlay buttons", () => {
     const harness = makeHarness();
     fireGraphClick(harness, { clientX: 120, clientY: 150, graphX: 200, graphY: 230 });
     const buttons = overlayButtons(harness.document);
-    assert.deepEqual(buttons.map(button => button.textContent), ["Add Module", "Add Garden Module", "Add Team Module", "Add Task Module", "Add Roadmap Module"]); // CHANGE
+    assert.deepEqual(buttons.map(button => button.textContent), ["Add Module", "Create a new garden", "Add team workspace", "Add task workspace", "Add roadmap"]); // CHANGE
+    assert.equal(buttons[1].title, 'Create a garden with companion team, task, and roadmap workspaces.'); // NEW
     assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "flex");
 });
 
@@ -1526,6 +1564,7 @@ test("overlay buttons create the selected module type at stored click point and 
     assert.equal(mod.geometry.y, 240);
     assert.equal(mod.getAttribute("garden_module"), "1");
     assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "none");
+    assertStarterAttributionPending(harness); // NEW
 });
 
 test("module context menu omits module type conversion actions", () => { // NEW

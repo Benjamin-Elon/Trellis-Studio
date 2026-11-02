@@ -1453,7 +1453,8 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     /** Garden membership comes from task boards and planting links, rather than a whole-document scan. */ // NEW
-    function listPlanningTasks(moduleCell) { // CHANGE
+    function listPlanningTasks(moduleCell) {
+        if (moduleCell?.__detachedInventory) return []; // NEW: never inspect a different open canvas for Home snapshots. // CHANGE
         const manager = graph.__trellisTaskManager; // CHANGE
         if (manager?.listPlanningTasks) return manager.listPlanningTasks(moduleCell); // CHANGE
         const result = []; // CHANGE
@@ -1609,22 +1610,23 @@ Draw.loadPlugin(function (ui) {
         document.head.appendChild(style);
     }
 
-    function openEquipmentDialog(moduleCell) {
+    function openEquipmentDialog(moduleCell, options = {}) {
+        if (!options.editTransitionResolved && graph.__trellisSharing?.transitionEditor) return graph.__trellisSharing.transitionEditor(() => openEquipmentDialog(moduleCell, { ...options, editTransitionResolved: true })); // CHANGE // CHANGE: detached snapshots reuse the existing editor.
         moduleCell = moduleCell || getActiveGardenModule();
         if (!moduleCell) {
             alert("Select a Trellis garden module first, or add garden_module=\"1\" to the module cell.");
             return;
         }
 
-        const references = graph.__trellisReferences; // NEW
-        if (getCellAttr(moduleCell, 'trellis_references_json', '') && references && !references.isDraftReady(moduleCell)) { references.restoreDraft(moduleCell).then(() => openEquipmentDialog(moduleCell)).catch(error => ui.handleError ? ui.handleError(error) : alert(error.message)); return; } // NEW
+        const references = options.detached ? null : graph.__trellisReferences; // CHANGE
+        if (!options.detached && getCellAttr(moduleCell, 'trellis_references_json', '') && references && !references.isDraftReady(moduleCell)) { references.restoreDraft(moduleCell).then(() => openEquipmentDialog(moduleCell)).catch(error => ui.handleError ? ui.handleError(error) : alert(error.message)); return; } // NEW
         ensureStyles();
 
         const state = {
             moduleCell,
-            inventory: graph.__trellisReferences?.catalog(moduleCell, ATTRS.EQUIPMENT_INVENTORY_JSON, { draft: true })?.items || readEquipmentInventory(moduleCell), // CHANGE: reopen the editor's unsent definitions without exposing them to calculations.
-            taskTypes: graph.__trellisReferences?.catalog(moduleCell, ATTRS.TASK_TYPE_REGISTRY_JSON, { draft: true })?.items || readTaskTypeRegistry(moduleCell), // CHANGE
-            capabilities: graph.__trellisReferences?.catalog(moduleCell, ATTRS.CAPABILITY_REGISTRY_JSON, { draft: true })?.items || readCapabilityRegistry(moduleCell), // CHANGE
+            inventory: options.snapshot?.equipment?.items || references?.catalog(moduleCell, ATTRS.EQUIPMENT_INVENTORY_JSON, { draft: true })?.items || readEquipmentInventory(moduleCell), // CHANGE // CHANGE: reopen the editor's unsent definitions without exposing them to calculations.
+            taskTypes: options.snapshot ? JSON.parse(JSON.stringify(options.snapshot.taskTypes.items)) : references?.catalog(moduleCell, ATTRS.TASK_TYPE_REGISTRY_JSON, { draft: true })?.items || readTaskTypeRegistry(moduleCell), // CHANGE: editable catalogs cannot mutate the detached comparison snapshot.
+            capabilities: options.snapshot ? JSON.parse(JSON.stringify(options.snapshot.capabilities.items)) : references?.catalog(moduleCell, ATTRS.CAPABILITY_REGISTRY_JSON, { draft: true })?.items || readCapabilityRegistry(moduleCell), // CHANGE
             activeTab: "inventory",
             sectionOpen: {}, // NEW: preserve disclosure state across editor refreshes.
             planningTaskLimit: 20, // NEW: long plans remain usable without omitting access to later tasks.
@@ -1650,24 +1652,35 @@ Draw.loadPlugin(function (ui) {
             const selected = state.inventory.find(eq => eq.id === state.selectedEquipmentId); // CHANGE
             if (target && selected) { target.replaceChildren(); renderEquipmentPlannedTasks(target, selected, state, render); } // CHANGE
         } // CHANGE
-        function close() {
+        let equipmentHold = null; // CHANGE
+        function close(closeOptions = {}) { // CHANGE
+            if (!closeOptions.resolved && equipmentHold?.dirty?.()) return equipmentHold.transition(() => close({ resolved: true })); // CHANGE
+            equipmentHold?.dispose(true); // CHANGE
             model.removeListener?.(refreshPreview); // NEW
             window.removeEventListener('trellisReferencesChanged', refreshPreview); // NEW
             if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
         }
         state.close = close; // NEW
-        state.openTask = task => { // NEW: task navigation cannot silently discard editor changes.
-            if (JSON.stringify([state.inventory, state.taskTypes, state.capabilities]) !== state.savedSnapshot) { // CHANGE
-                if (!confirm('Save equipment changes before opening this task? Cancel to keep editing.') || !saveAll()) return; // CHANGE
-            } // CHANGE
-            if (graph.__trellisTaskManager?.openTaskCard) graph.__trellisTaskManager.openTaskCard(task); // CHANGE
-            else { graph.setSelectionCell?.(task); graph.scrollCellToVisible?.(task); } // CHANGE
-            close(); // CHANGE
+        state.navigate = operation => { // CHANGE: the main tabs, item selection and editor sections share one draft decision.
+            const change = () => { operation(); equipmentHold?.checkpoint?.(); return true; }; // CHANGE
+            return equipmentHold?.transition ? equipmentHold.transition(change) : change(); // CHANGE
+        }; // CHANGE
+        state.openTask = async task => { // CHANGE
+            await state.navigate(() => { // CHANGE
+                if (graph.__trellisTaskManager?.openTaskCard) graph.__trellisTaskManager.openTaskCard(task); // CHANGE
+                else { graph.setSelectionCell?.(task); graph.scrollCellToVisible?.(task); } // CHANGE
+                close({ resolved: true }); // CHANGE
+            }); // CHANGE
         }; // CHANGE
         model.addListener?.('change', refreshPreview); // NEW
         window.addEventListener('trellisReferencesChanged', refreshPreview); // NEW
 
-        function saveAll() {
+        async function saveAll() { // CHANGE
+            if (equipmentHold) { try { await equipmentHold.acquire(); } catch (error) { alert(error.message); return false; } } // CHANGE
+            if (options.save) { // NEW: keep drafts in the existing dialog when a detached save fails.
+                if (!canSaveState(state)) { render(); return false; } // NEW
+                return options.save({ equipment_inventory_json: { version: PLUGIN_VERSION, items: state.inventory.map(normalizeEquipment) }, task_type_registry_json: { version: PLUGIN_VERSION, items: state.taskTypes.map(normalizeTaskType) }, equipment_capability_registry_json: { version: PLUGIN_VERSION, items: state.capabilities.map(normalizeCapability) } }).then(() => { state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); equipmentHold?.complete?.(); return true; }).catch(error => { alert(error.message); return false; }); // NEW
+            } // NEW
             // Preserve unmatched legacy preference IDs; missing catalogs must not erase saved data. // CHANGE
             if (!canSaveState(state)) {
                 render();
@@ -1682,12 +1695,12 @@ Draw.loadPlugin(function (ui) {
             if (!proposed) { writeEquipmentInventory(state.moduleCell, state.inventory); writeTaskTypeRegistry(state.moduleCell, state.taskTypes); writeCapabilityRegistry(state.moduleCell, state.capabilities); } // CHANGE
             else fireTrellisEvent(EVENTS.WORKLOAD_ASSUMPTIONS_CHANGED, { moduleCell: state.moduleCell }); // NEW
             state.validationReport = null;
-            state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); // NEW
+            state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); equipmentHold?.complete?.(); // CHANGE
             return true;
         }
 
-        function saveAndClose() {
-            if (saveAll()) close();
+        async function saveAndClose() { // CHANGE
+            if (await saveAll()) close(); // CHANGE
         }
 
         function render() {
@@ -1711,8 +1724,21 @@ Draw.loadPlugin(function (ui) {
             else if (state.activeTab === "warnings") body.appendChild(renderWarningsPane(state));
 
             dialog.appendChild(renderFooter(state, render, saveAll, saveAndClose, close));
+            if (options.snapshot?.canEdit === false) { // NEW
+                body.querySelectorAll('input, select, textarea, button').forEach(control => { control.disabled = true; }); // NEW
+                dialog.querySelectorAll('button').forEach(control => { if (/^Save/.test(control.textContent)) control.disabled = true; }); // NEW
+            } // NEW
         }
 
+        const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+        equipmentHold = graph.__trellisSharing?.registerEditor?.({ // CHANGE
+            kind: 'inventory', title: 'Equipment', element: overlay, targets: [JSON.stringify([pageId, String(moduleCell.id)])], // CHANGE
+            isDirty: () => JSON.stringify([state.inventory, state.taskTypes, state.capabilities]) !== state.savedSnapshot, // CHANGE
+            capture: () => ({ pageId, objectId: String(moduleCell.id), inventory: state.inventory, taskTypes: state.taskTypes, capabilities: state.capabilities }), // CHANGE
+            restore: draft => { if (!draft) return; for (const key of ['inventory', 'taskTypes', 'capabilities']) state[key] = JSON.parse(JSON.stringify(draft[key])); state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); render(); }, // CHANGE
+            save: saveAll, freeze() { overlay.querySelectorAll('input,select,textarea,button').forEach(control => { control.disabled = true; }); }, discard: () => close({ resolved: true }), // CHANGE
+        }); // CHANGE
+        overlay.addEventListener('input', () => equipmentHold?.touch()); overlay.addEventListener('change', () => equipmentHold?.touch()); // CHANGE
         render();
     }
 
@@ -1796,10 +1822,10 @@ Draw.loadPlugin(function (ui) {
 
     function renderMainTabs(state, render) {
         const tabs = div("trellis-eq-tabs");
-        tabs.appendChild(buttonEl('Equipment', 'trellis-eq-tab' + (state.activeTab === 'inventory' ? ' active' : ''), () => { state.activeTab = 'inventory'; render(); }, 'Configure tools and see their planned uses.', 'neutral')); // CHANGE
-        tabs.appendChild(buttonEl('Planning settings', 'trellis-eq-tab' + (state.activeTab !== 'inventory' ? ' active' : ''), () => { state.activeTab = state.activeTab === 'inventory' ? 'taskTypes' : 'inventory'; render(); }, 'Edit task types and planning summaries.', 'neutral')); // NEW
+        tabs.appendChild(buttonEl('Equipment', 'trellis-eq-tab' + (state.activeTab === 'inventory' ? ' active' : ''), () => state.navigate(() => { state.activeTab = 'inventory'; render(); }), 'Configure tools and see their planned uses.', 'neutral')); // CHANGE
+        tabs.appendChild(buttonEl('Planning settings', 'trellis-eq-tab' + (state.activeTab !== 'inventory' ? ' active' : ''), () => state.navigate(() => { state.activeTab = state.activeTab === 'inventory' ? 'taskTypes' : 'inventory'; render(); }), 'Edit task types and planning summaries.', 'neutral')); // NEW
         if (state.activeTab !== 'inventory') { // NEW
-            const select = selectInput([['taskTypes', 'Task Types'], ['efficiency', 'Time rules overview'], ['maintenance', 'Maintenance & Costs'], ['warnings', 'Equipment warnings']], state.activeTab, event => { state.activeTab = event.target.value; render(); }); // NEW
+            const select = selectInput([['taskTypes', 'Task Types'], ['efficiency', 'Time rules overview'], ['maintenance', 'Maintenance & Costs'], ['warnings', 'Equipment warnings']], state.activeTab, event => { const next = event.target.value; state.navigate(() => { state.activeTab = next; render(); }); }); // NEW
             select.setAttribute('aria-label', 'Planning settings'); tabs.appendChild(select); // NEW
         } // NEW
         return tabs;
@@ -1900,7 +1926,7 @@ Draw.loadPlugin(function (ui) {
                 const tr = document.createElement("tr");
                 tr.setAttribute("data-filter-text", [eq.name, eq.category, eq.status, eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")].join(" ").toLowerCase()); // CHANGE
                 if (eq.id === state.selectedEquipmentId) tr.className = "selected";
-                tr.onclick = function () { state.selectedEquipmentId = eq.id; render(); };
+                tr.onclick = function () { state.navigate(() => { state.selectedEquipmentId = eq.id; render(); }); }; // CHANGE
                 tr.appendChild(td(eq.name));
                 tr.appendChild(td(labelize(eq.category)));
                 tr.appendChild(tdBadge(eq.status, eq.status === "owned" || eq.status === "borrowed" ? "" : eq.status === "unavailable" || eq.status === "needs_repair" ? "gray" : "warn"));
@@ -2163,7 +2189,7 @@ Draw.loadPlugin(function (ui) {
         items.forEach(function (tt) {
             const tr = document.createElement("tr");
             if (tt.id === state.selectedTaskTypeId) tr.className = "selected";
-            tr.onclick = function () { state.selectedTaskTypeId = tt.id; render(); };
+            tr.onclick = function () { state.navigate(() => { state.selectedTaskTypeId = tt.id; render(); }); }; // CHANGE
             tr.appendChild(td(tt.name));
             tr.appendChild(td(labelize(tt.category)));
             tr.appendChild(td(tt.defaultQuantityBasis));
@@ -2286,7 +2312,7 @@ Draw.loadPlugin(function (ui) {
             applyTooltip(item, `Open ${tab[1]} editor section.`);
             item.setAttribute("role", "button");
             item.setAttribute("aria-label", `Open ${tab[1]} editor section.`);
-            item.onclick = function () { state[key] = tab[0]; render(); };
+            item.onclick = function () { state.navigate(() => { state[key] = tab[0]; render(); }); }; // CHANGE
             wrap.appendChild(item);
         });
         return wrap;
@@ -2896,6 +2922,7 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
+    window.TrellisEquipmentEditor = { open: (snapshot, save) => openEquipmentDialog({ id: snapshot.garden.gardenId, __detachedInventory: true, getAttribute: () => null }, { detached: true, snapshot, save }) }; // NEW
     graph.__trellisEquipment = {
         version: PLUGIN_VERSION,
         attrs: ATTRS,

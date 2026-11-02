@@ -1,0 +1,192 @@
+✖ PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields (41.016ms)
+✖ PlanningCore treats CSA components as committed demand (15.3063ms)
+✔ PlanningCore coverage week summaries expose canonical week start dates (10.3598ms)
+✔ PlanningCore recommends the smallest whole plant count for reachable shortage (19.6406ms)
+✔ PlanSchema normalizes weekStartDow to an integer from zero through six (12.4365ms)
+✖ PlanSchema adds default demand channels only when the collection is absent (3.8955ms)
+✔ Planting-method SQL starts directly with SQL text (0.5978ms)
+✔ PlanSchema detects duplicate crop identities and validates invalid units (3.6741ms)
+✔ PlanSchema rejects duplicate crop package units (5.2178ms)
+✔ PlanSchema clears demand-like units that are not crop packages (2.0329ms)
+✔ PlanSchema strips legacy demand prices from persisted plans (2.4676ms)
+✔ PlanSchema exposes CSA validation independently from the full plan (2.1821ms)
+✔ PlanSchema rejects reversed demand and effective CSA date ranges (2.4215ms)
+✔ PlanMath excludes reversed demand ranges while retaining explicit valid CSA components (7.2369ms)
+✔ PlanMath ignores manual harvest windows for supply and validation still rejects reversed dates (5.6204ms)
+✔ PlanRepository round-trips plans, templates, defaults, and leap-day shifts (10.2629ms)
+✔ PlanRepository migrates legacy root maps on the first diagram-level write (2.3524ms)
+✔ DiagramPlanReader aggregates perennial and cross-year tiler facts with one crop key (5.2541ms)
+✔ DiagramPlanReader resolves legacy variety names and rejects malformed harvest ranges (4.366ms)
+✔ DiagramPlanReader reports ambiguous planned legacy variety matches (6.4418ms)
+✔ DiagramPlanReader returns normalized garden crop candidates and ignores groups without plant identity (4.9629ms)
+✔ PlanRuntimeService recalculation is idempotent and preserves manual harvest dates (13.83ms)
+✔ PlanRuntimeService derives actual harvest windows and returns calculation warnings (12.7847ms)
+✔ PlanRuntimeService defaults legacy crops to sowing-window estimate only without actual harvest records (6.5862ms)
+✔ PlanRuntimeService does not default sowing-window estimate when actual harvest records exist (8.1438ms)
+✔ PlanRuntimeService keeps harvest windows independent from actual-only supply (20.6455ms)
+✔ PlanRuntimeService does not synthesize prior-year saved harvest windows as supply (7.6269ms)
+✔ PlanMath inventory uses conservative weekly shelf-life buckets and FIFO consumption (2.9487ms)
+✔ PlanMath tracks planting source provenance through FIFO inventory (5.2774ms)
+✔ PlanningCore keeps diagram planting provenance JSON-safe after allocation refresh (18.8686ms)
+✔ PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors (3.5439ms)
+✖ PlanMath allocates CSA first, then priority and channel order, with requested and fulfilled revenue (9.2757ms)
+✔ PlanMath derives CSA box value and prorates CSA revenue by component fulfillment (19.8291ms)
+✔ PlanMath counts missing CSA component prices as zero with a non-blocking warning (3.5804ms)
+✔ PlanMath counts missing self-use and demand prices as zero with non-blocking warnings (6.6955ms)
+✔ PlanMath requires explicit packages for built-in unit names (7.1802ms)
+✔ PlanMath resolves standard package weight bases to kg (2.4294ms)
+✔ PlanMath still blocks demand-like rows when package quantity conversion is invalid (6.4885ms)
+✔ PlanMath prices demand from package unit matches only (8.8479ms)
+✖ PlanMath breaks equal-priority shortages by stored channel order (4.0944ms)
+✔ PlanMath keeps raw harvest stable and never pools inventory across crops (14.2539ms)
+✔ PlanMath builds filtered and aggregate chart models with additive flow summaries (2.9339ms)
+✔ CropTimeline orders solid bars by value and keeps raw harvest in front (2.7519ms)
+✔ PlanRuntimeService syncs demand to harvest dates and collapses legacy shelf extensions (3.127ms)
+✔ YearPlanDashboard aggregates shortage and surplus without netting crops (10.0868ms)
+✔ YearPlanDashboard classifies weekly timing and avoids inventory snapshot surplus double-counting (6.2956ms)
+✔ YearPlanDashboard treats zero supply as a full shortage and validation errors as missing data (11.694ms)
+✔ YearPlanDashboard promotes a missing harvest window to missing data when demand exists (2.1293ms)
+✔ crop dots attribute linked validation to exact rows and keep shared setup global (4.23ms)
+✔ crop dot issues deduplicate validations but retain distinct repair destinations (2.4926ms)
+✔ crop dots collect active price and nutrition warnings by identity without persisting them (9.0549ms)
+✔ disabled demand sections contribute no linked validation or price warnings to crop dots (6.1739ms)
+✔ crop stage and package warnings override no demand and disappear when repaired (2.2099ms)
+✔ YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines (2.7694ms)
+✔ YearPlanDashboard builds compact status and CSA summaries without timezone parsing (1.488ms)
+✔ YearPlanDashboard expands checks only when blocking errors first appear (1.386ms)
+✔ YearPlanDashboard resolves selection after crop removal and preserves unknown methods (1.7606ms)
+✔ PlanSchema infers method category for legacy dotted crop methods (3.0722ms)
+✔ Self Sufficiency demand expands separately from sales demand (5.7788ms)
+✔ disabled self-use, commercial channels, and CSA stay saved but leave demand totals (9.5442ms)
+✔ Harvest allocation satisfies Self Sufficiency before CSA and sales (5.49ms)
+✔ Required plants and Plan Check default to combined demand (7.1884ms)
+✔ NutritionPlanner calculates requested and fulfilled self-use nutrition (4.5686ms)
+✔ YearPlanDashboard opens Self Sufficiency strip on first self-use validation errors (1.6615ms)
+✔ growth stages allow the same variety while rejecting duplicate stage identities (3.8536ms)
+✔ stage-specific diagram supply cannot cover another stage's demand (14.1252ms)
+✔ companion count overrides include lost supply and never mutate saved groups, including same-crop additions (29.0399ms)
+ℹ tests 67
+ℹ suites 0
+ℹ pass 62
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 768.9726
+
+✖ failing tests:
+
+test at test\year-planner.test.cjs:187:1
+✖ PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields (41.016ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    {
+  +   channelPriorityLevels: {
+  +     'sales:farm_store': 3,
+  +     'sales:farmers_market': 3,
+  +     'sales:restaurant_1': 3,
+  +     'sales:wholesale': 3,
+  +     csa: 2,
+  +     self: 1
+  +   },
+      crops: [
+        {
+          baseKgPerPlant: 1.5,
+          germRate: 0.8,
+          growthStage: {
+  ...
+      },
+  +   version: 3,
+  -   version: 2,
+      weekStartDow: 1,
+      year: 2025
+    }
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\year-planner.test.cjs:209:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.start (node:internal/test_runner/test:944:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { year: 2025, crops: [ [Object] ], version: 3, weekStartDow: 1, selfSufficiency: { enabled: true, adults: 0, children: 0, nutritionMultiplier: 1, lines: [] }, demandChannels: [ [Object], [Object], [Object], [Object] ], demands: [], channelPriorityLevels: { self: 1, csa: 2, 'sales:farm_store': 3, 'sales:restaurant_1': 3, 'sales:farmers_market': 3, 'sales:wholesale': 3 }, csa: { enabled: false, boxesPerWeek: 0, start: '', end: '', salePricePerBox: null, salePriceMode: 'auto', components: [] } },
+    expected: { year: 2025, crops: [ [Object] ], version: 2, weekStartDow: 1, demandChannels: [ [Object], [Object], [Object], [Object] ], selfSufficiency: { enabled: true, adults: 0, children: 0, nutritionMultiplier: 1, lines: [] }, demands: [], csa: { enabled: false, boxesPerWeek: 0, start: '', end: '', salePricePerBox: null, salePriceMode: 'auto', components: [] } },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test\year-planner.test.cjs:244:1
+✖ PlanningCore treats CSA components as committed demand (15.3063ms)
+  TypeError [Error]: Cannot read properties of undefined (reading 'targetKg')
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\year-planner.test.cjs:261:55)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+
+test at test\year-planner.test.cjs:323:1
+✖ PlanSchema adds default demand channels only when the collection is absent (3.8955ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  3 !== 2
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\year-planner.test.cjs:331:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 3,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\year-planner.test.cjs:948:1
+✖ PlanMath allocates CSA first, then priority and channel order, with requested and fulfilled revenue (9.2757ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  4 !== 6
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\year-planner.test.cjs:966:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 4,
+    expected: 6,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\year-planner.test.cjs:1168:1
+✖ PlanMath breaks equal-priority shortages by stored channel order (4.0944ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  4 !== 5
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\year-planner.test.cjs:1177:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 4,
+    expected: 5,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

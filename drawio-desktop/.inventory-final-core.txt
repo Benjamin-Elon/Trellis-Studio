@@ -1,0 +1,30 @@
+✔ unqualified production synchronization cannot publish, accept, or enumerate private agreement transport (3.9747ms)
+✔ bridge derives its identity from the current session and protects rate requests after logout (0.7221ms)
+✔ seed conversions require estimates for weight and packets (1.6487ms)
+✔ current-stock initialization baselines historical work; reopening and recompleting remain reversible (1.3948ms)
+✔ sowing completion survives repeated delivery, restart, reopen and corrected recompletion (0.5068ms)
+✔ negative balances are retained and shortages remain visible (0.4364ms)
+✔ published needs aggregate growth stages before subtracting completed work once (1.3447ms)
+✔ competing acceptances cannot reserve protected or already reserved stock (0.9854ms)
+✔ barter source lines combine; handover and receipt each affect stock exactly once (1.4841ms)
+✔ copies preserve definitions and conversions while resetting all operational records (0.364ms)
+✔ priority levels fill in order with proportional equal-level shortages and capped demand (0.922ms)
+✔ season quotes use eligible scheduled pickups and preserve original currency (7.1281ms)
+✔ plant requirements round per member and shortages rotate to seasonally underserved members (35.6093ms)
+✔ accepted sowing effects include germination, reopening, correction and retransmission (69.3504ms)
+✔ historical completed sowings baseline current stock; transplant tasks never deduct (5.9046ms)
+✔ ledger forgery is rejected even for administrators; automatic effects cannot authorize stock edits (17.8257ms)
+✔ real signed saves retain seed effects across duplicate delivery and coordinator restart (305.8651ms)
+✔ multiple unsaved complete/reopen transitions are independently validated as one accepted save (5.825ms)
+✔ copies baseline historical completed tasks before the first new completion (3.9269ms)
+✔ new invitations use garden 4 and the v4 namespace; old invitations remain rejected (3.6083ms)
+✔ unqualified community capability never starts transports or reads retained journals (2.1351ms)
+✔ cached activity authority expires with an invitation even when accepted XML is unchanged (11.1357ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 592.8695

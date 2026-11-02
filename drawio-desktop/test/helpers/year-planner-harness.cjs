@@ -196,7 +196,13 @@ function createYearPlannerHarness(options = {}) {
         }
     });
 
+    vm.runInContext(fs.readFileSync(path.join(path.dirname(PLUGIN_PATH), 'Trellis_Allocation_Core.js'), 'utf8'), context); // NEW
     vm.runInContext(PLUGIN_SOURCE, context, { filename: PLUGIN_PATH });
+    if (options.allocate) { // CHANGE: integration tests drive the real Allocate/Year Plan event transition in one window.
+        graph.container = document.createElement('div'); document.body.appendChild(graph.container); // CHANGE
+        const allocatePath = path.join(path.dirname(PLUGIN_PATH), 'Allocate_Planner.js'); // CHANGE
+        vm.runInContext(fs.readFileSync(allocatePath, 'utf8'), context, { filename: allocatePath }); // CHANGE
+    } // CHANGE
     const api = window.__uslYearPlannerTestApi;
     const plants = options.plants || [{
         plant_id: 1,

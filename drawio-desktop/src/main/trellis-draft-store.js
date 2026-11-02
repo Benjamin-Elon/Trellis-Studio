@@ -1,16 +1,18 @@
+import '../../drawio/src/main/webapp/js/trellis-reference-core.js'; // NEW: private recovery verifies the same canonical reference addresses as publication.
 /** Private author/session checkpoints, independent of the content journal and its queue. */ // NEW
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
-import { digest } from './trellis-share-protocol.js'; // NEW
+import { digest, canonical } from './trellis-share-protocol.js'; // CHANGE
 import { readBounded, LIMITS } from './trellis-input-policy.js'; // NEW
 
 export function createDraftStore({ profile, canvas, writeAtomic, now = Date.now }) { // NEW
-    const directory = path.join(profile, 'drafts-v3', canvas.shareId), writers = new Map(); // NEW
+    const directory = path.join(profile, 'drafts-v3', canvas.shareId), writers = new Map(), retainWrites = new Map(); // CHANGE
     const filename = (userId, sessionId) => path.join(directory, digest(JSON.stringify([userId, sessionId])) + '.json'); // NEW
     function validate(input) { // NEW
         if (typeof input.xml !== 'string' || typeof input.baseXml !== 'string' || Buffer.byteLength(input.xml) > LIMITS.diagram || Buffer.byteLength(input.baseXml) > LIMITS.diagram || !Number.isSafeInteger(input.revision) || input.revision < 0) throw new Error('Invalid private recovery checkpoint.'); // NEW
-        if (!Array.isArray(input.editorDrafts || []) || (input.editorDrafts || []).some(editor => !editor || !['planting', 'year-planner'].includes(editor.kind) || !Array.isArray(editor.targets))) throw new Error('Invalid private editor recovery data.'); // NEW
+        if (!Array.isArray(input.editorDrafts || []) || (input.editorDrafts || []).some(editor => !editor || !['planting', 'year-planner', 'inventory', 'details', 'label', 'object-form'].includes(editor.kind) || !Array.isArray(editor.targets))) throw new Error('Invalid private editor recovery data.'); // CHANGE
         const size = Buffer.byteLength(JSON.stringify(input.editorDrafts || [])); if (size > LIMITS.diagram) throw new Error('Editor recovery data is too large.'); // NEW
+        if (input.references) { if (typeof input.references !== 'object' || Array.isArray(input.references) || Buffer.byteLength(JSON.stringify(input.references)) > LIMITS.diagram) throw new Error('Invalid private reference recovery data.'); for (const [hash, value] of Object.entries(input.references)) if (!/^[a-f0-9]{64}$/.test(hash) || digest(globalThis.TrellisReferenceCore.canonical(value)) !== hash) throw new Error('Private reference recovery failed verification.'); } // CHANGE: private preservation stays independent of the content queue and grants no publication authority.
     } // NEW
     function checkpoint(userId, sessionId, input) { // NEW
         validate(input); const key = JSON.stringify([userId, sessionId]); // NEW
@@ -19,7 +21,7 @@ export function createDraftStore({ profile, canvas, writeAtomic, now = Date.now 
         if (input.revision < writer.revision) return Promise.reject(new Error('Stale recovery checkpoint.')); // NEW
         writer.revision = input.revision; // NEW
         const ticket = ++writer.sequence; // NEW: unapplied editor entries may change without a committed model revision.
-        writer.pending = { ticket, record: { schema: 1, diagramId: canvas.diagramId, userId, sessionId, revision: input.revision, xml: input.xml, baseXml: input.baseXml, editorDrafts: input.editorDrafts || [], at: now() } }; // CHANGE
+        writer.pending = { ticket, record: { schema: 1, diagramId: canvas.diagramId, userId, sessionId, revision: input.revision, xml: input.xml, baseXml: input.baseXml, editorDrafts: input.editorDrafts || [], ...(input.references ? { references: input.references } : {}), at: now() } }; // CHANGE
         const promise = new Promise((resolve, reject) => writer.waiters.push({ ticket, resolve, reject })); // CHANGE
         if (!writer.active) { // NEW
             writer.active = true; // NEW
@@ -35,11 +37,25 @@ export function createDraftStore({ profile, canvas, writeAtomic, now = Date.now 
         } // NEW
         return promise; // NEW
     } // NEW
+    /** Retained losses are immutable and independent of replaceable checkpoints and their discard operation. */ // CHANGE
+    function retain(userId, sessionId, input) { // CHANGE
+        validate(input); // CHANGE
+        if (typeof input.lossId !== 'string' || !input.lossId || input.lossId.length > 256 || typeof input.reason !== 'string' || input.reason.length > 4096) throw new Error('Invalid retained draft identity.'); // CHANGE
+        const payload = { schema: 1, retained: true, diagramId: canvas.diagramId, userId, sessionId, lossId: input.lossId, revision: input.revision, xml: input.xml, baseXml: input.baseXml, editorDrafts: input.editorDrafts || [], ...(input.references ? { references: input.references } : {}), reason: input.reason }; // CHANGE
+        const contentHash = digest(JSON.stringify(payload)), file = path.join(directory, digest(JSON.stringify([userId, sessionId, input.lossId])) + '.retained.json'); // CHANGE
+        const task = (retainWrites.get(file) || Promise.resolve()).catch(() => {}).then(async () => { // CHANGE
+            const existing = await readBounded(file, LIMITS.diagram * 4).then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error; }); // CHANGE
+            if (existing && existing.contentHash !== contentHash) throw new Error('This retained draft identity already contains different work.'); // CHANGE
+            if (!existing) await writeAtomic(file, JSON.stringify({ ...payload, contentHash, at: now() })); // CHANGE
+            return { ok: true, retained: true, lossId: input.lossId }; // CHANGE
+        }).finally(() => { if (retainWrites.get(file) === task) retainWrites.delete(file); }); // CHANGE
+        retainWrites.set(file, task); return task; // CHANGE
+    } // CHANGE
     async function restore(userId) { // NEW
         const names = await fs.readdir(directory).catch(error => { if (error.code === 'ENOENT') return []; throw error; }); // NEW
         if (names.length > 4096) throw new Error('Too many private recovery checkpoints.'); // NEW
         const records = []; // NEW
-        for (const name of names.filter(name => /^[a-f0-9]{64}\.json$/.test(name))) { // NEW
+        for (const name of names.filter(name => /^[a-f0-9]{64}(?:\.retained)?\.json$/.test(name))) { // CHANGE
             try { const record = JSON.parse(await readBounded(path.join(directory, name), LIMITS.diagram * 4)); if (record.schema === 1 && record.diagramId === canvas.diagramId && record.userId === userId) { validate(record); records.push(record); } } // NEW
             catch (_) { /* A damaged session must not hide other valid author checkpoints. */ } // NEW
         } // NEW
@@ -54,5 +70,5 @@ export function createDraftStore({ profile, canvas, writeAtomic, now = Date.now 
         if (record && record.revision <= revision) await fs.rm(file, { force: true }); // NEW
         return { ok: true }; // NEW
     } // NEW
-    return { checkpoint, restore, discard }; // NEW
+    return { checkpoint, retain, restore, discard }; // CHANGE
 } // NEW

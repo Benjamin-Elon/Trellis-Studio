@@ -16,7 +16,7 @@ function fixture() { // NEW
         return group; // NEW
     }; // NEW
     h.limits = (perPlanting, total, garden = h.moduleCell) => h.attrs(garden, { plant_circle_max_per_planting: perPlanting, plant_circle_max_total: total }); // NEW
-    h.serialize = () => h.window.mxUtils.getXml(new h.window.mxCodec().encode(h.graph.model)); // NEW
+    h.serialize = () => h.window.mxUtils.getXml(h.ui.getXmlFileData()); // CHANGE: assertions compare authored data through the production save boundary.
     h.circles = group => h.graph.getChildVertices(group).filter(child => child.getAttribute('plant_tiler') === '1'); // NEW
     h.count = group => Number(group.getAttribute('plant_count_actual')); // NEW
     h.collapsed = group => group.getAttribute('lod_collapsed') === '1'; // NEW
@@ -29,7 +29,7 @@ function fixture() { // NEW
     return h; // NEW
 } // NEW
 
-test('header toggle preserves footprint, disabled slots, moved circles, counts and one-step Undo/Redo', () => { // NEW
+test('header toggle preserves authored cells and manual layout without save or Undo entries', () => { // CHANGE
     const h = fixture(); // NEW
     try { // NEW
         const group = h.group('crop', 180, 130, h.moduleCell, { disabled_plants: '[[0,0]]' }); // NEW
@@ -42,9 +42,9 @@ test('header toggle preserves footprint, disabled slots, moved circles, counts a
         let bubbled = 0; h.graph.container.addEventListener('mousedown', () => bubbled++); // NEW
         button.dispatchEvent(new h.window.MouseEvent('mousedown', { bubbles: true, cancelable: true })); assert.equal(bubbled, 0); // NEW
         const footprint = JSON.stringify(group.geometry), count = h.count(group); h.limits(count, count); h.undoManager.clear(); const before = h.serialize(); // NEW: admission counts only enabled circles, including at the exact hard limit.
-        button.click(); assert.equal(h.collapsed(group), true); assert.equal(group.getAttribute('plant_circle_detail_mode'), 'collapsed'); assert.equal(h.graph.getSelectionCell(), group); // NEW
+        button.click(); assert.equal(h.collapsed(group), true); assert.equal(group.getAttribute('plant_circle_detail_mode'), undefined); assert.equal(h.graph.getSelectionCell(), group); // CHANGE
         assert.equal(JSON.stringify(group.geometry), footprint); assert.equal(h.count(group), count); assert.equal(Number(group.getAttribute('planting_expected_yield_kg')), count * 2); // NEW
-        const after = h.serialize(); assert.equal(h.undoManager.history.length, 1); h.undoManager.undo(); assert.equal(h.serialize(), before); h.undoManager.redo(); assert.equal(h.serialize(), after); // NEW
+        assert.equal(h.serialize(), before); assert.equal(h.undoManager.history.length, 0); // CHANGE
         h.tiler.retileGroup(h.graph, group); assert.equal(h.collapsed(group), true); // NEW
         assert.equal(h.tiler.setPlantingGroupDetail(group, true).ok, true); // NEW
         const restored = h.circles(group).find(child => child.getAttribute('tile_r') === tile.getAttribute('tile_r') && child.getAttribute('tile_c') === tile.getAttribute('tile_c')); // NEW
@@ -62,7 +62,7 @@ test('exact limits admit detail, exceeded limits refuse without edits, and zero 
         assert.match(h.tiler.setPlantingGroupDetail(group, true).reason, /per-planting limit/); assert.equal(h.serialize(), before); // NEW
         h.limits(count, count - 1); assert.match(h.tiler.setPlantingGroupDetail(group, true).reason, /garden limit/); // NEW
         h.limits(0, 1000); assert.equal(h.circles(group).length, 0); h.limits(1000, 0); assert.equal(h.circles(group).length, 0); // NEW
-        assert.equal(group.getAttribute('plant_circle_detail_mode'), 'expanded'); h.limits(count, count); assert.equal(h.collapsed(group), false); // NEW
+        assert.equal(group.getAttribute('plant_circle_detail_mode'), undefined); h.limits(count, count); assert.equal(h.collapsed(group), false); // CHANGE
         assert.equal(h.count(group), count); // NEW
     } finally { h.close(); } // NEW
 }); // NEW
@@ -95,7 +95,7 @@ test('resize, spacing changes and whole-garden accounting preserve manual intent
         const other = h.group('other', 150, 110, otherGarden); h.limits(1000, 1000, otherGarden); // NEW
         h.limits(h.count(group), h.count(group)); h.tiler.setPlantingGroupDetail(group, true); // NEW
         const larger = group.geometry.clone(); larger.width *= 2; h.graph.resizeCells([group], [larger]); // NEW
-        assert.equal(h.collapsed(group), true); assert.equal(group.getAttribute('plant_circle_detail_mode'), 'expanded'); assert.equal(h.collapsed(other), false); // NEW
+        assert.equal(h.collapsed(group), true); assert.equal(group.getAttribute('plant_circle_detail_mode'), undefined); assert.equal(h.collapsed(other), false); // CHANGE
         h.graph.model.beginUpdate(); try { h.attrs(group, { spacing_cm: '60' }); h.tiler.retileGroup(h.graph, group); } finally { h.graph.model.endUpdate(); } // NEW
         assert.equal(h.collapsed(group), false); h.tiler.setPlantingGroupDetail(group, false); // NEW
         const smaller = group.geometry.clone(); smaller.width *= 0.9; h.graph.resizeCells([group], [smaller]); assert.equal(h.collapsed(group), true); // NEW
@@ -103,18 +103,18 @@ test('resize, spacing changes and whole-garden accounting preserve manual intent
     } finally { h.close(); } // NEW
 }); // NEW
 
-test('legacy gardens stay unchanged on installation; serialized manual choices survive reopening', () => { // NEW
+test('legacy gardens keep saved defaults when local preferences are absent on another computer', () => { // CHANGE
     const h = fixture(); // NEW
     try { // NEW
         const group = h.group('legacy', 650, 600); assert.ok(h.count(group) > 300); assert.equal(h.tiler.readPlantCircleLimits(h.moduleCell).active, false); // NEW
         assert.equal(h.tiler.setPlantingGroupDetail(group, true).ok, true); h.tiler.retileGroup(h.graph, group); assert.equal(h.collapsed(group), false); // NEW
         const saved = h.serialize(); h.undoManager.clear(); h.window.eval(fs.readFileSync(path.join(plugins, 'Planting_Group.js'), 'utf8')); assert.equal(h.serialize(), saved); assert.equal(h.undoManager.history.length, 0); // NEW
         const reopened = fixture(); // NEW
-        try { const document = reopened.window.mxUtils.parseXml(saved); new reopened.window.mxCodec(document).decode(document.documentElement, reopened.graph.model); const loaded = reopened.graph.model.getCell('legacy'); reopened.tiler.retileGroup(reopened.graph, loaded); assert.equal(loaded.getAttribute('plant_circle_detail_mode'), 'expanded'); assert.equal(reopened.collapsed(loaded), false); } finally { reopened.close(); } // NEW
+        try { const document = reopened.window.mxUtils.parseXml(saved); new reopened.window.mxCodec(document).decode(document.documentElement, reopened.graph.model); const loaded = reopened.graph.model.getCell('legacy'); reopened.tiler.retileGroup(reopened.graph, loaded); assert.equal(loaded.getAttribute('plant_circle_detail_mode'), undefined); assert.equal(reopened.collapsed(loaded), true); } finally { reopened.close(); } // CHANGE
     } finally { h.close(); } // NEW
 }); // NEW
 
-test('header follows view changes, hides on deselection or read-only access, and is absent from exports', async () => { // NEW
+test('header follows view changes, remains available to viewers, and is absent from exports', async () => { // CHANGE
     const h = fixture(); // NEW
     try { // NEW
         const group = h.group('crop'); h.graph.setSelectionCell(group); const button = h.window.document.querySelector('.trellis-planting-detail-toggle'), left = button.style.left, before = h.serialize(); // NEW
@@ -123,7 +123,7 @@ test('header follows view changes, hides on deselection or read-only access, and
         h.graph.view.setCurrentRoot(h.moduleCell); await new Promise(resolve => h.window.requestAnimationFrame(resolve)); assert.equal(button.style.display, 'block'); // NEW
         const panLeft = parseInt(button.style.left, 10), panTop = parseInt(button.style.top, 10); h.graph.panGraph(20, 15); await new Promise(resolve => h.window.requestAnimationFrame(resolve)); assert.equal(parseInt(button.style.left, 10), panLeft + 20); assert.equal(parseInt(button.style.top, 10), panTop + 15); h.graph.panGraph(0, 0); // NEW
         h.graph.clearSelection(); assert.equal(button.style.display, 'none'); h.graph.setSelectionCell(group); // NEW
-        h.ui.getCurrentFile = () => ({ isEditable: () => false }); h.graph.__trellisPlantingGroup.overlay.syncSelection(); assert.equal(button.style.display, 'none'); assert.equal(h.tiler.setPlantingGroupDetail(group, false).ok, false); // NEW
+        h.ui.getCurrentFile = () => ({ isEditable: () => false }); h.graph.setEnabled(false); h.graph.__trellisPlantingGroup.overlay.syncSelection(); assert.equal(button.style.display, 'block'); assert.equal(h.tiler.setPlantingGroupDetail(group, false).ok, true); assert.equal(h.serialize(), before); // CHANGE
     } finally { h.close(); } // NEW
 }); // NEW
 
@@ -138,7 +138,7 @@ test('sibling creation and bed fitting use the same whole-garden limits', () => 
         h.tiler.retileAndFitToContainingBed(h.graph, source); // NEW
         const total = h.circles(source).length + h.circles(sibling).length; assert.ok(total <= count); assert.ok(h.circles(source).length <= count); // NEW
         h.tiler.setPlantingGroupDetail(source, false); const collapsedSibling = h.tiler.createSiblingTilerGroupFromSource(h.graph, source, { select: false }); // NEW
-        assert.equal(h.collapsed(collapsedSibling), true); assert.equal(h.graph.getChildVertices(collapsedSibling).length, 1); assert.equal(h.graph.getChildVertices(collapsedSibling)[0].getAttribute('lod_summary'), '1'); // NEW
+        assert.equal(collapsedSibling.getAttribute('plant_circle_detail_mode'), undefined); assert.ok(h.graph.getChildVertices(collapsedSibling).length >= 1); // CHANGE: duplicate starts with its own authored detail and budget admission.
     } finally { h.close(); } // NEW
 }); // NEW
 
@@ -154,8 +154,11 @@ test('model permissions protect garden budgets and allow only derived presentati
         const saved = h.serialize(); h.limits(0, 0); assert.equal(h.serialize(), saved); // NEW
         assert.equal(h.tiler.setPlantingGroupDetail(bobGroup, false).ok, true); // NEW
         users.logout(); users.login('Alice', '1234'); h.limits(1000, 1000); // NEW
+        h.attrs(bobGroup, { plant_circle_detail_mode: 'collapsed' }); h.tiler.retileGroup(h.graph, bobGroup); // NEW: the visitor's circles exist only in their personal expansion.
         const visitor = users.createUser('Visitor', '9012', false).user; users.setScopeGrant(h.moduleCell, { userId: visitor.id, preset: 'visitor' }); users.logout(); users.login('Visitor', '9012'); // NEW
-        assert.equal(h.tiler.setPlantingGroupDetail(bobGroup, true).ok, false); // NEW
+        const canonical = h.serialize(); h.undoManager.clear(); assert.equal(h.tiler.setPlantingGroupDetail(bobGroup, true).ok, true); assert.equal(h.serialize(), canonical); assert.equal(h.undoManager.canUndo(), false); // CHANGE: visitors may change local presentation only.
+        const tile = h.circles(bobGroup)[0], moved = tile.geometry.clone(); moved.x += 3; h.graph.model.setGeometry(tile, moved); // NEW
+        assert.equal(h.serialize(), canonical); assert.equal(h.undoManager.canUndo(), false); // NEW: translating a local circle edit into its authored snapshot cannot bypass content permissions.
     } finally { h.close(); } // NEW
 }); // NEW
 

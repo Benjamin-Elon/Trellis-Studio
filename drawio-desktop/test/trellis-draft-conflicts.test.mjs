@@ -6,6 +6,22 @@ import { objects } from '../src/main/trellis-collaboration-protocol.js'; // NEW
 const key = id => JSON.stringify(['page', id]); // NEW
 const canvas = (a = 'A', b = 'B') => '<mxfile><diagram id="page"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><object id="a" label="' + a + '"><mxCell parent="1" vertex="1"/></object><object id="b" label="' + b + '"><mxCell parent="1" vertex="1"/></object></root></mxGraphModel></diagram></mxfile>'; // NEW
 const label = (xml, id) => objects(xml).get(key(id))?.label; // NEW
+/** A new planting and generated tiles must be valid together before either can be accepted. */ // NEW
+test('new planting, generated circles and linked task form one non-conflicting creation', () => { // NEW
+    const base = canvas(); // NEW
+    const additions = '<object id="planting" label="Dill" tiler_group="1"><mxCell parent="a" vertex="1"/></object><object id="circle" label="DILL" plant_tiler="1" auto="1"><mxCell parent="planting" vertex="1"/></object><object id="task" label="Sow" kanban_card="1" linkedTo="planting"><mxCell parent="b" vertex="1"/></object>'; // NEW
+    const mine = base.replace('</root>', additions + '</root>'), review = reviewDraft(base, mine, base); // NEW
+    assert.equal(review.groups.length, 1); assert.equal(review.groups[0].conflict, false); // NEW
+    assert.ok(['planting', 'circle', 'task'].every(id => review.groups[0].keys.includes(key(id)))); // NEW
+    const result = resolveDraft(base, mine, base, { token: review.token, mode: 'non-conflicting' }); // NEW
+    assert.equal(objects(result.xml).size, objects(mine).size); assert.deepEqual(result.remaining, []); // NEW
+}); // NEW
+test('structural review ignores attribute order and formatting when content is already accepted', () => { // NEW
+    const base = canvas(), mine = base.replace('<mxGraphModel>', '<mxGraphModel pageWidth="900">'); // NEW
+    const accepted = mine.replace('id="a" label="A"', 'label="A" id="a"'); // NEW
+    const review = reviewDraft(base, mine, accepted); // NEW
+    assert.equal(review.groups[0].structural, true); assert.equal(review.groups[0].alreadyApplied, true); assert.equal(review.groups[0].conflict, false); // NEW
+}); // NEW
 function resolve(base, mine, accepted, mode, extra = {}) { return resolveDraft(base, mine, accepted, { token: reviewDraft(base, mine, accepted).token, mode, ...extra }); } // NEW
 test('partial application commits only independent groups and preserves the conflicting private version', () => { // NEW
     const result = resolve(canvas(), canvas('Mine', 'Independent'), canvas('Peer'), 'non-conflicting'); // NEW

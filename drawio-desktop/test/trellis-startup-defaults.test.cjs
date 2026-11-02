@@ -35,6 +35,7 @@ const trellisDefaultPluginIds = [
     "gardenLinking",
     "tidyContextMenu",
     "createdChangeMap",
+    "trellisInventories", // NEW
     "gardenDashboard",
     "gardenPlanner",
     "gardenAllocate",
@@ -68,6 +69,7 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Vertex_Linking_Standalone.js",
     "plugins/garden_planner_plugins/Tidy_Context_Menu.js",
     "plugins/garden_planner_plugins/Created_Change_Map.js",
+    "plugins/garden_planner_plugins/Trellis_Inventories.js", // NEW
     "plugins/garden_planner_plugins/Garden_Dashboard.js",
     "plugins/garden_planner_plugins/Year_Planner.js",
     "plugins/garden_planner_plugins/Allocate_Planner.js",
@@ -285,19 +287,20 @@ test('desktop startup migrates saved profiles to object details once and loads i
         '.drawio-config': storedConfig({ plugins: ['plugins/custom.js'], autosave: true }), // NEW
         '.trellisSyncthingDefault.v1': '1' // NEW
     } }); // NEW
-    const requests = [], context = { App: { initPluginCallback() {} }, mxSettings, localStorage, urlParams: {}, EditorUi: {}, document: { getElementsByTagName: () => [] }, mxmeta() {}, origAppMain() {}, mxscript: url => requests.push(url), requestSync: async () => null }; // NEW
+    const requests = [], context = { App: { initPluginCallback() {}, inventoryPluginId() { return null; } }, mxSettings, localStorage, urlParams: {}, EditorUi: {}, document: { getElementsByTagName: () => [] }, mxmeta() {}, origAppMain() {}, mxscript: url => requests.push(url), requestSync: async () => null }; // NEW
     mxSettings.getDraftSaveDelay = () => null; // NEW
     for (const field of ['pluginRegistry', 'publicPlugin']) vm.runInNewContext(runtimeAssignment(readProjectFile(appBundlePath), field), context); // NEW
     vm.runInNewContext(runtimeAssignment(source, 'main'), context); // NEW
     const details = 'plugins/garden_planner_plugins/Trellis_Object_Details.js'; // NEW
     await context.App.main(); // NEW
-    assert.deepEqual(hostArray(mxSettings.getPlugins()), ['./plugins/custom.js', './' + details, './plugins/garden_planner_plugins/Garden_Structures.js', './plugins/garden_planner_plugins/Trellis_API_Keys.js', './plugins/garden_planner_plugins/Garden_Quickstart.js']); // CHANGE: structures also migrate into saved desktop profiles.
+    assert.deepEqual(hostArray(mxSettings.getPlugins()), ['./plugins/custom.js', './' + details, './plugins/garden_planner_plugins/Garden_Structures.js', './plugins/garden_planner_plugins/Trellis_API_Keys.js', './plugins/garden_planner_plugins/Garden_Quickstart.js', './plugins/garden_planner_plugins/Trellis_Inventories.js']); // CHANGE // CHANGE: structures also migrate into saved desktop profiles.
     assert.ok(requests.some(url => url.endsWith('Garden_Structures.js'))); // NEW
     assert.ok(requests.includes('./' + details), 'the actual desktop loader requests the migrated plugin'); // NEW
     assert.equal(JSON.parse(localStorage.getItem('.drawio-config')).plugins.filter(plugin => plugin.endsWith('Trellis_Object_Details.js')).length, 1); // NEW
     await context.App.main(); // NEW
     assert.equal(mxSettings.getPlugins().filter(plugin => plugin.endsWith('Trellis_Object_Details.js')).length, 1, 'restarting does not duplicate the entry'); // NEW
-    assert.equal(mxSettings.getPlugins().filter(plugin => plugin.endsWith('Garden_Structures.js')).length, 1); // NEW
+    assert.equal(mxSettings.getPlugins().filter(plugin => plugin.endsWith('Garden_Structures.js')).length, 1);
+    assert.equal(mxSettings.getPlugins().filter(plugin => plugin.endsWith('Trellis_Inventories.js')).length, 1); // NEW // NEW
     mxSettings.setPlugins(['plugins/custom.js']); requests.length = 0; // NEW
     await context.App.main(); // NEW
     assert.equal(requests.some(url => url.endsWith('Trellis_Object_Details.js')), false, 'a later deliberate removal is preserved'); // NEW
@@ -356,5 +359,20 @@ for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // NEW
         context.App.loadRoadmapPlugin('gardenRoadmaps'); assert.equal(requests[0].url, './plugins/garden_planner_plugins/Garden_Roadmap_Core.js'); // NEW
         assert.equal(context.App.pluginsLoaded['./' + context.App.pluginRegistry.gardenRoadmaps], true); // NEW
         requests[0].done(); assert.equal(requests[1].url, './plugins/garden_planner_plugins/Garden_Roadmap_Manager.js'); // NEW
+    }); // NEW
+} // NEW
+
+for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // NEW
+    test(path.basename(filePath) + ' inventory consumers wait for shared cores, deduplicate, and retry failed loads', async () => { // NEW
+        const source = readProjectFile(filePath), requests = [], context = { App: { pluginsLoaded: {}, embedModePluginsCount: 0 }, PLUGINS_BASE_PATH: '.', window: {}, console: { error() {} }, mxscript: (url, done, id, key, noWrite, fail) => requests.push({ url, done, fail }) }; // NEW
+        for (const field of ['pluginRegistry', 'inventoryPluginId', 'loadInventoryPlugin']) vm.runInNewContext(runtimeAssignment(source, field), context); // NEW
+        assert.equal(context.App.inventoryPluginId('./plugins/garden_planner_plugins/Year_Planner.js'), 'gardenPlanner'); // NEW
+        context.App.loadInventoryPlugin('gardenPlanner'); context.App.loadInventoryPlugin('trellisInventories'); context.App.loadInventoryPlugin('gardenPlanner'); // NEW
+        assert.equal(requests.length, 1); assert.equal(requests[0].url, './plugins/garden_planner_plugins/Trellis_Allocation_Core.js'); // NEW
+        requests[0].fail('injected missing dependency'); await new Promise(resolve => setTimeout(resolve, 0)); assert.equal(context.App.embedModePluginsCount, 0); // NEW
+        context.App.loadInventoryPlugin('gardenPlanner'); assert.equal(requests.length, 2); // NEW
+        for (const [index, global] of [[1, 'TrellisAllocationCore'], [2, 'TrellisSeedsCore'], [3, 'TrellisExchangeCore']]) { context.window[global] = {}; requests[index].done(); await new Promise(resolve => setTimeout(resolve, 0)); } // NEW
+        assert.equal(requests[4].url, './plugins/garden_planner_plugins/Year_Planner.js'); // NEW
+        context.App.loadInventoryPlugin('gardenPlanner'); assert.equal(requests.length, 5); // NEW
     }); // NEW
 } // NEW

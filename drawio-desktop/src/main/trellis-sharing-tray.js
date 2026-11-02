@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import '../../drawio/src/main/webapp/js/trellis-sync-contract.js'; // NEW: tray eligibility follows the supported protocol contract.
 
 const run = promisify(execFile);
 /** Build an XDG Exec value using the installed executable, not an AppImage mount. */
@@ -27,6 +28,10 @@ export async function setSharingStartup(app, enabled, store) {
     }
     store?.set('trellisSharingStartup', enabled);
 }
+/** Only actionable current sync registrations belong in the tray; retained files stay in Garden Projects. */ // NEW
+export function isTrayStatusVisible(status) { // NEW
+    return (status.protocolVersion == null || globalThis.TrellisSyncContract.supportedGardens.includes(status.protocolVersion)) && !status.localOnly && !status.retired && !status.fenced && !status.revoked && !status.localRemoved; // NEW
+} // NEW
 export async function createSharingTray({ app, Tray, Menu, nativeImage, iconPath, service, openWindow, store }) {
     if (process.platform === 'linux') {
         // A successful constructor alone does not establish that the desktop displays tray icons.
@@ -38,12 +43,12 @@ export async function createSharingTray({ app, Tray, Menu, nativeImage, iconPath
     let disposed = false; // NEW
     function update() { // CHANGE: aggregate service notifications always rebuild the complete transport list.
         if (disposed) return; // NEW
-        const statuses = service.listStatus(); // NEW
+        const statuses = service.listStatus().filter(isTrayStatusVisible); // CHANGE // NEW
         tray.setToolTip('Trellis OS sharing'); // CHANGE: Trellis OS branding.
         tray.setContextMenu(Menu.buildFromTemplate([
             { label: 'Open Trellis OS', click: () => openWindow() }, // CHANGE: Electron passes a MenuItem argument to click handlers, not a canvas path.
             { type: 'separator' },
-            ...statuses.map(status => ({ label: status.label + ': ' + (status.connectedCollaborators == null ? 'connection count unavailable' : status.connectedCollaborators + ' connected collaborators') + ' (' + status.state + ')', click: () => openWindow(status.diagramPath) })),
+            ...statuses.map(status => ({ label: status.label + ': ' + (status.connectedCollaborators == null ? 'connection count unavailable' : status.connectedCollaborators + ' connected collaborators') + ' (' + (status.state === 'initializing' ? 'Starting syncing' : status.state) + ')', click: () => openWindow(status.diagramPath) })),
             { type: 'separator' },
             { label: 'Pause All Syncing', click: () => service.setPaused({ paused: true }).catch(showError) }, // CHANGE
             { label: 'Resume All Syncing', click: () => service.setPaused({ paused: false }).catch(showError) }, // CHANGE

@@ -246,7 +246,8 @@ contextBridge.exposeInMainWorld('trellisGardenCommunities', { // NEW
 	listRequests: () => identityRequest('trellisGardenCommunities', 'listRequests'), // NEW
 	onStatus(listener) { const receive = () => listener(); ipcRenderer.on('trellisGardenCommunitiesStatus', receive); return () => ipcRenderer.removeListener('trellisGardenCommunitiesStatus', receive); } // NEW
 }); // NEW
-contextBridge.exposeInMainWorld('trellisGardenLibrary', { // NEW
+contextBridge.exposeInMainWorld('trellisGardenLibrary', {
+	prepareOpen: payload => identityRequest('trellisGardenLibrary', 'prepareOpen', payload), // NEW: selected-garden verification retains account ownership. // NEW
     referenceTemplates: () => identityRequest('trellisGardenLibrary', 'referenceTemplates'), sendReferenceProposal: payload => identityRequest('trellisGardenLibrary', 'sendReferenceProposal', payload), // NEW
 	list: payload => identityRequest('trellisGardenLibrary', 'list', payload), // CHANGE: optional targeted read after an edit.
 	create: payload => identityRequest('trellisGardenLibrary', 'create', payload),
@@ -284,6 +285,18 @@ contextBridge.exposeInMainWorld('trellisGardenLibrary', { // NEW
 	getReferenceCity: () => identityRequest('trellisGardenLibrary', 'getReferenceCity'), // NEW
 	setReferenceCity: payload => identityRequest('trellisGardenLibrary', 'setReferenceCity', payload) // NEW
 });
+contextBridge.exposeInMainWorld('trellisInventories', { // NEW
+    list: () => identityRequest('trellisInventories', 'list'), // NEW
+    read: payload => identityRequest('trellisInventories', 'read', payload), // NEW
+    saveSeeds: payload => identityRequest('trellisInventories', 'saveSeeds', payload), // NEW
+    saveEquipment: payload => identityRequest('trellisInventories', 'saveEquipment', payload) // NEW
+}); // NEW
+contextBridge.exposeInMainWorld('trellisExchange', { // NEW
+    status: () => identityRequest('trellisExchange', 'status'), // NEW
+    list: payload => identityRequest('trellisExchange', 'list', payload), // NEW
+    command: payload => identityRequest('trellisExchange', 'command', payload), // NEW
+    estimate: payload => identityRequest('trellisExchange', 'estimate', payload) // NEW
+}); // NEW
 contextBridge.exposeInMainWorld('trellisField', { // NEW: packages stay outside generic renderer filesystem access.
 	publishWork: payload => identityRequest('trellisField', 'publishWork', payload),
 	pendingUpdates: payload => identityRequest('trellisField', 'pendingUpdates', payload),

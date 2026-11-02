@@ -753,11 +753,12 @@ Draw.loadPlugin(function (ui) {
         return { x: 1, y: 0 }; // NEW
     }
 
+    let creationPlacement = null; // CHANGE: only creation suppresses peer displacement; movement and resize keep their existing mechanics.
     function enforceModuleExternalMarginsFor(seedCells, opts) {
         const options = opts || {};
-        const seeds = (seedCells || []).filter(function (cell) { return isModule(cell) && model.getParent(cell) === graph.getDefaultParent(); });
+        const seeds = (seedCells || []).filter(function (cell) { return isModule(cell) && model.getParent(cell) === graph.getDefaultParent() && !creationPlacement?.existing.has(cell); }); // CHANGE
         if (!seeds.length || graph.__trellisModuleExternalMarginEnforcing) return;
-        const modules = allTopLevelModules();
+        const modules = allTopLevelModules().filter(cell => !creationPlacement?.existing.has(cell)); // CHANGE: creation may arrange its own starter roots, never pre-existing modules.
         if (modules.length < 2) return;
         const seedIds = new Set(seeds.map(cellId));
         const excludedIds = new Set((options.excludeCells || []).map(cellId)); // NEW
@@ -1821,6 +1822,8 @@ Draw.loadPlugin(function (ui) {
 
     function bootstrapNewTeamModule(teamCell) { // NEW
         if (!teamCell || !isTeamModule(teamCell)) return null; // NEW
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.scope('generated-content', () => bootstrapNewTeamModule(teamCell)); // NEW: starter teams and role fields are side effects of creating their workspace.
         let starterTeam = null; // NEW
         let starterRole = null; // NEW
         model.beginUpdate(); // NEW
@@ -2827,10 +2830,77 @@ Draw.loadPlugin(function (ui) {
         return type === "garden" || type === "team" || type === "task" || type === "roadmap" ? type : "regular"; // CHANGE
     }
 
+    /** Persist starter badge suppression on this newly created cluster, including its initial content. */ // NEW
+    function markStarterAttributionPending(roots) { // NEW
+        const cells = []; // NEW: creation status tracks only this cluster, without scanning existing diagram contents.
+        function visit(cell) { // NEW
+            if (!cell) return; // NEW
+            cells.push(cell); // NEW
+            setStringValueAttr(cell, 'trellis_starter_attribution_pending', '1'); // NEW: clone-backed values participate in the creation transaction.
+            for (let i = 0; i < model.getChildCount(cell); i++) visit(model.getChildAt(cell, i)); // NEW
+        } // NEW
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context) context.scope('attribution', () => roots.forEach(visit)); // NEW: badge metadata must not expand collaboration editing holds.
+        else roots.forEach(visit); // NEW
+        return cells; // NEW
+    } // NEW
+
+    /** Place a completed new cluster conservatively; never change pre-existing module geometry. */ // CHANGE
+    function placeCreatedModules(existing, requested) { // CHANGE
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (context && context.current()?.kind !== 'generated-content') return context.scope('generated-content', () => placeCreatedModules(existing, requested)); // NEW: final placement, including Roadmap completion, cannot reserve generated companions.
+        const roots = allTopLevelModules().filter(cell => !existing.has(cell)); if (!roots.length) return; // CHANGE
+        roots.forEach((cell, index) => enforceModuleExternalMarginsFor([cell], { manageUpdate: false, excludeCells: roots.slice(0, index + 1) })); // CHANGE: finalize starter spacing after late team/board sizing, then translate the cluster as a unit.
+        const bounds = roots.map(cellPageBounds).filter(Boolean); // CHANGE
+        if (bounds.length !== roots.length || bounds.some(rect => ![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite))) throw new Error('The new module has invalid placement bounds.'); // CHANGE
+        const left = Math.min(...bounds.map(rect => rect.x)), top = Math.min(...bounds.map(rect => rect.y)), width = Math.max(...bounds.map(rect => rect.x + rect.w)) - left, height = Math.max(...bounds.map(rect => rect.y + rect.h)) - top; // CHANGE
+        const gap = Math.max(...roots.map(cell => getModuleExternalMarginValue(cell))), obstacles = [...existing].map(cell => ({ ...cellPageBounds(cell), gap: Math.max(gap, getModuleExternalMarginValue(cell)) })).filter(rect => Number.isFinite(rect.x) && Number.isFinite(rect.y)); // CHANGE
+        const grid = (graph.isGridEnabled?.() ?? graph.gridEnabled ?? false) ? Math.max(1, Number(graph.gridSize) || 10) : 1, align = value => Math.round(value / grid) * grid; // CHANGE
+        const origin = { x: align(Number(requested?.x) || 0), y: align(Number(requested?.y) || 0) }, candidates = [], seen = new Set(); // CHANGE
+        const add = (x, y) => { x = align(x); y = align(y); const key = x + ':' + y; if (!seen.has(key)) { seen.add(key); candidates.push({ x, y }); } }; // CHANGE
+        add(origin.x, origin.y); // CHANGE
+        for (const obstacle of obstacles) { const right = obstacle.x + obstacle.w + obstacle.gap + grid, bottom = obstacle.y + obstacle.h + obstacle.gap + grid; add(obstacle.x - width - obstacle.gap - grid, origin.y); add(right, origin.y); add(origin.x, obstacle.y - height - obstacle.gap - grid); add(origin.x, bottom); if (candidates.length >= 1024) break; } // CHANGE
+        const distance = point => (point.x - origin.x) ** 2 + (point.y - origin.y) ** 2, order = (a, b) => distance(a) - distance(b) || a.y - b.y || a.x - b.x; // CHANGE
+        const fits = point => obstacles.every(obstacle => !rectsIntersect(expandedRect(obstacle, obstacle.gap), { x: point.x, y: point.y, w: width, h: height })); // CHANGE
+        let destination = candidates.sort(order).slice(0, 256).find(fits); // CHANGE: cap nearby collision trials, including the requested point.
+        if (!destination) { // CHANGE
+            const exterior = [ // CHANGE
+                { x: Math.ceil(Math.max(...obstacles.map(rect => rect.x + rect.w + rect.gap), origin.x) / grid) * grid + grid, y: origin.y }, // CHANGE
+                { x: Math.floor((Math.min(...obstacles.map(rect => rect.x - rect.gap), origin.x) - width) / grid) * grid - grid, y: origin.y }, // CHANGE
+                { x: origin.x, y: Math.ceil(Math.max(...obstacles.map(rect => rect.y + rect.h + rect.gap), origin.y) / grid) * grid + grid }, // CHANGE
+                { x: origin.x, y: Math.floor((Math.min(...obstacles.map(rect => rect.y - rect.gap), origin.y) - height) / grid) * grid - grid } // CHANGE
+            ]; destination = exterior.sort(order).find(fits); // CHANGE: the infinite canvas always has space outside all occupied bounds.
+        } // CHANGE
+        if (!destination) throw new Error('No safe location was found for the new module.'); // CHANGE
+        for (const cell of roots) translateModuleGeometry(cell, destination.x - left, destination.y - top); // CHANGE
+    } // CHANGE
+    /** Keep creation atomic, including starter initialization, final placement, and permission rejection. */ // CHANGE
+    function createModuleCommand(point, type) { // CHANGE
+        const existing = new Set(allTopLevelModules()), previousSelection = graph.getSelectionCells?.() || [], roadmapApi = graph.__trellisRoadmapManager; // CHANGE
+        const previousPlacement = creationPlacement; creationPlacement = { existing }; // CHANGE
+        const previousCreation = graph.__trellisModuleCreation; graph.__trellisModuleCreation = { actorUserId: window.Trellis?.users?.getCurrentUser?.()?.id || '' }; // CHANGE: collaboration may extend one pending local claim batch for a legitimate creation command; permission checks still validate every change.
+        const finish = cell => { if (cell) placeCreatedModules(existing, point); }; // CHANGE
+        let result, rejected = false; // CHANGE
+        try { // CHANGE
+            if (roadmapApi?.runModelCommand) result = roadmapApi.runModelCommand(() => createModuleAtPoint(point, type, true), { throwOnRejection: true, creation: true, finish, onRejected: () => { rejected = true; } }); // CHANGE
+            else { // CHANGE
+                model.beginUpdate(); const edit = model.currentEdit, start = edit?.changes?.length || 0; // CHANGE
+                try { result = createModuleAtPoint(point, type, true); finish(result); } // CHANGE
+                catch (error) { if (edit?.changes) for (const change of edit.changes.splice(start).reverse()) change.execute(); throw error; } // CHANGE
+                finally { model.endUpdate(); rejected = !!edit?.__trellisUsersRejected; } // CHANGE
+            } // CHANGE
+            if (rejected || !result || model.getCell && !model.getCell(result.id)) { if (graph.setSelectionCells) graph.setSelectionCells(previousSelection.filter(cell => !model.getCell || model.getCell(cell.id) === cell)); return null; } // CHANGE
+            graph.setSelectionCell?.(result); graph.scrollCellToVisible?.(result); return result; // CHANGE
+        } catch (error) { graph.setSelectionCells?.(previousSelection.filter(cell => !model.getCell || model.getCell(cell.id) === cell)); if (rejected) return null; throw error; } // CHANGE: permissions already display a specific refusal; do not raise a second unknown-error dialog from UI creation callbacks.
+        finally { // CHANGE
+            creationPlacement = previousPlacement; // CHANGE
+            graph.__trellisModuleCreation = previousCreation; // CHANGE
+        } // CHANGE
+    } // CHANGE
     function createModuleAtPoint(point, type, insideRoadmapCommand) { // CHANGE
         const moduleType = normalizeRootModuleType(type);
         const roadmapApi = graph.__trellisRoadmapManager; // NEW
-        if (!insideRoadmapCommand && (moduleType === 'garden' || moduleType === 'roadmap') && roadmapApi && roadmapApi.runModelCommand) return roadmapApi.runModelCommand(() => createModuleAtPoint(point, type, true), { throwOnRejection: true }); // CHANGE: starter initialization receives the real rollback reason.
+        if (!insideRoadmapCommand) return createModuleCommand(point, type); // CHANGE
         if (moduleType === "roadmap" && !roadmapApiReady()) return null; // NEW: never create an unusable module shell.
         const x = Number(point && point.x) || 0;
         const y = Number(point && point.y) || 0;
@@ -2842,10 +2912,20 @@ Draw.loadPlugin(function (ui) {
             if (moduleType !== "regular") setModuleType(mod, moduleType);
             if (window.Trellis && window.Trellis.users && typeof window.Trellis.users.stampCreatedOwner === "function") window.Trellis.users.stampCreatedOwner(mod); // NEW: modules created by logged-in users become ownership boundaries
             if (moduleType === "team") bootstrapNewTeamModule(mod); // NEW
-            if (moduleType === "garden") { setStringValueAttr(mod, 'trellis_reference_pending', '1'); const team = ensureGardenTeamModule(mod, { insideUpdate: true }); bootstrapNewTeamModule(team); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); ensureGardenRoadmapModule(mod); } // CHANGE: fresh gardens must capture defaults or a template before scheduling.
+            if (moduleType === "garden") { // CHANGE: every new garden initializes its complete starter cluster before selection.
+                setStringValueAttr(mod, 'trellis_reference_pending', '1'); // CHANGE
+                const team = ensureGardenTeamModule(mod, { insideUpdate: true }); // CHANGE
+                bootstrapNewTeamModule(team); // CHANGE
+                const task = ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); // CHANGE
+                const roadmap = ensureGardenRoadmapModule(mod); // CHANGE
+                const cells = markStarterAttributionPending([mod, team, task, roadmap]); // CHANGE
+                if (graph.__trellisModuleCreation) Object.assign(graph.__trellisModuleCreation, { gardenId: cellId(mod), cells }); // NEW: available during the native creation edit's synchronous notification.
+            } // CHANGE
             if (moduleType === "roadmap" && !graph.__trellisRoadmapManager.ensureMainRoadmapInRoadmapModule(mod)) { model.remove(mod); return null; } // NEW
-            enforceModuleExternalMarginsFor([mod], { manageUpdate: false }); // NEW
-            if (mod && graph.setSelectionCell) graph.setSelectionCell(mod);
+            const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+            if (context) context.scope('generated-content', () => enforceModuleExternalMarginsFor([mod], { manageUpdate: false })); // CHANGE: automatic cluster spacing is not manual editing of neighboring starter roots.
+            else enforceModuleExternalMarginsFor([mod], { manageUpdate: false }); // NEW
+            if (mod && graph.setSelectionCell && !creationPlacement) graph.setSelectionCell(mod); // CHANGE: selection must not trigger a save while the creation transaction is incomplete.
         } finally {
             model.endUpdate();
         }
@@ -3144,10 +3224,10 @@ Draw.loadPlugin(function (ui) {
             mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); });
             mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); });
             overlay.appendChild(makeOverlayButton("Add Module", "regular", "Create a module at the selected canvas location.")); // CHANGE: explicit action tooltip.
-            overlay.appendChild(makeOverlayButton("Add Garden Module", "garden", "Create a garden module for beds, plantings, and garden plans.")); // CHANGE: explicit action tooltip.
-            overlay.appendChild(makeOverlayButton("Add Team Module", "team", "Create a team module for teams, role cards, and permissions.")); // CHANGE: explicit action tooltip.
-            overlay.appendChild(makeOverlayButton("Add Task Module", "task", "Create a task module for task boards and schedules.")); // CHANGE: explicit action tooltip.
-            overlay.appendChild(makeOverlayButton("Add Roadmap Module", "roadmap", "Create a roadmap module for project timelines.")); // NEW
+            overlay.appendChild(makeOverlayButton("Create a new garden", "garden", "Create a garden with companion team, task, and roadmap workspaces.")); // CHANGE
+            overlay.appendChild(makeOverlayButton("Add team workspace", "team", "Create a workspace for teams, role cards, and permissions.")); // CHANGE
+            overlay.appendChild(makeOverlayButton("Add task workspace", "task", "Create a workspace for task boards and schedules.")); // CHANGE
+            overlay.appendChild(makeOverlayButton("Add roadmap", "roadmap", "Create a roadmap for project timelines.")); // CHANGE
             const host = ensureOverlayHost();
             if (host) host.appendChild(overlay);
             graph.__trellisOverlayVisibility?.mark(overlay); // NEW: informational overlays must not obstruct manipulation.

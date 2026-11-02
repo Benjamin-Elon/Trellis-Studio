@@ -34,6 +34,7 @@
             if (!enabled()) return;
             const cells = [...new Set([...(graph.getSelectionCells?.() || []), hovered].filter(Boolean).map(cell => context?.logicalCell(cell) || cell))];
             for (const cell of cells) {
+                if (cell.getAttribute?.('trellis_starter_attribution_pending') === '1') continue; // NEW: untouched starter objects retain their facts without displaying attribution.
                 if (!model.isVertex(cell) && !model.isEdge(cell)) continue;
                 const state = graph.view?.getState(cell); if (!state) continue;
                 if (!layer) { layer = root.document.createElement('div'); layer.dataset.trellisAttributionLayer = ''; layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:19;'; graph.container.appendChild(layer); graph.__trellisOverlayVisibility?.mark(layer); }

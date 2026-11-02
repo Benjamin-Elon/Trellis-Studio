@@ -743,7 +743,8 @@ Draw.loadPlugin(function (ui) {
         if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z);
     }
 
-    function showConditionEditorDialog(targetCell) {
+    function showConditionEditorDialog(targetCell, transitionResolved = false) {
+        if (!transitionResolved && graph.__trellisSharing?.transitionEditor) return graph.__trellisSharing.transitionEditor(() => showConditionEditorDialog(targetCell, true)); // CHANGE
         const current = readBedConditions(targetCell);
         const dialogHeight = conditionDialogHeight();
         const div = document.createElement("div");
@@ -776,8 +777,9 @@ Draw.loadPlugin(function (ui) {
         controls.userBedName = document.createElement("input");
         controls.userBedName.type = "text";
         controls.userBedName.value = current.userBedName || "";
+        controls.userBedName.placeholder = "Name this bed…"; // NEW
         controls.userBedName.style.width = "100%";
-        appendField(identity, { label: "User name" }, controls.userBedName);
+        appendField(identity, { label: "Bed name (optional)" }, controls.userBedName); // CHANGE
 
         const presetRow = document.createElement("label");
         presetRow.style.display = "grid";
@@ -886,19 +888,20 @@ Draw.loadPlugin(function (ui) {
         buttonRow.style.gap = "8px";
         buttonRow.style.marginTop = "12px";
         buttonRow.appendChild(bedButton("Cancel", function () { ui.hideDialog(); }, "close")); // CHANGE: bed-condition cancellation uses the red outline.
-        buttonRow.appendChild(bedButton("Save", function () {
-            if (String(controls.bedHeight.value || "").trim() && displayHeightToCm(controls.bedHeight.value, identityUnits) == null) { ui.alert("Bed height must be greater than 0."); controls.bedHeight.focus(); return; }
-            model.beginUpdate();
-            try {
-                writeBedConditions(targetCell, readDialogProfile(), { writeIdentityLabel: true });
-            } finally {
-                model.endUpdate();
-            }
-            ui.hideDialog();
-        }, "add", { title: "Save the current conditions to this garden bed." })); // CHANGE
+        let conditionsHold = null; // CHANGE
+        function saveConditions(saveOptions = {}) { // CHANGE
+            if (String(controls.bedHeight.value || '').trim() && displayHeightToCm(controls.bedHeight.value, identityUnits) == null) { ui.alert('Bed height must be greater than 0.'); controls.bedHeight.focus(); return false; } // CHANGE
+            const edit = model.currentEdit; model.beginUpdate(); // CHANGE
+            try { writeBedConditions(targetCell, readDialogProfile(), { writeIdentityLabel: true }); } finally { model.endUpdate(); } // CHANGE
+            if (edit?.__trellisUsersRejected) throw new Error(edit.__trellisUsersRejectedReason || 'Bed conditions were rejected.'); // CHANGE
+            conditionsHold?.complete?.(); if (saveOptions.closeAfter !== false) ui.hideDialog(); return true; // CHANGE
+        } // CHANGE
+        buttonRow.appendChild(bedButton('Save', () => { if (conditionsHold) void conditionsHold.commit(); else saveConditions(); }, 'add', { title: 'Save the current conditions to this garden bed.' })); // CHANGE
         footer.appendChild(buttonRow);
         div.appendChild(footer);
-        ui.showDialog(div, 520, dialogHeight, true, true);
+        const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+        conditionsHold = graph.__trellisSharing?.registerObjectForm?.({ title: 'Bed conditions', element: div, targets: [JSON.stringify([pageId, String(targetCell.id)])], save: saveConditions, discard: () => ui.hideDialog() }); // CHANGE
+        ui.showDialog(div, 520, dialogHeight, true, true, () => conditionsHold?.dispose(true)); // CHANGE
         elevateBedConditionsDialog();
     }
 
@@ -1012,7 +1015,8 @@ Draw.loadPlugin(function (ui) {
         const input = document.createElement("input");
         input.type = "text";
         input.value = initialName;
-        input.setAttribute("aria-label", "User name");
+        input.setAttribute("aria-label", "Bed name (optional)"); // CHANGE
+        input.placeholder = "Name this bed…"; // NEW
         input.style.boxSizing = "border-box";
         input.style.display = "block";
         input.style.width = "100%";

@@ -81,6 +81,13 @@ test('deferred groups leave the model untouched, independent groups proceed, and
     assert.equal(blocked.getAttribute('label'), 'Current input'); assert.equal(calculations, 2); assert.equal(h.context.deferred.size, 0);
 });
 
+test('deferred automation is coalesced and canceled when its actor or object disappears', t => { // NEW
+    const h = fixture(t), cell = h.create('blocked'); h.graph.__trellisSharing = { automationHolds: () => [{ key: '["","blocked"]', name: 'Peer' }] }; // NEW
+    const options = { id: 'same-update', cells: () => [cell], retry() {}, deferredValue: false }; const operation = () => assert.fail('Blocked automation executed'); // NEW
+    h.context.run('generated-content', options, operation); const node = h.w.document.querySelector('[data-trellis-deferred-automation]'); // NEW
+    h.context.run('generated-content', options, operation); assert.equal(h.w.document.querySelector('[data-trellis-deferred-automation]'), node); // NEW
+    h.users.logout(); h.w.dispatchEvent(new h.w.CustomEvent('trellisUsersSessionChanged')); assert.equal(h.context.deferred.size, 0); // NEW
+}); // NEW
 test('attribution toggle is local per user; badges are bounded, escaped and read-only', t => { // NEW
     const h = fixture(t), cell = h.create('object', { label: '<img src=x>' }); h.graph.setSelectionCell(cell);
     const before = h.ui.getFileData(), action = h.actions.get('trellisShowObjectAttribution'); h.badge.render();
@@ -156,3 +163,146 @@ test('recreating an older logical object preserves missing creation facts', t =>
     h.context.scope('generated-content', () => h.graph.addCell(replacement, h.graph.getDefaultParent())); // NEW
     assert.equal(h.badge.read(replacement).createdAt, null); assert.equal(h.badge.read(replacement).createdBy, ''); // NEW
 }); // NEW
+
+test('starter attribution survives maintenance and follows the first manual edit through Undo and Redo', t => { // NEW
+    const h = fixture(t), cell = h.create('starter', { trellis_starter_attribution_pending: '1' }); // NEW
+    const created = { at: cell.getAttribute('createdAt'), by: cell.getAttribute('createdByUserId') }; // NEW
+    h.graph.setSelectionCell(cell); h.badge.render(); // NEW
+    assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 0); // NEW
+    h.patch(cell, { label: 'starter' }); // NEW: manual no-op must not enable a badge.
+    h.context.scope('derived-presentation', () => h.model.setGeometry(cell, new h.w.mxGeometry(50, 50, 100, 60))); // NEW
+    h.context.scope('generated-content', () => h.patch(cell, { label: 'Generated content' })); // NEW
+    assert.equal(cell.getAttribute('trellis_starter_attribution_pending'), '1'); // NEW
+    h.badge.render(); assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 0); // NEW
+    h.undo.clear(); h.advance(); const before = cell.value.outerHTML; // NEW
+    h.patch(cell, { label: 'User content' }); // NEW
+    assert.equal(cell.getAttribute('trellis_starter_attribution_pending', null), null); // NEW
+    assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 1); // NEW
+    assert.equal(cell.getAttribute('createdAt'), created.at); assert.equal(cell.getAttribute('createdByUserId'), created.by); // NEW
+    const after = cell.value.outerHTML; // NEW
+    h.undo.undo(); assert.equal(cell.value.outerHTML, before); // NEW
+    assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 0); // NEW
+    h.undo.redo(); assert.equal(cell.value.outerHTML, after); // NEW
+    assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 1); // NEW
+}); // NEW
+
+test('starter suppression is per logical object and manual style, geometry, attribute and structural edits enable it', t => { // NEW
+    const h = fixture(t), parent = h.create('starter-parent', { trellis_starter_attribution_pending: '1' }); // NEW
+    const operations = [ // NEW
+        cell => h.graph.setCellStyles('fillColor', '#abcdef', [cell]), // NEW
+        cell => h.model.setGeometry(cell, new h.w.mxGeometry(80, 80, 100, 60)), // NEW
+        cell => h.model.execute(new h.w.mxCellAttributeChange(cell, 'custom', 'updated')), // NEW
+        cell => h.model.add(h.graph.getDefaultParent(), cell) // NEW
+    ]; // NEW
+    for (let i = 0; i < operations.length; i++) { // NEW
+        const cell = h.context.scope('generated-content', () => h.create('starter-child-' + i, { trellis_starter_attribution_pending: '1' }, parent)); // NEW: starter insertion may resize its parent and must remain initialization.
+        h.undo.clear(); operations[i](cell); // NEW
+        assert.equal(cell.getAttribute('trellis_starter_attribution_pending', null), null, 'operation ' + i); // NEW
+        assert.equal(parent.getAttribute('trellis_starter_attribution_pending'), '1'); // NEW
+        h.undo.undo(); assert.equal(cell.getAttribute('trellis_starter_attribution_pending'), '1'); // NEW
+    } // NEW
+    const group = h.create('starter-planting', { tiler_group: '1', trellis_starter_attribution_pending: '1' }); // NEW
+    const tile = h.context.scope('derived-presentation', () => h.create('starter-tile', { auto: '1', plant_tiler: '1' }, group)); // NEW
+    h.graph.setSelectionCell(tile); h.badge.render(); // NEW
+    assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 0); // NEW
+    h.patch(tile, { label: 'Manual child edit' }); // NEW
+    assert.equal(group.getAttribute('trellis_starter_attribution_pending', null), null); // NEW
+    assert.equal(h.w.document.querySelector('[data-trellis-attribution]').dataset.trellisAttribution, group.id); // NEW
+}); // NEW
+
+test('starter markers are metadata and persist across an XML reload and another user editing', t => { // NEW
+    const h = fixture(t), cell = h.create('starter'); const facts = JSON.stringify(h.badge.read(cell)); // NEW
+    h.advance(); h.patch(cell, { trellis_starter_attribution_pending: '1' }); // NEW
+    assert.equal(JSON.stringify(h.badge.read(cell)), facts); // NEW
+    const saved = h.ui.getFileData(), document = h.w.mxUtils.parseXml(saved); // NEW
+    h.ui.openingFile = true; h.graph.__trellisSharingApplying = true; // NEW
+    try { new h.w.mxCodec(document).decode(document.documentElement, h.model); } finally { h.ui.openingFile = false; h.graph.__trellisSharingApplying = false; } // NEW
+    const restored = h.model.getCell('starter'); h.graph.setSelectionCell(restored); h.badge.render(); // NEW
+    assert.equal(restored.getAttribute('trellis_starter_attribution_pending'), '1'); // NEW
+    assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 0); // NEW
+    assert.equal(h.users.createUser('Bob', '5678', true).ok, true); assert.equal(h.users.login('Bob', '5678').ok, true); // NEW
+    h.patch(restored, { label: 'Bob edited' }); // NEW
+    assert.equal(restored.getAttribute('trellis_starter_attribution_pending', null), null); // NEW
+    assert.equal(restored.getAttribute('lastEditedByUserId'), h.users.getCurrentUser().id); // NEW
+    assert.equal(restored.getAttribute('createdByUserId'), cell.getAttribute('createdByUserId')); // NEW
+    h.badge.render(); assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 1); // NEW
+}); // NEW
+
+test('rejected first edits restore suppression and remote saved state controls badge eligibility', t => { // NEW
+    const h = fixture(t), cell = h.create('starter', { trellis_starter_attribution_pending: '1' }); // NEW
+    h.graph.setSelectionCell(cell); const before = cell.value.outerHTML; // NEW
+    h.model.addListener(h.w.mxEvent.CHANGE, (_sender, event) => { // NEW
+        const edit = event.getProperty('edit'); // NEW
+        if (!edit.undone && !edit.__trellisUsersRejected && cell.getAttribute('label') === 'Rejected') { edit.__trellisUsersRejected = true; edit.undo(); } // NEW
+    }); // NEW
+    h.patch(cell, { label: 'Rejected' }); assert.equal(cell.value.outerHTML, before); // NEW
+    h.badge.render(); assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 0); // NEW
+    const accepted = cell.value.cloneNode(true); accepted.removeAttribute('trellis_starter_attribution_pending'); // NEW
+    accepted.setAttribute('label', 'Remote edit'); accepted.setAttribute('lastEditedByUserId', 'remote-user'); // NEW
+    h.ui.openingFile = true; h.graph.__trellisSharingApplying = true; // NEW
+    try { h.model.setValue(cell, accepted); } finally { h.ui.openingFile = false; h.graph.__trellisSharingApplying = false; } // NEW
+    h.badge.render(); assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 1); // NEW
+    assert.equal(cell.getAttribute('lastEditedByUserId'), 'remote-user'); // NEW
+}); // NEW
+
+test('production garden creation suppresses attribution before selection and marks starter descendants', t => { // NEW
+    const h = fixture(t); h.ui.alert = () => {}; // NEW
+    h.load('plugins/garden_planner_plugins/Modules_Standalone.js'); // NEW
+    let creation; h.model.addListener(h.w.mxEvent.CHANGE, (_sender, event) => { creation = event.getProperty('edit'); }); // NEW
+    const garden = h.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, 'garden'); // NEW
+    h.badge.render(); assert.equal(h.w.document.querySelectorAll('[data-trellis-attribution]').length, 0); // NEW
+    const roots = [garden, h.model.getCell(garden.getAttribute('trellis_team_module_id')), h.model.getCell(garden.getAttribute('trellis_task_module_id'))]; // NEW
+    const metadataTargets = new Set(creation.changes.filter(change => h.context.kindOf(change) === 'attribution').map(change => change.cell)); // NEW
+    for (const root of roots) { // NEW
+        const descendants = h.model.getDescendants(root); // NEW
+        for (const cell of descendants) { // NEW
+            assert.equal(cell.getAttribute('trellis_starter_attribution_pending'), '1', cell.id); // NEW
+            assert.ok(metadataTargets.has(cell), 'starter badge metadata cannot claim activity for ' + cell.id); // NEW
+        } // NEW
+    } // NEW
+    h.undo.clear(); h.patch(garden, { label: 'My garden' }); // NEW
+    assert.equal(garden.getAttribute('trellis_starter_attribution_pending', null), null); // NEW
+    assert.equal(roots[1].getAttribute('trellis_starter_attribution_pending'), '1'); // NEW
+    h.undo.undo(); assert.equal(garden.getAttribute('trellis_starter_attribution_pending'), '1'); // NEW
+}); // NEW
+
+test('pending local persistence is not an active draft conflict, while other sessions remain protected', async t => { // CHANGE
+    const h = fixture(t), source = h.create('source'); let hold = { key: '["","source"]', local: true, active: false }; // CHANGE
+    await Promise.resolve(); // CHANGE: creation's synchronous manual-source exemption ends before a subsequent editor action.
+    h.graph.__trellisSharing = { automationHolds: () => [hold] }; assert.equal(h.context.blocked([source]).length, 0); // CHANGE
+    hold = { ...hold, active: true }; assert.equal(h.context.blocked([source]).length, 1); // CHANGE
+    hold = { ...hold, active: undefined }; assert.equal(h.context.blocked([source]).length, 1, 'unknown activity from another caller remains conservative'); // CHANGE
+    hold = { ...hold, local: false, active: false }; assert.equal(h.context.blocked([source], [source]).length, 1); // CHANGE
+}); // CHANGE
+
+test('an explicit parent dependency protects its geometry without treating every sibling as a target', t => { // CHANGE
+    const h = fixture(t), garden = h.create('garden'), source = h.create('source', {}, garden), sibling = h.create('sibling', {}, garden); // CHANGE
+    let hold = { key: JSON.stringify(['', sibling.id]), local: false }; h.graph.__trellisSharing = { automationHolds: () => [hold] }; // CHANGE
+    assert.equal(h.context.blocked([source], [], false, [garden]).length, 0); // CHANGE
+    hold = { key: JSON.stringify(['', garden.id]), local: false }; assert.equal(h.context.blocked([source], [], false, [garden]).length, 1); // CHANGE
+}); // CHANGE
+
+test('explicit blocker handling receives captured holds and throws before queuing or mutation', async t => { // CHANGE
+    const h = fixture(t), cell = h.create('blocked'); await Promise.resolve(); let reads = 0; // CHANGE
+    const hold = { key: '["","blocked"]', local: false, objectLabel: 'Blocked bed' }; // CHANGE
+    h.graph.__trellisSharing = { automationHolds() { reads++; return [hold]; } }; // CHANGE
+    const error = new Error('Keep the editor open'); // CHANGE
+    assert.throws(() => h.context.run('manual', { cells: () => [cell], onBlocked(holds) { assert.equal(holds[0], hold); throw error; } }, () => assert.fail('Blocked mutation ran')), thrown => thrown === error); // CHANGE
+    assert.equal(reads, 1); assert.equal(h.context.deferred.size, 0); assert.equal(h.w.document.querySelector('[data-trellis-deferred-automation]'), null); // CHANGE
+    assert.equal(h.context.run('generated-content', { cells: () => [cell], deferredValue: null, retry() {} }, () => assert.fail('Blocked mutation ran')), null); // CHANGE
+    assert.equal(h.context.deferred.size, 1, 'callers without explicit blocker handling retain their Retry'); // CHANGE
+}); // CHANGE
+
+test('blocker descriptions and Retry notices share plain names and safe unavailable-target fallbacks', async t => { // CHANGE
+    const h = fixture(t), title = 'Harvest – Cilantro & <seed>', task = h.create('task', { title, label: 'Wrong<br/><span>Days Left: -2</span>' }); // CHANGE
+    const rich = h.create('rich', { label: 'Sow &amp; prep<br/><b>Cilantro</b><script>untrusted()</script>' }); await Promise.resolve(); // CHANGE
+    const holds = [{ key: '["","task"]', local: true, active: true }, { key: '["","rich"]', local: false }, { key: '["","gone"]', local: false, objectLabel: 'Prep &amp; water<br/>bed' }, { key: 'bad-key', local: false }, { key: '*', local: false }]; // CHANGE
+    h.graph.__trellisSharing = { automationHolds: () => holds }; // CHANGE
+    const description = h.context.describeHolds(holds); // CHANGE
+    for (const name of [title, 'Sow & prep Cilantro', 'Prep & water bed', 'unavailable object', 'project structure']) assert.ok(description.includes(name), name); // CHANGE
+    assert.doesNotMatch(description, /<br|<span|untrusted\(\)|Days Left/); // CHANGE
+    h.context.run('generated-content', { cells: () => [task, rich], retry() {} }, () => assert.fail('Blocked mutation ran')); // CHANGE
+    const notice = h.w.document.querySelector('[data-trellis-deferred-automation]'); // CHANGE
+    for (const name of [title, 'Sow & prep Cilantro', 'project structure']) assert.ok(notice.textContent.includes(name), name); // CHANGE
+    assert.equal(notice.querySelector('seed,script,b,span span'), null); // CHANGE
+}); // CHANGE

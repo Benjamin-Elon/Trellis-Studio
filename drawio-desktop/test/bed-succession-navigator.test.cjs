@@ -116,7 +116,7 @@ function makeHarness(options = {}) {
     if (bedAssemblies[0]) states.set(bedAssemblies[0], options.bedAssemblyState || { x: 20, y: 20, width: 30, height: 20 });
     if (bedAssemblies[1]) states.set(bedAssemblies[1], options.bedAssembly2State || { x: 60, y: 20, width: 24, height: 20 });
     if (bedAssemblies[2]) states.set(bedAssemblies[2], options.outsideBedAssemblyState || { x: 140, y: 20, width: 24, height: 20 });
-    states.forEach((state, cell) => { cell.geometry = makeGeometry(state); });
+    Array.from(states).sort((a, b) => layer.children.indexOf(a[0]) - layer.children.indexOf(b[0])).forEach(([cell, state]) => { cell.geometry = makeGeometry(state); const node = document.createElement('div'); node.dataset.renderCell = cell.id; document.getElementById('graph').appendChild(node); state.shape = { node }; }); // CHANGE: inspect rendered order separately from model order.
 
     const graph = {
         container: document.getElementById("graph"),
@@ -133,12 +133,12 @@ function makeHarness(options = {}) {
         setSelectionCell(cell) { selectedCells = cell ? [cell] : []; fireSelectionChange(); },
         setSelectionCells(cells) { selectedCells = cells.slice(); fireSelectionChange(); },
         getChildVertices(parent) { return (parent.children || []).filter(child => model.isVertex(child)); },
-        getCellStyle(cell) { return { rotation: options.rotations && options.rotations[cell.id] || 0 }; }, // CHANGE: exercise rotated virtual-cluster membership.
+        getCellStyle(cell) { return { ...cell.styles, rotation: options.rotations && options.rotations[cell.id] || 0 }; }, // CHANGE: exercise rotated virtual-cluster membership.
         getSelectionModel() { return selectionModel; },
         addListener() {},
         refresh() {},
         orderCells() {},
-        setCellStyles(key, value, cells) { (cells || []).forEach(cell => { cell.styles[key] = String(value); }); } // CHANGE: expose outline-only assertions.
+        setCellStyles(key, value, cells) { if (options.rejectStyleWrites) throw Error('Navigator attempted a document style edit'); (cells || []).forEach(cell => { cell.styles[key] = String(value); }); } // CHANGE: deny model writes in the rejection-loop regression.
     };
 
     const context = {
@@ -559,7 +559,7 @@ test("Occupancy navigator bar click selects the exact planting group", () => {
 });
 
 test("cluster visibility keeps selected and temporally overlapping groups active", () => {
-    const { tiler1, tiler2, tiler3 } = makeHarness({
+    const { graph, tiler1, tiler2, tiler3 } = makeHarness({
         secondTiler: true,
         thirdTiler: true,
         tiler2State: { x: 12, y: 12, width: 20, height: 20 },
@@ -569,15 +569,24 @@ test("cluster visibility keeps selected and temporally overlapping groups active
         tiler3Attrs: { plant_name: "Lettuce", sow_date: "2026-02-01", harvest_end: "2026-03-01" }
     });
 
-    assert.equal(tiler1.styles.fillOpacity, "100");
-    assert.equal(tiler2.styles.fillOpacity, "100");
-    assert.equal(tiler3.styles.fillOpacity, "0");
-    assert.equal(tiler3.styles.textOpacity, "0");
-    assert.equal(tiler3.styles.imageOpacity, "0");
+    assert.equal(graph.getCellStyle(tiler1).fillOpacity, "100"); // CHANGE: assert rendered visibility independently of authored styles.
+    assert.equal(graph.getCellStyle(tiler2).fillOpacity, "100"); // CHANGE: assert rendered visibility independently of authored styles.
+    assert.equal(graph.getCellStyle(tiler3).fillOpacity, "0"); // CHANGE: assert rendered visibility independently of authored styles.
+    assert.equal(graph.getCellStyle(tiler3).textOpacity, "0"); // CHANGE: assert rendered visibility independently of authored styles.
+    assert.equal(graph.getCellStyle(tiler3).imageOpacity, "0"); // CHANGE: assert rendered visibility independently of authored styles.
 });
 
+test('bed planting visibility and repeated selection never attempt document style edits', () => { // NEW
+    const { graph, tiler1, tiler2 } = makeHarness({ secondTiler: true, rejectStyleWrites: true }); // NEW
+    const before = JSON.stringify([tiler1.styles, tiler2.styles]); // NEW
+    for (let i = 0; i < 30; i++) { graph.setSelectionCell(tiler2); graph.setSelectionCell(tiler1); } // NEW
+    graph.setSelectionCells([]); // NEW: baseline restoration must also remain read-only.
+    assert.equal(JSON.stringify([tiler1.styles, tiler2.styles]), before); // NEW
+    assert.equal(graph.getCellStyle(tiler1).fillOpacity, '100'); // NEW
+}); // NEW
+
 test("undated Occupancy navigator groups render dashed and inactive unless selected", () => {
-    const { document, tiler2 } = makeHarness({
+    const { document, graph, tiler2 } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 29, y: 10, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
@@ -588,7 +597,7 @@ test("undated Occupancy navigator groups render dashed and inactive unless selec
     assert.ok(basil);
     assert.match(basil.title, /Basil - Genovese - Undated/);
     assert.equal(basil.style.borderStyle, "dashed");
-    assert.equal(tiler2.styles.fillOpacity, "0");
+    assert.equal(graph.getCellStyle(tiler2).fillOpacity, "0"); // CHANGE: assert rendered visibility independently of authored styles.
 });
 
 test("Prev and Next cycle through all cluster members and recompute active overlap", () => {
@@ -606,13 +615,13 @@ test("Prev and Next cycle through all cluster members and recompute active overl
     next.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true }));
 
     assert.deepEqual(JSON.parse(JSON.stringify(graph.getSelectionCells().map(cell => cell.id))), ["tiler2"]);
-    assert.equal(tiler2.styles.fillOpacity, "100");
-    assert.equal(tiler1.styles.fillOpacity, "100");
-    assert.equal(tiler3.styles.fillOpacity, "0");
+    assert.equal(graph.getCellStyle(tiler2).fillOpacity, "100"); // CHANGE: assert rendered visibility independently of authored styles.
+    assert.equal(graph.getCellStyle(tiler1).fillOpacity, "100"); // CHANGE: assert rendered visibility independently of authored styles.
+    assert.equal(graph.getCellStyle(tiler3).fillOpacity, "0"); // CHANGE: assert rendered visibility independently of authored styles.
 });
 
 test("Occupancy navigator excludes perennial lifespan from axis and clips perennial display", () => {
-    const { document, tiler1, tiler2 } = makeHarness({
+    const { document, graph, tiler1, tiler2 } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 12, y: 12, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2026-01-01", lifespan_end: "2030-12-31" },
@@ -627,8 +636,8 @@ test("Occupancy navigator excludes perennial lifespan from axis and clips perenn
     assert.equal(apple.style.left, "0%");
     assert.equal(apple.style.width, "100%");
     assert.match(apple.title, /Apple - 2026-01-01 to 2030-12-31 \(shown clipped to visible year span\)/);
-    assert.equal(tiler1.styles.fillOpacity, "100");
-    assert.equal(tiler2.styles.fillOpacity, "100");
+    assert.equal(graph.getCellStyle(tiler1).fillOpacity, "100"); // CHANGE: assert rendered visibility independently of authored styles.
+    assert.equal(graph.getCellStyle(tiler2).fillOpacity, "100"); // CHANGE: assert rendered visibility independently of authored styles.
 });
 
 test("Occupancy navigator preserves non-perennial cross-year crop span", () => {
@@ -843,7 +852,8 @@ test("bed-select returns beds behind tilers after selecting a tiler", () => {
 
     assert.deepEqual(childOrder(layer), ["bed", "tiler1"]);
     selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true }));
-    assert.deepEqual(childOrder(layer), ["tiler1", "bed"]);
+    assert.deepEqual(childOrder(layer), ["bed", "tiler1"]); // CHANGE: selection preserves authored order.
+    assert.deepEqual(Array.from(graph.container.querySelectorAll('[data-render-cell]'), node => node.dataset.renderCell), ["tiler1", "bed"]); // NEW
 
     graph.setSelectionCells([tiler1]);
     assert.deepEqual(childOrder(layer), ["bed", "tiler1"]);
@@ -856,10 +866,12 @@ test("selected containing garden bed remains temporarily in front", () => {
 
     selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true }));
     assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["bed"]);
-    assert.deepEqual(childOrder(layer), ["bed2", "tiler1", "tiler2", "bed"]);
+    assert.deepEqual(childOrder(layer), ["bed", "bed2", "tiler1", "tiler2"]); // CHANGE: selected bed is raised only in the view.
+    assert.deepEqual(Array.from(graph.container.querySelectorAll('[data-render-cell]'), node => node.dataset.renderCell), ["bed2", "tiler1", "tiler2", "bed"]); // NEW
 
     graph.setSelectionCells([bed]);
-    assert.deepEqual(childOrder(layer), ["bed2", "tiler1", "tiler2", "bed"]);
+    assert.deepEqual(childOrder(layer), ["bed", "bed2", "tiler1", "tiler2"]); // CHANGE: selected bed is raised only in the view.
+    assert.deepEqual(Array.from(graph.container.querySelectorAll('[data-render-cell]'), node => node.dataset.renderCell), ["bed2", "tiler1", "tiler2", "bed"]); // NEW
 });
 
 test("bed-select selects the containing bed when another bed overlaps the cluster", () => {

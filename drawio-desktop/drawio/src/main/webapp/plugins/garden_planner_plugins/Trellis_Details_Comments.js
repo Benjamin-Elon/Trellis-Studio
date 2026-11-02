@@ -6,7 +6,7 @@
     function mount(options) { // CHANGE
         const { entry, toolbar, core } = options, userId = entry.user; // CHANGE
         const storageKey = 'trellis.comments.draft.v1:' + options.identity.key; // CHANGE
-        let destroyed = false, discarded = false, composing = false, pending = false, unresolvedExpanded = true, resolvedExpanded = false, retentionTimer = null, fingerprint = '', storageError = '', commandError = ''; // CHANGE
+        let destroyed = false, frozen = false, discarded = false, composing = false, pending = false, unresolvedExpanded = true, resolvedExpanded = false, retentionTimer = null, fingerprint = '', storageError = '', commandError = ''; // CHANGE
         let saved = privateDrafts.get(storageKey); // CHANGE
         if (!saved) { // CHANGE
             saved = { active: 'new', drafts: {} }; // CHANGE
@@ -49,7 +49,7 @@
             const policy = options.users(), user = policy && policy.getCurrentUser && policy.getCurrentUser(); // CHANGE
             return { enabled: !!(policy && policy.isEnabled && policy.isEnabled()), user, editable: options.canEdit(), ownerUserId: policy && policy.getAccessSummary ? policy.getAccessSummary(entry.cell).ownerUserId : '' }; // CHANGE
         } // CHANGE
-        function editable() { const value = actor(); return !destroyed && !pending && value.enabled && value.editable && value.user && value.user.id === userId; } // CHANGE
+        function editable() { const value = actor(); return !frozen && !destroyed && !pending && value.enabled && value.editable && value.user && value.user.id === userId; } // CHANGE
         function draft() { // CHANGE
             let value = saved.drafts[saved.active]; // CHANGE
             if (!value || typeof value.html !== 'string' || typeof value.id !== 'string') value = saved.drafts[saved.active] = { id: root.crypto.randomUUID(), html: '', isAlert: entry.activeTab === 'alerts', baseline: null }; // CHANGE
@@ -70,7 +70,7 @@
             message.textContent = [commandError, storageError, pending ? 'Saving comment…' : !value.enabled ? 'Enable Trellis users and log in to post or manage comments.' : !value.user ? 'Log in to post or manage comments.' : !value.editable ? 'Comments are read only.' : 'Drafts are private. Use Post or Save changes to publish.'].filter(Boolean).join(' '); // CHANGE
         } // CHANGE
         function rememberInput() { // CHANGE
-            if (!editable()) return; capture(); persist(); submit.disabled = composing || !core.normalizeHtml(editor.innerHTML); // CHANGE
+            if (!editable()) return; capture(); persist(); entry.editHold?.touch(); submit.disabled = composing || !core.normalizeHtml(editor.innerHTML); // CHANGE
         } // CHANGE
         alertToggle.addEventListener('change', () => { if (!editable()) { alertToggle.checked = draft().isAlert; return; } draft().alertChosen = true; capture(); persist(); }); // CHANGE: checkbox choices stay device-local until explicit submission.
         const target = toolbar.createTarget({ cell: entry.cell, element: editor, canEdit: editable, changed: rememberInput }); // CHANGE
@@ -98,23 +98,33 @@
         async function execute(action, submittedDraft) { // CHANGE
             if (!editable() || composing) return; // CHANGE
             const currentActor = actor(), before = options.read(), active = saved.active; // CHANGE
-            try { // CHANGE
+            try {
+                if (entry.editHold) await entry.editHold.acquire(); // CHANGE // CHANGE
                 const next = core.changeComments(before, action, currentActor); // CHANGE
                 pending = true; commandError = ''; refresh(); // CHANGE
                 options.write(next); // CHANGE
                 const sharing = options.graph.__trellisSharing; // CHANGE
-                if (sharing && sharing.settleObjectEdits) await sharing.settleObjectEdits(); // CHANGE
+                if (sharing?.settleObjectEdits) { // CHANGE
+                    const persistence = sharing.settleObjectEdits({ automatic: true }); // CHANGE
+                    if (entry.editHold) { // CHANGE: model application finishes the edit while normal persistence continues.
+                        void persistence.catch(error => { // CHANGE
+                            commandError = error.message + ' The comment is pending; its private draft has been retained.';
+                            if (submittedDraft && !saved.drafts[active]) saved.drafts[active] = submittedDraft;
+                            persist(); if (!destroyed) refresh();
+                        }); // CHANGE
+                    } else await persistence; // CHANGE: legacy callers still receive durability failures synchronously.
+                } // CHANGE
                 if (options.read() !== next) throw new Error('The comment change was rejected or replaced. Your draft is retained.'); // CHANGE
                 if (submittedDraft && saved.drafts[active] === submittedDraft && submittedDraft.html === action.html && submittedDraft.isAlert === action.isAlert) { delete saved.drafts[active]; if (saved.active === active) saved.active = 'new'; } // CHANGE
                 persist(); // CHANGE
-                if (!destroyed && options.isCurrent()) loadDraft(); // CHANGE
-            } catch (error) { commandError = error.message + ' Your text is retained; copy it or retry after reloading the comment.'; } // CHANGE
+                if (!destroyed && options.isCurrent()) loadDraft(); entry.editHold?.complete?.(); return true; // CHANGE // CHANGE
+            } catch (error) { commandError = error.message + ' Your text is retained; copy it or retry after reloading the comment.'; return false; } // CHANGE // CHANGE
             finally { pending = false; if (!destroyed) refresh(); options.changed(); } // CHANGE
         } // CHANGE
         function submitDraft() { // CHANGE
-            if (!editable() || composing) return; capture(); persist(); const value = draft(); // CHANGE
-            if (!value.html) return; // CHANGE
-            execute({ type: saved.active === 'new' ? 'post' : 'edit', id: value.id, html: value.html, isAlert: value.isAlert, baseline: value.baseline }, value); // CHANGE
+            if (!editable() || composing) return false; capture(); persist(); const value = draft(); // CHANGE
+            if (!value.html) return true; // CHANGE
+            return execute({ type: saved.active === 'new' ? 'post' : 'edit', id: value.id, html: value.html, isAlert: value.isAlert, baseline: value.baseline }, value); // CHANGE
         } // CHANGE
         function startEdit(item) { // CHANGE
             if (!editable()) return; capture(); saved.active = 'edit:' + item.id; // CHANGE
@@ -181,7 +191,8 @@
         } // CHANGE
         loadDraft(); refresh(); // CHANGE
         const hasDraft = () => !!core.normalizeHtml(editor.innerHTML) || Object.values(saved.drafts).some(value => value && (value.html || value.alertChosen)); // CHANGE
-        return { element: container, refresh, focus: () => editor.focus(), hasDraft, needsUnloadWarning: () => hasDraft() && (!!storageError || composing), // CHANGE
+        return { element: container, submit: submitDraft, restore(value) { saved = value ? JSON.parse(JSON.stringify(value)) : { active: 'new', drafts: {} }; loadDraft(); persist(); refresh(); }, refresh, focus: () => editor.focus(), hasDraft, needsUnloadWarning: () => hasDraft() && (!!storageError || composing), // CHANGE
+            snapshot() { capture(); return JSON.parse(JSON.stringify(saved)); }, freeze() { frozen = true; capture(); persist(); editor.contentEditable = 'false'; }, // CHANGE
             discard() { discarded = true; saved = { active: 'new', drafts: {} }; editor.innerHTML = ''; privateDrafts.delete(storageKey); if (options.identity.persistent) root.localStorage.removeItem(storageKey); }, // NEW: explicit hold rejection discards unapplied entries rather than retaining them on close.
             persist() { capture(); persist(); }, // CHANGE
             destroy() { if (!discarded) { capture(); persist(); } destroyed = true; if (retentionTimer !== null) root.clearTimeout(retentionTimer); if (options.ui.getActiveRichTextTarget() === target) toolbar.deactivate(); target.dispose(); } }; // CHANGE

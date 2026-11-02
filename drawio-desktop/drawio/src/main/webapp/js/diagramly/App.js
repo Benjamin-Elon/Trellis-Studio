@@ -307,6 +307,10 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'gardenLinking': 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js',              // CHANGE
     'tidyContextMenu': 'plugins/garden_planner_plugins/Tidy_Context_Menu.js',                    // CHANGE
     'createdChangeMap': 'plugins/garden_planner_plugins/Created_Change_Map.js',                  // CHANGE
+    'trellisAllocationCore': 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js', // NEW
+    'trellisSeedsCore': 'plugins/garden_planner_plugins/Trellis_Seeds_Core.js', // NEW
+    'trellisExchangeCore': 'plugins/garden_planner_plugins/Trellis_Exchange_Core.js', // NEW
+    'trellisInventories': 'plugins/garden_planner_plugins/Trellis_Inventories.js', // NEW
     'gardenDashboard': 'plugins/garden_planner_plugins/Garden_Dashboard.js',                     // NEW
     'gardenPlanner': 'plugins/garden_planner_plugins/Year_Planner.js',                           // CHANGE
     'gardenAllocate': 'plugins/garden_planner_plugins/Allocate_Planner.js',                       // NEW
@@ -339,6 +343,7 @@ App.publicPlugin = [
     'gardenLinking',                                          // CHANGE
     'tidyContextMenu',                                        // NEW
     'createdChangeMap',                                       // NEW
+    'trellisInventories', // NEW
     'gardenDashboard',                                        // NEW
     'gardenPlanner',                                          // NEW
     'gardenAllocate',                                         // NEW
@@ -844,6 +849,7 @@ App.main = function(callback, createUi)
 						try
 						{
 							plugins[i] = App.normalizePlantingPluginPath(plugins[i]); // CHANGE: legacy settings share canonical loading and deduplication.
+                            var inventoryId = App.inventoryPluginId(plugins[i]); if (inventoryId) { App.loadInventoryPlugin(inventoryId); continue; } // NEW
 							if (plugins[i].charAt(0) == '/')
 							{
 								plugins[i] = PLUGINS_BASE_PATH + plugins[i];
@@ -1455,6 +1461,31 @@ App.loadRoadmapPlugin = function(pluginId)
 /**
  * Queue for loading plugins and wait for UI instance
  */
+/** Load pure inventory dependencies before their consumers, including persisted plugin lists. */ // NEW
+App.inventoryPluginId = function(value) { // NEW
+    var path = String(value || '').replace(/^(?:\.\/|\/)/, ''); // NEW
+    return ['trellisInventories', 'gardenPlanner'].filter(function(id) { return path === id || path === App.pluginRegistry[id]; })[0] || null; // NEW
+}; // NEW
+App.loadInventoryPlugin = function(pluginId) { // NEW
+    var prefix = String(PLUGINS_BASE_PATH || ''), base = (typeof window.drawDevUrl === 'undefined' ? '' : window.drawDevUrl) + prefix + (prefix && prefix.charAt(prefix.length - 1) !== '/' ? '/' : ''); // NEW
+    var target = base + App.pluginRegistry[pluginId]; // NEW
+    if (App.pluginsLoaded[target]) return; // NEW
+    App.pluginsLoaded[target] = true; App.embedModePluginsCount++; // NEW
+    App.inventoryDependencies = App.inventoryDependencies || {}; // NEW
+    var dependencies = [['Trellis_Allocation_Core.js', 'TrellisAllocationCore'], ['Trellis_Seeds_Core.js', 'TrellisSeedsCore'], ['Trellis_Exchange_Core.js', 'TrellisExchangeCore']]; // NEW
+    function fail(error) { delete App.pluginsLoaded[target]; App.embedModePluginsCount--; console.error('Inventories dependency unavailable:', error); } // NEW
+    function next(index) { // NEW
+        if (index === dependencies.length) { mxscript(target, null, null, null, true, fail); return; } // NEW
+        var dependency = dependencies[index], url = base + 'plugins/garden_planner_plugins/' + dependency[0]; // NEW
+        if (window[dependency[1]]) { next(index + 1); return; } // NEW
+        var entry = App.inventoryDependencies[url]; // NEW
+        if (entry) { entry.then(function() { next(index + 1); }, fail); return; } // NEW
+        entry = new Promise(function(resolve, reject) { mxscript(url, function() { if (window[dependency[1]]) resolve(); else reject('Missing ' + dependency[1]); }, null, null, true, reject); }); // NEW
+        App.inventoryDependencies[url] = entry; entry.then(null, function() { delete App.inventoryDependencies[url]; }); entry.then(function() { next(index + 1); }, fail); // NEW
+    } // NEW
+    next(0); // NEW
+}; // NEW
+
 App.loadPlugins = function(plugins, useInclude)
 {
 	EditorUi.debug('Loading plugins', plugins);
@@ -1465,6 +1496,7 @@ App.loadPlugins = function(plugins, useInclude)
 		{
 			try
 			{
+                if (plugins[i] === 'trellisInventories' || plugins[i] === 'gardenPlanner') { App.loadInventoryPlugin(plugins[i]); continue; } // NEW
 				if (plugins[i] === 'gardenRoadmapCore' || plugins[i] === 'gardenRoadmaps') { App.loadRoadmapPlugin(plugins[i]); continue; } // NEW
 				if (App.pluginRegistry[plugins[i]] != null)
 				{

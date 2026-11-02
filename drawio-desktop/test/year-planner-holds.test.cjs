@@ -15,6 +15,12 @@ test('year planner registers one garden target, views without claiming, and requ
     const year = h.document.querySelector('[data-trellis-quickstart="plan-year"]'); h.setControlValue(year, 2027, 'change'); await h.settle(120); // NEW
     assert.equal(f.editor().capture().year, 2027); assert.deepEqual(Array.from(f.editor().targets), ['["","module"]']); assert.equal(f.calls.includes('release'), false); // NEW
 }); // NEW
+test('frozen planner stays mounted but Save and Close cannot persist its old draft', async t => { // CHANGE
+    const f = fixture(t), session = await f.h.openModal(2026); session.plan.selfSufficiency.adults = 5; const element = f.editor().element(); f.editor().freeze('Access changed'); // CHANGE
+    assert.equal(element.isConnected, true); assert.equal(f.editor().capture().plan.selfSufficiency.adults, 5); assert.equal(await f.editor().save(), false); // CHANGE
+    const close = [...element.querySelectorAll('button')].find(button => button.textContent === 'Close'); assert.ok(close); close.click(); await f.h.settle(); assert.equal(session.ui.modalEl, null); // CHANGE
+    assert.equal(f.h.api.PlanRepository.loadDraftForYear(f.h.moduleCell, 2026), null); assert.equal(f.h.api.PlanRepository.loadPlanForYear(f.h.moduleCell, 2026), null); // CHANGE
+}); // CHANGE
 test('forced planner close preserves a capturable incomplete plan and suppresses draft autosave', async t => { // NEW
     const f = fixture(t), session = await f.h.openModal(2026); session.plan.selfSufficiency.adults = 3; // NEW
     assert.equal(f.editor().capture().plan.selfSufficiency.adults, 3); f.editor().discard(); await f.h.settle(); // NEW

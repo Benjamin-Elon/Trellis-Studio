@@ -10,8 +10,61 @@
         irrigation_catalog_json: ['stockState', 'stockQuantity']
     };
     const clone = value => JSON.parse(JSON.stringify(value));
+    const snapshotCache = new Map(); let snapshotBytes = 0; const SNAPSHOT_BUDGET = 32 * 1024 * 1024; // NEW: verified immutable definitions, never document or permission authority.
+    /** Synchronous SHA-256 permits an atomic native graph edit; native publication independently verifies these bytes. */ // NEW
+    function snapshotDigest(text) { // NEW
+        const raw = unescape(encodeURIComponent(text)), words = [], constants = [], initial = []; // NEW
+        for (let n = 2; constants.length < 64; n++) { let prime = true; for (let d = 2; d * d <= n; d++) if (n % d === 0) { prime = false; break; } if (prime) { if (initial.length < 8) initial.push((Math.sqrt(n) % 1 * 4294967296) | 0); constants.push((Math.cbrt(n) % 1 * 4294967296) | 0); } } // NEW
+        for (let i = 0; i < raw.length; i++) words[i >> 2] = (words[i >> 2] || 0) | raw.charCodeAt(i) << (24 - (i % 4) * 8); // NEW
+        words[raw.length >> 2] = (words[raw.length >> 2] || 0) | 0x80 << (24 - raw.length % 4 * 8); const size = ((raw.length + 9 + 63) >> 6) * 16; words[size - 2] = Math.floor(raw.length / 0x20000000); words[size - 1] = raw.length * 8; // NEW
+        const rotate = (x, n) => x >>> n | x << (32 - n), hash = initial.slice(); // NEW
+        for (let offset = 0; offset < size; offset += 16) { // NEW
+            const w = [], h = hash.slice(); // NEW
+            for (let i = 0; i < 64; i++) { // NEW
+                if (i < 16) w[i] = words[offset + i] | 0; else { const a = w[i - 15], b = w[i - 2]; w[i] = (w[i - 16] + (rotate(a, 7) ^ rotate(a, 18) ^ a >>> 3) + w[i - 7] + (rotate(b, 17) ^ rotate(b, 19) ^ b >>> 10)) | 0; } // NEW
+                const t = (h[7] + (rotate(h[4], 6) ^ rotate(h[4], 11) ^ rotate(h[4], 25)) + ((h[4] & h[5]) ^ (~h[4] & h[6])) + constants[i] + w[i]) | 0; // NEW
+                const u = ((rotate(h[0], 2) ^ rotate(h[0], 13) ^ rotate(h[0], 22)) + ((h[0] & h[1]) ^ (h[0] & h[2]) ^ (h[1] & h[2]))) | 0; // NEW
+                h.pop(); h.unshift((t + u) | 0); h[4] = (h[4] + t) | 0; // NEW
+            } // NEW
+            for (let i = 0; i < 8; i++) hash[i] = (hash[i] + h[i]) | 0; // NEW
+        } // NEW
+        return hash.map(n => (n >>> 0).toString(16).padStart(8, '0')).join(''); // NEW
+    } // NEW
+    /** A content address is a dependency, never a substitute for owner approval. */ // NEW
+    function externalReference(value) { return !!value && value.version === 2 && /^[a-f0-9]{64}$/.test(value.digest || '') && Object.keys(value).every(key => ['version', 'digest'].includes(key)); } // NEW
+    function registerSnapshot(store, expected) { // NEW
+        if (expected && snapshotCache.has(expected)) return { version: 2, digest: expected }; // CHANGE: reuse verified immutable bytes; ignore retransmitted payloads instead of hashing them on the interaction thread.
+        validate(store); const text = canonical(store), hash = snapshotDigest(text); assert(!expected || expected === hash, 'Reference snapshot failed content verification.'); // NEW
+        return retainSnapshot(store, hash, text); // CHANGE
+    } // CHANGE
+    /** Verify arriving definitions asynchronously before synchronous consumers can resolve them. */ // NEW
+    async function registerSnapshotAsync(store, expected) { // NEW
+        if (expected && snapshotCache.has(expected)) return { version: 2, digest: expected }; // NEW
+        if (!root.crypto?.subtle) return registerSnapshot(store, expected); // NEW: standalone test/older hosts retain the verified synchronous path.
+        validate(store); const text = canonical(store), bytes = new TextEncoder().encode(text); // NEW
+        const hash = Array.from(new Uint8Array(await root.crypto.subtle.digest('SHA-256', bytes)), value => value.toString(16).padStart(2, '0')).join(''); // NEW
+        assert(!expected || expected === hash, 'Reference snapshot failed content verification.'); // NEW
+        return retainSnapshot(JSON.parse(text), hash, text); // NEW: callers cannot mutate bytes while verification is pending.
+    } // NEW
+    function retainSnapshot(store, hash, text) { // NEW
+        if (!snapshotCache.has(hash)) { const bytes = text.length * 2; assert(bytes <= SNAPSHOT_BUDGET, 'Reference snapshot exceeds the cache budget.'); while (snapshotBytes + bytes > SNAPSHOT_BUDGET) { const key = snapshotCache.keys().next().value; snapshotBytes -= snapshotCache.get(key).bytes; snapshotCache.delete(key); } snapshotCache.set(hash, { store: freeze(store), bytes }); snapshotBytes += bytes; } // NEW
+        return { version: 2, digest: hash }; // NEW
+    } // NEW
+    function resolveReference(value) { // NEW
+        const record = typeof value === 'string' ? JSON.parse(value) : value; // NEW
+        if (!externalReference(record)) return validate(record); // NEW
+        const store = root.TrellisReferenceResolver ? root.TrellisReferenceResolver(record.digest) : snapshotCache.get(record.digest)?.store; // NEW
+        assert(store, 'Reference definitions are unavailable. Wait for synchronization or restore the project files.'); return store; // NEW
+    } // NEW
+    const cachedSnapshot = hash => snapshotCache.get(hash)?.store; // NEW
     const validated = new WeakMap(); // NEW
-    function freeze(value) { if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); } return value; } // NEW
+    const immutableSnapshots = new WeakSet(); // NEW: a shallow-frozen root cannot qualify mutable descendants for reuse.
+    function freeze(value) { // CHANGE
+        if (value && typeof value === 'object' && !immutableSnapshots.has(value)) { // NEW
+            Object.values(value).forEach(freeze); Object.freeze(value); immutableSnapshots.add(value); // NEW
+        } // NEW
+        return value; // NEW
+    } // CHANGE
     function canonical(value) {
         if (value === undefined) return 'undefined';
         if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -54,8 +107,10 @@
         }
     }
     function validate(store, manifestId = store?.current) {
-        root.TrellisContentPolicy?.jsonValue(store); // NEW: frozen-cache hits cannot bypass structure limits.
-        if (Object.isFrozen(store) && validated.get(store)?.has(manifestId)) return store; // NEW: only deeply frozen snapshots can use validation caching.
+        const contentPolicy = root.TrellisContentPolicy, cached = immutableSnapshots.has(store) ? validated.get(store) : null; // CHANGE
+        const sameValidator = !!cached && cached.policy === contentPolicy && cached.validator === contentPolicy?.jsonValue; // NEW
+        if (sameValidator && cached.manifests.has(manifestId)) return store; // CHANGE: verified immutable bytes can reuse bounds and schema checks under the same validator.
+        contentPolicy?.jsonValue(store); // CHANGE: a new or changed bounds validator must inspect the complete store again.
         assert(store?.version === 1 && object(store.revisions) && object(store.manifests) && object(store.bindings), 'Unsupported or missing garden references.');
         schemaValid(store.schema);
         const manifest = store.manifests[manifestId]; assert(manifest && object(manifest.heads), 'The pinned reference manifest is missing.');
@@ -84,7 +139,7 @@
             assert(new Set(items.map(rev => rev.data.item.id)).size === items.length, 'Distinct portable entities share a catalog ID. Map their identities explicitly.'); // NEW
             assert(metadata.length <= 1 && payloads.length <= 1 && (!items.length || metadata.length === 1) && (!payloads.length || !metadata.length && !items.length), 'Catalog metadata identities must be explicitly mapped.'); // NEW
         } // NEW
-        if (!validated.has(store)) validated.set(store, new Set()); validated.get(store).add(manifestId); return store; // CHANGE
+        if (immutableSnapshots.has(store)) { const entry = sameValidator ? cached : { policy: contentPolicy, validator: contentPolicy?.jsonValue, manifests: new Set() }; entry.manifests.add(manifestId); validated.set(store, entry); } return store; // CHANGE: mutable validation cannot attest to later changes, and cache entries remain bound to their limits.
     }
     function newStore(schema, id = uuid) {
         schemaValid(schema); const current = id();
@@ -361,7 +416,7 @@
         const requests = nextLog.requests.filter(item => !oldLog.requests.some(old => old.id === item.id)), decisions = nextLog.decisions.filter(item => !oldLog.decisions.some(old => old.id === item.id)); // NEW
         for (const request of requests) assert(policy.editor && request.author === policy.actor && request.target.gardenId === policy.gardenId, 'Only an editor can submit their own proposal to this garden.'); // NEW
         for (const decision of decisions) assert(policy.owner && decision.actor === policy.actor, 'Only the receiving garden owner may decide reference changes.'); // NEW
-        const changed = before.references !== after.references, oldStore = parse(before.references, null), next = parse(after.references, null); // NEW
+        const changed = before.references !== after.references, oldStore = before.references ? resolveReference(before.references) : null, next = after.references ? resolveReference(after.references) : null; // CHANGE: compact pointers resolve only within the verified project context.
         if (changed) { // NEW
             assert(next && policy.owner, 'Only the receiving garden owner may accept reference data.'); validate(next); // NEW
             if (!oldStore) assert(policy.initializing && !decisions.length, 'Garden references may only be initialized during creation.'); // NEW
@@ -382,12 +437,16 @@
         } // NEW
         if (next) { // NEW
             for (const kind of CATALOGS) { // NEW
-                const data = parse(after.catalogs?.[kind], null); // NEW
+                const stored = parse(after.catalogs?.[kind], null), data = externalReference(parse(after.references, null)) ? mergeOperational(next, kind, stored) : stored; // CHANGE
+                if (externalReference(parse(after.references, null)) && stored) assert(equal(stored, operationalOverlay(kind, stored)), 'Reference operational overlays may contain only stock fields and item identities.'); // CHANGE
                 if (before.catalogs?.[kind] === after.catalogs?.[kind] && !changed) continue; // NEW
                 const accepted = catalog(next, kind); if (!accepted && !data) continue; assert(data && accepted && equal(catalogDefinition(kind, data), accepted), 'Reusable catalog definitions require owner acceptance.'); // CHANGE
             } // NEW
         } // NEW
         return true; // NEW
     } // NEW
-    root.TrellisReferenceCore = Object.freeze({ ATTR, PROPOSALS, PIN, CATALOGS, OPERATIONAL, canonical, equal, clone, freeze, uuid, identifier, references, validate, newStore, capture, project, rowByKey, publish, revision, catalogDefinition, putCatalog, putCatalogBatch, catalog, merge, proposal, validateProposal, review, mapProposal, retire, template, creationSnapshot, resetInventory, localToday, canRecalculate, validateTransition, logValid }); // CHANGE
+    /** Compact operational overlays contain identities and mutable stock fields only. */ // NEW
+    function operationalOverlay(kind, payload) { const names = OPERATIONAL[kind] || []; return { version: payload?.version || 1, items: (payload?.items || []).map(item => Object.fromEntries(['id', ...names].filter(key => item[key] !== undefined).map(key => [key, clone(item[key])]))).filter(item => Object.keys(item).length > 1) }; } // NEW
+    function mergeOperational(store, kind, overlay) { const result = clone(catalog(store, kind)); if (!result) return result; if (result.items) for (const item of result.items) { const update = overlay?.items?.find(value => value.id === item.id); for (const key of OPERATIONAL[kind] || []) if (update?.[key] !== undefined) item[key] = clone(update[key]); } return result; } // NEW
+    root.TrellisReferenceCore = Object.freeze({ ATTR, PROPOSALS, PIN, CATALOGS, OPERATIONAL, canonical, equal, clone, freeze, uuid, identifier, references, validate, newStore, capture, project, rowByKey, publish, revision, catalogDefinition, putCatalog, putCatalogBatch, catalog, merge, proposal, validateProposal, review, mapProposal, retire, template, creationSnapshot, resetInventory, localToday, canRecalculate, validateTransition, logValid, externalReference, registerSnapshot, registerSnapshotAsync, resolveReference, cachedSnapshot, snapshotDigest, operationalOverlay, mergeOperational }); // CHANGE
 })(globalThis); // NEW

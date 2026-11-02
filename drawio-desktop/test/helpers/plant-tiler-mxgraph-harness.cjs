@@ -5,7 +5,7 @@ const { createPreviewHistoryUi } = require('./preview-history-ui.cjs'); // CHANG
 
 /** Runs the complete production tiler against the bundled mxGraph model and SVG renderer. */ // CHANGE
 function loadPlantTilerMxGraph() { // CHANGE
-    const dom = new JSDOM('<!doctype html><body><div id="graph"></div></body>', { runScripts: 'outside-only', pretendToBeVisual: true }); // CHANGE
+    const dom = new JSDOM('<!doctype html><body><div id="graph"></div></body>', { url: 'https://trellis.test/', runScripts: 'outside-only', pretendToBeVisual: true }); // CHANGE: local preferences require a non-opaque origin.
     const window = dom.window; // CHANGE
     window.mxLoadResources = false; window.mxLoadStylesheets = false; // CHANGE
     window.HTMLCanvasElement.prototype.getContext = () => null; // CHANGE: jsdom has no raster canvas; these tests use the SVG renderer.
@@ -18,6 +18,9 @@ function loadPlantTilerMxGraph() { // CHANGE
     const undoManager = new window.mxUndoManager(); // CHANGE
     graph.getModel().addListener(window.mxEvent.UNDO, (sender, event) => undoManager.undoableEditHappened(event.getProperty('edit'))); // CHANGE
     const ui = createPreviewHistoryUi(window, graph, undoManager); // CHANGE
+    Object.setPrototypeOf(ui.editor, window.mxEventSource.prototype); // NEW: expose the same file/page lifecycle as the editor shell.
+    ui.getXmlFileData = () => new window.mxCodec().encode(graph.model); // NEW: save boundaries must see authored planting children.
+    window.eval(fs.readFileSync(path.join(webapp, 'js/trellis-local-view.js'), 'utf8')); // NEW
     window.eval(fs.readFileSync(path.join(webapp, 'js/trellis-edit-context.js'), 'utf8')); // NEW: exercise generator provenance on the native model.
     window.Draw = { loadPlugin(callback) { callback(ui); } }; // CHANGE
     window.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Planting_Group.js'), 'utf8')); // CHANGE

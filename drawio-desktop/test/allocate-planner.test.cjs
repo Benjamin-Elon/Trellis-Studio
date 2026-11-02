@@ -123,6 +123,7 @@ function loadAllocatePlugin() {
         }
     };
     const context = vm.createContext({
+        CustomEvent: class { constructor(type, options = {}) { this.type = type; this.detail = options.detail; } }, // CHANGE: exercise real plan-navigation event payloads.
         Date,
         JSON,
         Math,
@@ -347,6 +348,59 @@ test("Allocate progress text reports row and action counts", () => {
     assert.match(text, /2 of 5 demand rows/);
     assert.match(text, /1 action found/);
 });
+
+/** Empty-plan navigation must follow plan data while respecting Allocate's existing prerequisites. */ // CHANGE
+test("Allocate exposes Year Plan navigation only for missing, empty, zero-demand, and covered plans", async t => { // CHANGE
+    for (const scenario of [ // CHANGE
+        { name: 'missing', plan: null, visible: true, message: /No saved Year Plan/ }, // CHANGE
+        { name: 'empty', crops: [], visible: true, message: /No crops/ }, // CHANGE
+        { name: 'zero demand', targetKg: 0, shortKg: 0, visible: true, message: /No demand/ }, // CHANGE
+        { name: 'covered', targetKg: 4, shortKg: 0, visible: true, message: /plan is covered/ }, // CHANGE
+        { name: 'unmet demand', targetKg: 4, shortKg: 4, visible: false, message: /unmet/ }, // CHANGE
+        { name: 'missing contracts', contracts: false, visible: false, message: /contracts are unavailable/ }, // CHANGE
+        { name: 'missing climate', climate: false, visible: false, message: /climate\/location/ }, // CHANGE
+        { name: 'missing module', module: null, visible: false, message: /Select a Trellis garden/ } // CHANGE
+    ]) await t.test(scenario.name, async () => { // CHANGE
+        const api = loadAllocatePlugin(), usl = api.__window.USL; // CHANGE
+        usl.planningCore = { // CHANGE
+            loadPlanForYear: () => scenario.plan === null ? null : { crops: scenario.crops || [{ id: 'crop-1', plantId: '1' }] }, // CHANGE
+            computeYearCoverage: () => ({ totals: { targetKg: scenario.targetKg ?? 0, shortKg: scenario.shortKg ?? 0 }, cropSummaries: [], weekSummaries: [] }) // CHANGE
+        }; // CHANGE
+        usl.scheduler = { resolveCityForModule: async () => ({ ok: scenario.climate !== false, city: {} }) }; // CHANGE
+        usl.tiler = { listGardenBeds: () => [] }; // CHANGE
+        if (scenario.contracts === false) delete usl.planningCore; // CHANGE
+        const state = await usl.allocate.open(scenario.module === null ? null : { id: 'garden' }, 2027); // CHANGE
+        try { // CHANGE
+            const { openYearPlan, status, actions } = state.hudRefs; // CHANGE
+            assert.equal(openYearPlan.textContent, 'Open Year Plan'); // CHANGE
+            assert.equal(openYearPlan.style.display !== 'none', scenario.visible); // CHANGE
+            assert.match(status.textContent, scenario.message); // CHANGE
+            assert.equal(state.hud.children[state.hud.children.indexOf(status) + 1], openYearPlan); // CHANGE
+            if (scenario.visible) assert.equal(actions.style.display, 'none'); // CHANGE
+        } finally { usl.allocate.close('test'); } // CHANGE
+    }); // CHANGE
+}); // CHANGE
+
+test("Allocate hides Year Plan navigation while loading and clears it before a failed refresh", async t => { // CHANGE
+    const api = loadAllocatePlugin(), usl = api.__window.USL; let resolveCity; // CHANGE
+    usl.planningCore = { loadPlanForYear: () => null }; usl.tiler = {}; // CHANGE
+    usl.scheduler = { resolveCityForModule: () => new Promise(resolve => { resolveCity = resolve; }) }; // CHANGE
+    t.after(() => usl.allocate.close('test')); // CHANGE
+    const opening = usl.allocate.open({ id: 'garden' }, 2027); // CHANGE
+    await waitUntil(() => !!resolveCity); // CHANGE
+    const button = api.__root.querySelector('.trellis-allocate-hud').children[2]; // CHANGE
+    assert.equal(button.style.display, 'none'); // CHANGE
+    resolveCity({ ok: true, city: {} }); const state = await opening; // CHANGE
+    assert.equal(state.hudRefs.openYearPlan, button); assert.notEqual(button.style.display, 'none'); // CHANGE
+    let request; api.__window.addEventListener('usl:planYearRequested', event => { request = event.detail; }); // CHANGE
+    button.click(); assert.deepEqual(JSON.parse(JSON.stringify(request)), { moduleCellId: 'garden', year: 2027, returnToAllocate: true }); // CHANGE
+    usl.scheduler.resolveCityForModule = async () => ({ ok: false }); // CHANGE
+    api.__window.dispatchEvent({ type: 'usl:growthStagesSaved' }); // CHANGE
+    assert.equal(button.style.display, 'none'); // CHANGE
+    request = null; button.click(); assert.equal(request, null); // CHANGE: detached or stale actions cannot navigate.
+    await waitUntil(() => /climate\/location/.test(state.message), 1000); // CHANGE
+    assert.equal(button.style.display, 'none'); // CHANGE
+}); // CHANGE
 
 test("Allocate open renders a progress state before sow-week scheduling completes", async () => {
     const api = loadAllocatePlugin();

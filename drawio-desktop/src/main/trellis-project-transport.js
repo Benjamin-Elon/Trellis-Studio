@@ -3,7 +3,7 @@ import { readBounded, LIMITS } from './trellis-input-policy.js'; // NEW
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
 import { atomicJson, readOptional, moveRetained } from './trellis-project-trash.js'; // NEW
-import { inspectDiagram, activeAdmin, hasCanvasAccess, safeId, signRecord, verifyRecord, digest, makeId } from './trellis-share-protocol.js'; // NEW
+import { SYNC_PROTOCOL, inspectDiagram, activeAdmin, hasCanvasAccess, safeId, signRecord, verifyRecord, digest, makeId } from './trellis-share-protocol.js'; // CHANGE
 
 export const PROJECT_LIFECYCLE_VERSION = 1; // NEW
 export function createProjectTransport(context) { // NEW
@@ -43,6 +43,7 @@ export function createProjectTransport(context) { // NEW
         const snapshot = await collaborationStore(canvas).snapshot(), state = inspectDiagram(snapshot.xml); // CHANGE: membership queries need verified state, not projection writes or presentation metadata.
         const user = linked(state, input.userId, input.identityId), users = activeUsers(state); // CHANGE: current authorization is still checked on every query.
         if (users.length === 1) return { available: true, canDelete: !!user.admin, canLeave: false, successors: [], pendingInvitationCount: (state.store.invites || []).filter(i => i.status === 'pending').length }; // NEW
+        if (!SYNC_PROTOCOL.capabilities.handoff) return { available: true, canDelete: false, canLeave: false, successors: [], reason: 'Coordinator transfer is unavailable until the replacement handoff engine is qualified.' }; // NEW
         let connections; // NEW
         try { await start(); connections = (await api('system/connections')).connections; if (!connections) throw new Error('No connection telemetry.'); } // NEW
         catch (_) { return { available: true, canDelete: false, canLeave: false, successors: [], reason: 'Connect to another project member before leaving.' }; } // NEW
@@ -68,6 +69,7 @@ export function createProjectTransport(context) { // NEW
         context.validateManaged(canvas); // NEW
         const target = retained(canvas), receiptPath = path.join(profile, 'project-trash-journals', safeId(input.recordId) + '.json'); // NEW
         if (canvas.retirementComplete === input.operation && input.operation === 'trashed') return { ok: true, reason: canvas.retirementReason || '' }; // NEW
+        if (input.operation !== 'active') collaborationStore(canvas).cancelVerification?.(); // CHANGE: invalidate verification once before a project move.
         if (input.operation === 'active') { // NEW
             if (!canvas.projectRetired || canvas.projectRetired === 'left' || canvas.projectRetired === 'purged') return { ok: true }; // NEW
             if (await fs.stat(target).then(() => true).catch(() => false)) await moveRetained(target, canvas.folderPath, receiptPath); // NEW
@@ -115,6 +117,7 @@ export function createProjectTransport(context) { // NEW
         return p?.type === type && p.shareId === canvas.shareId && p.diagramId === canvas.diagramId && member && verifyRecord(record, member.publicKey) ? member : null; // NEW
     } // NEW
     async function leaveProject(input) { // NEW
+        SYNC_PROTOCOL.requireCapability('handoff'); // NEW: legacy membership transfer cannot strand a v4 successor without an epoch/head.
         await initialize(); const canvas = known(input.shareId); // NEW
         if (!canvas) throw new Error('Download this project before leaving.'); // NEW
         if (canvas.departureRequestId) { // NEW
@@ -216,6 +219,7 @@ export function createProjectTransport(context) { // NEW
     } // NEW
     /** Orchestrate independent stages without abandoning an interrupted departure. */ // NEW
     async function refresh(canvas) { // NEW
+        if (!SYNC_PROTOCOL.capabilities.handoff) return; // NEW: inactive legacy departure records never enter ordinary v4 polling.
         if (canvas.localRemoved || canvas.revoked || canvas.pending) return; // NEW
         await publishCapability(canvas); // NEW
         if (canvas.departureRequestId) { // NEW

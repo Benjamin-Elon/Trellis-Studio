@@ -1,0 +1,298 @@
+✔ sole garden remains active for empty, unrelated, descendant, and mixed selections (86.7456ms)
+✔ only companions associated with the active garden determine its workspace (41.3779ms)
+✔ zero and multiple gardens preserve selection and ambiguity rules (66.4832ms)
+✔ default context follows garden count, conversion, undo, and current-page changes (31.5468ms)
+✔ default activation preserves selection, viewport, and selection-based share eligibility (31.3042ms)
+✔ picker matches every word across name and city and retains sorted city groups (18.2197ms)
+✔ garden dashboard toolbar is mounted to the graph viewport and sized from the viewport (2.3149ms)
+✔ garden dashboard toolbar width follows a narrowed graph container rect (0.3743ms)
+✔ garden dashboard toolbar follows garden module and descendant selection (1.9244ms)
+✔ garden dashboard blank toolbar leaves module-scoped flash lookup to active render (2.0741ms)
+✖ garden dashboard toolbar controls use module scoped plugin contracts (4.0963ms)
+✔ garden dashboard toolbar exposes share only for eligible selected scopes (1.2004ms)
+✔ garden dashboard toolbar groups tools left and messages export share table right (1.9414ms)
+✔ garden dashboard toolbar disables Allocate until the selected year has saved crops (3.0065ms)
+✔ garden dashboard blank state keeps controls visible and exposes searchable garden picker (1.3742ms)
+✔ garden dashboard waits for an opened diagram before rendering toolbar (1.6144ms)
+✔ garden dashboard picker searches names and cities while preserving city grouping (0.8492ms)
+✔ garden dashboard picker selection and no-garden create path select and zoom gardens (1.7317ms)
+✔ garden dashboard startup focuses sole garden only once (2.2269ms)
+✔ garden dashboard persists the last selected garden by diagram page and user (1.527ms)
+✔ garden dashboard updates last garden memory only for unambiguous garden contexts (1.3222ms)
+✔ garden dashboard startup uses selected remembered then sole-garden fallback (1.5277ms)
+✔ garden dashboard last garden restore runs only on file open, not page switch (0.9905ms)
+✔ garden dashboard resolves linked and ambiguous module contexts (1.5586ms)
+✔ garden dashboard applies selected year to linked task module cards (1.2236ms)
+✔ garden dashboard derives active workspace from selection (0.9484ms)
+✔ garden workspace switcher repairs companions and pulses destinations (1.443ms)
+✔ garden dashboard disables garden tools outside Garden workspace (1.7465ms)
+✔ garden dashboard toolbar exposes Garden Workspace Switcher with task badge and selector (2.1799ms)
+✔ garden dashboard toolbar uses task manager API for boards and unseen counts (1.7036ms)
+✔ garden dashboard toolbar persists the selected task board in local user storage (2.3117ms)
+✔ garden dashboard selected task board resolver is strict across selected cells (0.5132ms)
+✔ garden dashboard toolbar marks Irrigation active with existing blue (1.7922ms)
+✔ garden dashboard irrigation buttons close active irrigation mode (1.8518ms)
+✔ garden dashboard messages button calls users API for active module and prompts auth (1.6555ms)
+✔ garden dashboard table is collapsed by default and session scoped (1.0115ms)
+✔ legacy dashboard cell code is removed from the viewport dashboard plugin (1.012ms)
+✔ fresh Electron settings use Trellis startup defaults (4.361ms)
+✔ empty stored plugin settings are normalized to the full Trellis default set (1.8491ms)
+✔ non-empty stored plugin settings are preserved (1.8833ms)
+✔ old editor autosave transition no longer forces Trellis autosave off (1.0886ms)
+✔ Trellis splash is not suppressed by stored false Electron preference (0.4574ms)
+✔ Trellis plugin defaults stay aligned across source and bundled runtime (668.3084ms)
+✔ new blank diagram runtime flag is carried through fileLoaded (161.6292ms)
+✔ desktop startup migrates saved profiles to object details once and loads its script (95.9298ms)
+✔ App.js actual registry, public list, and defaults register Roadmap dependencies (3.6791ms)
+✔ App.js waits for Core completion, deduplicates requests, and retries failures (6.2208ms)
+✔ app.min.js actual registry, public list, and defaults register Roadmap dependencies (45.7083ms)
+✔ app.min.js waits for Core completion, deduplicates requests, and retries failures (164.2086ms)
+✔ integrate.min.js actual registry, public list, and defaults register Roadmap dependencies (110.272ms)
+✔ integrate.min.js waits for Core completion, deduplicates requests, and retries failures (413.4649ms)
+✔ App.js canonical and legacy planting plugins normalize and load once (3.8648ms)
+✔ app.min.js canonical and legacy planting plugins normalize and load once (49.6521ms)
+✔ integrate.min.js canonical and legacy planting plugins normalize and load once (99.8301ms)
+✔ App.js desktop roadmap URLs include the separator and share stored-plugin keys (8.1801ms)
+✔ app.min.js desktop roadmap URLs include the separator and share stored-plugin keys (46.2419ms)
+✔ integrate.min.js desktop roadmap URLs include the separator and share stored-plugin keys (109.4407ms)
+ℹ tests 57
+ℹ suites 0
+ℹ pass 56
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2174.0542
+
+✖ failing tests:
+
+test at test\garden-dashboard-toolbar.test.cjs:341:1
+✖ garden dashboard toolbar controls use module scoped plugin contracts (4.0963ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /TrellisInventories\?\.showMenu\(equipmentBtn,\{ui,garden:activeToolbarModule\}\)/. Input:
+  
+  '// -------------------- Viewport toolbar (active dashboard UI) --------------------\r\n' +
+    '    const toolbarExpandedByModuleId = new Map();\r\n' +
+    '    const taskBoardSelectionByPreferenceKey = new Map(); // CHANGE: board memory is keyed by user/shared local preference\r\n' +
+    '    const lastGardenSelectionByPreferenceKey = new Map(); // NEW: cache local startup garden memory by diagram/page/user key.\r\n' +
+    '    let viewportToolbar = null;\r\n' +
+    '    let activeToolbarModule = null;\r\n' +
+    '    let toolbarRefreshTimer = null;\r\n' +
+    '    let gardenPickerOpen = false;\r\n' +
+    '    let gardenPickerSearchText = "";\r\n' +
+    '    let gardenPickerPage = 0; // NEW: render at most 100 matching picker rows at a time.\r\n' +
+    '    let lastToolbarContext = null;\r\n' +
+    '    let startupGardenFocusDone = false;\r\n' +
+    '    const pendingPlanButtonFlashByModuleId = new Map(); // CHANGE\r\n' +
+    '    const planButtonFlashTimersByModuleId = new Map(); // CHANGE\r\n' +
+    '\r\n' +
+    '    function dashboardDiagramIsOpen() {\r\n' +
+    '        return !!(ui && typeof ui.getCurrentFile === "function" && ui.getCurrentFile());\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function cellId(cell) {\r\n' +
+    '        return cell && cell.getId ? cell.getId() : (cell && cell.id) || "";\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function flashPlanButton(entry, moduleId, durationMs) {\r\n' +
+    '        if (!entry || !entry.planBtn || !moduleId) return;\r\n' +
+    '        const button = entry.planBtn;\r\n' +
+    '        if (planButtonFlashTimersByModuleId.has(moduleId)) clearTimeout(planButtonFlashTimersByModuleId.get(moduleId));\r\n' +
+    '        button.style.transition = "box-shadow .18s ease, background-color .18s ease, color .18s ease";\r\n' +
+    '        button.style.boxShadow = "0 0 0 3px rgba(47,111,237,.36),0 0 0 6px rgba(47,111,237,.14)";\r\n' +
+    '        button.style.backgroundColor = "#eef4ff";\r\n' +
+    '        button.style.color = "#1f4fbf";\r\n' +
+    '        planButtonFlashTimersByModuleId.set(moduleId, setTimeout(function () {\r\n' +
+    '            button.style.boxShadow = "";\r\n' +
+    '            button.style.backgroundColor = "";\r\n' +
+    '            button.style.color = "";\r\n' +
+    '            planButtonFlashTimersByModuleId.delete(moduleId);\r\n' +
+    '        }, Math.max(500, Number(durationMs) || 2000)));\r\n' +
+    '    } // CHANGE\r\n' +
+    '\r\n' +
+    '    function getViewportToolbarContainer() {\r\n' +
+    '        return graph && graph.container;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function getViewportToolbarHost() {\r\n' +
+    '        return ensureGraphBodyControlLayer();\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function ensureViewportToolbarHost() {\r\n' +
+    '        const host = getViewportToolbarHost();\r\n' +
+    '        return host;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function ensureGraphBodyControlLayer() {\r\n' +
+    '        const container = getViewportToolbarContainer();\r\n' +
+    '        if (!container || !document.body) return null;\r\n' +
+    '        try {\r\n' +
+    '            if (window.getComputedStyle && window.getComputedStyle(container).position === "static") container.style.position = "relative";\r\n' +
+    '        } catch (_) { }\r\n' +
+    '        let layer = document.body.querySelector(".trellis-body-control-layer");\r\n' +
+    '        if (!layer) {\r\n' +
+    '            layer = document.createElement("div");\r\n' +
+    '            layer.className = GRAPH_OVERLAY_LAYER_CLASS.control;\r\n' +
+    '            layer.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:" + GRAPH_OVERLAY_Z.CONTROL + ";";\r\n' +
+    '            document.body.appendChild(layer);\r\n' +
+    '        }\r\n' +
+    '        return layer;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function viewportToolbarWidth(host) {\r\n' +
+    '        if (!host) return 0;\r\n' +
+    '        const rect = host.getBoundingClientRect ? host.getBoundingClientRect() : null;\r\n' +
+    '        if (rect && rect.width) return rect.width;\r\n' +
+    '        return host.clientWidth || 0;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function getToolbarYear(moduleCell) {\r\n' +
+    '        const moduleYear = getModuleCurrentYear(moduleCell);\r\n' +
+    '        return isValidYear(moduleYear) ? moduleYear : new Date().getFullYear();\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function setToolbarYear(moduleCell, year) {\r\n' +
+    '        const y = toInt(year, NaN);\r\n' +
+    '        if (!moduleCell || !isGardenModule(moduleCell) || !isValidYear(y)) return;\r\n' +
+    '        model.beginUpdate();\r\n' +
+    '        try {\r\n' +
+    '            setModuleCurrentYear(moduleCell, y);\r\n' +
+    '        } finally {\r\n' +
+    '            model.endUpdate();\r\n' +
+    '        }\r\n' +
+    '        applyYearVisibilityToModule(moduleCell, y);\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function plainTextLabel(raw, fallback) {\r\n' +
+    '        const value = String(raw == null ? "" : raw);\r\n' +
+    '        if (document && document.createElement) {\r\n' +
+    '            const holder = document.createElement("template"); // CHANGE: parse in an inert template.\r\n' +
+    '            holder.innerHTML = value; // CHANGE\r\n' +
+    '            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(value) : holder.content.textContent || "").replace(/\\s+/g, " ").trim();\r\n' +
+    '            if (text) return text;\r\n' +
+    '        }\r\n' +
+    '        const stripped = value.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim();\r\n' +
+    '        return stripped || fallback || "";\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function gardenLabel(moduleCell) {\r\n' +
+    '        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n' +
+    '        if (clusters) return clusters.gardenLabel(moduleCell) || "Garden Module"; // NEW: use indexed labels rather than repeatedly parsing HTML during sorting.\r\n' +
+    '        const raw = getCellAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : "");\r\n' +
+    '        return plainTextLabel(raw, "Garden Module") || cellId(moduleCell) || "Garden Module";\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function gardenCity(moduleCell) {\r\n' +
+    '        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n' +
+    '        if (clusters) return clusters.gardenCity(moduleCell); // NEW: city grouping and sorting reuse indexed display labels.\r\n' +
+    '        return plainTextLabel(getCellAttr(moduleCell, "city_name", "") || getCellAttr(moduleCell, "city_id", ""), "");\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function allModelCells() {\r\n' +
+    '        const root = model.getRoot && model.getRoot();\r\n' +
+    '        const fromMap = model.cells ? Object.values(model.cells) : [];\r\n' +
+    '        if (fromMap.length) return fromMap;\r\n' +
+    '        return getDescendants(root);\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function collectGardenModules() {\r\n' +
+    '        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n' +
+    "        if (clusters) return clusters.listGardens(); // NEW: the controller maintains the current page's garden index.\r\n" +
+    '        const seen = new Set();\r\n' +
+    '        const gardens = [];\r\n' +
+    '        for (const cell of allModelCells()) {\r\n' +
+    '            const id = cellId(cell);\r\n' +
+    '            if (!id || seen.has(id) || !isGardenModule(cell)) continue;\r\n' +
+    '            seen.add(id);\r\n' +
+    '            gardens.push(cell);\r\n' +
+    '        }\r\n' +
+    '        return gardens;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function linkIdSet(cell) {\r\n' +
+    '        return new Set(String(getCellAttr(cell, "linkedTo", "") || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean));\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function linkedGardenModulesForCompanion(moduleCell) {\r\n' +
+    '        if (!moduleCell) return [];\r\n' +
+    '        const ids = linkIdSet(moduleCell);\r\n' +
+    '        const typedGardenId = getCellAttr(moduleCell, "trellis_garden_module_id", "") || getCellAttr(moduleCell, "roadmap_garden_module_id", ""); // CHANGE: Roadmap companions store their linked garden under a roadmap-specific key.\r\n' +
+    '        if (typedGardenId) ids.add(typedGardenId);\r\n' +
+    '        const seen = new Set();\r\n' +
+    '        const gardens = [];\r\n' +
+    '        ids.forEach(function (id) {\r\n' +
+    '            const garden = id && model.getCell ? model.getCell(id) : null;\r\n' +
+    '            const gardenId = cellId(garden);\r\n' +
+    '            if (!gardenId || seen.has(gardenId) || !isGardenModule(garden)) return;\r\n' +
+    '            seen.add(gardenId);\r\n' +
+    '            gardens.push(garden);\r\n' +
+    '        });\r\n' +
+    '        return sortGardensForPicker(gardens);\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function resolvedGardenCandidatesForCell(cell) {\r\n' +
+    '        const moduleCell = isGardenModule(cell) ? cell : findGardenModuleAncestor(graph, cell);\r\n' +
+    '        if (moduleCell) return [moduleCell];\r\n' +
+    '        const taskModule = isTaskModule(cell) ? cell : findTaskModuleAncestor(graph, cell);\r\n' +
+    '        if (taskModule) return linkedGardenModulesForCompanion(taskModule);\r\n' +
+    '        const teamModule = isTeamModule(cell) ? cell : findTeamModuleAncestor(graph, cell);\r\n' +
+    '        if (teamModule) return linkedGardenModulesForCompanion(teamModule);\r\n' +
+    '        const roadmapModule = isRoadmapModule(cell) ? cell : findRoadmapModuleAncestor(graph, cell); // NEW\r\n' +
+    '        if (roadmapModule) return linkedGardenModulesForCompanion(roadmapModule); // NEW\r\n' +
+    '        return [];\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function selectedCellsForDashboard() {\r\n' +
+    '        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [graph.getSelectionCell && graph.getSelectionCell()].filter(Boolean);\r\n' +
+    '        return selected.filter(Boolean);\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function uniqueGardenList(gardens) {\r\n' +
+    '        const seen = new Set();\r\n' +
+    '        const out = [];\r\n' +
+    '        for (const garden of (gardens || [])) {\r\n' +
+    '            const id = cellId(garden);\r\n' +
+    '            if (!id || seen.has(id) || !isGardenModule(garden)) continue;\r\n' +
+    '            seen.add(id);\r\n' +
+    '            out.push(garden);\r\n' +
+    '        }\r\n' +
+    '        return out;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function collectLinkedTaskBoardCards(moduleCell) {\r\n' +
+    '        const api = taskManagerApi();\r\n' +
+    '        if (!api || typeof api.listBoardsForGarden !== "function") return []; // NEW: task year filtering is best-effort when the task manager is unavailable\r\n' +
+    '        const cards = [];\r\n' +
+    '        const seen = new Set();\r\n' +
+    '        (api.listBoardsForGarden(moduleCell) || []).forEach(function (board) {\r\n' +
+    '            getDescendants(board).forEach(function (cell) {\r\n' +
+    '                const id = cellId(cell);\r\n' +
+    '                if (!isKanbanCard(cell) || (id && seen.has(id))) return;\r\n' +
+    '                if (id) seen.add(id);\r\n' +
+    '                cards.push(cell);\r\n' +
+    '            });\r\n' +
+    '        });\r\n' +
+    '        return cards;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function sortGardensForPicker(gardens) {\r\n' +
+    '        return uniqueGardenList(gardens).sort(function (left, right) {\r\n' +
+    '            const leftCity = gardenCity(left) || GARDEN_PICKER_NO_CITY;\r\n' +
+    '            const rightCity = gardenCity(right) || GARDEN_PICKER_NO_CITY;\r\n' +
+    '            const leftNoCity = leftCity === GARDEN_PICKER_NO_CITY;\r\n' +
+    '            const rightNoCity = rightCity === GARDEN_PICKER_NO_CITY;\r\n' +
+    '            '... 82130 more characters
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\garden-dashboard-toolbar.test.cjs:346:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `// -------------------- Viewport toolbar (active dashboard UI) --------------------\r\n    const toolbarExpandedByModuleId = new Map();\r\n    const taskBoardSelectionByPreferenceKey = new Map(); // CHANGE: board memory is keyed by user/shared local preference\r\n    const lastGardenSelectionByPreferenceKey = new Map(); // NEW: cache local startup garden memory by diagram/page/user key.\r\n    let viewportToolbar = null;\r\n    let activeToolbarModule = null;\r\n    let toolbarRefreshTimer = null;\r\n    let gardenPickerOpen = false;\r\n    let gardenPickerSearchText = "";\r\n    let gardenPickerPage = 0; // NEW: render at most 100 matching picker rows at a time.\r\n    let lastToolbarContext = null;\r\n    let startupGardenFocusDone = false;\r\n    const pendingPlanButtonFlashByModuleId = new Map(); // CHANGE\r\n    const planButtonFlashTimersByModuleId = new Map(); // CHANGE\r\n\r\n    function dashboardDiagramIsOpen() {\r\n        return !!(ui && typeof ui.getCurrentFile === "function" && ui.getCurrentFile());\r\n    }\r\n\r\n    function cellId(cell) {\r\n        return cell && cell.getId ? cell.getId() : (cell && cell.id) || "";\r\n    }\r\n\r\n    function flashPlanButton(entry, moduleId, durationMs) {\r\n        if (!entry || !entry.planBtn || !moduleId) return;\r\n        const button = entry.planBtn;\r\n        if (planButtonFlashTimersByModuleId.has(moduleId)) clearTimeout(planButtonFlashTimersByModuleId.get(moduleId));\r\n        button.style.transition = "box-shadow .18s ease, background-color .18s ease, color .18s ease";\r\n        button.style.boxShadow = "0 0 0 3px rgba(47,111,237,.36),0 0 0 6px rgba(47,111,237,.14)";\r\n        button.style.backgroundColor = "#eef4ff";\r\n        button.style.color = "#1f4fbf";\r\n        planButtonFlashTimersByModuleId.set(moduleId, setTimeout(function () {\r\n            button.style.boxShadow = "";\r\n            button.style.backgroundColor = "";\r\n            button.style.color = "";\r\n            planButtonFlashTimersByModuleId.delete(moduleId);\r\n        }, Math.max(500, Number(durationMs) || 2000)));\r\n    } // CHANGE\r\n\r\n    function getViewportToolbarContainer() {\r\n        return graph && graph.container;\r\n    }\r\n\r\n    function getViewportToolbarHost() {\r\n        return ensureGraphBodyControlLayer();\r\n    }\r\n\r\n    function ensureViewportToolbarHost() {\r\n        const host = getViewportToolbarHost();\r\n        return host;\r\n    }\r\n\r\n    function ensureGraphBodyControlLayer() {\r\n        const container = getViewportToolbarContainer();\r\n        if (!container || !document.body) return null;\r\n        try {\r\n            if (window.getComputedStyle && window.getComputedStyle(container).position === "static") container.style.position = "relative";\r\n        } catch (_) { }\r\n        let layer = document.body.querySelector(".trellis-body-control-layer");\r\n        if (!layer) {\r\n            layer = document.createElement("div");\r\n            layer.className = GRAPH_OVERLAY_LAYER_CLASS.control;\r\n            layer.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:" + GRAPH_OVERLAY_Z.CONTROL + ";";\r\n            document.body.appendChild(layer);\r\n        }\r\n        return layer;\r\n    }\r\n\r\n    function viewportToolbarWidth(host) {\r\n        if (!host) return 0;\r\n        const rect = host.getBoundingClientRect ? host.getBoundingClientRect() : null;\r\n        if (rect && rect.width) return rect.width;\r\n        return host.clientWidth || 0;\r\n    }\r\n\r\n    function getToolbarYear(moduleCell) {\r\n        const moduleYear = getModuleCurrentYear(moduleCell);\r\n        return isValidYear(moduleYear) ? moduleYear : new Date().getFullYear();\r\n    }\r\n\r\n    function setToolbarYear(moduleCell, year) {\r\n        const y = toInt(year, NaN);\r\n        if (!moduleCell || !isGardenModule(moduleCell) || !isValidYear(y)) return;\r\n        model.beginUpdate();\r\n        try {\r\n            setModuleCurrentYear(moduleCell, y);\r\n        } finally {\r\n            model.endUpdate();\r\n        }\r\n        applyYearVisibilityToModule(moduleCell, y);\r\n    }\r\n\r\n    function plainTextLabel(raw, fallback) {\r\n        const value = String(raw == null ? "" : raw);\r\n        if (document && document.createElement) {\r\n            const holder = document.createElement("template"); // CHANGE: parse in an inert template.\r\n            holder.innerHTML = value; // CHANGE\r\n            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(value) : holder.content.textContent || "").replace(/\\s+/g, " ").trim();\r\n            if (text) return text;\r\n        }\r\n        const stripped = value.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim();\r\n        return stripped || fallback || "";\r\n    }\r\n\r\n    function gardenLabel(moduleCell) {\r\n        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n        if (clusters) return clusters.gardenLabel(moduleCell) || "Garden Module"; // NEW: use indexed labels rather than repeatedly parsing HTML during sorting.\r\n        const raw = getCellAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : "");\r\n        return plainTextLabel(raw, "Garden Module") || cellId(moduleCell) || "Garden Module";\r\n    }\r\n\r\n    function gardenCity(moduleCell) {\r\n        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n        if (clusters) return clusters.gardenCity(moduleCell); // NEW: city grouping and sorting reuse indexed display labels.\r\n        return plainTextLabel(getCellAttr(moduleCell, "city_name", "") || getCellAttr(moduleCell, "city_id", ""), "");\r\n    }\r\n\r\n    function allModelCells() {\r\n        const root = model.getRoot && model.getRoot();\r\n        const fromMap = model.cells ? Object.values(model.cells) : [];\r\n        if (fromMap.length) return fromMap;\r\n        return getDescendants(root);\r\n    }\r\n\r\n    function collectGardenModules() {\r\n        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n        if (clusters) return clusters.listGardens(); // NEW: the controller maintains the current page's garden index.\r\n        const seen = new Set();\r\n        const gardens = [];\r\n        for (const cell of allModelCells()) {\r\n            const id = cellId(cell);\r\n            if (!id || seen.has(id) || !isGardenModule(cell)) continue;\r\n            seen.add(id);\r\n            gardens.push(cell);\r\n        }\r\n        return gardens;\r\n    }\r\n\r\n    function linkIdSet(cell) {\r\n        return new Set(String(getCellAttr(cell, "linkedTo", "") || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean));\r\n    }\r\n\r\n    function linkedGardenModulesForCompanion(moduleCell) {\r\n        if (!moduleCell) return [];\r\n        const ids = linkIdSet(moduleCell);\r\n        const typedGardenId = getCellAttr(moduleCell, "trellis_garden_module_id", "") || getCellAttr(moduleCell, "roadmap_garden_module_id", ""); // CHANGE: Roadmap companions store their linked garden under a roadmap-specific key.\r\n        if (typedGardenId) ids.add(typedGardenId);\r\n        const seen = new Set();\r\n        const gardens = [];\r\n        ids.forEach(function (id) {\r\n            const garden = id && model.getCell ? model.getCell(id) : null;\r\n            const gardenId = cellId(garden);\r\n            if (!gardenId || seen.has(gardenId) || !isGardenModule(garden)) return;\r\n            seen.add(gardenId);\r\n            gardens.push(garden);\r\n        });\r\n        return sortGardensForPicker(gardens);\r\n    }\r\n\r\n    function resolvedGardenCandidatesForCell(cell) {\r\n        const moduleCell = isGardenModule(cell) ? cell : findGardenModuleAncestor(graph, cell);\r\n        if (moduleCell) return [moduleCell];\r\n        const taskModule = isTaskModule(cell) ? cell : findTaskModuleAncestor(graph, cell);\r\n        if (taskModule) return linkedGardenModulesForCompanion(taskModule);\r\n        const teamModule = isTeamModule(cell) ? cell : findTeamModuleAncestor(graph, cell);\r\n        if (teamModule) return linkedGardenModulesForCompanion(teamModule);\r\n        const roadmapModule = isRoadmapModule(cell) ? cell : findRoadmapModuleAncestor(graph, cell); // NEW\r\n        if (roadmapModule) return linkedGardenModulesForCompanion(roadmapModule); // NEW\r\n        return [];\r\n    }\r\n\r\n    function selectedCellsForDashboard() {\r\n        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [graph.getSelectionCell && graph.getSelectionCell()].filter(Boolean);\r\n        return selected.filter(Boolean);\r\n    }\r\n\r\n    function uniqueGardenList(gardens) {\r\n        const seen = new Set();\r\n        const out = [];\r\n        for (const garden of (gardens || [])) {\r\n            const id = cellId(garden);\r\n            if (!id || seen.has(id) || !isGardenModule(garden)) continue;\r\n            seen.add(id);\r\n            out.push(garden);\r\n        }\r\n        return out;\r\n    }\r\n\r\n    function collectLinkedTaskBoardCards(moduleCell) {\r\n        const api = taskManagerApi();\r\n        if (!api || typeof api.listBoardsForGarden !== "function") return []; // NEW: task year filtering is best-effort when the task manager is unavailable\r\n        const cards = [];\r\n        const seen = new Set();\r\n        (api.listBoardsForGarden(moduleCell) || []).forEach(function (board) {\r\n            getDescendants(board).forEach(function (cell) {\r\n                const id = cellId(cell);\r\n                if (!isKanbanCard(cell) || (id && seen.has(id))) return;\r\n                if (id) seen.add(id);\r\n                cards.push(cell);\r\n            });\r\n        });\r\n        return cards;\r\n    }\r\n\r\n    function sortGardensForPicker(gardens) {\r\n        return uniqueGardenList(gardens).sort(function (left, right) {\r\n            const leftCity = gardenCity(left) || GARDEN_PICKER_NO_CITY;\r\n            const rightCity = gardenCity(right) || GARDEN_PICKER_NO_CITY;\r\n            const leftNoCity = leftCity === GARDEN_PICKER_NO_CITY;\r\n            const rightNoCity = rightCity === GARDEN_PICKER_NO_CITY;\r\n            `... 82130 more characters,
+    expected: /TrellisInventories\?\.showMenu\(equipmentBtn,\{ui,garden:activeToolbarModule\}\)/,
+    operator: 'match',
+    diff: 'simple'
+  }

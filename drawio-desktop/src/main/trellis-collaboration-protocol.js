@@ -3,11 +3,11 @@
  * reject it. All replicas replay the same signed causal records from genesis. // NEW */
 import { XMLSerializer } from '@xmldom/xmldom'; // NEW
 import { validateProjectNameChange } from './trellis-project-naming.js'; // NEW
-import { diagramDocument, inspectDiagram, parseXml, digest, canonical } from './trellis-share-protocol.js'; // CHANGE
+import { SYNC_PROTOCOL, diagramDocument, inspectDiagram, parseXml, digest, canonical } from './trellis-share-protocol.js'; // CHANGE
 import { permissions, permissionSnapshot, validatePermissionChanges } from './trellis-permission-policy.js'; // NEW
 import { saveCache } from './trellis-save-cache.js';
 import { REVISION, LIMITS, textLimit, fail } from './trellis-input-policy.js'; // NEW // NEW
-export const COLLABORATION_VERSION = 4; // CHANGE: the coordinator engine does not accept replay-era records.
+export const COLLABORATION_VERSION = SYNC_PROTOCOL.garden; // CHANGE: the coordinator engine does not accept replay-era records.
 export const HOLD_MS = 300000; // NEW
 export const REQUEST_GRACE_MS = 300000; // NEW: request deadlines do not depend on idle activity.
 export const PRESENCE_MS = 300000; // NEW: viewing presence still expires.
@@ -89,11 +89,11 @@ function structuralDependents(index, cell) { // NEW
     return [...index.values()].filter(item => item.pageId === cell.pageId && (dependent.has(item.id) || dependent.has(item.model.getAttribute('source')) || dependent.has(item.model.getAttribute('target')) || String(item.node.getAttribute('linkedTo') || '').split(',').some(id => dependent.has(id.trim())))); // NEW
 } // NEW
 /** Reuse the journal's dependency calculation for a single incoming object without rebuilding complete diagrams. */ // NEW
-export function targetsForChange(before, after, key) { // NEW
+export function targetsForChange(before, after, key, includeCreated = false) { // CHANGE: reviews include new dependencies; durable locks still reserve existing authority scopes.
     const a = before.get(key), b = after.get(key), targets = new Set(); // NEW
     if (!a && !b) return []; // NEW
     for (const target of targetsForObject(before, a ? key : objectKey(b.pageId, b.parent))) targets.add(target); // NEW
-    if (b) for (const target of targetsForObject(after, key)) if (before.has(target)) targets.add(target); // NEW
+    if (b) for (const target of targetsForObject(after, key)) if (includeCreated || before.has(target)) targets.add(target); // CHANGE
     if (!a || !b || a.parent !== b.parent || serialize(a.model.getElementsByTagName('mxGeometry')[0] || a.model) !== serialize(b.model.getElementsByTagName('mxGeometry')[0] || b.model)) { // NEW
         if (a?.parent && before.get(objectKey(a.pageId, a.parent))?.model.getAttribute('vertex') === '1') targets.add(logicalKey(before, objectKey(a.pageId, a.parent))); // NEW
         if (b?.parent && after.get(objectKey(b.pageId, b.parent))?.model.getAttribute('vertex') === '1') targets.add(logicalKey(after, objectKey(b.pageId, b.parent))); // NEW
@@ -107,6 +107,8 @@ export function targetsForChange(before, after, key) { // NEW
 } // NEW
 /** Compute the existing canonical node hash without changing signed wire identities. */ // NEW
 export function objectContentHash(xml) { return digest(canonical(normalized(parseXml(xml).documentElement))); } // NEW
+/** Stable transport base identity excludes serializer spelling and local viewport settings. */ // NEW
+export function documentContentHash(xml) { return digest(canonical([envelope(xml), [...objects(xml)].map(([key, value]) => [key, value.hash]).sort((a, b) => a[0].localeCompare(b[0]))])); } // NEW
 export function diffObjects(beforeXml, afterXml) { // NEW
     const before = objects(beforeXml), after = objects(afterXml); // NEW
     if (envelope(beforeXml) !== envelope(afterXml)) return { changes: [{ key: '*', before: digest(beforeXml), xml: afterXml }], targets: ['*', ...new Set([...before.keys(), ...after.keys()].map(k => logicalKey(after.has(k) ? after : before, k)))] }; // NEW

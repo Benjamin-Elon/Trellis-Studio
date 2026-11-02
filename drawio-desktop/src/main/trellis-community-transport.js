@@ -2,7 +2,7 @@ import { listBounded, readJson as readBoundedJson, readBounded, LIMITS } from '.
 /** Garden-side community integration. Only a garden coordinator commits roster/device changes. */ // NEW
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
-import { canonical, makeId, safeId, signRecord, verifyRecord, activeAdmin, hasCanvasAccess, activeAccessTeams } from './trellis-share-protocol.js'; // CHANGE
+import { SYNC_PROTOCOL, canonical, makeId, safeId, signRecord, verifyRecord, activeAdmin, hasCanvasAccess, activeAccessTeams } from './trellis-share-protocol.js'; // CHANGE
 import { COMMUNITY_VERSION, COMMUNITY_PRESETS, verifyGardenEvidence, evidenceSigner, reduceCommunity } from './trellis-community-protocol.js'; // CHANGE
 import { projectName } from './trellis-project-naming.js'; // NEW
 import { cityRecord, projectSummary } from './trellis-project-summary.js'; // NEW
@@ -124,6 +124,7 @@ export function createCommunityTransport(context) { // NEW
         await writeAtomic(evidencePath(canvas), JSON.stringify(record)); await writeAtomic(path.join(area(canvas), 'evidence.json'), JSON.stringify(record)); return record; // CHANGE
     } // NEW
     async function refresh(canvas, force = false) { // CHANGE
+        if (!SYNC_PROTOCOL.capabilities.communities) return; // NEW: retained replay-era communities never enter ordinary v4 polling.
         if (canvas.localRemoved || canvas.revoked || canvas.pending || canvas.projectRetired) return; // NEW
         if (!force && !await fs.stat(area(canvas)).then(s => s.isDirectory()).catch(error => { if (error.code === 'ENOENT') return false; throw error; })) return; // NEW
         const localEndpoint = await endpoint(); // NEW

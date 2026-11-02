@@ -2090,7 +2090,7 @@ Draw.loadPlugin(function (ui) {
         const gardenPickerBtn = createToolbarButton("Select garden...", "Select a garden module", "open");
         gardenPickerBtn.className = "trellis-garden-dashboard-picker-button";
 
-        const createGardenBtn = createToolbarButton("Create Garden", "Create a garden module", "add");
+        const createGardenBtn = createToolbarButton("Create a new garden", "Create a garden with companion team, task, and roadmap workspaces.", "add"); // CHANGE
         createGardenBtn.className = "trellis-garden-dashboard-create-garden";
         createGardenBtn.style.display = "none";
 
@@ -2103,7 +2103,7 @@ Draw.loadPlugin(function (ui) {
         const workspaceTeamBtn = workspaceSwitcher.teamBtn; // NEW
         const workspaceRoadmapBtn = workspaceSwitcher.roadmapBtn; // NEW
         const planBtn = createToolbarButton("Plan", "Open the year planner", "open");
-        const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment", "open");
+        const equipmentBtn = createToolbarButton("Inventories ▾", "Open garden inventories", "open");
         const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner", "open");
         const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan", "add");
         const taskBoardSelect = createTaskBoardSelect();
@@ -2144,6 +2144,7 @@ Draw.loadPlugin(function (ui) {
         leftControls.appendChild(allocateBtn);
         leftControls.appendChild(irrigationBtn);
         leftControls.appendChild(equipmentBtn);
+        const exchangeBtn = createToolbarButton("The Grand Exchange", "Open community seed trading and CSA", "open"); exchangeBtn.addEventListener("click", () => window.TrellisInventories?.openExchange({ ui, garden: activeToolbarModule })); leftControls.appendChild(exchangeBtn); // NEW
         rightActions.appendChild(messagesBtn);
         rightActions.appendChild(exportBtn);
         rightActions.appendChild(shareBtn);
@@ -2184,8 +2185,7 @@ Draw.loadPlugin(function (ui) {
         });
         equipmentBtn.addEventListener("click", function () {
             if (!activeToolbarModule) return;
-            const equipmentApi = graph && graph.__trellisEquipment;
-            if (equipmentApi && typeof equipmentApi.openDialog === "function") equipmentApi.openDialog(activeToolbarModule);
+            window.TrellisInventories?.showMenu(equipmentBtn, { ui, garden: activeToolbarModule }); // CHANGE
         });
         irrigationBtn.addEventListener("click", function () { toggleIrrigationPlannerForModule(activeToolbarModule); });
         allocateBtn.addEventListener("click", function () {
@@ -2282,7 +2282,7 @@ Draw.loadPlugin(function (ui) {
         entry.gardenPickerBtn.textContent = "Select garden...";
         entry.gardenPickerBtn.title = candidates.length ? "Select a garden module" : "No garden modules found.";
         setButtonDisabled(entry.gardenPickerBtn, !candidates.length && !hasClusters, candidates.length || hasClusters ? "Select a garden or city" : "No garden modules found."); // CHANGE
-        setButtonDisabled(entry.createGardenBtn, false, "Create a garden module");
+        setButtonDisabled(entry.createGardenBtn, false, "Create a garden with companion team, task, and roadmap workspaces."); // CHANGE
         if (!gardenPickerOpen) closeGardenPicker(entry);
         else renderGardenPickerPopover(entry, context || {});
         entry.wrap.style.display = "block";

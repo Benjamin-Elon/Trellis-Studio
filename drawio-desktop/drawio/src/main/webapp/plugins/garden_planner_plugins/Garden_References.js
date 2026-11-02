@@ -21,6 +21,8 @@
         function diagramId() { return Object.values(model.cells || {}).map(cell => attr(cell, 'trellis_users_diagram_id')).find(Boolean) || users()?.getDiagramKey?.() || ''; } // CHANGE
         function pageId(page = ui.currentPage) { return page?.getId?.() || page?.node?.getAttribute?.('id') || page?.id || ''; } // NEW
         function set(cell, key, value) {
+            if (graph.__trellisProjectFormat === 2 && key === C.ATTR && !C.externalReference(value)) value = C.registerSnapshot(value); // CHANGE: native edits store only a verified content address.
+            if (graph.__trellisProjectFormat === 2 && C.CATALOGS.includes(key)) value = C.operationalOverlay(key, value); // CHANGE: definitions live in immutable snapshots; stock remains mutable.
             let node = cell.value?.nodeType === 1 ? cell.value.cloneNode(true) : mxUtils.createXmlDocument().createElement('object');
             node.setAttribute(key, typeof value === 'string' ? value : JSON.stringify(value)); model.setValue(cell, node); // CHANGE
             const page = isGarden(cell) && model.getCell(cell.id) !== cell ? pageGardens().find(entry => entry.cell === cell)?.page : null; // CHANGE
@@ -34,7 +36,7 @@
             finally { model.endUpdate(); }
         }
         const readCache = new WeakMap(); // NEW
-        function read(cell) { const garden = gardenFor(cell) || cell, raw = attr(garden, C.ATTR), cached = readCache.get(garden); if (cached?.raw === raw) return cached.store; const store = C.freeze(C.validate(raw ? JSON.parse(raw) : null)); readCache.set(garden, { raw, store }); return store; } // CHANGE
+        function read(cell) { const garden = gardenFor(cell) || cell, raw = attr(garden, C.ATTR), cached = readCache.get(garden); if (cached?.raw === raw) return cached.store; const store = C.freeze(C.resolveReference(raw ? JSON.parse(raw) : null)); readCache.set(garden, { raw, store }); return store; } // CHANGE
         function consumerCell(garden, manifestId) { if (!manifestId) return garden; return { parent: garden, getParent: () => garden, getAttribute: key => key === C.PIN ? manifestId : ['garden_module', 'trellis_garden_module', 'module_type'].includes(key) ? '' : attr(garden, key) }; } // CHANGE: implement mxGraph's parent contract while keeping a pinned view distinct from its real garden.
         function scopeForConsumer(garden, cell) { // NEW
             const seen = new Set(); for (let current = cell; current && current !== garden && !seen.has(current); current = model.getParent(current)) { seen.add(current); if (attr(current, C.PIN)) return consumerCell(garden, attr(current, C.PIN)); } // NEW
@@ -151,7 +153,7 @@
             const margin = /(?:^|;)module_external_margin=([^;]+)/.exec(model.getStyle?.(cell) || cell.style || ''); if (margin) result.module_external_margin = margin[1]; // NEW
             const geometry = model.getGeometry(cell); if (geometry) result.geometry = { width: geometry.width, height: geometry.height }; return result;
         }
-        function snapshot(cell, page = ui.currentPage) { return { name: attr(cell, 'garden_name') || attr(cell, 'label') || 'Garden', source: { gardenId: cell.id, diagramId: diagramId(), pageId: pageId(page) }, references: C.template(read(cell)), settings: settings(cell) }; } // CHANGE
+        function snapshot(cell, page = ui.currentPage) { return { name: attr(cell, 'garden_name') || attr(cell, 'label') || 'Garden', source: { gardenId: cell.id, diagramId: diagramId(), pageId: pageId(page) }, references: C.template(read(cell)), seeds: attr(cell, 'trellis_seeds_json') ? root.TrellisSeedsCore.reset(attr(cell, 'trellis_seeds_json')) : null, settings: settings(cell) }; } // CHANGE
         async function templates(target) {
             const values = pageGardens().filter(({ cell }) => cell !== target && attr(cell, C.ATTR)).map(({ cell, page }) => { const entry = snapshot(cell, page); if (page && page !== ui.currentPage) entry.name = (page.getName?.() || page.node?.getAttribute('name') || pageId(page)) + ' / ' + entry.name; return entry; }); // CHANGE
             if (root.trellisGardenLibrary?.referenceTemplates) { // CHANGE: an unsigned-in library does not prevent local-default creation.
@@ -181,6 +183,7 @@
             return { store, source, finalize(cityId) { store = C.creationSnapshot(store, cityId); this.store = store; }, apply() { // CHANGE
                 if (original !== attr(cell, C.ATTR) || !owner(cell) || userId !== actor()) throw new Error('The garden changed. Prepare its settings again.');
                 set(cell, C.ATTR, store); set(cell, 'trellis_reference_pending', '0');
+                if (source?.seeds) set(cell, 'trellis_seeds_json', root.TrellisSeedsCore.reset(source.seeds)); // NEW: retain definitions, never stock or agreements.
                 for (const kind of C.CATALOGS) set(cell, kind, C.resetInventory(kind, C.catalog(store, kind)));
                 if (source) { set(cell, 'trellis_template_source_json', source.source); for (const [key, value] of Object.entries(source.settings || {})) if (key !== 'geometry') set(cell, key, value); }
             } };
@@ -351,13 +354,13 @@
                 if (!changed.length) return null;
                 try {
                     if (before.getAttribute(C.ATTR) !== after.getAttribute(C.ATTR)) { // CHANGE: validate the complete action in signed replay; mxValueChanges here can be intermediate steps of that action.
-                        if (!owner(cell) || !authorizedReferenceChanges.has(change)) return false; C.validate(JSON.parse(after.getAttribute(C.ATTR))); // CHANGE
+                        if (!owner(cell) || !authorizedReferenceChanges.has(change)) return false; C.resolveReference(after.getAttribute(C.ATTR)); // CHANGE
                     } // NEW
                     const oldLog = C.logValid(JSON.parse(before.getAttribute(C.PROPOSALS) || '{"version":1,"requests":[],"decisions":[]}')), log = C.logValid(JSON.parse(after.getAttribute(C.PROPOSALS) || '{"version":1,"requests":[],"decisions":[]}')); // NEW
                     for (const field of ['requests', 'decisions']) for (const item of oldLog[field]) if (!log[field].some(next => next.id === item.id && C.equal(next, item))) return false; // NEW
                     if (log.requests.some(item => !oldLog.requests.some(old => old.id === item.id) && (!editor(cell) || item.author !== actor()))) return false; // NEW
                     if (log.decisions.some(item => !oldLog.decisions.some(old => old.id === item.id) && (!owner(cell) || item.actor !== actor()))) return false; // NEW
-                    if (before.getAttribute(C.ATTR) === after.getAttribute(C.ATTR)) for (const kind of C.CATALOGS) if (before.getAttribute(kind) !== after.getAttribute(kind) && after.getAttribute(C.ATTR)) { const accepted = C.catalog(read(cell), kind); if (!C.equal(C.catalogDefinition(kind, JSON.parse(after.getAttribute(kind))), accepted)) return false; } // NEW
+                    if (before.getAttribute(C.ATTR) === after.getAttribute(C.ATTR)) for (const kind of C.CATALOGS) if (before.getAttribute(kind) !== after.getAttribute(kind) && after.getAttribute(C.ATTR)) { const store = read(cell), accepted = C.catalog(store, kind), raw = JSON.parse(after.getAttribute(kind)), effective = C.externalReference(JSON.parse(after.getAttribute(C.ATTR))) ? C.mergeOperational(store, kind, raw) : raw; if (!C.equal(C.catalogDefinition(kind, effective), accepted)) return false; } // CHANGE
                     const names = new Set([...Array.from(before.attributes), ...Array.from(after.attributes)].map(item => item.name));
                     return [...names].every(key => before.getAttribute(key) === after.getAttribute(key) || keys.includes(key)) ? true : null;
                 } catch (_) { return false; }

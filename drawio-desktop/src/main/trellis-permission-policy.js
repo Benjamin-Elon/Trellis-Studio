@@ -1,9 +1,10 @@
 /** XML adapter for the shared pure policy. Parsing and rich-text validation stay outside permission decisions. */ // NEW
 import '../../drawio/src/main/webapp/js/trellis-permission-core.js'; // NEW
-import { DOMParser } from '@xmldom/xmldom'; // NEW
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom'; // CHANGE
 import { policy } from './trellis-input-policy.js'; // NEW
 import { inspectDiagram } from './trellis-share-protocol.js'; // NEW
 import { validateReferenceChanges } from './trellis-reference-policy.js'; // NEW
+import { validateSeedTransaction } from './trellis-seed-effects.js'; // NEW
 export const permissions = globalThis.TrellisPermissionCore; // NEW
 const attributes = node => Object.fromEntries(Array.from(node?.attributes || []).map(attribute => [attribute.name, attribute.value])); // NEW
 /** Attribute order and formatting whitespace are representation details, not permission-bearing edits. */ // NEW
@@ -16,17 +17,20 @@ function normalizedNode(node) { // NEW
 } // NEW
 
 /** Preserve page-qualified identities and all permission-relevant relationships, including task source links. */ // NEW
-export function permissionSnapshot(state) { // NEW
+export function permissionSnapshot(state, resident = null) { // CHANGE: optional project-owned index shares unchanged immutable facts.
   const pages = new Map(state.document.pages.map(page => [page.doc, page.container?.getAttribute('id') || ''])); // NEW
+  const present = new Set(), serializer = resident && new XMLSerializer(); // CHANGE
   const cells = state.cells.map(cell => { // NEW
     const model = cell.node.nodeName === 'mxCell' ? cell.node : cell.node.getElementsByTagName('mxCell')[0], // NEW
       pageId = pages.get(cell.node.ownerDocument), // NEW
       parent = model.getAttribute('parent'); // NEW
+    const key = JSON.stringify([pageId, cell.id]), encoded = resident && serializer.serializeToString(cell.node), prior = resident?.get(key); present.add(key); // CHANGE
+    if (prior?.encoded === encoded && prior.parentIsLayer === (!!parent && !cell.page.get(parent)?.parentId)) return prior.fact; // CHANGE: parent changes can change the layer classification without changing this cell XML.
     const values = attributes(cell.node), // NEW
       modelValues = attributes(model); // NEW
     for (const name of ['id', 'parent', 'style', 'vertex', 'edge', 'source', 'target', 'collapsed', 'visible', 'trellis_users_json']) delete modelValues[name]; // NEW
     delete values.trellis_users_json; // NEW: the roster has one canonical snapshot representation.
-    return { // NEW
+    const fact = { // CHANGE
       key: JSON.stringify([pageId, cell.id]), // NEW
       id: cell.id, // NEW
       pageId, // NEW
@@ -46,7 +50,9 @@ export function permissionSnapshot(state) { // NEW
       collapsed: model.getAttribute('collapsed') || '', // NEW
       visible: model.getAttribute('visible') || '' // NEW
     }; // NEW
+    if (resident) { const freeze = value => { if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); } }; freeze(fact); resident.set(key, { encoded, fact, parentIsLayer: fact.layer }); } return fact; // CHANGE
   }); // NEW
+  if (resident) for (const key of resident.keys()) if (!present.has(key)) resident.delete(key); // CHANGE: lifetime deletions never accumulate in the resident index.
   return permissions.snapshot({ // NEW
     store: state.store, // NEW
     cells // NEW
@@ -104,6 +110,7 @@ function qualifyStandalone(snapshot, pageId) { // NEW
 /** Return a decision; callers retain ownership of publication, recovery, and rejection feedback. */ // NEW
 export function validatePermissionChanges(beforeXml, afterXml, actor, at, options = {}) { // NEW
   try { // NEW
+    const automaticSeedEffects = validateSeedTransaction(beforeXml, afterXml); // NEW
     validateReferenceChanges(beforeXml, afterXml, actor, at); // NEW: domain approval remains mandatory even for administrators.
     const afterState = inspectDiagram(afterXml), after = permissionSnapshot(afterState), pageId = afterState.document.pages.length === 1 ? afterState.document.pages[0].container?.getAttribute('id') : null; // CHANGE
     const before = qualifyStandalone(options.before || permissionSnapshot(inspectDiagram(beforeXml)), pageId); // CHANGE
@@ -112,6 +119,7 @@ export function validatePermissionChanges(beforeXml, afterXml, actor, at, option
       ...options, // NEW
       policy: policySnapshot, // NEW: only representation identity is aligned; all authority remains the prior policy.
       commentsChangeAllowed, // NEW
+      seedChangeAllowed: (old, next, names) => names.length === 1 && names[0] === 'trellis_seeds_json' && automaticSeedEffects.has(next.key), // NEW: exact derived balances cannot authorize other garden edits.
       referenceChangeAllowed: (old, next, names) => { const core = globalThis.TrellisReferenceCore; return !!(old.attributes[core.ATTR] || next.attributes[core.ATTR] || old.attributes[core.PROPOSALS] || next.attributes[core.PROPOSALS]) && names.length > 0 && names.every(name => [core.ATTR, core.PROPOSALS, ...core.CATALOGS].includes(name)); } // NEW: only independently validated reference fields receive the domain exception.
     }); // NEW
   } catch (error) { // NEW

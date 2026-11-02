@@ -11,63 +11,90 @@ import { createCurrentStateStore } from './trellis-current-state.js'; // CHANGE:
 import { createObjectViews } from './trellis-object-views.js'; // CHANGE
 import { permissions, permissionSnapshot, validatePermissionChanges } from './trellis-permission-policy.js'; // NEW
 import { reviewDraft, resolveDraft } from './trellis-draft-conflicts.js'; // NEW
-export function createCollaborationStore({ canvas, deviceId, keys, profile, now = Date.now, writeAtomic, writeImmutable, prepareXml = async xml => xml, beforeMaterialize = async () => {}, beforeCommit = () => [], onTiming = () => {}, onVerified = () => {} }) { // CHANGE
+import { prepareSeedTransaction } from './trellis-seed-effects.js'; // NEW
+import { createReferenceSnapshots } from './trellis-reference-snapshots.js'; // NEW
+import { analyzeDocument } from './trellis-analysis-worker.js'; // NEW
+import { documentContentHash } from './trellis-collaboration-protocol.js'; // NEW
+let nextPolicyRevision = 0; // CHANGE: local IPC policy ordering is independent of activity observations and signed protocol records.
+export function createCollaborationStore({ canvas, deviceId, keys, profile, now = Date.now, writeAtomic, writeImmutable, prepareXml = async xml => xml, beforeMaterialize = async () => {}, beforeCommit = () => [], validateActor = () => {}, onTiming = () => {}, onVerified = () => {} }) { // CHANGE
     let nextOperationId = 0, activeOperationId = 0; // NEW
     const timing = sample => { try { onTiming({ operationId: activeOperationId, ...sample }); } catch (_) {} }; // NEW: observers cannot fail a durable operation.
     const sessions = new Map(); // CHANGE
-    const current = createCurrentStateStore({ canvas, deviceId, keys, writeAtomic, writeImmutable, now, onTiming: timing }); // CHANGE
+    const references = createReferenceSnapshots({ canvas, writeImmutable }); let referenceView = { snapshots: {}, unavailable: {} }; const referenceSent = new Map(); // NEW
+    async function stageReferences(snapshots) { // NEW
+        if (canvas.protocolVersion !== 5 || !snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots)) throw new Error('Unsupported reference dependencies.'); // NEW
+        for (const [hash, value] of Object.entries(snapshots)) { if (references.resolve(hash)) continue; if (!/^[a-f0-9]{64}$/.test(hash) || digest(globalThis.TrellisReferenceCore.canonical(value)) !== hash) throw new Error('Reference snapshot failed content verification.'); await references.publish(value); } // CHANGE: ignored retransmissions cannot replace previously verified immutable bytes.
+    } // NEW
+    const current = createCurrentStateStore({ canvas, deviceId, keys, profile, writeAtomic, writeImmutable, references, now, onTiming: timing }); // CHANGE
     let queue = Promise.resolve(), latest = null, recoveryPaths = []; // NEW
     const views = createObjectViews({ profile, canvas, writeAtomic, now }); // NEW: private, serialized by this store's existing journal queue.
     const checkpointRetries = new Map(); // NEW: a failed private write must not republish an already accepted local edit on retry.
-    let policyXml = null, policySnapshot = null, policyHash = null, presentation = null; const policySent = new Map(); // CHANGE: the current presentation is reused across unchanged state reads.
+    let policyXml = null, policySnapshot = null, policyHash = null, policyRevision = 0, presentation = null; const policySent = new Map(), deliveredPolicies = new Map(), permissionFacts = new Map(); // CHANGE: accepted facts live only with the current project owner.
     const sessionFor = (callerId, userId) => { const key = callerId + ':' + userId; if (!sessions.has(key)) sessions.set(key, makeId()); return sessions.get(key); }; // NEW
     let pendingRefresh = null; // NEW: only adjacent refresh requests may share work.
     function serialized(operation, kind = 'action') { // CHANGE
-        const queued = performance.now(), operationId = ++nextOperationId; if (kind !== 'refresh') pendingRefresh = null; // NEW: mutations fence refresh coalescing.
-        const next = queue.then(async () => { const started = performance.now(); activeOperationId = operationId; try { return await operation(); } finally { timing({ phase: 'queue', kind, waitMs: started - queued, durationMs: performance.now() - started }); activeOperationId = 0; } }); // CHANGE
+        const queued = performance.now(), operationId = ++nextOperationId, generation = verificationGeneration; if (kind !== 'refresh') pendingRefresh = null; // CHANGE: mutations fence refresh coalescing.
+        const next = queue.then(() => references.run(async () => { assertGeneration(generation); const started = performance.now(); activeOperationId = operationId; try { return await operation(); } finally { timing({ phase: 'queue', kind, waitMs: started - queued, durationMs: performance.now() - started }); activeOperationId = 0; } })); // CHANGE
         queue = next.catch(() => {}); return next; // CHANGE
     } // CHANGE
+    let verificationGeneration = 0; // NEW
+    function assertGeneration(generation) { if (generation !== verificationGeneration) throw Object.assign(new Error('Garden verification was canceled.'), { code: 'ABORT_ERR' }); } // NEW
+    /** Async preparation cannot retain an obsolete caller, document, or approval. */ // NEW
+    function assertActor(actor, generation) { // NEW
+        assertGeneration(generation); // NEW
+        if (canvas.revoked || canvas.pending || canvas.projectRetired || canvas.projectFenced || canvas.localRemoved) throw new Error('This computer is no longer approved to edit this project.'); // NEW
+        if (sessions.get(actor.callerId + ':' + actor.userId) !== actor.sessionId) throw new Error('The author changed during asynchronous preparation.'); // NEW
+        validateActor(actor); // NEW
+    } // NEW
+    function cancelVerification() { verificationGeneration++; latest = null; pendingRefresh = null; current.cancelVerification(); } // CHANGE
     let recoveryLoaded = false; // CHANGE
     /** Initialize one verified state; no historical collaboration records are consulted. */ // CHANGE
-    async function initialize(xml) { const state = await current.initialize(xml); onVerified(state); return state; } // CHANGE
+    async function initialize(xml) { const captured = canvas.protocolVersion === 5 ? await references.compact(xml) : xml; const state = await current.initialize(captured); referenceView = await references.hydrate(state.xml); onVerified(state); return state; } // CHANGE
     /** Read a small signed head and only new accepted changes; load recovery metadata once. */ // CHANGE
-    async function read() { // CHANGE
+    async function read(options) { // CHANGE
+        const generation = verificationGeneration; // NEW
         if (!recoveryLoaded) { // CHANGE
             const saved = await readJson(path.join(profile, 'recovery', canvas.shareId, 'index.json')).catch(error => { if (error.code === 'ENOENT') return []; throw error; }); // CHANGE
             if (!Array.isArray(saved)) throw new Error('Invalid private recovery index.'); // CHANGE
             recoveryPaths = saved.filter(item => item && typeof item.filename === 'string' && (/^local-[a-f0-9-]{36}\.drawio$/.test(item.filename) || item.filename === canvas.filename)).map(item => ({ ...item, recoveryPath: path.join(profile, 'recovery', canvas.shareId, item.filename) })); // CHANGE
             recoveryLoaded = true; // CHANGE
         } // CHANGE
-        latest = await current.read(); onVerified(latest); return latest; // CHANGE
+        const verified = await current.read(options), hydrated = await references.hydrate(verified.xml); // CHANGE
+        if (generation !== verificationGeneration) throw Object.assign(new Error('Garden verification was canceled.'), { code: 'ABORT_ERR' }); // NEW
+        latest = verified; referenceView = hydrated; onVerified(latest); return latest; // CHANGE
     } // CHANGE
-    async function preserve(xml, reason, editorDrafts = []) { // CHANGE
-        if (!Array.isArray(editorDrafts) || editorDrafts.some(editor => !editor || !['planting', 'year-planner'].includes(editor.kind) || !Array.isArray(editor.targets))) throw new Error('Invalid editor recovery data.'); // NEW
+    async function preserve(xml, reason, editorDrafts = [], proposal) { // CHANGE
+        if (!Array.isArray(editorDrafts) || editorDrafts.some(editor => !editor || !['planting', 'year-planner', 'inventory'].includes(editor.kind) || !Array.isArray(editor.targets))) throw new Error('Invalid editor recovery data.'); // NEW
         const filename = 'local-' + makeId() + '.drawio', recoveryPath = path.join(profile, 'recovery', canvas.shareId, filename); // NEW
         await writeAtomic(recoveryPath, xml); // CHANGE
         const editorDataPath = editorDrafts.length ? recoveryPath + '.editors.json' : undefined; // NEW
         if (editorDataPath) await writeAtomic(editorDataPath, JSON.stringify({ schema: 1, diagramId: canvas.diagramId, at: now(), reason, editors: editorDrafts })); // NEW
-        recoveryPaths.push({ filename, recoveryPath, reason, ...(editorDataPath ? { editorDataPath } : {}) }); // CHANGE
+        recoveryPaths.push({ filename, recoveryPath, reason, ...(editorDataPath ? { editorDataPath } : {}), ...(proposal ? { proposal } : {}) }); // CHANGE: retained draft indexes identify the exact original private submission after restart.
         await writeAtomic(path.join(profile, 'recovery', canvas.shareId, 'index.json'), JSON.stringify(recoveryPaths)); return recoveryPath; // NEW
     } // NEW
     let projectionRecoveryPath = null; const notifiedProjectionRecoveries = new Map(); // NEW: notify each live session once, including recoveries found by background materialization.
     async function materialize(state) { // NEW
-        const started = performance.now(); // NEW
-        if (canvas.localRemoved || canvas.projectRetired) return; // NEW: queued refreshes must never recreate a retired projection.
+        const started = performance.now(), generation = verificationGeneration; // CHANGE
+        if (canvas.localRemoved || canvas.projectRetired || canvas.projectFenced || canvas.revoked) return; // CHANGE: queued refreshes cannot recreate an ineligible projection.
         await beforeMaterialize(state.xml); // NEW: naming runs inside the same queue as every projection write.
-        if (canvas.localRemoved || canvas.projectRetired) return; // NEW
+        assertGeneration(generation); // NEW
+        if (canvas.localRemoved || canvas.projectRetired || canvas.projectFenced || canvas.revoked) return; // CHANGE
         const existing = await fs.readFile(canvas.diagramPath, 'utf8').catch(err => { if (err.code === 'ENOENT') return null; throw err; }); // NEW
         const markerPath = path.join(profile, 'recovery', canvas.shareId, 'projection.json'); // NEW
         const marker = await readJson(markerPath) /* CHANGE */.catch(err => { if (err.code === 'ENOENT') return null; throw err; }); // NEW
+        assertGeneration(generation); // NEW
         if (existing && existing !== state.xml && digest(existing) !== (marker?.hash || state.snapshotHash)) projectionRecoveryPath = await preserve(existing, 'External or interrupted local changes were preserved before rebuilding the project.'); // CHANGE
+        assertGeneration(generation); // NEW
         if (existing !== state.xml) await writeAtomic(canvas.diagramPath, state.xml); // NEW
         const hash = digest(state.xml); // CHANGE: unchanged polling must not rewrite the recovery marker.
+        assertGeneration(generation); // NEW
         if (marker?.hash !== hash) await writeAtomic(markerPath, JSON.stringify({ hash })); // CHANGE
         timing({ phase: 'materialize', durationMs: performance.now() - started, wroteProjection: existing !== state.xml, bytes: Buffer.byteLength(state.xml) }); // NEW
         return { hash }; // CHANGE: this hash describes the verified journal projection.
     } // NEW
-    function refresh() { // CHANGE
+    function refresh(options = { priority: 'background' }) { // CHANGE
         if (pendingRefresh) return pendingRefresh; // NEW: do not enqueue identical background work repeatedly.
-        const task = serialized(async () => { if (pendingRefresh === task) pendingRefresh = null; const previous = latest; const state = await read(); latest = previous; await materialize(state); latest = state; return publicState(state); }, 'refresh'); // CHANGE: an arrival during the active read can request one further refresh.
+        const task = serialized(async () => { if (pendingRefresh === task) pendingRefresh = null; const previous = latest; const state = await read(options); latest = previous; await materialize(state); latest = state; return publicState(state); }, 'refresh'); // CHANGE: an arrival during the active read can request one further refresh.
         pendingRefresh = task; task.finally(() => { if (pendingRefresh === task) pendingRefresh = null; }).catch(() => {}); return task; // NEW
     } // CHANGE
     function publicState(state, sessionId, forcePolicy = false) { // CHANGE
@@ -75,23 +102,48 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
             const parsed = inspectDiagram(state.xml), roster = parsed.store.users || [], labels = new Map(); // CHANGE
             const pageIds = new Map(parsed.document.pages.map(page => [page.doc, page.container?.getAttribute('id') || ''])); // CHANGE
             for (const cell of parsed.cells) labels.set(JSON.stringify([pageIds.get(cell.node.ownerDocument), cell.id]), cell.node.getAttribute('label') || cell.node.getAttribute('value') || cell.id); // CHANGE
-            const permission = permissionSnapshot(parsed); // NEW
+            const permission = permissionSnapshot(parsed, permissionFacts); // CHANGE: unchanged objects retain their immutable facts across accepted revisions.
             policySnapshot = { store: parsed.store, cells: Object.values(permission.cells), teams: Object.fromEntries(roster.map(user => [user.id, permissions.activeTeams(permission, user.id)])) }; // CHANGE: transmit complete plain policy facts independently of displayed content.
-            policyHash = digest(canonical(policySnapshot)); policyXml = state.xml;
+            const nextHash = digest(canonical(policySnapshot)); if (nextHash !== policyHash) policyRevision = ++nextPolicyRevision; policyHash = nextHash; policyXml = state.xml; // CHANGE
             presentation = { labels, names: new Map(roster.map(user => [user.id, user.name])), hash: digest(state.xml) }; // CHANGE
         }
         const identify = value => ({ ...value, name: presentation.names.get(value.userId) || 'Unknown user', requesters: value.requesters?.map(requester => ({ ...requester, name: presentation.names.get(requester.userId) || 'Unknown user' })), objectLabel: value.key === '*' ? 'project structure' : presentation.labels.get(value.key), objects: value.targets?.map(key => ({ key, label: presentation.labels.get(key) })) }); // CHANGE
-        const policy = sessionId && (forcePolicy || policySent.get(sessionId) !== policyHash) ? policySnapshot : undefined; // CHANGE: reopening can reset renderer policy while the actor's journal session survives.
+        const previousPolicy = deliveredPolicies.get(sessionId); let policy = sessionId && (forcePolicy || policySent.get(sessionId) !== policyHash) ? policySnapshot : undefined, policyDelta; // CHANGE
+        if (canvas.protocolVersion === 5 && policy && previousPolicy && forcePolicy !== 'reset') { const old = new Map(previousPolicy.cells.map(cell => [cell.key, cell])), cells = policySnapshot.cells.filter(cell => canonical(old.get(cell.key) || null) !== canonical(cell)), currentKeys = new Set(policySnapshot.cells.map(cell => cell.key)); policyDelta = { baseHash: policySent.get(sessionId), store: policySnapshot.store, teams: policySnapshot.teams, cells, removed: [...old.keys()].filter(key => !currentKeys.has(key)) }; policy = undefined; } // CHANGE: authority deltas remain bound to the exact installed policy hash.
         if (policy) policySent.set(sessionId, policyHash); // NEW
-        return { protocolVersion: COLLABORATION_VERSION, sessionId, hash: presentation.hash, policyHash, policy, holds: state.holds.map(identify), reservations: state.reservations.map(identify), presence: state.presence.map(identify), pending: state.pending.length, errors: state.errors, rejected: state.rejected, recoveries: recoveryPaths }; // CHANGE
+        if (policyDelta) policySent.set(sessionId, policyHash); if (policy || policyDelta) deliveredPolicies.set(sessionId, policySnapshot); // CHANGE
+        const known = referenceSent.get(sessionId) || new Set(), snapshots = Object.fromEntries(Object.entries(referenceView.snapshots).filter(([hash]) => forcePolicy === 'reset' || !known.has(hash))); for (const hash of Object.keys(snapshots)) known.add(hash); referenceSent.set(sessionId, known); // CHANGE: reopening recovers a lost delivery; saves and heartbeats do not resend definitions.
+        return structuredClone({ protocolVersion: canvas.protocolVersion || COLLABORATION_VERSION, projectFormat: canvas.protocolVersion === 5 ? 2 : 1, references: { snapshots, unavailable: referenceView.unavailable }, sessionId, hash: presentation.hash, policyHash, policyRevision, policy, policyDelta, holds: state.holds.map(identify), reservations: state.reservations.map(identify), presence: state.presence.map(identify), pending: state.pending.length, errors: state.errors, rejected: state.rejected, recoveries: recoveryPaths }); // CHANGE
     } // NEW
     /** A no-peer action still writes a signed durable proposal and succeeds locally. */ // NEW
     async function action(callerId, userId, input) { // NEW
-        const actor = { callerId, userId, sessionId: sessionFor(callerId, userId) }; // NEW: capture ownership before entering the queue; a closing window cannot recreate its session.
+        const actor = { callerId, userId, sessionId: sessionFor(callerId, userId) }, generation = verificationGeneration; // CHANGE: capture ownership before asynchronous preparation.
+        actor.assertActive = () => assertActor(actor, generation); // NEW: native-only callback remains outside signed data and survives preparation inside the accepted-state owner.
         return serialized(async () => { // NEW
-            if (canvas.revoked || canvas.pending) throw new Error('This computer is not approved to edit this project.'); // NEW
+            assertActor(actor, generation); // CHANGE
+            if (input.references) await stageReferences(input.references); // CHANGE: staging bytes does not authorize a pointer update.
+            if (input.kind === 'portable-export') return { ok: true, xml: await references.portable(input.xml) }; // CHANGE: exports capture local draft content without submitting it.
             const cachedRead = ['changes', 'review', 'ack-refresh', 'history-state'].includes(input.kind); // NEW: these read the latest verified state; refresh preparation and every edit re-read the journal.
             let state = cachedRead && latest ? latest : await read(input.retry === true), journalChanged = false, projection, stagedRecovery; const authorityContext = { at: now() }; // CHANGE: local checks use an explicit operation time.
+            assertActor(actor, generation); // NEW
+            const wireRequestHash = input.transaction ? digest(canonical({ userId, transaction: input.transaction, usersPolicyAction: !!input.usersPolicyAction, explicitRefresh: !!input.explicitRefresh })) : null; // CHANGE: retry identity is independent of an already advanced view.
+            if (input.transaction) { // CHANGE: only the coordinator chooses the remembered base and derives authority and dependency targets.
+                if (canvas.protocolVersion !== 5 || input.kind !== 'save' || input.transaction.version !== 1 || !Array.isArray(input.transaction.changes)) throw new Error('Unsupported object transaction.'); // CHANGE
+                if (input.proposalId) { const receipt = await current.receipt(input.proposalId); if (receipt) { if (receipt.proposal.payload.userId !== userId || receipt.proposal.payload.clientRequestHash !== wireRequestHash) throw new Error('Proposal ID was reused with different contents.'); await materialize(state); if (input.explicitRefresh) await views.accepted(actor, receipt.proposal.payload.changes, state); checkpointRetries.delete(JSON.stringify([callerId, userId])); await current.acknowledge(input.proposalId); return { ok: true, duplicate: true, acceptedPosition: { epoch: receipt.epoch, sequence: receipt.sequence, hash: receipt.commitHash }, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId, 'reset') }; } } // CHANGE: completed transactions never reconstruct against a newer saved base.
+                const baseXml = views.get(actor)?.xml || state.xml; if (documentContentHash(baseXml) !== input.transaction.baseHash) throw new Error('The saved view changed before this transaction. Refresh its baseline and retry; the draft is retained.'); // CHANGE
+                input = { ...input, baseXml, xml: applyChanges(baseXml, input.transaction.changes) }; // CHANGE: per-object predecessor hashes and complete structure are validated here, then again at acceptance.
+            } // CHANGE
+            const clientRequestHash = wireRequestHash || (input.kind === 'save' && input.proposalId ? digest(canonical({ userId, baseXml: input.baseXml, xml: input.xml, claimIds: [...new Set(input.claimIds || [])].sort(), usersPolicyAction: !!input.usersPolicyAction, explicitRefresh: !!input.explicitRefresh, resolution: input.resolution || null })) : null); // CHANGE: compact retries retain their exact original intent.
+            if (clientRequestHash) { // NEW
+                const receipt = await current.receipt(input.proposalId); // NEW
+                if (receipt) { // NEW
+                    if (receipt.proposal.payload.userId !== userId || receipt.proposal.payload.clientRequestHash !== clientRequestHash) throw new Error('Proposal ID was reused with different contents.'); // NEW
+                    await materialize(state); // NEW: an accepted retry may still need to finish its local projection write.
+                    if (input.explicitRefresh && views.get(actor)) await views.accepted(actor, receipt.proposal.payload.changes, state, input.baseXml); checkpointRetries.delete(JSON.stringify([callerId, userId])); // CHANGE: accepted retries cannot regress newer remembered objects or pages.
+                    await current.acknowledge(input.proposalId); // NEW
+                    return { ok: true, duplicate: true, acceptedPosition: { epoch: receipt.epoch, sequence: receipt.sequence, hash: receipt.commitHash }, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId, true) }; // CHANGE: retries also carry the complete policy covering the accepted creation.
+                } // NEW
+            } // NEW
             if (input.kind === 'checkpoint') { // NEW: main-process lifecycle callers checkpoint the same resident state used by production saves.
                 await current.checkpoint(); state = await read(); // NEW
                 return { ok: true, epoch: state.epoch, sequence: state.sequence, hash: state.headHash, collaboration: publicState(state, actor.sessionId) }; // NEW
@@ -144,7 +196,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
             if (['open-view', 'reset-view', 'changes', 'review', 'prepare-refresh', 'ack-refresh'].includes(input.kind)) { // NEW
                 const started = performance.now(), result = await views.action(actor, input, state); // NEW
                 timing({ phase: input.kind, durationMs: performance.now() - started }); // NEW
-                return { ok: true, ...result, objectViews: 1, collaboration: publicState(state, actor.sessionId, ['open-view', 'reset-view'].includes(input.kind)) }; // CHANGE
+                return { ok: true, ...result, objectViews: 1, collaboration: publicState(state, actor.sessionId, ['open-view', 'reset-view', 'get'].includes(input.kind) ? 'reset' : false) }; // CHANGE
             } // NEW
             if (input.kind === 'history-state') return { ok: true, xml: state.xml, collaboration: publicState(state, actor.sessionId) }; // NEW
             if (input.explicitRefresh && ['claim', 'save'].includes(input.kind) && !views.get(actor)) return { ok: false, reason: 'Open or explicitly recover your remembered objects before editing.', collaboration: publicState(state, actor.sessionId) }; // NEW
@@ -165,14 +217,31 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
                 journalChanged = true; // CHANGE
             } else if (input.kind === 'claim' || input.kind === 'save') { // NEW
                 if (input.kind === 'save') { const started = performance.now(); input = { ...input, xml: await prepareXml(input.xml) }; timing({ phase: 'assets', durationMs: performance.now() - started }); } // CHANGE
+                assertActor(actor, generation); // NEW
+                if (input.kind === 'save') input = { ...input, xml: prepareSeedTransaction(input.baseXml, input.xml) }; // NEW: derived seed effects join the signed, held transaction.
+                if (canvas.protocolVersion === 5 && input.xml) { // CHANGE
+                    const parsed = inspectDiagram(input.xml); // NEW
+                    for (const cell of parsed.cells) { const raw = cell.node.getAttribute('trellis_references_json'); if (raw && !globalThis.TrellisReferenceCore.externalReference(JSON.parse(raw))) throw new Error('New-format projects require content-addressed reference snapshots.'); } // NEW
+                    const previousReferences = await references.hydrate(input.baseXml); referenceView = await references.hydrate(input.xml); // NEW
+                    const unavailable = new Set([...Object.keys(previousReferences.unavailable), ...Object.keys(referenceView.unavailable)]); // NEW
+                    if (unavailable.size) { // NEW
+                        const before = objects(input.baseXml), after = objects(input.xml), delta = diffObjects(input.baseXml, input.xml); // NEW
+                        for (const change of delta.changes) { // NEW
+                            if (change.key === '*') throw new Error('Restore missing reference definitions before changing project structure.'); // NEW
+                            for (const index of [before, after]) for (let cell = index.get(change.key); cell; cell = index.get(JSON.stringify([cell.pageId, cell.parent]))) if (unavailable.has(cell.id)) throw new Error('Reference definitions are unavailable for this garden.'); // NEW: deletion and reparenting cannot bypass the affected garden's read-only boundary.
+                        } // NEW
+                    } // NEW
+                } // CHANGE
+
                 let delta; // CHANGE: full-proposal diffing already constructs its own validated object indexes.
                 if (input.kind === 'claim' && !input.xml) { const index = objects(state.xml); delta = { changes: [{}], targets: [...new Set((input.targets || []).filter(k => index.has(k)).flatMap(k => targetsForObject(index, k)))] }; } // CHANGE
-                else delta = diffObjects(input.baseXml, input.xml); // CHANGE
+                else delta = canvas.protocolVersion === 5 ? await analyzeDocument('diff', { before: input.baseXml, after: input.xml }) : diffObjects(input.baseXml, input.xml); // CHANGE: queued results remain bound to this serialized actor and accepted state.
+                assertActor(actor, generation); // NEW
                 if (input.kind === 'save' && delta.changes.length) { // NEW
                     const permission = validatePermissionChanges(input.baseXml, input.xml, userId, now(), { policy: permissionSnapshot(inspectDiagram(state.xml)) }); // NEW
                     if (!permission.allowed) { const recoveryPath = await preserve(input.xml, permission.reason); return { ok: false, code: 'PERMISSION_DENIED', reason: permission.reason, recoveryPath, collaboration: publicState(state, actor.sessionId) }; } // NEW: reject the complete proposal before selecting independent conflict-free groups.
                 } // NEW
-                if (input.kind === 'save' && !input.resolution && input.baseXml !== state.xml) { // NEW
+                if (input.kind === 'save' && !input.resolution && input.baseXml !== state.xml && diffObjects(input.baseXml, state.xml).changes.length) { // CHANGE: serialization-only differences must not enter conflict resolution.
                     const review = reviewDraft(input.baseXml, input.xml, state.xml); // NEW
                     if (review.groups.some(group => group.conflict) && !review.canApplyNonConflicting) { const recoveryPath = await preserve(input.xml, 'Conflicting local draft preserved for review.'); return { ok: false, code: 'CONFLICT', staleView: !!input.explicitRefresh, reason: 'The object changed; review conflicting changes before applying them.', review, recoveryPath, collaboration: publicState(state, actor.sessionId) }; } // NEW
                     if (review.groups.some(group => group.conflict || group.alreadyApplied)) { // NEW
@@ -182,6 +251,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
                     } // NEW
                 } // NEW
                 if (input.kind === 'save' && delta.changes.length) { const blocked = await beforeCommit(actor, delta.targets); if (blocked.length) { const recoveryPath = await preserve(input.xml, 'A connected editor still holds this group.'); return { ok: false, code: 'EDITING_BUSY', reason: 'Another connected user is editing this object. Your draft is preserved.', blocked, recoveryPath, collaboration: publicState(state, actor.sessionId) }; } } // NEW
+                assertActor(actor, generation); // NEW
                 const view = input.explicitRefresh && views.get(actor); // NEW
                 const missing = input.kind === 'save' && Array.isArray(input.claimIds) ? delta.targets.filter(key => !state.holds.some(h => h.key === key && h.sessionId === actor.sessionId && input.claimIds.includes(h.claimId))) : []; // NEW
                 const denied = delta.targets.filter(key => authorityFor(state.xml, key, userId, authorityContext) < 1); // NEW
@@ -224,9 +294,10 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
                         } // NEW
                     } else if (input.kind === 'claim') { await current.append(actor, 'activity', { targets: delta.targets, claimIds: [...new Set(holds.map(h => h.claimId))] }); journalChanged = true; } // CHANGE: activity renews a hold without publishing private form fields.
                     if (input.kind === 'save') { // NEW
-                        const id = makeId(); // NEW
-                        stagedRecovery = await preserve(input.xml, 'Submitted work retained until acceptance and local save completion.'); // CHANGE: index the exact pending proposal so interrupted acceptance remains recoverable.
-                        const edit = await current.append(actor, 'save', { id, targets: delta.targets, changes: delta.changes, ...(accountSetup ? { usersPolicyAction: true } : {}) }); // CHANGE
+                        const id = input.proposalId || makeId(); // CHANGE
+                        stagedRecovery = await preserve(input.xml, 'Submitted work retained until acceptance and local save completion.', [], { id, userId, requestHash: clientRequestHash }); // CHANGE: the indexed ID resolves the original signed private proposal after interruption.
+                        assertActor(actor, generation); // NEW: retaining a draft never authorizes publication after its caller changes.
+                        const edit = await current.append(actor, 'save', { id, targets: delta.targets, changes: delta.changes, ...(clientRequestHash ? { clientRequestHash } : {}), ...(accountSetup ? { usersPolicyAction: true } : {}) }); // CHANGE
                         state = await read(); const rejection = state.rejected.find(r => r.id === edit.id); // NEW
                         if (rejection) { const recoveryPath = await preserve(input.xml, rejection.reason); const ended = delta.targets.filter(key => !state.holds.some(hold => hold.key === key && hold.sessionId === actor.sessionId)); return { ok: false, ...rejection, ...(ended.length ? { code: 'HOLD_LOST', targets: ended } : {}), recoveryPath, xml: state.xml, collaboration: publicState(state, actor.sessionId) }; } // CHANGE
                         if (!state.accepted.includes(edit.id)) throw new Error('Changes are preserved locally but are waiting for missing predecessor records.'); // NEW
@@ -242,11 +313,13 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
             }
             if (input.resolution && views.get(actor)) await views.saved(actor, input.originalBaseXml, input.resolution.baseXml); // NEW
             if (stagedRecovery) { // NEW: remove only this successful proposal's staging copy; retained older recovery data is untouched.
+                const proposal = recoveryPaths.find(item => item.recoveryPath === stagedRecovery)?.proposal; // NEW
+                if (proposal) await current.acknowledge(proposal.id); // NEW: clear pending intent only after accepted projection/view persistence finishes.
                 const retained = recoveryPaths.filter(item => item.recoveryPath !== stagedRecovery); // NEW
                 await writeAtomic(path.join(profile, 'recovery', canvas.shareId, 'index.json'), JSON.stringify(retained)); // NEW
                 recoveryPaths = retained; await fs.unlink(stagedRecovery); // NEW
             } // NEW
-            return { ok: true, projection, resolution: input.resolution, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId) }; // CHANGE: status and save replies never carry incoming canvas content in explicit mode.
+            return { ok: true, projection, resolution: input.resolution, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId, input.kind === 'get' ? 'reset' : input.kind === 'save') }; // CHANGE: initialization recovers the full authority context; routine saves use bounded deltas.
         }); // NEW
     } // NEW
     /** Remove ownership immediately, then release the captured generation without touching a replacement session. */ // NEW
@@ -254,9 +327,9 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         views.forget(callerId); // NEW
         for (const key of checkpointRetries.keys()) if (JSON.parse(key)[0] === callerId) checkpointRetries.delete(key); // NEW: a reopened window must not replay a previous window's outstanding private write.
         for (const [key, sessionId] of [...sessions]) if (key.startsWith(callerId + ':')) { // NEW
-            const actor = { userId: key.slice(String(callerId).length + 1), sessionId }; sessions.delete(key); policySent.delete(sessionId); notifiedProjectionRecoveries.delete(sessionId); // NEW
+            const actor = { userId: key.slice(String(callerId).length + 1), sessionId }; sessions.delete(key); policySent.delete(sessionId); deliveredPolicies.delete(sessionId); referenceSent.delete(sessionId); notifiedProjectionRecoveries.delete(sessionId); // NEW
             serialized(async () => { const state = await read(); await current.append(actor, 'release', {}); }).catch(() => {}); // NEW
         } // NEW
     } // NEW
-    return { initialize, refresh, action, read, checkpoint: () => serialized(current.checkpoint, 'checkpoint'), sessionFor, peek: () => latest, snapshot: () => serialized(read), runExclusive: serialized, saveRecovery: (xml, editorDrafts = []) => serialized(async () => { await read(); const recoveryPath = await preserve(xml, 'Manually saved recovery copy.', editorDrafts); return { recoveryPath, filename: path.basename(recoveryPath), editorDataPath: recoveryPaths.at(-1).editorDataPath }; }), flush: () => queue, forget }; // CHANGE
+    return { initialize: xml => serialized(() => initialize(xml)), stageReferences: snapshots => serialized(() => stageReferences(snapshots)), refresh, action, cancelVerification, prioritizeVerification: current.prioritizeVerification, readiness: () => latest ? 'ready' : 'deferred', read: options => serialized(() => read(options)), checkpoint: () => serialized(current.checkpoint, 'checkpoint'), sessionFor, peek: () => latest && structuredClone(latest), snapshot: options => serialized(() => read(options)), runExclusive: serialized, saveRecovery: (xml, editorDrafts = []) => serialized(async () => { await read(); const recoveryPath = await preserve(xml, 'Manually saved recovery copy.', editorDrafts); return { recoveryPath, filename: path.basename(recoveryPath), editorDataPath: recoveryPaths.at(-1).editorDataPath }; }), flush: () => queue, forget }; // CHANGE
 } // NEW

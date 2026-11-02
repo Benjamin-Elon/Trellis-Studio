@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, dialog, session } = require('electron'); // CHANGE
+let fixtureLoginItem = { openAtLogin: false }; app.setLoginItemSettings = value => { fixtureLoginItem = { ...value }; }; app.getLoginItemSettings = () => ({ ...fixtureLoginItem }); // NEW: disposable accounts never alter OS sign-in registration.
 const childProcess = require('node:child_process'), { syncBuiltinESMExports } = require('node:module'); // NEW
 const ownedChildren = new Set(), originalSpawn = childProcess.spawn; // NEW
 childProcess.spawn = (...args) => { const child = originalSpawn(...args); if (child.pid != null) ownedChildren.add(child); child.once('exit', () => ownedChildren.delete(child)); child.once('close', () => ownedChildren.delete(child)); return child; }; syncBuiltinESMExports(); // NEW: the isolated helper records actual owned handles for emergency cleanup.
@@ -78,9 +79,15 @@ async function run() {
         fs.writeFileSync(path.join(output, 'section-folds-checks.json'), JSON.stringify(result, null, 2)); console.log('SECTION_FOLDS_SMOKE:', JSON.stringify(result)); // NEW
         await cleanup(0); return; // NEW
     } // NEW
-    const splash = await until(() => window.webContents.executeJavaScript(`(()=>{const panel=document.querySelector('.trellis-splash-login-status');return panel?.textContent==='Not logged in'?{controls:panel.textContent,afterLicense:panel.previousElementSibling.classList.contains('trellis-license-contact-panel'),installed:!!smokeUi.__trellisGardenHome,fieldInstalled:!!smokeUi.__trellisFieldRuntime}:false;})()`), 'logged-out splash status'); // CHANGE
+    const splash = await until(() => window.webContents.executeJavaScript(`(()=>{const panel=document.querySelector('.trellis-splash-login-status');return panel?.textContent==='Not logged in'?{controls:panel.textContent,afterLicense:!!panel.previousElementSibling?.matches('.trellis-license-contact-panel,.trellis-saved-license-card'),installed:!!smokeUi.__trellisGardenHome,fieldInstalled:!!smokeUi.__trellisFieldRuntime}:false;})()`), 'logged-out splash status'); // CHANGE: both existing completed-license presentations precede login status.
     assert.equal(splash.controls, 'Not logged in'); // CHANGE
     assert.equal(splash.afterLicense, true); assert.equal(splash.installed, true); assert.equal(splash.fieldInstalled, true); // CHANGE
+    if (process.env.TRELLIS_FILE_OPEN_TEST === '1') { // NEW: exercise native Browse and error dialogs through real desktop IPC.
+        let selection = []; const originalPicker = dialog.showOpenDialog; // NEW
+        dialog.showOpenDialog = async () => ({ canceled: selection.length === 0, filePaths: selection }); // NEW: only replace native file selection in this isolated profile.
+        try { await require('./file-open-production.cjs')({ window, until, profile, project, output, select: paths => { selection = paths; } }); } finally { dialog.showOpenDialog = originalPicker; } // NEW
+        console.log('FILE_OPEN_RESULT:passed'); await cleanup(0); return; // NEW
+    } // NEW
     if (process.env.TRELLIS_FIRST_OPEN_TEST === '1') { // NEW
         window.webContents.debugger.attach('1.3'); await window.webContents.debugger.sendCommand('Page.enable'); // NEW: fail explicitly if a hidden native JavaScript dialog blocks the integration fixture.
         let unexpectedDialog = null; window.webContents.debugger.on('message', (_event, method, details) => { if (method === 'Page.javascriptDialogOpening') { unexpectedDialog = details.message; console.error('FIRST_OPEN_NATIVE_DIALOG:', details.message); window.webContents.debugger.sendCommand('Page.handleJavaScriptDialog', { accept: false }).catch(() => {}); } }); // NEW
@@ -322,7 +329,7 @@ async function preparePhysicalDesktop(seed = true) { // CHANGE
 } // NEW
 run().catch(async error => { // CHANGE: preserve public fixture pixels and vector data before the shared owned-resource cleanup.
     console.error(error); // CHANGE
-    try { const state = await Promise.race([window?.webContents.executeJavaScript('({status:smokeUi.editor.status,modified:smokeUi.getCurrentFile()?.isModified(),saving:smokeUi.getCurrentFile()?.savingFile,editable:smokeUi.getCurrentFile()?.isEditable?.(),loggedIn:Trellis.users?.isLoggedIn(),liveTaskNote:smokeUi.editor.graph.model.getCell("smoke-task")?.getAttribute("card_note"),diagnostics:TrellisContentPolicy?.diagnostics()})'), new Promise(resolve => setTimeout(resolve, 2000))]); console.error('PRODUCTION_FAILURE_STATE:', JSON.stringify(state)); } catch (_) {} // CHANGE: operation diagnostics omit credentials and user document content.
+    try { const state = await Promise.race([window?.webContents.executeJavaScript('({status:smokeUi.editor.status,modified:smokeUi.getCurrentFile()?.isModified(),saving:smokeUi.getCurrentFile()?.savingFile,editable:smokeUi.getCurrentFile()?.isEditable?.(),loggedIn:Trellis.users?.isLoggedIn(),liveTaskNote:smokeUi.editor.graph.model.getCell("smoke-task")?.getAttribute("card_note"),projectPath:smokeUi.getCurrentFile()?.fileObject?.path,projectStatus:smokeUi.__trellisGardenHome?.projectsStatus?.textContent,creationError:document.querySelector(".trellis-home-open")?.textContent,diagnostics:TrellisContentPolicy?.diagnostics()})'), new Promise(resolve => setTimeout(resolve, 2000))]); console.error('PRODUCTION_FAILURE_STATE:', JSON.stringify(state)); } catch (_) {} // CHANGE: operation diagnostics omit credentials and user document content.
     try { const preview = await Promise.race([window?.webContents.executeJavaScript('({svg:window.smokePreviewSvg,png:window.smokePreviewPng})'), new Promise(resolve => setTimeout(resolve, 2000))]); if (preview?.svg) fs.writeFileSync(path.join(output, 'failed-preview.svg'), preview.svg); if (preview?.png) fs.writeFileSync(path.join(output, 'failed-preview.png'), Buffer.from(preview.png.split(',')[1], 'base64')); } catch (_) {} // CHANGE
     if (diagnosticMode) { clearTimeout(timeout); setTimeout(() => { void cleanup(1); }, 180000).unref(); } else void cleanup(1); // CHANGE
 }); // CHANGE

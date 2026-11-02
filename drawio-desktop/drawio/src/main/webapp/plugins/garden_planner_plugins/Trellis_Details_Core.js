@@ -132,7 +132,7 @@
             if (disposed) return; // NEW
             draft = normalizeHtml(value); cancel(); // NEW
             options.state(draft === baseline ? 'saved' : 'pending'); // NEW
-            if (!composing && draft !== baseline) timer = setTimeout(flush, 500); // NEW
+            if (!composing && draft !== baseline && !options.defer?.()) timer = setTimeout(flush, 500); // CHANGE: managed sections wait for Commit or an explicit editing boundary. // NEW
         } // NEW
         return { // NEW
             edit, flush, cancel, value: () => draft, baseline: () => baseline, dirty: () => draft !== baseline, composing: () => composing, // NEW

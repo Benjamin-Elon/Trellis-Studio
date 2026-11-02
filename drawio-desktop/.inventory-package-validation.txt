@@ -1,0 +1,260 @@
+
+> trellis-studio@2.7.0 test:inventories
+> node --test ./test/trellis-inventories.test.mjs ./test/trellis-inventories-dom.test.mjs ./test/trellis-seed-effects.test.mjs ./test/trellis-exchange-core.test.mjs ./test/trellis-exchange-rates.test.mjs ./test/trellis-exchange-service.test.mjs ./test/trellis-inventories-electron.test.cjs
+
+TAP version 13
+# Subtest: publishing private-garden offers needs seed authority and exposes no private pickup details
+ok 1 - publishing private-garden offers needs seed authority and exposes no private pickup details
+  ---
+  duration_ms: 4.0004
+  type: 'test'
+  ...
+# Subtest: acceptance remains pending until both parties approve and every reservation is validated
+ok 2 - acceptance remains pending until both parties approve and every reservation is validated
+  ---
+  duration_ms: 1.031
+  type: 'test'
+  ...
+# Subtest: partial fulfillment counts receipts once and competing commitments cannot exceed the request
+ok 3 - partial fulfillment counts receipts once and competing commitments cannot exceed the request
+  ---
+  duration_ms: 2.2064
+  type: 'test'
+  ...
+# Subtest: same-crop variety substitutions are suggested after exact matches and need explicit approval
+ok 4 - same-crop variety substitutions are suggested after exact matches and need explicit approval
+  ---
+  duration_ms: 1.6537
+  type: 'test'
+  ...
+# Subtest: handover prevents untouched cancellation; repeated receipts are silent and source currency is fixed
+ok 5 - handover prevents untouched cancellation; repeated receipts are silent and source currency is fixed
+  ---
+  duration_ms: 2.1323
+  type: 'test'
+  ...
+# Subtest: membership departure preserves existing cancellation and private agreement coordination
+ok 6 - membership departure preserves existing cancellation and private agreement coordination
+  ---
+  duration_ms: 0.6037
+  type: 'test'
+  ...
+# Subtest: CSA publication is stricter than routine management and rejects reopened seasons and mixed units
+ok 7 - CSA publication is stricter than routine management and rejects reopened seasons and mixed units
+  ---
+  duration_ms: 2.679
+  type: 'test'
+  ...
+# Subtest: share sizes use base equivalents and capacity checks reject a second competing acceptance
+ok 8 - share sizes use base equivalents and capacity checks reject a second competing acceptance
+  ---
+  duration_ms: 2.5933
+  type: 'test'
+  ...
+# Subtest: enrollment cancellation requires both parties and preserves earlier distributions
+ok 9 - enrollment cancellation requires both parties and preserves earlier distributions
+  ---
+  duration_ms: 3.5965
+  type: 'test'
+  ...
+# Subtest: members report collections, operators confirm, and completed distributions remain immutable
+ok 10 - members report collections, operators confirm, and completed distributions remain immutable
+  ---
+  duration_ms: 2.3462
+  type: 'test'
+  ...
+# Subtest: operator departure ends future pickups while retaining private settlement history
+ok 11 - operator departure ends future pickups while retaining private settlement history
+  ---
+  duration_ms: 0.7241
+  type: 'test'
+  ...
+# Subtest: country inference uses the existing city country and leaves missing or ambiguous defaults unresolved
+ok 12 - country inference uses the existing city country and leaves missing or ambiguous defaults unresolved
+  ---
+  duration_ms: 1.2549
+  type: 'test'
+  ...
+# Subtest: display rates cache the provider date and retrieval time across restart without leaking amounts
+ok 13 - display rates cache the provider date and retrieval time across restart without leaking amounts
+  ---
+  duration_ms: 17.9161
+  type: 'test'
+  ...
+# Subtest: offline stale rates retain dated estimates and missing pairs retain original prices
+ok 14 - offline stale rates retain dated estimates and missing pairs retain original prices
+  ---
+  duration_ms: 8.4104
+  type: 'test'
+  ...
+# Subtest: simultaneous viewers share one currency-pair request, and same-currency displays need no provider
+ok 15 - simultaneous viewers share one currency-pair request, and same-currency displays need no provider
+  ---
+  duration_ms: 33.6202
+  type: 'test'
+  ...
+# Subtest: provider failure, invalid dates, damaged cache, and invalid input cannot manufacture display values
+ok 16 - provider failure, invalid dates, damaged cache, and invalid input cannot manufacture display values
+  ---
+  duration_ms: 8.358
+  type: 'test'
+  ...
+# Subtest: unqualified production synchronization cannot publish, accept, or enumerate private agreement transport
+ok 17 - unqualified production synchronization cannot publish, accept, or enumerate private agreement transport
+  ---
+  duration_ms: 3.8251
+  type: 'test'
+  ...
+# Subtest: bridge derives its identity from the current session and protects rate requests after logout
+ok 18 - bridge derives its identity from the current session and protects rate requests after logout
+  ---
+  duration_ms: 0.6959
+  type: 'test'
+  ...
+# Subtest: inventory dropdown exposes Equipment and Seeds and Escape returns focus to its anchor
+ok 19 - inventory dropdown exposes Equipment and Seeds and Escape returns focus to its anchor
+  ---
+  duration_ms: 132.6405
+  type: 'test'
+  ...
+# Subtest: seed edits preserve the underlying plan, save current stock, and update the base for subsequent saves
+ok 20 - seed edits preserve the underlying plan, save current stock, and update the base for subsequent saves
+  ---
+  duration_ms: 86.7277
+  type: 'test'
+  ...
+# Subtest: stale-save errors retain edits, retry remains possible, and Escape respects the dirty draft
+ok 21 - stale-save errors retain edits, retry remains possible, and Escape respects the dirty draft
+  ---
+  duration_ms: 60.9714
+  type: 'test'
+  ...
+# Subtest: weight conversion keeps canonical seed stock stable and read-only inventories expose no Save action
+ok 22 - weight conversion keeps canonical seed stock stable and read-only inventories expose no Save action
+  ---
+  duration_ms: 69.5574
+  type: 'test'
+  ...
+# Subtest: canceling a multiple-garden picker, including Escape, leaves no pending inventory dialog
+ok 23 - canceling a multiple-garden picker, including Escape, leaves no pending inventory dialog
+  ---
+  duration_ms: 14.6818
+  type: 'test'
+  ...
+# Subtest: desktop inventories preserve drafts and keyboard focus across editor and Home access
+ok 24 - desktop inventories preserve drafts and keyboard focus across editor and Home access
+  ---
+  duration_ms: 3747.0456
+  type: 'test'
+  ...
+# Subtest: seed conversions require estimates for weight and packets
+ok 25 - seed conversions require estimates for weight and packets
+  ---
+  duration_ms: 1.8326
+  type: 'test'
+  ...
+# Subtest: current-stock initialization baselines historical work; reopening and recompleting remain reversible
+ok 26 - current-stock initialization baselines historical work; reopening and recompleting remain reversible
+  ---
+  duration_ms: 1.2207
+  type: 'test'
+  ...
+# Subtest: sowing completion survives repeated delivery, restart, reopen and corrected recompletion
+ok 27 - sowing completion survives repeated delivery, restart, reopen and corrected recompletion
+  ---
+  duration_ms: 0.3606
+  type: 'test'
+  ...
+# Subtest: negative balances are retained and shortages remain visible
+ok 28 - negative balances are retained and shortages remain visible
+  ---
+  duration_ms: 0.2749
+  type: 'test'
+  ...
+# Subtest: published needs aggregate growth stages before subtracting completed work once
+ok 29 - published needs aggregate growth stages before subtracting completed work once
+  ---
+  duration_ms: 0.6433
+  type: 'test'
+  ...
+# Subtest: competing acceptances cannot reserve protected or already reserved stock
+ok 30 - competing acceptances cannot reserve protected or already reserved stock
+  ---
+  duration_ms: 0.5284
+  type: 'test'
+  ...
+# Subtest: barter source lines combine; handover and receipt each affect stock exactly once
+ok 31 - barter source lines combine; handover and receipt each affect stock exactly once
+  ---
+  duration_ms: 0.3599
+  type: 'test'
+  ...
+# Subtest: copies preserve definitions and conversions while resetting all operational records
+ok 32 - copies preserve definitions and conversions while resetting all operational records
+  ---
+  duration_ms: 0.2118
+  type: 'test'
+  ...
+# Subtest: priority levels fill in order with proportional equal-level shortages and capped demand
+ok 33 - priority levels fill in order with proportional equal-level shortages and capped demand
+  ---
+  duration_ms: 0.6196
+  type: 'test'
+  ...
+# Subtest: season quotes use eligible scheduled pickups and preserve original currency
+ok 34 - season quotes use eligible scheduled pickups and preserve original currency
+  ---
+  duration_ms: 1.7438
+  type: 'test'
+  ...
+# Subtest: plant requirements round per member and shortages rotate to seasonally underserved members
+ok 35 - plant requirements round per member and shortages rotate to seasonally underserved members
+  ---
+  duration_ms: 11.2744
+  type: 'test'
+  ...
+# Subtest: accepted sowing effects include germination, reopening, correction and retransmission
+ok 36 - accepted sowing effects include germination, reopening, correction and retransmission
+  ---
+  duration_ms: 64.7667
+  type: 'test'
+  ...
+# Subtest: historical completed sowings baseline current stock; transplant tasks never deduct
+ok 37 - historical completed sowings baseline current stock; transplant tasks never deduct
+  ---
+  duration_ms: 12.5506
+  type: 'test'
+  ...
+# Subtest: ledger forgery is rejected even for administrators; automatic effects cannot authorize stock edits
+ok 38 - ledger forgery is rejected even for administrators; automatic effects cannot authorize stock edits
+  ---
+  duration_ms: 24.6004
+  type: 'test'
+  ...
+# Subtest: real signed saves retain seed effects across duplicate delivery and coordinator restart
+ok 39 - real signed saves retain seed effects across duplicate delivery and coordinator restart
+  ---
+  duration_ms: 458.9057
+  type: 'test'
+  ...
+# Subtest: multiple unsaved complete/reopen transitions are independently validated as one accepted save
+ok 40 - multiple unsaved complete/reopen transitions are independently validated as one accepted save
+  ---
+  duration_ms: 13.3897
+  type: 'test'
+  ...
+# Subtest: copies baseline historical completed tasks before the first new completion
+ok 41 - copies baseline historical completed tasks before the first new completion
+  ---
+  duration_ms: 4.5461
+  type: 'test'
+  ...
+1..41
+# tests 41
+# suites 0
+# pass 41
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4005.3226

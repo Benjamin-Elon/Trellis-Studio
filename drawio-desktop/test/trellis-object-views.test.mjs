@@ -41,6 +41,15 @@ test('saving A2 keeps B0 displayed and remembered while B1 is accepted elsewhere
     assert.deepEqual(reopened.groups[0].objects.map(object => object.key), [key('b')]);
 });
 
+test('accepted receipt completion preserves a newer same-account window checkpoint', async t => { // NEW
+    const { views, actor, make } = await fixture(t), other = { ...actor, callerId: 2 }; // NEW
+    await views.open(actor, state(xml())); await views.open(other, state(xml())); // NEW
+    await views.saved(other, xml(), xml('A3')); // NEW
+    await views.accepted(actor, diffObjects(xml(), xml('A2')).changes, state(xml('A3'))); // NEW
+    assert.equal(objects(views.get(actor).xml).get(key('a')).label, 'A2'); // NEW: the original window acknowledges exactly its captured work.
+    const reopened = await make().open({ ...actor, callerId: 3 }, state(xml('A3'))); assert.equal(objects(reopened.xml).get(key('a')).label, 'A3'); // NEW
+}); // NEW
+
 test('remembered ordering does not accumulate deletion tombstones after completed saves', async t => { // NEW
     const {views,actor,profile} = await fixture(t), base = xml(); // NEW
     await views.open(actor,state(base)); // NEW

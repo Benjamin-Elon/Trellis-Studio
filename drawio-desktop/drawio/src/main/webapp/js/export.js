@@ -768,10 +768,11 @@ function render(data)
 		}
 		
 		// Parses XML into graph
-		var renderingXml = extras && extras.globalVars && (extras.globalVars.__trellisRoadmapProjection || extras.globalVars.__trellisDetailsProjection) ? xmlDoc.cloneNode(true) : xmlDoc; // CHANGE: display projections never contaminate canonical embedded XML.
+		var renderingXml = extras && extras.globalVars && (extras.globalVars.__trellisRoadmapProjection || extras.globalVars.__trellisDetailsProjection || extras.globalVars.__trellisPlantingProjection) ? xmlDoc.cloneNode(true) : xmlDoc; // CHANGE: display projections never contaminate canonical embedded XML.
 		var codec = new mxCodec(renderingXml); // CHANGE
 		var model = graph.getModel();
 		codec.decode(renderingXml.documentElement, model); // CHANGE
+		if (window.TrellisLocalView && extras && extras.globalVars) window.TrellisLocalView.applyPlantingProjection(graph, extras.globalVars.__trellisPlantingProjection, currentPageId); // NEW: restore local detail only in the isolated rendering model.
 		if (window.TrellisRoadmapRenderer && extras && extras.globalVars) window.TrellisRoadmapRenderer.applyProjection(graph, extras.globalVars.__trellisRoadmapProjection, currentPageId); // NEW: modify only the isolated rendering model, preserving embedded source XML.
 		if (window.TrellisDetailsCore && extras && extras.globalVars) window.TrellisDetailsCore.applyProjection(graph, extras.globalVars.__trellisDetailsProjection, currentPageId); // NEW
 

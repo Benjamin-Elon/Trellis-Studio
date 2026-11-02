@@ -5,7 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url'; // NEW
 import { createReferenceDatabaseService, materialize, snapshotDatabase, referenceCore as C } from '../src/main/trellis-reference-database.js';
 import { validateReferenceChanges } from '../src/main/trellis-reference-policy.js';
-import { replay, diffObjects } from '../src/main/trellis-collaboration-protocol.js'; // NEW
+import { diffObjects } from '../src/main/trellis-collaboration-protocol.js'; // CHANGE
+import { transactCurrent } from './helpers/current-transaction.mjs'; // NEW: security protections run through the replacement validator.
 const table = (columns, pk, foreignKeys = []) => ({ columns: columns.map(([name, type]) => ({ name, type, notnull: 0, dflt_value: null, pk: pk.indexOf(name) + 1 })), pk, foreignKeys });
 function fixture(name = 'Lettuce') {
     return C.capture({ schema: {
@@ -145,7 +146,7 @@ test('the actual signed collaboration replay rejects an administrator acceptance
     const decision = { id: 'admin-decision', proposalId: request.id, actor: 'admin', items: [plantEntity(base)], status: 'accepted', before: base.current, after: reviewed.store.current, resolutions: {} }; // NEW
     const before = canvas(base, log), after = canvas(reviewed.store, { ...log, decisions: [decision] }), delta = diffObjects(before, after); // NEW
     const hold = { id: 'hold', kind: 'claim', schema: 2, deviceId: 'device', sessionId: 'session', userId: 'admin', clock: 1, parents: [], at: 1000, targets: delta.targets }; // NEW
-    const result = replay(before, [hold, { ...hold, id: 'edit', kind: 'edit', clock: 2, parents: ['hold'], claimIds: ['hold'], at: 1001, ...delta }], 2000); // NEW
+    const result = transactCurrent(before, [hold, { ...hold, id: 'edit', kind: 'edit', clock: 2, parents: ['hold'], claimIds: ['hold'], at: 1001, ...delta }], 2000); // NEW
     assert.equal(result.accepted.length, 0); assert.ok(result.rejected.some(item => /owner/.test(item.reason))); // NEW
     assert.throws(() => validateReferenceChanges(before, after, 'admin'), /owner/); // NEW
 }); // NEW
@@ -176,11 +177,11 @@ test('catalog dependencies use portable IDs and repeated saves do not manufactur
 /** Domain-specific proposal access must survive the generic content policy without allowing bundled garden edits. */ // NEW
 test('signed gardener proposals reuse reference approval while unrelated bundled edits remain forbidden', () => { // NEW
     const base = fixture(), request = proposal(base, edit(base, { spacing_cm: 31 })), before = canvas(base, emptyLog()), after = canvas(base, { ...emptyLog(), requests: [request] }), delta = diffObjects(before, after); // NEW
-    const claim = { schema: 3, id: 'reference-claim', kind: 'claim', sessionId: 'session', deviceId: 'device', userId: 'editor', clock: 1, at: 1000, parents: [], targets: delta.targets }; // NEW
+    const claim = { schema: 4, id: 'reference-claim', kind: 'claim', sessionId: 'session', deviceId: 'device', userId: 'editor', clock: 1, at: 1000, parents: [], targets: delta.targets }; // NEW
     const transaction = { ...claim, ...delta, id: 'reference-edit', kind: 'edit', clock: 2, at: 1001, parents: [claim.id], claimIds: [claim.id] }; // NEW
-    assert.deepEqual(replay(before, [claim, transaction], 2000).accepted, [transaction.id]); // NEW
+    assert.deepEqual(transactCurrent(before, [claim, transaction], 2000).accepted, [transaction.id]); // NEW
     const mixed = after.replace('id="garden" ', 'id="garden" label="Forbidden garden rename" '), changed = { ...transaction, ...diffObjects(before, mixed) }; // NEW
-    assert.deepEqual(replay(before, [claim, changed], 2000).accepted, []); // NEW
+    assert.deepEqual(transactCurrent(before, [claim, changed], 2000).accepted, []); // NEW
 }); // NEW
 
 
@@ -191,4 +192,27 @@ test('recipe equipment selections are portable dependencies and retain explicit 
     const rules = C.catalog(base, 'task_recipe_library_json').items[0].template.rules; // NEW
     assert.deepEqual(rules[0].equipmentIds, ['hoe']); assert.deepEqual(rules[1].equipmentIds, []); assert.equal(rules[2].equipmentIds, null); // NEW
     assert.equal(C.putCatalog(base, 'task_recipe_library_json', C.catalog(base, 'task_recipe_library_json')).current, base.current); // NEW
+}); // NEW
+
+test('asynchronous definition verification publishes exact immutable bytes and ignores cached retransmissions', async () => { // NEW
+    const store = fixture(), hash = C.snapshotDigest(C.canonical(store)), pointer = await C.registerSnapshotAsync(store, hash); // NEW
+    assert.equal(pointer.digest, hash); assert.equal(Object.isFrozen(C.cachedSnapshot(hash)), true); // NEW
+    assert.equal((await C.registerSnapshotAsync({ corrupt: true }, hash)).digest, hash); // NEW: a verified cache entry is reused without trusting replacement bytes.
+    await assert.rejects(C.registerSnapshotAsync(store, '0'.repeat(64)), /verification/); // NEW
+}); // NEW
+
+test('shallow freezing cannot retain validation of mutable reference descendants', () => { // NEW
+    const store = Object.freeze(fixture()); C.validate(store); const heads = store.manifests[store.current].heads; heads.invalid = 'missing'; // NEW
+    assert.throws(() => C.validate(store), /revision identity/); delete heads.invalid; // NEW
+    const pointer = C.registerSnapshot(store), cached = C.cachedSnapshot(pointer.digest); assert.equal(Object.isFrozen(cached.manifests[cached.current].heads), true); // NEW
+    assert.throws(() => { cached.manifests[cached.current].heads.invalid = 'missing'; }, TypeError); // NEW
+    const mutable = fixture(); C.validate(mutable); mutable.manifests[mutable.current].heads.invalid = 'missing'; C.freeze(mutable); assert.throws(() => C.validate(mutable), /revision identity/); // NEW: freezing after a mutation cannot revive an earlier validation.
+}); // NEW
+
+test('immutable definition reuse checks bounds once and invalidates when the validator changes', () => { // NEW
+    const previous = globalThis.TrellisContentPolicy; let checks = 0; // NEW
+    try { // NEW
+        globalThis.TrellisContentPolicy = { jsonValue() { checks++; } }; const store = C.freeze(fixture()); checks = 0; C.validate(store); C.validate(store); assert.equal(checks, 1); // NEW
+        globalThis.TrellisContentPolicy.jsonValue = () => { throw Error('Stricter definition bounds'); }; assert.throws(() => C.validate(store), /Stricter definition bounds/); // NEW
+    } finally { globalThis.TrellisContentPolicy = previous; } // NEW
 }); // NEW

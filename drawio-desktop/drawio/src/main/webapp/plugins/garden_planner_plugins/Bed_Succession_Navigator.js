@@ -152,48 +152,20 @@ Draw.loadPlugin(function (ui) {
         return id1 < id2 ? -1 : id1 > id2 ? 1 : 0;
     }
 
-    function snapCanopyOrderInParent(parent) {
-        if (!parent) return;
+    /** Reorder rendered nodes only; selection must preserve authored sibling order. */ // CHANGE
+    function renderCellOrder(cells) { // NEW
+        for (const cell of cells) for (const member of collectVertexTree(cell)) { // NEW
+            const state = graph.getView().getState(member); // NEW
+            for (const node of [state?.shape?.node, state?.text?.node, state?.control?.node]) if (node?.parentNode) node.parentNode.appendChild(node); // NEW
+        } // NEW
+    } // NEW
 
-        withUndoSuppressed(() => {
-            const childCount = model.getChildCount(parent);
-            if (childCount <= 1) return;
-
-            // Gather current child list (includes non-vertices too)                        
-            const children = [];
-            for (let i = 0; i < childCount; i++) children.push(model.getChildAt(parent, i));
-
-            // Identify planting children and their current slot indices                    
-            const plantingSlots = [];
-            const plantings = [];
-            for (let i = 0; i < children.length; i++) {
-                const c = children[i];
-                if (model.isVertex(c) && isPlantingCell(c)) {
-                    plantingSlots.push(i);
-                    plantings.push(c);
-                }
-            }
-
-            if (plantings.length <= 1) return;
-
-            // Sort: shorter first, taller last (front)                                     
-            const sorted = plantings.slice().sort(canopyCompare);
-
-            // Reinsert ONLY plantings into their existing slots (preserve non-plantings)   
-            model.beginUpdate();
-            try {
-                for (let k = 0; k < plantingSlots.length; k++) {
-                    const idx = plantingSlots[k];
-                    const cell = sorted[k];
-                    // model.add moves within same parent; index is the z-order position   
-                    model.add(parent, cell, idx);
-                }
-            } finally {
-                model.endUpdate();
-            }
-            graph.refresh();
-        });
-    }
+    function snapCanopyOrderInParent(parent) { // CHANGE
+        if (!parent) return; // CHANGE
+        const children = Array.from({ length: model.getChildCount(parent) }, (_, index) => model.getChildAt(parent, index)); // CHANGE
+        const plantings = children.filter(cell => model.isVertex(cell) && isPlantingCell(cell)).sort(canopyCompare); // CHANGE
+        let index = 0; renderCellOrder(children.map(cell => model.isVertex(cell) && isPlantingCell(cell) ? plantings[index++] : cell)); // CHANGE
+    } // CHANGE
 
     let canopySnapRaf = null;
     function scheduleCanopySnap(parent) {
@@ -822,51 +794,44 @@ Draw.loadPlugin(function (ui) {
     const BASE_TG_OPACITY = '50';
     const SELECTED_TG_OPACITY = '100';
 
+    /** Personal succession visibility belongs to the view, never to saved object styles. */ // NEW
+    const visibilityStyles = new WeakMap(); // NEW
+    const originalGetCellStyle = graph.getCellStyle; // NEW
+    graph.getCellStyle = function (cell) { // NEW
+        const style = originalGetCellStyle.apply(this, arguments), override = visibilityStyles.get(cell); // NEW
+        return override ? Object.assign({}, style, override) : style; // NEW
+    }; // NEW
+
+    function setVisibilityStyles(cells, values) { // NEW
+        let changed = false; // NEW
+        for (const cell of new Set(cells)) { // NEW
+            const previous = visibilityStyles.get(cell) || {}; // NEW
+            if (Object.keys(values).every(key => previous[key] === values[key])) continue; // NEW
+            visibilityStyles.set(cell, Object.assign({}, previous, values)); // NEW
+            graph.getView().invalidate?.(cell, false, false); // NEW: invalidate only affected render states.
+            changed = true; // NEW
+        } // NEW
+        if (changed) graph.getView().validate?.(); // NEW: redraw without model events, undo entries, attribution, or permission attempts.
+    } // NEW
+
     // -------------------- Outline-only dimming (deep) --------------------
 
 
     // In setOutlineOnlyVisibleDeep, swap to use cached:                        
-    function setOutlineOnlyVisibleDeep(roots, visible) {
+    function setOutlineOnlyVisibleDeep(roots, visible, opacityPct) { // CHANGE
         const cells = [];
         (roots || []).forEach(r => cells.push(...collectVertexTreeCached(r)));
         if (!cells.length) return;
     
-        const fillV = String(visible ? 100 : 0);
-        const textV = String(visible ? 100 : 0);
-        const imgV  = String(visible ? 100 : 0);
-        const stroke = '100';
-    
-        withUndoSuppressed(() => {
-            model.beginUpdate();
-            try {
-                graph.setCellStyles('fillOpacity', fillV, cells);
-                graph.setCellStyles('textOpacity', textV, cells);
-                graph.setCellStyles('imageOpacity', imgV, cells);
-                graph.setCellStyles('strokeOpacity', stroke, cells);
-            } finally {
-                model.endUpdate();
-            }
-        });
+        const opacity = String(visible ? 100 : 0); // CHANGE
+        setVisibilityStyles(cells, { fillOpacity: opacity, textOpacity: opacity, imageOpacity: opacity, strokeOpacity: '100', opacity: String(opacityPct) }); // CHANGE: one invalidation/validation covers every visual property.
     }
     
-
-    // deep opacity setter (root + descendants)
-    function setOpacityDeep(roots, opacityPct) {
-        const cells = [];
-        (roots || []).forEach(r => cells.push(...collectVertexTreeCached(r)));
-        if (!cells.length) return;
-        withUndoSuppressed(() => {
-            model.beginUpdate();
-            try { graph.setCellStyles('opacity', String(opacityPct), cells); }
-            finally { model.endUpdate(); }
-        });
-    }
 
     // restore to baseline visuals for a tiler group (deep)
     function restoreBaselineTGDeep(roots) {
         if (!roots || !roots.length) return;
-        setOutlineOnlyVisibleDeep(roots, true);
-        setOpacityDeep(roots, BASE_TG_OPACITY);
+        setOutlineOnlyVisibleDeep(roots, true, BASE_TG_OPACITY); // CHANGE
     }
 
     // Invalidate when tree structure changes:                                   
@@ -2480,14 +2445,12 @@ Draw.loadPlugin(function (ui) {
         const toDim = [];
         nextDim.forEach(c => { if (!st.dimmed.has(c)) toDim.push(c); });
         if (toDim.length) {
-            setOutlineOnlyVisibleDeep(toDim, false);
-            setOpacityDeep(toDim, SELECTED_TG_OPACITY);
+            setOutlineOnlyVisibleDeep(toDim, false, SELECTED_TG_OPACITY); // CHANGE
         }
 
         const activeMembers = st.order.filter(c => active.has(c));
         if (activeMembers.length) {
-            setOutlineOnlyVisibleDeep(activeMembers, true); // CHANGE: selected and temporally overlapping groups stay fully visible.
-            setOpacityDeep(activeMembers, SELECTED_TG_OPACITY);
+            setOutlineOnlyVisibleDeep(activeMembers, true, SELECTED_TG_OPACITY); // CHANGE: selected and temporally overlapping groups stay fully visible.
         }
 
         st.dimmed = nextDim;
@@ -2495,24 +2458,9 @@ Draw.loadPlugin(function (ui) {
 
 
     // -------------------- Navigation per cluster --------------------
-    function bringCellToFrontInParent(cell) {
-        if (!cell) return;
-        const p = model.getParent(cell);
-        if (!p) return;
-
-        const umWrap = graph.__withUndoSuppressed || ((fn) => fn());
-
-        umWrap(() => {
-            model.beginUpdate();
-            try {
-                model.add(p, cell, model.getChildCount(p));
-            } finally {
-                model.endUpdate();
-            }
-            graph.refresh(cell);
-        });
-    }
-
+    function bringCellToFrontInParent(cell) { // CHANGE
+        if (cell) renderCellOrder([cell]); // CHANGE: raising a selection is a personal display operation.
+    } // CHANGE
 
     // -------------------- NEW: temporary bed-unit front-ordering --------------------
     const parentOrderSnapshots = new Map(); // parentId -> [childId,...]               
@@ -2536,24 +2484,9 @@ Draw.loadPlugin(function (ui) {
         const snap = parentOrderSnapshots.get(parent.id);
         if (!snap) return;
 
-        withUndoSuppressed(() => {
-            model.beginUpdate();
-            try {
-                let idx = 0;
-                for (const id of snap) {
-                    if (!id) continue;
-                    const cell = model.getCell(id);
-                    if (!cell) continue;
-                    if (model.getParent(cell) !== parent) continue;
-                    model.add(parent, cell, idx++);
-                }
-            } finally {
-                model.endUpdate();
-            }
-            parentOrderSnapshots.delete(parent.id);
-            graph.refresh(parent);
-        });
-    }
+        renderCellOrder(snap.map(id => model.getCell(id)).filter(cell => cell && model.getParent(cell) === parent)); // CHANGE
+        parentOrderSnapshots.delete(parent.id); // CHANGE
+    } // CHANGE
 
     function bringCellsToFrontTemporarilyInParent(parent, cells) {
         if (!parent || !cells || !cells.length) return;
@@ -2573,17 +2506,8 @@ Draw.loadPlugin(function (ui) {
         }
         if (!order.length) return;
         temporaryFrontedCellIds = order.map(c => c && c.id).filter(Boolean);
-        withUndoSuppressed(() => {
-            model.beginUpdate();
-            try {
-                for (const c of order) model.add(parent, c, model.getChildCount(parent));
-            } finally {
-                model.endUpdate();
-            }
-            temporaryFrontedParent = parent;
-            graph.refresh(parent);
-        });
-    }
+        renderCellOrder(order); temporaryFrontedParent = parent; // CHANGE
+    } // CHANGE
 
     function selectionMatchesTemporaryFrontedCells(cells) {
         const selectedIds = (cells || []).map(c => c && c.id).filter(Boolean).sort();
@@ -2810,9 +2734,7 @@ Draw.loadPlugin(function (ui) {
 
         // If selecting a planting, bring it to front (temporary) and remember it
         if (selIsPlanting) {
-            (graph.__withUndoSuppressed || ((fn) => fn()))(() => {
-                graph.orderCells(false, [sel]);
-            });
+            bringCellToFrontInParent(sel); // CHANGE: selection never changes saved document order.
             lastSelectedPlantingId = sel.id;
             lastSelectedPlantingParent = model.getParent(sel);
         }

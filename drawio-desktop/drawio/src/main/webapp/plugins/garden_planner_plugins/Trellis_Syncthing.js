@@ -1,6 +1,8 @@
 // NEW: Renderer orchestration for managed canvas sharing; credentials stay in Electron.
 Draw.loadPlugin(function (ui) {
     'use strict';
+    const protocol = window.TrellisSyncContract; // NEW: index.html installs the shared protocol contract before plugins.
+    if (!protocol) throw new Error('The synchronization contract was not loaded.'); // NEW
     window.TrellisLocalView?.install(ui); // NEW: local-only diagrams use the same folding mechanics.
     const bridge = window.trellisShare;
     if (!bridge || typeof bridge.setContext !== 'function') return;
@@ -21,10 +23,15 @@ Draw.loadPlugin(function (ui) {
     let remoteBaselinePending = false; // NEW: imported history may arrive after its diagram replacement.
     let modelRevision = 0, tracksModelChanges = false, remoteReadTask = null; // CHANGE: invalidate captures without serializing the live graph.
     let background = null, backgroundFile = null, dirtyObjects = new Set(), savedObjects = new Map(), conflictDialog = null; // NEW
+    let saveStatusOwner = null; // NEW: only owned progress text may be replaced by countdown ticks.
     let assetAvailability = null, assetSequence = null; // CHANGE: retain observations independently of mutable status objects.
     const explicitMode = !window.__trellisLiveUpdatesForBenchmark; // CHANGE: missing review code must never silently enable automatic content updates.
     let incoming = null, viewIdentity = null, pendingHash = null, refreshingTargets = new Set(), formTargets = []; // NEW
     const releasingClaims = new Set(); // NEW: intentional handoffs must not produce hold-loss discard notices.
+    let activityRevision = -1; const lossChecks = new Map(), frozenForms = new Map(), retainedLosses = new Map(); // CHANGE: observations and retained drafts belong to one renderer context.
+    const composingFields = new Set(); // CHANGE: an active IME composition is not an editing pause.
+    const gardenCreations = new Map(), creationMembers = new Map(), creationDrafts = new Map(), creationEditors = new Set(); // NEW: presentation state is private to the current author/document, never save authority.
+    let creationEdits = new WeakMap(), creationDraftObserver = null; // NEW: native edits retain their creation identity through Undo/Redo without serializing it.
     let refreshSaveBarrier = Promise.resolve(); // NEW: autosave waits until incoming patches are acknowledged or restored.
     let indexedPending = null, pendingKeys = new Set(), pendingStructure = false; // NEW
     const timings = value => { try { window.TrellisSyncTiming?.({ ...value, diagramId: info?.diagramId }); } catch (_) {} }; // CHANGE: diagnostics never alter save completion. // NEW
@@ -63,13 +70,51 @@ Draw.loadPlugin(function (ui) {
         return Array.from(new Uint8Array(bytes)).map(value => value.toString(16).padStart(2, '0')).join('');
     }
     function status(message) { if (ui.editor.setStatus) ui.editor.setStatus(String(message)); }
+    /** Preserve unrelated notices, callbacks and alerts when refreshing local save progress. */ // NEW
+    function setSaveStatus(current, message, submitting = false) { // NEW
+        if (file() !== current || !isCollaborative()) return; // NEW
+        const visible = ui.statusContainer?.textContent ?? ui.editor.getStatus?.() ?? ''; // NEW
+        const owned = saveStatusOwner?.file === current && saveStatusOwner.generation === contextGeneration && saveStatusOwner.message === visible; // NEW
+        const saved = current.allChangesSavedKey && window.mxResources?.get?.(current.allChangesSavedKey); // NEW
+        if (!submitting && (ui.editor.statusFunction || ui.statusContainer?.querySelector('.geStatusAlert') || visible && !owned && visible !== saved)) return; // NEW
+        if (!message && !owned) return; // NEW
+        if (visible !== message) status(message); // NEW
+        saveStatusOwner = message ? { file: current, generation: contextGeneration, message } : null; // NEW
+    } // NEW
+    /** Drop only our own text when a file or author context is invalidated. */ // NEW
+    function clearSaveStatus() { // NEW
+        const visible = ui.statusContainer?.textContent ?? ui.editor.getStatus?.() ?? ''; // NEW
+        if (saveStatusOwner?.message === visible && !ui.editor.statusFunction) status(''); // NEW
+        saveStatusOwner = null; // NEW
+    } // NEW
+    /** The countdown measures the editing pause, never a promise of completed persistence. */ // NEW
+    function renderSaveStatus(current) { // NEW
+        if (file() !== current || backgroundFile !== current || !background || window.__trellisClosing) return; // NEW
+        const timing = background.getSaveStatus(), batch = current.__trellisSaveBatch, stage = current.__trellisSaveStage; // NEW
+        if (timing.state === 'saving' || current.__trellisCollaborativeSaving || batch?.capturedRevision != null && stage === 'saving garden') return; // NEW: finish displaying an active capture before counting down newer edits.
+        if (!current.isModified()) { setSaveStatus(current, ''); return; } // NEW
+        if (!coordinationAvailable()) { setSaveStatus(current, lastStatus?.editingAvailability?.reason || info?.editingAvailability?.reason || 'Waiting for saving to become available…'); return; } // NEW
+        const seconds = Math.ceil(timing.remainingMs / 1000); // NEW
+        let message; // NEW
+        if (timing.busy) message = 'Waiting for editing to finish…'; // NEW
+        else if (seconds > 0 && (!batch || batch.automatic)) message = 'Changes waiting to save · ' + seconds + ' ' + (seconds === 1 ? 'second' : 'seconds') + ' remaining'; // NEW
+        else if (stage === 'waiting for editing access') message = 'Waiting for editing access…'; // NEW
+        else if (stage === 'queued') message = 'Waiting for queued save…'; // NEW
+        else message = 'Preparing to save…'; // NEW
+        setSaveStatus(current, message); // NEW
+    } // NEW
     function objectFingerprint(key) { // NEW: encode only the affected cell; never serialize the whole document for a badge.
         if (key === '*') return ui.getFileData(); // NEW: genuinely project-wide structural changes require the complete envelope.
         const [page, id] = JSON.parse(key), currentPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
         let cell = page === currentPage ? graph.getModel().getCell?.(id) : null; // CHANGE
         if (!cell) { const target = ui.pages?.find(item => (item.getId?.() || item.node?.getAttribute('id') || '') === page); const visit = value => { if (!value) return null; if (String(value.id) === id) return value; for (const child of value.children || []) { const found = visit(child); if (found) return found; } return null; }; cell = visit(target?.root); } // NEW
         if (!cell) return null; // NEW
-        const encode = () => mxUtils.getXml(new mxCodec().encode(cell)); // NEW
+        const encode = () => { // CHANGE: a planting's pending baseline includes the actual content represented by its group badge.
+            const codec = new mxCodec(), values = []; // CHANGE
+            const visit = node => { values.push(mxUtils.getXml(codec.encode(node))); for (const child of node.children || []) visit(child); }; // CHANGE
+            if (cell.getAttribute?.('tiler_group') === '1' || cell.getAttribute?.('planting_id') || /(?:^|;)tiler_group=1(?:;|$)/.test(cell.style || '')) { visit(cell); return JSON.stringify(values); } // CHANGE
+            return mxUtils.getXml(codec.encode(cell)); // CHANGE
+        }; // CHANGE
         return graph.__trellisLocalView?.canonical ? graph.__trellisLocalView.canonical(encode) : encode(); // NEW
     } // NEW
     function resetObjectBaselines() { // NEW
@@ -85,18 +130,115 @@ Draw.loadPlugin(function (ui) {
         if (tracked && !dirtyObjects.size && !holdEditors?.pinnedTargets().length) file()?.setModified(false); // NEW: undo to the saved baseline must not launch a no-op content save.
         return [...dirtyObjects]; // NEW
     } // NEW
+    /** Forget presentation state without changing holds, dirty objects, or serialized content. */ // NEW
+    function resetGardenCreations() { // NEW
+        gardenCreations.clear(); creationMembers.clear(); creationDrafts.clear(); creationEditors.clear(); creationEdits = new WeakMap(); // NEW
+        creationDraftObserver?.disconnect(); creationDraftObserver = null; // NEW
+    } // NEW
+    /** Capture only the real factory's accepted native creation edit; selection cannot create a group. */ // NEW
+    function observeGardenCreation(edit, page) { // NEW
+        const source = graph.__trellisModuleCreation; // NEW
+        if (!creationEdits.has(edit) && source?.gardenId && source.actorUserId === context().userId && !edit.undone && !edit.redone) { // NEW
+            const gardenKey = JSON.stringify([page, String(source.gardenId)]); // NEW
+            if (!gardenCreations.has(gardenKey) && edit.changes.some(change => change.constructor?.name === 'mxChildChange' && String(change.child?.id) === String(source.gardenId) && change.parent && !change.previous)) { // NEW
+                const descriptor = { gardenKey, cells: source.cells.slice() }; // NEW
+                Object.defineProperty(edit, '__trellisGardenCreation', { value: descriptor, configurable: true }); // NEW
+                const group = { ...descriptor, garden: source.cells.find(cell => String(cell.id) === String(source.gardenId)), edit, revision: modelRevision, file: file(), generation: contextGeneration, userId: context().userId, sessionId: localSessionId, saved: false, manualEdits: new Map() }; // NEW
+                gardenCreations.set(gardenKey, group); creationEdits.set(edit, group); // NEW
+                for (const cell of group.cells) creationMembers.set(JSON.stringify([page, String(cell.id)]), { group, cell }); // NEW
+            } // NEW
+        } // NEW
+        for (const change of edit.changes) { // NEW
+            if (editContext?.kindOf(change) !== 'manual' || !editContext.isContentChange(change)) continue; // NEW
+            const cell = editContext.logicalCell(change.cell || change.child), member = creationMembers.get(JSON.stringify([page, String(cell?.id)])); // NEW
+            if (!member || member.group.edit === edit) continue; // NEW: creating the garden is not a later manual edit to its starter content.
+            const first = member.group.manualEdits.get(cell.id); // NEW
+            if (!first || first.undone || first.__trellisUsersRejected) member.group.manualEdits.set(cell.id, edit); // NEW: the first active manual edit suffices; do not retain every later Undo record.
+        } // NEW
+    } // NEW
+    /** Saved creation groups stop aggregating pending work; untouched initial holds still need no editing label. */ // NEW
+    function untouchedCreationMember(key, includeSaved = false) { // NEW
+        const member = creationMembers.get(key), group = member?.group; // NEW
+        if (!group || group.file !== file() || group.generation !== contextGeneration || group.userId !== context().userId || group.sessionId && group.sessionId !== localSessionId || group.edit.undone || group.edit.__trellisUsersRejected || !includeSaved && group.saved) return null; // NEW
+        if (!group.garden?.parent || !member.cell.parent || member.cell.getAttribute?.('trellis_starter_attribution_pending') !== '1') return null; // NEW
+        const [page, id] = JSON.parse(key), currentPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
+        if (page === currentPage && graph.getModel?.().getCell(id) !== member.cell) return null; // NEW: a remote/root replacement cannot inherit stale session presentation state.
+        const first = group.manualEdits.get(member.cell.id); // NEW
+        if (first && !first.undone && !first.__trellisUsersRejected) return null; // NEW
+        return member; // NEW
+    } // NEW
+    /** Project status only: every original key remains in dirtyObjects, save captures and recovery journals. */ // NEW
+    function creationPendingKeys(keys, state) { // NEW
+        if (state === 'failed' || state === 'conflict') return [...keys]; // NEW: errors retain their actual affected-object anchors.
+        return [...new Set([...keys].map(key => untouchedCreationMember(key)?.group.gardenKey || key))]; // NEW
+    } // NEW
+    function captureGardenCreations(capturedRevision) { // NEW
+        return [...gardenCreations.values()].filter(group => !group.saved && group.revision <= capturedRevision && !group.edit.undone && !group.edit.__trellisUsersRejected && group.garden?.parent); // NEW: record membership at capture, before typing or Undo can change the live graph.
+    } // NEW
+    function finishGardenCreations(captured, current, generation, userId) { // NEW
+        if (file() !== current || contextGeneration !== generation || context().userId !== userId) return; // NEW: late native completion cannot retire another author or document's new groups.
+        for (const group of captured) group.saved = true; // NEW: a successful captured creation is saved even if the user undid it while persistence was in flight.
+    } // NEW
+    /** Draft visibility follows its real editor lifetime, including cancellation before a model edit. */ // NEW
+    function pruneCreationDrafts() { // NEW
+        let changed = false; // NEW
+        for (const [key, drafts] of creationDrafts) { // NEW
+            for (const draft of drafts) { // NEW
+                let visible = draft.element.isConnected && (!draft.editor || creationEditors.has(draft.editor)) && (!draft.nativeCell || graph.cellEditor?.editingCell === draft.nativeCell); // NEW
+                for (let node = draft.element; visible && node; node = node.parentElement) if (node.hidden || node.style?.display === 'none') visible = false; // NEW
+                if (!visible) { drafts.delete(draft); changed = true; } // NEW
+            } // NEW
+            if (!drafts.size) creationDrafts.delete(key); // NEW
+        } // NEW
+        if (!creationDrafts.size) { creationDraftObserver?.disconnect(); creationDraftObserver = null; } // NEW
+        return changed; // NEW
+    } // NEW
+    /** Reuse trusted typing signals and existing editor target bindings; focus is never editing intent. */ // NEW
+    function rememberCreationDraft(field) { // NEW
+        const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '', binding = field.closest('[data-collaboration-object-id],[data-spacing-row-cell]'); // NEW
+        const nativeCell = graph.cellEditor?.textarea?.contains(field) ? graph.cellEditor.editingCell : null; // NEW
+        const registered = [...creationEditors].find(entry => { const element = typeof entry.config.element === 'function' ? entry.config.element() : entry.config.element; return element?.contains(field); }); // NEW
+        const element = registered ? typeof registered.config.element === 'function' ? registered.config.element() : registered.config.element : nativeCell ? graph.cellEditor.textarea : field.closest('[role="dialog"],.geDialog,.usl-scheduler-dialog,.trellis-object-details') || binding; // NEW
+        if (!element) return; // NEW
+        const id = nativeCell ? (editContext?.logicalCell(nativeCell) || nativeCell).id : binding?.dataset.collaborationObjectId || binding?.dataset.spacingRowCell; // NEW
+        const targets = registered ? typeof registered.config.targets === 'function' ? registered.config.targets() : registered.config.targets : id ? [JSON.stringify([page, String(id)])] : selectedObjectKeys(); // NEW
+        for (const key of targets || []) if (untouchedCreationMember(key, true)) { // NEW
+            const drafts = creationDrafts.get(key) || new Set(); // NEW
+            if (![...drafts].some(draft => draft.element === element)) drafts.add({ element, nativeCell, editor: registered }); // NEW
+            creationDrafts.set(key, drafts); // NEW
+        } // NEW
+        if (creationDrafts.size && !creationDraftObserver && window.MutationObserver) { // NEW
+            creationDraftObserver = new window.MutationObserver(() => { if (pruneCreationDrafts()) renderBadges(); }); // NEW
+            creationDraftObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'style'] }); // NEW
+        } // NEW
+        renderBadges(); // NEW
+    } // NEW
+    /** Preserve the registered editor API while removing cancelled draft intent immediately on disposal. */ // NEW
+    function registerSharingEditor(config) { // NEW
+        const editor = holdEditors?.register(config); if (!editor) return editor; // NEW
+        const entry = { config }, dispose = editor.dispose; creationEditors.add(entry); // NEW
+        editor.dispose = function () { creationEditors.delete(entry); try { return dispose.apply(this, arguments); } finally { pruneCreationDrafts(); renderBadges(); } }; // NEW
+        return editor; // NEW
+    } // NEW
     function startBackground() { // NEW
         const current = file(); if (!isCollaborative() || backgroundFile === current || !window.TrellisBackgroundSaving || !bridge.activityAction || !bridge.recoveryAction) return; // NEW
-        background?.dispose(); backgroundFile = current; resetObjectBaselines(); current.autosaveDelay = 5000; current.maxAutosaveDelay = Infinity; // NEW
+        clearSaveStatus(); background?.dispose(); backgroundFile = current; resetObjectBaselines(); current.autosaveDelay = window.TrellisBackgroundSaving.QUIET_PERIOD_MS; current.maxAutosaveDelay = Infinity; // CHANGE
         const generation = contextGeneration, shareId = info.shareId, expectedUserId = context().userId; // CHANGE
         background = window.TrellisBackgroundSaving.create({ // NEW
             pending: pendingObjects, viewing: selectedObjectKeys, revision: () => modelRevision, // NEW
+            busy: () => [...composingFields].some(field => field.isConnected && !field.closest('[data-trellis-frozen]')), // CHANGE
             dirty: () => !window.__trellisClosing && (current.isModified() || !!holdEditors?.pinnedTargets().length), // CHANGE
-            publish: async input => { if (file() !== current || generation !== contextGeneration) return; const result = await bridge.activityAction({ shareId, expectedUserId, ...input }); if (file() === current && generation === contextGeneration) adoptActivity(result.collaboration); }, // CHANGE
+            publish: async input => { if (file() !== current || generation !== contextGeneration) return; const result = await bridge.activityAction({ shareId, expectedUserId, ...input, pending: creationPendingKeys(input.pending, input.saveState) }); if (file() === current && generation === contextGeneration) adoptActivity(result.collaboration); }, // CHANGE: peers receive the same garden summary while private save tracking stays per object.
             capture: () => ({ kind: 'checkpoint', shareId, expectedUserId, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: holdEditors?.capture(['*']) || [] }), // CHANGE
-            checkpoint: input => bridge.recoveryAction(input), report: status, // NEW
+            checkpoint: input => bridge.recoveryAction({ ...input, ...(graph.__trellisProjectFormat === 2 ? { references: referenceDependencies() } : {}) }), report: status, // CHANGE: unsaved immutable definitions accompany private checkpoints without entering the content queue.
+            onStatusChange: () => { if (file() === current && generation === contextGeneration && expectedUserId === context().userId) { renderSaveStatus(current); renderBadges(); } }, // CHANGE: failure/conflict transitions immediately restore affected-object badge anchors.
         }); // NEW
-        current.isAutosaveNow = function () { this.__trellisAutomaticRequest = true; return true; }; // NEW: native autosave identifies its call synchronously; explicit Save remains an immediate flush.
+        current.isAutosaveNow = function () { const marker = {}; this.__trellisAutomaticRequest = marker; Promise.resolve().then(() => { if (this.__trellisAutomaticRequest === marker) delete this.__trellisAutomaticRequest; }); return true; }; // CHANGE: a native no-op autosave must not misclassify a later manual Save.
+        const previousChanged = current.fileChanged; // CHANGE
+        if (previousChanged && !current.__trellisQuietStatusHook) { current.__trellisQuietStatusHook = true; current.fileChanged = function () { // CHANGE: install once per file; native fileChanged announces Saving before its timer fires.
+            const key = this.savingStatusKey; if (file() === current && isCollaborative()) this.savingStatusKey = null; // CHANGE
+            try { return previousChanged.apply(this, arguments); } finally { this.savingStatusKey = key; if (file() === current && isCollaborative()) renderSaveStatus(current); } // CHANGE
+        }; } // CHANGE
         current.__trellisCheckpoint = () => backgroundFile === current ? background.checkpoint(true) : Promise.resolve(); // NEW
         current.__trellisDiscardCheckpoint = () => bridge.recoveryAction({ shareId, kind: 'discard', revision: modelRevision }); // NEW
         const previousDraft = current.saveDraft; // NEW
@@ -105,16 +247,61 @@ Draw.loadPlugin(function (ui) {
         current.addUnsavedStatus = function () { const result = previousUnsaved?.apply(this, arguments); if (backgroundFile === current && this.saveDraftThread != null) { window.clearTimeout(this.saveDraftThread); this.saveDraftThread = null; } return result; }; // NEW: the independent ten-second timer owns recovery scheduling for this file.
         bridge.recoveryAction({ shareId, kind: 'restore' }).then(result => { if (file() === current && generation === contextGeneration) { current.__trellisRecoveredDrafts = (result.drafts || []).filter(draft => draft.xml !== draft.baseXml || draft.editorDrafts?.length); if (current.__trellisRecoveredDrafts.length) status('A private local draft is available in Sharing → Recovery copies.'); } }).catch(error => status(error.message)); // NEW
         void background.publish(); // NEW
+        void retryPrivatePreservation(); // CHANGE: a failed loss draft stays author-scoped in memory across context switches until its author can retry.
     } // NEW
-    function adoptActivity(next) { // NEW
+    function adoptActivity(next, intentional = false) { // CHANGE
         if (!next || !isCollaborative()) return; // CHANGE
+        if (bridge.activityAction && !Number.isSafeInteger(next.observationRevision)) return false; // CHANGE: an unversioned durable-claim projection is never native activity ownership, including during startup.
+        if (next.actorUserId && next.actorUserId !== context().userId) return false; // CHANGE
+        if (next.sessionId && localSessionId && next.sessionId !== localSessionId) return false; // CHANGE
+        if (Number.isSafeInteger(next.observationRevision)) { if (next.observationRevision <= activityRevision) return false; activityRevision = next.observationRevision; } else if (activityRevision >= 0) return false; // CHANGE: unversioned/cached content cannot replace authoritative activity.
+        const previous = collaboration?.holds?.filter(hold => hold.sessionId === localSessionId) || []; // CHANGE
         const started = window.performance.now(); // NEW
         const people = users()?.listUsers?.() || [], named = value => ({ ...value, name: people.find(user => user.id === value.userId)?.name || value.name || value.userId }); // NEW
-        collaboration = { ...collaboration, ...next, holds: (next.holds || []).map(named), presence: (next.presence || []).map(named), pendingChanges: (next.pendingChanges || []).map(named) }; localSessionId = next.sessionId || localSessionId; // CHANGE
-        if (lastStatus) lastStatus.collaboration = collaboration; holdEditors?.update(collaboration.holds, localSessionId); announce(); // NEW
+        const { policy, policyHash, policyRevision, ...activity } = next; // CHANGE: permission snapshots have a separate adoption boundary and clock.
+        collaboration = { ...collaboration, ...activity, holds: (next.holds || []).map(named), presence: (next.presence || []).map(named), pendingChanges: (next.pendingChanges || []).map(named) }; localSessionId = next.sessionId || localSessionId; // CHANGE
+        if (lastStatus) lastStatus.collaboration = collaboration; holdEditors?.update(collaboration.holds, localSessionId); // CHANGE
+        const revoked = previous.filter(hold => collaboration.losses?.some(loss => loss.key === hold.key && loss.code === 'ACCESS_CHANGED')); // CHANGE
+        if (revoked.length) { const staged = stageLostDraft(revoked.map(hold => hold.key), 'Your access to this object changed.'); staged.preservation.catch(() => {}); } // CHANGE: capture the old author's private fields before policy revalidation can sign them out.
+        announce(); // CHANGE
         timings({ phase: 'activity render', durationMs: window.performance.now() - started }); // NEW
         if (window.TrellisSyncTiming && window.requestAnimationFrame) window.requestAnimationFrame(() => timings({ phase: 'activity paint', durationMs: window.performance.now() - started })); // NEW
+        if (explicitMode && !intentional) { const lost = previous.filter(hold => !releasingClaims.has(hold.claimId) && !collaboration.holds.some(item => item.claimId === hold.claimId && item.sessionId === localSessionId)); if (lost.length) void confirmLostHolds(lost); } return true; // CHANGE
     } // NEW
+    /** Refresh only activity authority, without renewing a lease or changing graph content. */ // CHANGE
+    async function refreshActivity() { // CHANGE
+        const current = file(), generation = contextGeneration, expectedUserId = context().userId; // CHANGE
+        const result = await bridge.activityAction({ shareId: info.shareId, expectedUserId, kind: 'snapshot' }); // CHANGE
+        if (file() !== current || generation !== contextGeneration || expectedUserId !== context().userId) throw new Error('The project or author changed during editing-status confirmation.'); // CHANGE
+        if (!result?.ok || !Number.isSafeInteger(result.collaboration?.observationRevision)) throw new Error('Editing status unconfirmed. Your draft has not been reverted.'); // CHANGE
+        adoptActivity(result.collaboration, true); return collaboration; // CHANGE
+    } // CHANGE
+    /** Native editors and countdowns must confirm the same claim generation before freezing a draft. */ // CHANGE
+    async function loseEditorHolds(targets, reason, claims) { // CHANGE
+        if (bridge.activityAction) { // CHANGE
+            const state = await refreshActivity(); // CHANGE
+            if (claims?.size && targets.every(key => state.holds.some(hold => hold.key === key && hold.claimId === claims.get(key) && hold.sessionId === localSessionId && (!Number.isFinite(hold.expiresAt) || hold.expiresAt > Date.now())))) return; // CHANGE
+            reason = state.losses?.find(loss => targets.includes(loss.key))?.reason || reason; // CHANGE
+        } // CHANGE
+        return recoverLostHolds(targets, reason); // CHANGE
+    } // CHANGE
+    /** Confirm absence independently of content saves; a failed status read cannot authorize rollback. */ // CHANGE
+    function confirmLostHolds(holds) { // CHANGE
+        const current = file(), generation = contextGeneration, expectedUserId = context().userId, shareId = info?.shareId; // CHANGE
+        const valid = () => file() === current && contextGeneration === generation && context().userId === expectedUserId && info?.shareId === shareId; // CHANGE
+        return Promise.all(holds.map(hold => { // CHANGE
+            if (lossChecks.has(hold.claimId)) return lossChecks.get(hold.claimId); // CHANGE
+            let confirmed = false; // CHANGE
+            const task = Promise.resolve().then(async () => { // CHANGE
+                if (bridge.activityAction) { const result = await bridge.activityAction({ shareId, expectedUserId, kind: 'snapshot' }); if (!valid()) return; if (!result?.ok || !result.collaboration || !Number.isSafeInteger(result.collaboration.observationRevision)) throw new Error('A fresh editing-status observation is unavailable.'); adoptActivity(result.collaboration, true); } // CHANGE
+                if (!valid() || releasingClaims.has(hold.claimId) || collaboration?.holds?.some(item => item.claimId === hold.claimId && item.sessionId === localSessionId)) return; // CHANGE
+                const reported = collaboration?.losses?.find(item => item.key === hold.key), competing = collaboration?.holds?.some(item => item.sessionId !== localSessionId && (item.key === hold.key || item.key === '*' || hold.key === '*')); // CHANGE
+                const reason = reported?.reason || (competing ? 'Another concurrent editor has priority for this object.' : hold.requested && hold.expiresAt <= Date.now() ? 'The requested editing handoff deadline ended.' : 'Your editing ownership ended or access to this object changed.'); // CHANGE
+                confirmed = true; await recoverLostHolds([hold.key], reason); // CHANGE
+            }).catch(error => { if (valid() && !confirmed) status('Editing status unconfirmed. Your draft has not been reverted. ' + error.message); }).finally(() => { if (lossChecks.get(hold.claimId) === task) lossChecks.delete(hold.claimId); }); // CHANGE
+            lossChecks.set(hold.claimId, task); return task; // CHANGE
+        })); // CHANGE
+    } // CHANGE
     function applyDraftResolution(resolution, current) { // NEW
         applyRemote(resolution.baseXml, current); resetObjectBaselines(); applyRemote(resolution.remainingXml, current); // NEW
         collaborationBaseline = resolution.baseXml; current.data = resolution.baseXml; observedXml = resolution.remainingXml; // NEW
@@ -157,18 +344,26 @@ Draw.loadPlugin(function (ui) {
     async function showPrivateDrafts() { // NEW
         const current = file(), generation = contextGeneration, result = await bridge.recoveryAction({ shareId: info.shareId, kind: 'restore' }); // NEW
         if (file() !== current || generation !== contextGeneration) return; // NEW
-        const panel = showDialog('Private recovery drafts', showSharingDialog), drafts = (result.drafts || []).filter(draft => draft.xml !== draft.baseXml || draft.editorDrafts?.length); // NEW
+        const pending = [...retainedLosses.values()].filter(record => !record.saved && record.input.shareId === info.shareId && record.input.expectedUserId === context().userId).map(record => ({ ...record.input, retained: true, unsavedPrivateCopy: true, at: record.at })); // CHANGE
+        const panel = showDialog('Private recovery drafts', showSharingDialog), drafts = [...(result.drafts || []), ...pending].filter(draft => draft.xml !== draft.baseXml || draft.editorDrafts?.length); // CHANGE
         if (!drafts.length) note(panel, 'No pending private drafts.'); // NEW
         for (const draft of drafts) { // NEW
             const section = details(panel, 'Draft saved ' + new Date(draft.at).toLocaleString()); // NEW
-            button('Recover this draft', async () => { // NEW
+            if (!draft.retained) button('Recover this draft', async () => { // CHANGE: a loss draft is review-only and must never resume its old editing generation. // NEW
                 if (file() !== current || generation !== contextGeneration) throw new Error('The project changed.'); // NEW
-                await background?.checkpoint(true); applyRemote(draft.baseXml, current); resetObjectBaselines(); applyRemote(draft.xml, current); // NEW
+                await background?.checkpoint(true); for (const [hash, store] of Object.entries(draft.references || {})) await window.TrellisReferenceCore.registerSnapshotAsync(store, hash); // CHANGE
+                if (file() !== current || generation !== contextGeneration) throw new Error('The project changed during recovery verification.'); // NEW
+                applyRemote(draft.baseXml, current); resetObjectBaselines(); applyRemote(draft.xml, current); // CHANGE
                 collaborationBaseline = draft.baseXml; current.data = draft.baseXml; observedXml = draft.xml; modelRevision = Math.max(modelRevision, draft.revision) + 1; // NEW
                 for (const key of savedObjects.keys()) dirtyObjects.add(key); // NEW
                 const page = ui.currentPage?.getId?.() || ''; for (const id of Object.keys(graph.getModel().cells || {})) dirtyObjects.add(JSON.stringify([page, id])); // NEW
                 current.setModified(true); current.__trellisConflict = true; background?.state('conflict'); closeDialog(); await showDraftConflicts(); // NEW
             }, section, 'open'); // NEW
+            if (draft.retained) { // CHANGE
+                note(section, draft.reason + ' This retained draft is available for review, copying, and export only.'); // CHANGE
+                if (draft.unsavedPrivateCopy) { note(section, 'This copy is still only in memory because private preservation failed. Copy or export it before closing Trellis.'); button('Retry preservation', async () => { await retryPrivatePreservation(); await showPrivateDrafts(); }, section); } // CHANGE
+                button('Export draft', () => { const link = document.createElement('a'), url = URL.createObjectURL(new window.Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' })); link.href = url; link.download = 'Trellis-retained-draft.json'; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0); }, section, 'open'); // CHANGE
+            } // CHANGE
             if (draft.editorDrafts?.length) { const data = document.createElement('textarea'); data.readOnly = true; data.setAttribute('aria-label', 'Recovered editor entries'); data.value = JSON.stringify(draft.editorDrafts, null, 2); data.style.cssText = 'width:100%;height:160px;'; section.appendChild(data); note(section, 'Unapplied editor entries are preserved here for inspection and copying.'); } // NEW
         } // NEW
     } // NEW
@@ -177,8 +372,10 @@ Draw.loadPlugin(function (ui) {
         if (updateDialog) updateDialog(); renderBadges(); // NEW: update status only; never rebuild active forms.
     }
     /** Progress belongs to one file and must never block a save if an observer fails. */ // NEW
-    function saveProgress(current, stage) { // NEW
+    function saveProgress(current, stage, operation) { // CHANGE
+        if (operation) operation.stage = stage; // CHANGE: progress remains associated with the capture that owns the work.
         current.__trellisSaveStage = stage; // NEW
+        renderSaveStatus(current); // NEW: access and queue transitions need not wait for the next heartbeat.
         for (const listener of current.__trellisSaveObservers || []) { try { listener(stage); } catch (_) {} } // NEW
     } // NEW
     async function saveCurrent(options = {}) { // CHANGE
@@ -188,7 +385,7 @@ Draw.loadPlugin(function (ui) {
         if (observer) listeners.add(observer); // NEW
         try { // NEW
             if (observer) { try { observer(current.__trellisSaveStage || 'queued'); } catch (_) {} } // NEW
-            await new Promise((resolve, reject) => current.save(false, resolve, error => reject(new Error(error && error.message || String(error))), undefined, undefined, () => reject(new Error('Save cancelled. The invitation has not been prepared.')))); // CHANGE
+            await new Promise((resolve, reject) => { if (options.automatic) current.__trellisAutomaticRequest = true; current.save(false, resolve, error => reject(new Error(error && error.message || String(error))), undefined, undefined, () => reject(new Error('Save cancelled. The invitation has not been prepared.'))); }); // CHANGE: automatic release uses the same quiet queue; explicit actions still flush it.
         } finally { if (observer) listeners.delete(observer); } // NEW
     } // CHANGE
     async function synchronizeContext() {
@@ -239,7 +436,7 @@ Draw.loadPlugin(function (ui) {
             if (!entry) { info = null; lastStatus = null; classifiedFile = openedFile; settleDocumentReady(); announce(); return; } // CHANGE
             const nextInfo = await bridge.getSyncthingShareInfo({ diagramPath: current.diagramPath }); // CHANGE
             if (file() !== openedFile || generation !== contextGeneration) return; // CHANGE
-            const assetContextChanged = info?.assetBaseUrl !== nextInfo.assetBaseUrl; info = nextInfo; window.TrellisContentPolicy?.setAssetBase(info?.assetBaseUrl); // CHANGE
+            const assetContextChanged = info?.assetBaseUrl !== nextInfo.assetBaseUrl; info = nextInfo; graph.__trellisProjectFormat = info.projectFormat || (info.protocolVersion === 5 ? 2 : 1); window.TrellisContentPolicy?.setAssetBase(info?.assetBaseUrl); // CHANGE
             if (assetContextChanged) refreshManagedImages(); // CHANGE: unchanged context must not refresh the complete graph.
             lastStatus = entry; classifiedFile = openedFile; // CHANGE
             assetAvailability = entry.state; // CHANGE
@@ -247,7 +444,7 @@ Draw.loadPlugin(function (ui) {
             if (isCollaborative() && (collaborationBaseline == null || explicitMode && viewIdentity !== current.userId) && current.userId) { // CHANGE: each authenticated user restores their remembered objects.
                 const opened = file(); collaborationBaseline = opened.data; observedXml = collaborationBaseline; // NEW
                 const baseline = await coordinate({ kind: explicitMode ? 'open-view' : 'get' }); // CHANGE
-                if (!baseline || file() !== opened || generation !== contextGeneration) return; collaborationBaseline = baseline.xml; collaboration = baseline.collaboration; // CHANGE
+                if (!baseline || file() !== opened || generation !== contextGeneration) return; collaborationBaseline = baseline.xml; adoptActivity(baseline.collaboration); // CHANGE: initialization cannot replace a newer independent ownership observation.
                 if (explicitMode) { // NEW
                     viewIdentity = current.userId;
                     if (baseline.xml !== opened.data && !identityJoinInProgress) applyRemote(baseline.xml, opened); // CHANGE: retain the just-proven account mutation until its explicit claim and save.
@@ -335,7 +532,7 @@ Draw.loadPlugin(function (ui) {
         if (current.fileObject && current.fileObject.path) await saveCurrent();
         else current.data = ui.getFileData();
         await synchronizeContext();
-        result = await bridge.setupCanvas({ ...context(), protocolVersion: 4, filename: current.getTitle && current.getTitle() || 'Garden.drawio', xml: current.getData() });
+        result = await bridge.setupCanvas({ ...context(), protocolVersion: protocol.newGarden, filename: current.getTitle && current.getTitle() || 'Garden.drawio', xml: current.getData() }); // CHANGE: creating managed storage chooses format 2; opening existing registrations preserves their format.
         await adoptCanvas(result);
         return result;
     }
@@ -414,12 +611,12 @@ Draw.loadPlugin(function (ui) {
         current.__trellisSharingHooks = true;
         const originalSave = current.save;
         const originalAutosave = current.isAutosave, originalOptional = current.isAutosaveOptional; // NEW
-        current.isAutosave = function () { return file() === current && isCollaborative() ? !!current.fileObject && !lastStatus?.pending && !['revoked', 'awaitingApproval'].includes(lastStatus?.state) : originalAutosave ? originalAutosave.apply(this, arguments) : false; }; // NEW
+        current.isAutosave = function () { return file() === current && isCollaborative() ? !!current.fileObject && coordinationAvailable() && !lastStatus?.pending && !['revoked', 'awaitingApproval'].includes(lastStatus?.state) : originalAutosave ? originalAutosave.apply(this, arguments) : false; }; // NEW
         current.isAutosaveOptional = function () { return file() === current && isCollaborative() ? false : originalOptional ? originalOptional.apply(this, arguments) : true; }; // NEW
         current.save = function () {
             const automatic = !!current.__trellisAutomaticRequest; delete current.__trellisAutomaticRequest; // NEW
-            if (current.__trellisNamingMove) { const args = arguments; current.__trellisNamingMove.then(() => current.save.apply(current, args)); return; } // NEW
-            if (file() === current && refreshing) { const args = arguments; refreshFinished.then(() => current.save.apply(current, args)); return; } // NEW: never fall back to a native write while managed status is unresolved.
+            if (current.__trellisNamingMove) { const args = arguments; current.__trellisNamingMove.then(() => { current.__trellisAutomaticRequest = automatic; current.save.apply(current, args); }); return; } // CHANGE: retain request intent through native naming waits.
+            if (file() === current && refreshing) { const args = arguments; refreshFinished.then(() => { current.__trellisAutomaticRequest = automatic; current.save.apply(current, args); }); return; } // CHANGE: retain request intent while managed status is unresolved.
             if (file() === current && isCollaborative()) { saveCollaborative(current, arguments[1], arguments[2], automatic); return; } // CHANGE
             return originalSave.apply(this, arguments);
         };
@@ -486,13 +683,14 @@ Draw.loadPlugin(function (ui) {
     let collaborationBaseline = null, observedXml = null, localSessionId = null, acquiring = false, editingForm = null; // NEW
     let collaboration = null, collaborationSave = Promise.resolve(), contextGeneration = 0; // NEW
     let recoveryQueue = Promise.resolve(), recoveryFailure = null, retryRecovery = null, saveFence = Promise.resolve(); const unsavedActions = [], recoveringTargets = new Map(); // CHANGE
-    const isCollaborative = () => !!(info && info.protocolVersion === 4 && bridge.collaborationAction); // NEW
-    const holdEditors = window.TrellisEditingHolds?.create(ui, { isCollaborative, status, claim: targets => coordinate({ kind: 'claim', targets }), release: releaseHolds, lose: recoverLostHolds }); // NEW
+    const coordinationAvailable = () => info?.editingAvailability?.available !== false && lastStatus?.editingAvailability?.available !== false; // NEW: connection loss alone does not disable the local coordinator.
+    const isCollaborative = () => !!(info && protocol.supportedGardens.includes(info.protocolVersion) && bridge.collaborationAction); // NEW
+    const holdEditors = window.TrellisEditingHolds?.create(ui, { isCollaborative, status, logicalTarget: logicalObjectKey, claim: targets => coordinate({ kind: 'claim', targets }), release: (targets, options = { automatic: true }) => releaseHolds(targets, options), lose: loseEditorHolds, refresh: bridge.activityAction ? refreshActivity : undefined, targetState: objectFingerprint, validate: targets => { if (targets.some(key => { try { return isPendingCell(graph.getModel().getCell(JSON.parse(key)[1])); } catch (_) { return false; } })) throw new Error('Refresh this object before starting another edit.'); } }); // CHANGE: normalize all registered form targets before their claim/recovery lifecycle begins.
     function describeStatus(state = lastStatus) { // NEW
         if (info?.localOnly || state?.localOnly) return 'Local only · Sharing off'; // CHANGE
         if (!state) return 'Not shared'; // NEW
         if (state.pending) return 'Awaiting approval'; // NEW
-        if (info && info.protocolVersion === 4 && ['upToDate', 'syncing', 'unavailable'].includes(state.state) && ((state.connectedPeers ?? state.connectedCollaborators) === 0 || state.state === 'unavailable')) return 'Working locally'; // NEW: local work must not conceal pause, revocation, or approval states.
+        if (info && protocol.supportedGardens.includes(info.protocolVersion) && ['upToDate', 'syncing', 'unavailable'].includes(state.state) && ((state.connectedPeers ?? state.connectedCollaborators) === 0 || state.state === 'unavailable')) return 'Working locally'; // NEW: local work must not conceal pause, revocation, or approval states.
         return ({ upToDate: 'Up to date', syncing: 'Syncing', paused: 'Paused', awaitingApproval: 'Awaiting approval', revoked: 'Access removed', unavailable: 'Unavailable' })[state.state] || 'Checking connection'; // CHANGE
     } // NEW
     function collaborationSummary() { // NEW
@@ -509,9 +707,9 @@ Draw.loadPlugin(function (ui) {
         else { const color = { open: '#2563eb', add: '#188038', close: '#b91c1c', danger: '#b91c1c', neutral: '#6b7280' }[variant]; element.style.cssText = 'padding:6px 10px;border:1px solid ' + color + ';border-radius:6px;background:#fff;color:' + color + ';cursor:pointer;'; } // NEW
         element.style.margin = '4px 6px 4px 0'; // NEW
         element.addEventListener('click', async () => { // CHANGE
-            if (element.disabled) return; const panel = element.closest('[role="dialog"]'); element.disabled = true; // NEW
+            if (element.disabled) return; const panel = element.closest('[role="dialog"]'), restoreActivityFocus = element.hasAttribute('data-activity-action') && document.activeElement === element; element.disabled = true; // CHANGE: native Chromium drops focus when an activity control becomes disabled.
             try { await handler(); } catch (err) { const target = panel && panel.querySelector('[data-status]'); if (target && panel.isConnected) { target.textContent = err.message; target.setAttribute('role', 'alert'); } else status(err.message); } // CHANGE
-            finally { if (element.isConnected && element.dataset.keepDisabled !== 'true') element.disabled = false; } // NEW
+            finally { if (element.isConnected && element.dataset.keepDisabled !== 'true') element.disabled = false; if (restoreActivityFocus && panel?.isConnected && document.activeElement === document.body) (element.isConnected && !element.hidden && !element.disabled ? element : panel.querySelector('[data-activity-close]'))?.focus(); } // CHANGE: restore activity focus after completion unless the user moved it elsewhere.
         }); // CHANGE
         parent.appendChild(element); return element; // CHANGE
     } // CHANGE
@@ -527,7 +725,7 @@ Draw.loadPlugin(function (ui) {
         panel.style.cssText = 'width:640px;max-width:100%;max-height:calc(100vh - 32px);overflow:auto;background:#fff;color:#111827;border:1px solid #d1d5db;border-radius:8px;padding:20px;font:13px Arial;box-sizing:border-box;box-shadow:0 12px 40px #0003;'; // CHANGE
         const header = document.createElement('div'); header.style.cssText = 'display:flex;justify-content:space-between;gap:12px;align-items:center;'; // CHANGE
         const heading = document.createElement('h2'); heading.textContent = title; heading.style.cssText = 'font-size:19px;margin:0;flex:1;'; // CHANGE
-        if (back) button('Back', back, header, 'neutral'); header.appendChild(heading); button('Close', closeDialog, header, 'close'); panel.appendChild(header); // CHANGE
+        if (back) button('Back', back, header, 'neutral'); header.appendChild(heading); button('Close', closeDialog, header, 'close').dataset.activityClose = ''; panel.appendChild(header); // CHANGE: a disappearing activity action can return keyboard focus to Close.
         const message = document.createElement('p'); message.dataset.status = ''; message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite'); panel.appendChild(message); // CHANGE
         dialog.appendChild(panel); document.body.appendChild(dialog); // CHANGE
         for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'click', 'dblclick', 'keypress', 'keyup']) dialog.addEventListener(type, e => e.stopPropagation()); // NEW
@@ -616,15 +814,14 @@ Draw.loadPlugin(function (ui) {
         let copies = null, recoveryList = null; // NEW: refresh recovery entries without replacing their controls.
         const health = document.createElement('div'); health.style.cssText = 'padding:14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;line-height:1.6;'; health.setAttribute('aria-live', 'polite'); panel.appendChild(health); // NEW
         const people = document.createElement('div'); panel.appendChild(people); // NEW
+        const activityRows = document.createElement('div'); panel.appendChild(activityRows); // CHANGE: activity controls survive overview updates and share object-dialog descriptions.
         const update = () => { // NEW
             health.textContent = describeStatus() + '. ' + (info?.localOnly ? info.reason : info?.managed ? collaborationSummary() : 'This canvas is not shared. Use Share on the garden toolbar to invite someone.') + (lastStatus?.reason ? ' ' + lastStatus.reason : '') + (collaboration?.recoveries?.length ? ' Rejected or recovered edits are available below.' : '') + (collaboration?.pending ? ' Waiting for missing change records.' : ''); // CHANGE
             if (recoveryList) { recoveryList.replaceChildren(); for (const copy of collaboration?.recoveries || []) { note(recoveryList, copy.reason || 'Recovery copy'); if (copy.editorDataPath) button('Open editor data', () => showRecoveredEditorData(copy), recoveryList); // CHANGE
                  button('Open copy', () => { closeDialog(); if (ui.loadArgs) ui.loadArgs({ args: [copy.recoveryPath] }); }, recoveryList); note(recoveryList, copy.recoveryPath); } if (!collaboration?.recoveries?.length) note(recoveryList, localRecovery ? localRecovery.recoveryPath : 'No recovered edits.'); } // NEW
             people.replaceChildren(); note(people, lastStatus?.connectedCollaborators == null ? 'Collaborator connection status is unavailable.' : lastStatus.connectedCollaborators ? lastStatus.connectedCollaborators + ' connected collaborator' + (lastStatus.connectedCollaborators === 1 ? '' : 's') : 'No other collaborators are connected.'); // NEW
             for (const person of lastStatus?.collaborators || []) if (!collaboration?.holds.some(h => h.userId === person.id)) note(people, person.name || 'Unknown user'); // NEW
-            for (const viewer of collaboration?.presence || []) for (const key of viewer.targets || []) if (!collaboration?.holds.some(h => h.key === key && h.sessionId === viewer.sessionId && h.deviceId === viewer.deviceId)) note(people, (viewer.name || viewer.userId) + (viewer.online === false ? ' · offline · status unconfirmed for ' : ' is viewing ') + objectLabel(key)); // CHANGE: last-known activity cannot imply a live viewer in the overview.
-            for (const turn of collaboration?.reservations || []) note(people, (turn.sessionId === localSessionId ? 'Your next editing turn' : turn.name + ' has the next editing turn') + ' for ' + objectLabel(turn.key) + '. Begin within ' + Math.max(0, Math.ceil((turn.until - Date.now()) / 1000)) + ' seconds.'); // NEW
-            for (const hold of collaboration?.holds || lastStatus?.collaboration?.holds || []) { const row = document.createElement('div'); row.style.margin = '8px 0'; note(row, hold.name + ' is editing ' + objectLabel(hold.key)); if (hold.sessionId === localSessionId) button('Release now', () => holdEditors ? holdEditors.handoff([hold.key]) : releaseHolds([hold.key]), row, 'neutral'); else button('Request release', () => coordinate({ kind: 'request', targets: [hold.key] }), row); if (hold.expiresAt) note(row, (hold.requested ? 'Release requested. ' : '') + 'Reservation expires in ' + Math.max(0, Math.ceil((hold.expiresAt - Date.now()) / 1000)) + ' seconds without a fresh heartbeat.'); people.appendChild(row); } // NEW
+            renderActivityRows(activityRows, [...objectActivity().values()].flat(), true); // CHANGE: pending-only and uncertain sessions have the same explanations/actions as object badges.
         }; updateDialog = update; update(); // NEW
         button('Join another canvas', () => showJoinDialog(showSharingDialog), panel); // NEW
         if (!info?.managed) return; // NEW
@@ -659,40 +856,82 @@ Draw.loadPlugin(function (ui) {
         if (reported) return reported; // NEW
         try { const [page, id] = JSON.parse(key), currentPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '', cell = page === currentPage && graph.getModel?.().getCell(id); return cell && (cell.getAttribute?.('label') || cell.getAttribute?.('value') || graph.convertValueToString?.(cell)) || id + (page === currentPage ? ' (deleted or unavailable)' : ' (other page)'); } catch (_) { return 'unavailable object'; } // NEW
     } // NEW
-    function selectedObjectKeys() { // NEW
-        const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; return (graph.getSelectionCells?.() || []).map(cell => JSON.stringify([pageId, cell.id])); // NEW
+    /** Resolve activity for any loaded page without changing its signed source key. */ // CHANGE
+    function logicalObjectKey(key) { // CHANGE
+        if (key === '*') return key; // CHANGE
+        const [page, id] = JSON.parse(key), currentPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+        let cell = page === currentPage ? graph.getModel?.().getCell?.(id) : null; // CHANGE
+        if (!cell && page !== currentPage) { // CHANGE
+            const visit = node => { if (!node || String(node.id) === id) return node; for (const child of node.children || []) { const found = visit(child); if (found) return found; } return null; }; // CHANGE
+            cell = visit(ui.pages?.find(item => (item.getId?.() || item.node?.getAttribute('id') || '') === page)?.root); // CHANGE
+        } // CHANGE
+        if (!cell) return key; // CHANGE: unknown or deleted objects remain discoverable under their original identity.
+        if (editContext) return JSON.stringify([page, String(editContext.logicalCell(cell).id)]); // CHANGE
+        let logical = cell; const visited = new Set(); // CHANGE: older shells retain the same planting markers.
+        for (let cursor = cell; cursor && !visited.has(cursor); cursor = graph.getModel?.().getParent?.(cursor) || cursor.parent) { // CHANGE
+            visited.add(cursor); // CHANGE
+            if (cursor.getAttribute?.('tiler_group') === '1' || cursor.getAttribute?.('planting_id') || /(?:^|;)tiler_group=1(?:;|$)/.test(cursor.style || '')) logical = cursor; // CHANGE
+        } // CHANGE
+        return JSON.stringify([page, String(logical.id)]); // CHANGE
+    } // CHANGE
+    function selectedObjectKeys() { // CHANGE
+        const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; return [...new Set((graph.getSelectionCells?.() || []).map(cell => logicalObjectKey(JSON.stringify([pageId, String(cell.id)]))))]; // CHANGE
+    } // CHANGE
+    /** Only planting selection retains a completed native hold; other objects keep their existing lifecycle. */ // CHANGE
+    function selectedPlanting(key) { // CHANGE
+        if (!selectedObjectKeys().includes(logicalObjectKey(key)) || key === '*') return false; // CHANGE
+        const [page, id] = JSON.parse(logicalObjectKey(key)), currentPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+        const cell = page === currentPage && graph.getModel?.().getCell?.(id); // CHANGE
+        return !!cell && (cell.getAttribute?.('tiler_group') === '1' || !!cell.getAttribute?.('planting_id') || /(?:^|;)tiler_group=1(?:;|$)/.test(cell.style || '')); // CHANGE
     } // NEW
     async function coordinate(input) { // NEW
-        if (!isCollaborative()) return null; const current = file(), shareId = info.shareId, generation = contextGeneration; // CHANGE
-        if (bridge.activityAction && ['claim', 'view', 'request', 'release'].includes(input.kind)) { const { baseXml, xml, ...activity } = input; const result = input.kind === 'claim' && input.xml && !input.targets ? await bridge.collaborationAction({ shareId, ...input }) : await bridge.activityAction({ shareId, ...activity }); if (file() === current && generation === contextGeneration) adoptActivity(result.collaboration); return result; } // CHANGE: XML claims use the independent native activity adapter while retaining the existing capture and rejection path.
+        if (!isCollaborative()) return null; const current = file(), shareId = info.shareId, generation = contextGeneration, expectedUserId = context().userId; // CHANGE
+        if (bridge.activityAction && ['claim', 'view', 'request', 'release'].includes(input.kind)) { // CHANGE
+            const { baseXml, xml, ...activity } = input; // CHANGE
+            if (input.kind === 'release' && activity.claimIds === undefined) activity.claimIds = [...(collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId), ...(collaboration?.losses || [])].filter(hold => !input.targets || input.targets.includes(hold.key)).map(hold => hold.claimId); // CHANGE: recovery and ordinary release name only their observed generation.
+            const releasing = input.kind === 'release' ? (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && (!input.targets || input.targets.includes(hold.key)) && !releasingClaims.has(hold.claimId)).map(hold => hold.claimId) : []; // CHANGE
+            releasing.forEach(id => releasingClaims.add(id)); // CHANGE
+            try { // CHANGE
+                const result = input.kind === 'claim' && input.xml && !input.targets ? await bridge.collaborationAction({ shareId, ...input, ...(graph.__trellisProjectFormat === 2 ? { references: referenceDependencies() } : {}) }) : await bridge.activityAction({ shareId, expectedUserId, ...activity }); // CHANGE: native authority verifies new definition dependencies before granting a content-derived claim.
+                if (file() !== current || generation !== contextGeneration || expectedUserId !== context().userId) return null; const adopted = adoptActivity(result.collaboration); // CHANGE
+                if (input.kind === 'claim' && result.ok === false && adopted === false && input.targets?.length && input.targets.every(key => collaboration.holds.some(hold => hold.sessionId === localSessionId && (hold.key === key || hold.key === '*') && (!Number.isFinite(hold.expiresAt) || hold.expiresAt > Date.now())))) return { ...result, ok: true, collaboration }; // CHANGE: a stale refusal cannot reject a hold already confirmed by a newer observation.
+                return result; // CHANGE: releasing one object must not hide a confirmed loss on a different object.
+            } finally { releasing.forEach(id => releasingClaims.delete(id)); } // CHANGE
+        } // CHANGE
         await synchronizeContext(); // CHANGE
         if (file() !== current || info?.shareId !== shareId || generation !== contextGeneration) throw new Error('The project changed before the collaboration action.'); // NEW
-        const result = await bridge.collaborationAction({ shareId, explicitRefresh: explicitMode, ...input }); // CHANGE
-        if (file() !== current || info?.shareId !== shareId || generation !== contextGeneration) return null; // CHANGE: ignore delayed replies after a document switch.
-        const previousHolds = collaboration?.holds?.filter(hold => hold.sessionId === localSessionId) || []; // NEW
-        adoptActivity(result.collaboration); // CHANGE: content completion must retain the independent snapshot's resolved display names.
-        adoptPolicy(collaboration); // NEW
-        if (explicitMode) { // NEW
-            if (result.ok === false && input.kind === 'claim' && !holdEditors?.pinnedTargets().some(key => (input.targets || formTargets).includes(key))) rejectDialogs(input.targets || formTargets, result.reason); // CHANGE: registered drafts must be preserved before their editor closes.
-            const lost = previousHolds.filter(hold => !releasingClaims.has(hold.claimId) && !collaboration?.holds?.some(next => next.claimId === hold.claimId && next.sessionId === localSessionId)); // CHANGE
-            if (!['release', 'recover-holds'].includes(input.kind) && !(input.kind === 'save' && result.code === 'HOLD_LOST') && lost.length) { // CHANGE
-                const recovery = recoverLostHolds(lost.map(hold => hold.key), 'Your editing hold expired, access changed, or another concurrent editor has priority.'); // NEW
-                if (input.kind === 'save') recovery.catch(() => {}); else await recovery; // NEW: an accepted save must settle before background expiry can roll it back.
-            } // NEW
-        } // NEW
-        holdEditors?.update(collaboration?.holds, localSessionId); // NEW
+        const references = graph.__trellisProjectFormat === 2 && ['save', 'claim', 'portable-export'].includes(input.kind) ? referenceDependencies() : undefined; // CHANGE: immutable definitions cross IPC only when introduced by a local edit.
+        let contentInput = input; // CHANGE
+        if (graph.__trellisProjectFormat === 2 && input.kind === 'save') { if (!window.TrellisObjectTransactions) await new Promise(resolve => mxscript('js/trellis-object-transactions.js', resolve)); const transport = graph.__trellisObjectTransactions || (graph.__trellisObjectTransactions = window.TrellisObjectTransactions.create()), transaction = transport.transaction(input.baseXml, input.xml); if (transaction) { const { baseXml, xml, ...rest } = input; contentInput = { ...rest, transaction }; } } // CHANGE: routine save IPC carries changed objects, not the full document twice.
+        const result = await bridge.collaborationAction({ shareId, explicitRefresh: explicitMode, ...contentInput, ...(references ? { references } : {}) }); // CHANGE
+        if (file() !== current || info?.shareId !== shareId || generation !== contextGeneration || expectedUserId !== context().userId) return null; // CHANGE: replies cannot install another actor's policy.
+        for (const [hash, store] of Object.entries(result.collaboration?.references?.snapshots || {})) { if (!window.TrellisReferenceCore) await new Promise(resolve => mxscript('js/trellis-reference-core.js', resolve)); await window.TrellisReferenceCore.registerSnapshotAsync(store, hash); } // CHANGE: immutable cache publication cannot alter document authority.
+        if (file() !== current || info?.shareId !== shareId || generation !== contextGeneration || expectedUserId !== context().userId) return null; // NEW: asynchronous verification cannot install another document's policy or dependency availability.
+        for (const hash of Object.keys(result.collaboration?.references?.snapshots || {})) stagedReferenceDigests.add(hash); if (result.ok && references) for (const hash of Object.keys(references)) stagedReferenceDigests.add(hash); graph.__trellisReferenceUnavailable = result.collaboration?.references?.unavailable || {}; // CHANGE: install definitions before policy or decoded objects can be queried.
+        adoptActivity(result.collaboration, ['release', 'recover-holds'].includes(input.kind) || input.kind === 'save' && result.code === 'HOLD_LOST'); // CHANGE: activity adoption alone determines loss; durable claims are separate.
+        adoptPolicy(result.collaboration); // CHANGE: a newer heartbeat must not discard the accepted save's permission policy.
+        if (explicitMode && result.ok === false && input.kind === 'claim') await recoverLostHolds(input.targets || formTargets, result.reason); // CHANGE
         announce(); return result; // CHANGE
+    } // NEW
+    /** Stage only immutable definitions referenced by this document; the native owner verifies every digest. */ // NEW
+    const stagedReferenceDigests = new Set(); ui.editor.addListener?.('fileLoaded', () => { stagedReferenceDigests.clear(); graph.__trellisObjectTransactions?.reset(); }); // CHANGE
+    function referenceDependencies() { // NEW
+        const C = window.TrellisReferenceCore, result = {}; if (!C) return result; // NEW
+        const visit = cell => { if (!cell) return; const raw = cell.getAttribute?.(C.ATTR); if (raw) { const pointer = JSON.parse(raw); if (C.externalReference(pointer) && !stagedReferenceDigests.has(pointer.digest)) { const store = C.cachedSnapshot(pointer.digest); if (store) result[pointer.digest] = store; } } for (const child of cell.children || []) visit(child); }; // CHANGE: ordinary save payloads never retransmit definitions already staged in this project.
+        if (ui.pages?.length) for (const page of ui.pages) visit(page.root); else visit(graph.getModel?.().getRoot?.()); return result; // NEW
     } // NEW
     /** Serialize recovery with itself; never wait for a save that may already be awaiting this reply. */ // NEW
     function recoverLostHolds(targets, reason, insideSave = false) { // CHANGE
-        if (!file()?.isModified() && !unsavedActions.length && !(holdEditors?.capture(targets).length)) { rejectDialogs(targets, reason); return Promise.resolve(); } // NEW: clean editors need no asynchronous disk operation.
+        if (!targets?.length) return Promise.resolve(); const staged = stageLostDraft(targets, reason); // CHANGE: freeze, capture and start private persistence before waiting for any content save.
         const current = file(), generation = contextGeneration, pendingSave = insideSave ? Promise.resolve() : saveFence; targets.forEach(key => recoveringTargets.set(key, (recoveringTargets.get(key) || 0) + 1)); // CHANGE
+        const expectedUserId = context().userId, lossKey = staged.lossKey; // CHANGE
         const operation = async () => { // NEW
-            await background?.checkpoint(true); // NEW: preserve a private, author-scoped checkpoint before the existing rejection/rollback path runs.
+            await staged.preservation; // CHANGE: private preservation is independent of content durability and its queue.
             await pendingSave; // NEW: accepted actions leave the rollback set before an asynchronous status loss is processed.
-            if (file() !== current || generation !== contextGeneration) return; // NEW
+            if (file() !== current || generation !== contextGeneration || context().userId !== expectedUserId) return; // CHANGE
             const editors = holdEditors?.capture(targets) || [], captured = ui.getFileData(), baseline = collaborationBaseline || current.data; // NEW
-            if (current.isModified() || unsavedActions.length || editors.length) { // CHANGE
+            const extraEditors = [...frozenForms.values()].map(item => item.draft).filter(draft => draft.targets.some(key => targets.includes(key) || targets.includes('*') || key === '*')); // CHANGE
+            if (current.isModified() || unsavedActions.length || editors.length || extraEditors.length) { // CHANGE
                 const result = await coordinate({ kind: 'recover-holds', baseXml: baseline, xml: captured, targets, actions: unsavedActions.map(action => action.keys), editorDrafts: editors, reason }); // NEW
                 if (!result || file() !== current || generation !== contextGeneration) return; // NEW
                 if (!result.ok || typeof result.xml !== 'string') throw new Error(result.reason || 'The recovery copy or draft rollback could not be completed.'); // NEW
@@ -708,9 +947,9 @@ Draw.loadPlugin(function (ui) {
                 for (const action of removed) { action.edit.__trellisUsersRejected = true; unsavedActions.splice(unsavedActions.indexOf(action), 1); } // NEW
                 localRecovery = result; status(reason + ' Affected unsaved actions were reverted. Recovery copy: ' + result.recoveryPath); // NEW
             } // NEW
-            holdEditors?.discard(targets); rejectDialogs(targets, reason); recoveryFailure = null; retryRecovery = null; // CHANGE
+            recoveryFailure = null; retryRecovery = null; retainedLosses.delete(lossKey); // CHANGE: frozen editor generations stay mounted and cannot reacquire authority.
         }; // NEW
-        const recovery = (insideSave ? operation() : recoveryQueue.catch(() => {}).then(operation)).catch(error => { if (generation === contextGeneration) { recoveryFailure = error; retryRecovery = { targets, reason }; status('The draft remains open because recovery failed: ' + error.message); } throw error; }).finally(() => { if (generation === contextGeneration) targets.forEach(key => { const count = recoveringTargets.get(key) || 0; if (count <= 1) recoveringTargets.delete(key); else recoveringTargets.set(key, count - 1); }); }); // CHANGE
+        const recovery = (insideSave ? operation() : recoveryQueue.catch(() => {}).then(operation)).catch(error => { if (generation === contextGeneration) { recoveryFailure = error; retryRecovery = { targets, reason }; const retry = () => recoverLostHolds(targets, reason).catch(() => {}); preservationStatus(targets, !!retainedLosses.get(lossKey)?.saved, error.message, retry); status('The draft remains frozen and visible because recovery failed: ' + error.message); } throw error; }).finally(() => { if (generation === contextGeneration) targets.forEach(key => { const count = recoveringTargets.get(key) || 0; if (count <= 1) recoveringTargets.delete(key); else recoveringTargets.set(key, count - 1); }); }); // CHANGE
         if (!insideSave) recoveryQueue = recovery; return recovery; // CHANGE
     } // NEW
     /** Serialize incoming reads and coalesce file notifications without delaying claims or saves. */ // CHANGE
@@ -745,36 +984,68 @@ Draw.loadPlugin(function (ui) {
         })().finally(() => { if (remoteReadTask === task) remoteReadTask = null; }); // CHANGE
         return task.promise; // CHANGE
     } // CHANGE
-    async function releaseHolds(targets) { // NEW
-        const current = file(), shareId = info?.shareId; // NEW
-        if (graph.isEditing?.()) { // NEW: finish a native label only at handoff, keeping ordinary autosave from closing the editor.
+    async function releaseHolds(targets, options = {}) { // CHANGE
+        const current = file(), shareId = info?.shareId, generation = contextGeneration, actor = context().userId; // CHANGE
+        const originalClaims = options.claims || new Map((collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId).map(hold => [hold.key, hold.claimId])); // CHANGE: completion carries the originating claim, never a newer replacement. // CHANGE
+        if (!options.automatic && graph.isEditing?.()) { // CHANGE: a delayed automatic release must never commit a reopened label editor.
             stoppingForSave = true; // NEW
             try { graph.stopEditing(false); } finally { stoppingForSave = false; } // NEW
         } // NEW
-        await saveCurrent(); if (file() !== current || info?.shareId !== shareId) return;
-        const claims = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && (!targets || targets.includes(hold.key))).map(hold => hold.claimId); // NEW
+        if (!options.persisted && (!options.automatic || current.isModified())) await saveCurrent(options); if (file() !== current || info?.shareId !== shareId || generation !== contextGeneration || actor !== context().userId) return; // CHANGE: closing a private text-only draft must not create a graph save.
+        if (options.automatic) { // CHANGE: selection and pinned editors may change while waiting for the quiet period.
+            const retained = holdEditors?.pinnedTargets() || []; // CHANGE: selection and ancestors are viewing, not unfinished editing.
+            targets = (targets || []).filter(key => !retained.includes(key) && !selectedPlanting(key) && (!options.shouldRelease || options.shouldRelease(key))); // CHANGE: recheck after persistence so returning to the planting cancels a queued release.
+            targets = targets.filter(key => (collaboration?.holds || []).some(hold => hold.key === key && hold.sessionId === localSessionId && hold.claimId === originalClaims.get(key))); if (!targets.length) return; // CHANGE: an old automatic handoff cannot release a newer hold generation.
+        } // CHANGE
+        targets = (targets || [...originalClaims.keys()]).filter(key => (collaboration?.holds || []).some(hold => hold.key === key && hold.sessionId === localSessionId && hold.claimId === originalClaims.get(key))); if (!targets.length) return; // CHANGE: explicit saves may also finish after another editor acquired a newer generation.
+        const claims = targets.map(key => originalClaims.get(key)); // CHANGE
         claims.forEach(id => releasingClaims.add(id));
-        try { return await coordinate({ kind: 'release', targets }); } finally { claims.forEach(id => releasingClaims.delete(id)); } // CHANGE
+        try { return await coordinate({ kind: 'release', targets, claimIds: claims }); } finally { claims.forEach(id => releasingClaims.delete(id)); } // CHANGE
     } // NEW
     /** Share only a capture covering the same file generation, refresh barrier, and requested revision. */ // NEW
+    /** Retire only captured, still-unmodified objects whose editor has not resumed. */ // CHANGE
+    async function releaseSavedHolds(candidates, current, generation, actor) { // CHANGE
+        if (file() !== current || generation !== contextGeneration || actor !== context().userId) return; // CHANGE
+        const pinned = holdEditors?.pinnedTargets() || [], pending = new Set(pendingObjects()); // CHANGE
+        const targets = [...candidates].filter(([key, claim]) => !pinned.includes(key) && !pending.has(key) && collaboration?.holds?.some(hold => hold.key === key && hold.claimId === claim && hold.sessionId === localSessionId)).map(([key]) => key); // CHANGE
+        if (targets.length) await releaseHolds(targets, { automatic: true, claims: candidates, persisted: true }); // CHANGE
+    } // CHANGE
+    /** Failed native creation may have claimed new IDs before a later guard rejected the edit. */ // CHANGE
+    async function releaseRemovedCreations(ids) { // CHANGE
+        const current = file(), generation = contextGeneration, actor = context().userId, page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+        await acquisitionPromise; // CHANGE
+        if (current !== file() || generation !== contextGeneration || actor !== context().userId) return; // CHANGE
+        const model = graph.getModel(), pinned = new Set(holdEditors?.pinnedTargets() || []); // CHANGE
+        const keys = new Set(ids.filter(id => !model.getCell(id)).map(id => JSON.stringify([page, String(id)]))); // CHANGE
+        const candidates = new Map((collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && keys.has(hold.key) && !pinned.has(hold.key)).map(hold => [hold.key, hold.claimId])); // CHANGE
+        if (candidates.size) await releaseHolds([...candidates.keys()], { automatic: true, persisted: true, claims: candidates }); // CHANGE
+    } // CHANGE
+    /** Keep one immutable save identity across transport/native-completion retries of the same capture. */ // NEW
+    function proposalIdFor(current, baseXml, xml, claimIds, usersPolicyAction = false) { // NEW
+        const userId = context().userId, claims = JSON.stringify(claimIds.slice().sort()), pending = current.__trellisPendingProposal; // NEW
+        if (pending && pending.userId === userId && pending.baseXml === baseXml && pending.xml === xml && pending.claims === claims && pending.usersPolicyAction === usersPolicyAction) return pending.id; // NEW
+        const id = Array.from(window.crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join(''); // NEW
+        current.__trellisPendingProposal = { id, userId, baseXml, xml, claims, usersPolicyAction }; return id; // NEW
+    } // NEW
     async function saveCollaborative(current, success, error, automatic = false) { // CHANGE
+        if (!coordinationAvailable()) { if (error) error(new Error(lastStatus?.editingAvailability?.reason || info?.editingAvailability?.reason || 'No usable coordinator is available.')); return; } // NEW: manual saves respect the same availability boundary as autosave.
         const priorRefresh = refreshSaveBarrier, generation = contextGeneration, saveUser = context().userId; // CHANGE: queued saves remain bound to their originating user.
         let batch = current.__trellisSaveBatch; // NEW
         if (!batch || batch.generation !== generation || batch.capturedRevision !== null && (!tracksModelChanges || batch.barrier !== priorRefresh || modelRevision > batch.capturedRevision)) { // CHANGE: every uncaptured request shares the single latest pending capture.
-            batch = { id: ++saveOperationSequence, generation, barrier: priorRefresh, capturedRevision: null, promise: null, automatic }; // CHANGE
-            current.__trellisSaveBatch = batch; saveProgress(current, 'queued'); // NEW
+            batch = { id: ++saveOperationSequence, generation, barrier: priorRefresh, capturedRevision: null, promise: null, automatic, stage: 'queued', blockedBy: batch }; // CHANGE: one predecessor identity explains queue waits without treating a timer as progress.
+            current.__trellisSaveBatch = batch; saveProgress(current, 'queued', batch); // NEW
             const started = window.performance.now(); // NEW
             const operation = async () => { // CHANGE
                 timings({ operationId: batch.id, phase: 'save queue', automatic: batch.automatic, durationMs: window.performance.now() - started }); // CHANGE: diagnostics distinguish native autosave execution from an explicit save.
-                if (batch.automatic && background) { saveProgress(current, 'waiting for an editing pause'); await background.waitForQuiet(() => batch.automatic); } // NEW: edits made after a follow-up was queued still reset its quiet period.
-                saveProgress(current, 'waiting for editing access'); // NEW
+                if (batch.automatic && background) { saveProgress(current, 'waiting for an editing pause', batch); await background.waitForQuiet(() => batch.automatic); } // NEW: edits made after a follow-up was queued still reset its quiet period.
+                saveProgress(current, 'waiting for editing access', batch); // NEW
                 const claimStarted = window.performance.now(); // NEW
                 let barrier; do { // NEW: a superseding explicit refresh updates the pending request without adding a queued snapshot.
                     barrier = batch.barrier; await barrier; // CHANGE
                     if (batch.generation !== contextGeneration || saveUser !== context().userId) throw new Error('The user or document changed before saving. The previous draft was not submitted under the new user.'); // NEW
                     await current.__trellisNamingSync; // NEW: capture a draft only after a shared-name update has patched its saved baseline.
                     await acquisitionPromise; await recoveryQueue.catch(() => {}); if (retryRecovery) await recoverLostHolds(retryRecovery.targets, retryRecovery.reason); if (recoveryFailure) throw recoveryFailure; // CHANGE
-                    if (batch.automatic && background) { saveProgress(current, 'waiting for an editing pause'); await background.waitForQuiet(() => batch.automatic); } // NEW: edits during access or refresh waits also restart the five-second quiet period.
+                    if (batch.automatic && background) { saveProgress(current, 'waiting for an editing pause', batch); await background.waitForQuiet(() => batch.automatic); } // NEW: edits during access or refresh waits also restart the five-second quiet period.
                     if (file() !== current || !isCollaborative() || batch.generation !== contextGeneration || saveUser !== context().userId) throw new Error('The project or user changed before saving.'); // CHANGE
                 } while (barrier !== batch.barrier); // NEW
                 saveFence = new Promise(resolve => { batch.finishFence = resolve; }); // NEW
@@ -782,20 +1053,24 @@ Draw.loadPlugin(function (ui) {
                 if (explicitMode && !viewIdentity) throw new Error('Open or explicitly recover your remembered objects before saving.'); // NEW
                 const captureStarted = window.performance.now(); // NEW
                 let captured = ui.getFileData(), capturedRevision = modelRevision; const generation = contextGeneration, baseline = collaborationBaseline || current.data; // CHANGE
+                const releaseCandidates = new Map((collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !(holdEditors?.pinnedTargets() || []).includes(hold.key)).map(hold => [hold.key, hold.claimId])); // CHANGE
                 const capturedObjects = new Map([...dirtyObjects].map(key => [key, objectFingerprint(key)])); background?.state('saving'); // NEW
+                let capturedCreations = captureGardenCreations(capturedRevision); // NEW
                 batch.capturedRevision = capturedRevision; // NEW: subscribers may only share a capture that covers their requested revision.
                 timings({ operationId: batch.id, phase: 'save capture', durationMs: window.performance.now() - captureStarted, characters: captured.length }); // NEW
-                saveProgress(current, 'saving garden'); // NEW
+                saveProgress(current, 'saving garden', batch); // NEW
+                setSaveStatus(current, 'Saving…', true); // CHANGE: report persistence only when an accepted capture is actually submitted.
                 const claimIds = [...new Set((collaboration?.holds || []).filter(h => h.sessionId === localSessionId).map(h => h.claimId))]; // NEW: saves retain their editing generation; delayed drafts cannot reacquire a released hold.
                 let result; current.__trellisCollaborativeSaving = true; // NEW
-                try { result = await coordinate({ kind: 'save', baseXml: baseline, xml: captured, claimIds, usersPolicyAction: !!policyActionPending }); } finally { current.__trellisCollaborativeSaving = false; } // CHANGE: preserve Users bootstrap intent; native replay still validates the exact invitation transition.
+                try { result = await coordinate({ kind: 'save', proposalId: proposalIdFor(current, baseline, captured, claimIds, !!policyActionPending), baseXml: baseline, xml: captured, claimIds, usersPolicyAction: !!policyActionPending }); } finally { current.__trellisCollaborativeSaving = false; } // CHANGE: preserve one signed save intent while validating the exact invitation transition.
                 const recovered = new Set(); // NEW: every retry must remove at least one rejected target from this capture.
                 while (result?.code === 'HOLD_LOST' && result.targets?.some(key => !recovered.has(key))) { // NEW
                     result.targets.forEach(key => recovered.add(key)); await recoverLostHolds(result.targets, result.reason, true); // CHANGE
                     if (file() !== current || generation !== contextGeneration) throw new Error('The diagram changed during recovery.'); // NEW
                     captured = ui.getFileData(); capturedRevision = modelRevision; batch.capturedRevision = capturedRevision; // NEW
+                    capturedCreations = captureGardenCreations(capturedRevision); // NEW: recovery may remove a rejected creation from the submitted snapshot.
                     const freshClaims = [...new Set((collaboration?.holds || []).filter(h => h.sessionId === localSessionId).map(h => h.claimId))]; // NEW
-                    result = await coordinate({ kind: 'save', baseXml: baseline, xml: captured, claimIds: freshClaims }); // NEW
+                    result = await coordinate({ kind: 'save', proposalId: proposalIdFor(current, baseline, captured, freshClaims), baseXml: baseline, xml: captured, claimIds: freshClaims }); // CHANGE: changed recovery content gets a distinct immutable proposal.
                 } // NEW
                 if (!result || file() !== current || generation !== contextGeneration) throw new Error('The diagram changed before the save completed.'); // CHANGE
                 const unchanged = () => tracksModelChanges ? modelRevision === capturedRevision : ui.getFileData() === captured; // CHANGE: native revision checks avoid full-document equality captures.
@@ -810,25 +1085,33 @@ Draw.loadPlugin(function (ui) {
                 if (file() !== current || generation !== contextGeneration) throw new Error('The diagram changed before the save completed.'); // CHANGE
                 if (result.resolution) { // NEW
                     current.stat = stat; // NEW
-                    if (unchanged()) applyDraftResolution(result.resolution, current); // NEW
-                    else { current.setModified(true); current.__trellisConflict = true; background?.state('pending'); } // NEW
+                    if (unchanged()) applyDraftResolution(result.resolution, current); // CHANGE
+                    else { // CHANGE: acceptance advances independently of subsequent typing; never replace that newer draft.
+                        if (current.patch && ui.diffPages && ui.getPagesForXml && ui.pages?.length) applyRemote(result.resolution.remainingXml, current, stat, captured); // CHANGE: apply only returned differences against the submitted capture.
+                        collaborationBaseline = result.resolution.baseXml; current.data = collaborationBaseline; observedXml = ui.getFileData(); // CHANGE
+                        for (const [key, fingerprint] of capturedObjects) if (!result.resolution.remaining?.includes(key)) { if (fingerprint == null) savedObjects.delete(key); else savedObjects.set(key, fingerprint); } // CHANGE
+                        current.setModified(true); current.__trellisConflict = result.resolution.remaining?.length ? result.resolution.review : null; background?.state(current.__trellisConflict ? 'conflict' : 'pending'); // CHANGE
+                    } // CHANGE
                     return new Promise((resolve, reject) => current.fileSaved(result.resolution.baseXml, null, resolve, reject)); // NEW
                 } // NEW
                 current.stat = stat; current.data = explicitMode ? captured : result.xml; // CHANGE
                 for (const [key, fingerprint] of capturedObjects) { if (fingerprint === null) savedObjects.delete(key); else savedObjects.set(key, fingerprint); dirtyObjects.add(key); } current.__trellisConflict = null; // CHANGE: deleted objects have an absent baseline; completed deletions do not accumulate in renderer bookkeeping.
-                for (let index = unsavedActions.length - 1; index >= 0; index--) if (unsavedActions[index].revision <= capturedRevision) unsavedActions.splice(index, 1); // NEW: accepted actions are no longer eligible for expiry rollback.
+                const policyCovered = !Number.isSafeInteger(result.collaboration?.policyRevision) || graph.__trellisSharedPolicy?.policyRevision >= result.collaboration.policyRevision; // CHANGE
+                for (let index = unsavedActions.length - 1; index >= 0; index--) if (policyCovered && unsavedActions[index].revision <= capturedRevision) unsavedActions.splice(index, 1); // CHANGE: retain creation proof until policy adoption covers this accepted save.
                 if (explicitMode) { collaborationBaseline = captured; current.setModified(!unchanged()); if (unchanged()) observedXml = captured; pendingHash = null; } // NEW: newer typing and unseen objects remain exactly as displayed.
                 else if (unchanged()) { collaborationBaseline = result.xml; if (captured !== result.xml) applyRemote(result.xml, current, current.stat); else { current.setModified(false); observedXml = captured; } } // CHANGE
                 else if (current.patch && ui.diffPages && ui.getPagesForXml && ui.pages?.length) applyRemote(result.xml, current, current.stat, captured); // NEW: apply only differences returned by the captured save, leaving subsequent local changes intact.
                 else { collaborationBaseline = captured; current.setModified(true); } // NEW: compatibility fallback keeps the captured object bases so unseen peer changes cannot be mistaken for local reversions.
-                return new Promise((resolve, reject) => current.fileSaved(explicitMode ? captured : result.xml, null, () => { current.contentChanged?.(); background?.state(current.isModified() ? 'pending' : 'saved'); void background?.checkpoint(true).catch(error => status('Recovery checkpoint failed: ' + error.message)); timings({ operationId: batch.id, phase: 'save native completion', durationMs: window.performance.now() - nativeStarted }); resolve(); }, err => { background?.state('failed'); reject(err); })); // CHANGE
+                return new Promise((resolve, reject) => current.fileSaved(explicitMode ? captured : result.xml, null, () => { current.contentChanged?.(); if (background && file() === current && generation === contextGeneration) pendingObjects(); finishGardenCreations(capturedCreations, current, generation, saveUser); void releaseSavedHolds(releaseCandidates, current, generation, saveUser).catch(error => status('Changes saved; releasing editing activity failed: ' + error.message)); background?.state(current.isModified() ? 'pending' : 'saved'); void background?.checkpoint(true).catch(error => status('Recovery checkpoint failed: ' + error.message)); timings({ operationId: batch.id, phase: 'save native completion', durationMs: window.performance.now() - nativeStarted }); resolve(); }, err => { background?.state('failed'); reject(err); })); // CHANGE: reconcile the captured objects before retiring their creation summary, avoiding a completion-time badge flash.
             }; // NEW
             const slowTimer = window.setInterval(() => { // NEW
-                if (file() === current && window.performance.now() - started >= 5000) status('Still working: ' + (current.__trellisSaveStage || 'saving garden') + ' (' + Math.floor((window.performance.now() - started) / 1000) + ' seconds).'); // NEW
+                if (file() === current && batch.generation === contextGeneration && batch.stage !== 'waiting for an editing pause' && window.performance.now() - started >= 5000) { const stage = batch.stage === 'queued' && batch.blockedBy ? 'queued behind save #' + batch.blockedBy.id + ' (' + batch.blockedBy.stage + ')' : batch.stage; setSaveStatus(current, 'Still working: ' + (stage || 'saving garden') + ' (' + Math.floor((window.performance.now() - started) / 1000) + ' seconds).'); } // CHANGE: report the actual blocking operation while preserving unrelated warnings.
             }, 1000); // NEW
             batch.promise = collaborationSave.catch(() => {}).then(operation).catch(error => { if (file() === current && batch.generation === contextGeneration) background?.state(current.__trellisConflict ? 'conflict' : 'failed'); throw error; }).finally(() => { // CHANGE: transport and persistence exceptions also leave a precise recoverable failure badge.
                 batch.finishFence?.(); // NEW: release waiting expiry processing after native save bookkeeping.
+                batch.blockedBy = null; // CHANGE: completed batches do not retain the predecessor chain.
                 window.clearInterval(slowTimer); if (current.__trellisSaveBatch === batch) { current.__trellisSaveBatch = null; delete current.__trellisSaveStage; } // NEW
+                if (batch.generation === contextGeneration) renderSaveStatus(current); // NEW: resume the countdown for edits made during the completed capture.
                 timings({ operationId: batch.id, phase: 'save total', durationMs: window.performance.now() - started }); // NEW
             }); // NEW
             collaborationSave = batch.promise; // CHANGE
@@ -840,16 +1123,16 @@ Draw.loadPlugin(function (ui) {
     let editingLabel = false, labelClaim = Promise.resolve(), labelEditorRegistration = null; // CHANGE
     let pendingEdits = [], acquisitionObjects = new Set(), claimDispatched = false, policyActionPending = false; // NEW: one synchronous Users/domain action may produce several model edits before its atomic claim is sent.
     function editObjectIds(edit, manualOnly = false) { // CHANGE
-        return (edit.changes || []).filter(change => !change.__trellisUsersActorStamp && (!manualOnly || !editContext || editContext.kindOf(change) === 'manual')).map(change => { // CHANGE
+        return (edit.changes || []).filter(change => !change.__trellisUsersActorStamp && (!manualOnly || !editContext || editContext.kindOf(change) === 'manual')).flatMap(change => { // CHANGE
             const cell = change.cell || change.child; if (!cell) return null; // NEW
-            if (editContext) return editContext.logicalCell(cell)?.id; // NEW: activity and pending badges share the same logical-parent attribution policy.
+            if (editContext) return editContext.changeCells(change).map(target => target.id); // CHANGE: detached children retain their pre-edit planting target.
             let planting = null; // NEW: retain the existing fallback for older shells without the context runtime.
             for (let cursor = cell; cursor; cursor = graph.getModel().getParent(cursor)) if (/(?:^|;)tiler_group=1(?:;|$)/.test(cursor.style || '') || cursor.getAttribute?.('planting_id')) planting = cursor; // NEW
             return (planting || cell).id; // NEW
         }).filter(Boolean); // NEW
     } // NEW
     function undoRejected(edit, reason) { // NEW
-        for (const item of Array.isArray(edit) ? edit : [edit]) if (item) item.__trellisUsersRejected = true; // NEW: deferred history must not attribute rejected optimistic work.
+        for (const item of Array.isArray(edit) ? edit : [edit]) if (item) { item.__trellisUsersRejected = true; item.__trellisUsersRejectedReason = reason; } // CHANGE: initiating creation commands retain the specific rejection rather than reporting an unknown cluster error.
         for (let index = unsavedActions.length - 1; index >= 0; index--) if (unsavedActions[index].edit.__trellisUsersRejected) unsavedActions.splice(index, 1); // NEW
         const previous = graph.__trellisUsersInternalChange; graph.__trellisSharingApplying = true; graph.__trellisUsersInternalChange = true; // NEW
         try { for (const item of (Array.isArray(edit) ? [...edit].reverse() : [edit])) if (item?.undo) item.undo(); } finally { graph.__trellisSharingApplying = false; graph.__trellisUsersInternalChange = previous; observedXml = ui.getFileData(); } status(reason); // NEW
@@ -859,23 +1142,37 @@ Draw.loadPlugin(function (ui) {
         const model = graph.getModel?.(); if (!model?.addListener || model.__trellisCollaboration) return; model.__trellisCollaboration = true; // NEW
         tracksModelChanges = true; // CHANGE
         model.addListener('change', (_sender, event) => { // NEW
+            const edit = event?.getProperty?.('edit'); // CHANGE: rejected transactions and their nested rollback cannot invalidate an accepted capture.
+            if (graph.__trellisUsersRejecting || graph.__trellisLocalViewChanging || edit?.__trellisUsersRejected) return; // CHANGE
+            if (edit?.changes?.length && editContext && edit.changes.every(change => change.__trellisUsersActorStamp || ['derived-presentation', 'attribution'].includes(editContext.kindOf(change)))) return; // CHANGE: presentation-only transactions cannot become pending content.
             modelRevision++; // CHANGE: internal and remote edits also invalidate pending captures.
             if (!isCollaborative() || identityJoinInProgress || graph.__trellisSharingApplying || graph.__trellisLocalViewChanging || graph.__trellisUsersRejecting || ui.openingFile) return; // CHANGE
-            const edit = event.getProperty?.('edit'); if (!edit?.changes?.some(change => !change.__trellisUsersActorStamp) || edit.__trellisUsersRejected) return; // NEW
+            if (!edit?.changes?.some(change => !change.__trellisUsersActorStamp) || edit.__trellisUsersRejected) return; // CHANGE
+            if (!coordinationAvailable()) { undoRejected(edit, lastStatus?.editingAvailability?.reason || info?.editingAvailability?.reason || 'This scope is read-only until a coordinator is available.'); return; } // NEW: internal remote updates have already passed the trusted-update guard.
             if (explicitMode && editObjectIds(edit).some(id => isPendingCell(model.getCell(id)))) { undoRejected(edit, 'Refresh this object and its related changes before editing.'); return; } // NEW
             const before = observedXml || collaborationBaseline || file().data; // CHANGE: the first claim captures its snapshot in the existing deferred operation, without a redundant full-diagram serialization here.
             const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
+            observeGardenCreation(edit, page); // NEW: register the group before either synchronous paint or activity publication.
             const keys = [...new Set(editObjectIds(edit))].map(id => JSON.stringify([page, String(id)])); // CHANGE: generated planting tiles share their source's pending status instead of creating hundreds of badges.
+            if (editingForm?.isConnected && formTargets.some(key => keys.includes(key))) { editingForm = null; formTargets = []; } // CHANGE: applying a legacy object form completes its draft; persistence keeps the hold.
             for (const key of keys.length ? keys : ['*']) dirtyObjects.add(key); // NEW
             const badgeStarted = window.performance.now(); background?.changed(); renderBadges(); // CHANGE: rejection and recovery handling below remains intact.
             timings({ phase: 'pending badge', durationMs: window.performance.now() - badgeStarted }); // NEW
             if (window.TrellisSyncTiming && window.requestAnimationFrame) window.requestAnimationFrame(() => timings({ phase: 'pending badge paint', durationMs: window.performance.now() - badgeStarted })); // NEW
             unsavedActions.push({ edit, keys: keys.length ? [...new Set(keys)] : ['*'], revision: modelRevision }); // NEW
             if (!editObjectIds(edit, true).length) { if (acquiring && editObjectIds(edit).some(id => acquisitionObjects.has(id))) pendingEdits.push(edit); return; } // CHANGE: dependent generation rolls back with a rejected manual source; independent generation retains its own save/recovery tracking.
-            if (acquiring) { const ids = editObjectIds(edit, true); if (!claimDispatched || ids.every(id => acquisitionObjects.has(id))) { pendingEdits.push(edit); policyActionPending ||= !!graph.__trellisUsersInternalChange; for (const id of ids) acquisitionObjects.add(id); return; } bridge.saveRecoveryCopy({ shareId: info.shareId, xml: ui.getFileData() }).catch(err => status(err.message)); undoRejected(edit, 'Wait for the pending editing hold before changing another object.'); return; } // CHANGE: automated portions never expand the activity reservation.
+            if (acquiring) { const ids = editObjectIds(edit, true); if (!claimDispatched || ids.every(id => acquisitionObjects.has(id)) || graph.__trellisModuleCreation?.actorUserId === context().userId) { pendingEdits.push(edit); policyActionPending ||= !!graph.__trellisUsersInternalChange; for (const id of ids) acquisitionObjects.add(id); return; } bridge.saveRecoveryCopy({ shareId: info.shareId, xml: ui.getFileData() }).catch(err => status(err.message)); undoRejected(edit, 'Wait for the pending editing hold before changing another object.'); return; } // CHANGE: authorized module creation joins the existing claim drain without waiting for persistence.
             acquiring = true; claimDispatched = false; policyActionPending = !!graph.__trellisUsersInternalChange; pendingEdits = [edit]; acquisitionObjects = new Set(editObjectIds(edit, true)); const current = file(), generation = contextGeneration; // CHANGE
             let capturedXml, capturedRevision; // CHANGE
-            acquisitionPromise = Promise.resolve().then(() => { claimDispatched = true; capturedXml = ui.getFileData(); capturedRevision = modelRevision; const targets = [...acquisitionObjects].map(id => JSON.stringify([page, String(id)])); return coordinate({ kind: 'claim', targets, baseXml: before, xml: capturedXml, usersPolicyAction: policyActionPending }); }).then(async result => { // CHANGE: retain capture/rejection handling while sending explicit object targets to the independent activity lane.
+            acquisitionPromise = Promise.resolve().then(async () => { // CHANGE: serialize an extending creation batch using the existing claim lane.
+                let result, requested; // CHANGE
+                do { // CHANGE
+                    claimDispatched = true; capturedXml = ui.getFileData(); capturedRevision = modelRevision; requested = new Set(acquisitionObjects); // CHANGE
+                    const targets = [...requested].map(id => JSON.stringify([page, String(id)])); result = await coordinate({ kind: 'claim', targets, baseXml: before, xml: capturedXml, usersPolicyAction: policyActionPending }); // CHANGE
+                    if (file() !== current || generation !== contextGeneration || !result?.ok) return result; // CHANGE
+                } while ([...acquisitionObjects].some(id => !requested.has(id))); // CHANGE: new roots added while a claim was in flight receive their own confirmed claim before saving.
+                return result; // CHANGE
+            }).then(async result => { // CHANGE
                 if (file() !== current) return; // NEW
                 if (!result) return; // CHANGE
                 if (!result.ok) { const copy = await bridge.saveRecoveryCopy({ shareId: info.shareId, xml: ui.getFileData() }); if (file() === current) undoRejected(pendingEdits, result.reason + ' Recovery copy: ' + copy.recoveryPath); } // NEW: preserve continued typing durably before rolling back a losing action.
@@ -890,58 +1187,147 @@ Draw.loadPlugin(function (ui) {
             if (!isCollaborative() || graph.__trellisSharingApplying) return; const objects = selectedObjectKeys(); // NEW
             const holds = collaboration?.holds.filter(h => h.sessionId === localSessionId) || []; // NEW
             const pinned = holdEditors?.pinnedTargets() || []; // NEW
-            const leaving = holds.filter(h => !pinned.includes(h.key) && !objects.includes(h.key) && !objects.some(k => { try { let cell = model.getCell(JSON.parse(k)[1]); while (cell) { if (cell.id === JSON.parse(h.key)[1]) return true; cell = model.getParent(cell); } } catch (_) {} return false; })).map(h => h.key); // CHANGE
-            const update = async () => { await coordinate({ kind: 'view', objects }); await acquisitionPromise; if (leaving.length) await releaseHolds(leaving); }; update().catch(err => status(err.message)); // CHANGE: viewing is announced before any save required to release an editing hold.
+            const leaving = holds.filter(h => !pinned.includes(h.key) && !selectedPlanting(h.key)).map(h => h.key); // CHANGE: navigating among planting siblings continues the same editing session.
+            const update = async () => { await coordinate({ kind: 'view', objects }); await acquisitionPromise; if (leaving.length) await releaseHolds(leaving, { automatic: true }); }; update().catch(err => status(err.message)); // CHANGE: navigation must not promote autosave to an immediate manual flush.
         }); // NEW
     } // NEW
     let formActivityTimer = null; // NEW
+    /** Observe typing before registered-editor handlers consume it; do not turn private text into a graph change. */ // CHANGE
+    for (const type of ['input', 'change', 'compositionstart', 'compositionupdate', 'compositionend']) document.addEventListener(type, event => { // CHANGE
+        const field = event.target; if (!isCollaborative() || !event.isTrusted || !field.matches?.('input,textarea,select,[contenteditable="true"]') || field.closest('[data-trellis-frozen],.trellis-collaboration-dialog,.trellis-garden-share-dialog') || field.matches('input[type="search"],[data-trellis-search]') || /search|filter/i.test(field.name + ' ' + field.id)) return; // CHANGE
+        if (!field.closest('[data-trellis-collaborative-editor],[data-collaboration-object-id],[data-spacing-row-cell],.trellis-object-details') && !graph.cellEditor?.textarea?.contains(field)) return; // CHANGE
+        if (type === 'compositionstart') composingFields.add(field); if (type === 'compositionend') composingFields.delete(field); background?.activity(); // CHANGE
+        if (type === 'input' || type === 'change' || type === 'compositionupdate') rememberCreationDraft(field); // NEW: only actual typing or a field change reveals the creator's editing label.
+    }, true); // CHANGE
     document.addEventListener('input', event => { // NEW: form drafts reserve their object on actual typing, before Apply mutates the model.
+        if (event.target.closest('[data-trellis-frozen]')) return; // CHANGE
         if (event.target.closest('[data-trellis-collaborative-editor]')) return; // NEW: registered editors own their claim and recovery lifecycle.
         if (!isCollaborative() || !event.isTrusted || event.target.closest('.trellis-collaboration-dialog,.trellis-garden-share-dialog')) return; // NEW
         const labelCell = editingLabel && graph.cellEditor?.textarea?.contains(event.target) ? graph.cellEditor.editingCell : null; // NEW
         if (labelCell) { // NEW: contenteditable native labels count as editing activity; viewing does not.
             const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
-            window.clearTimeout(formActivityTimer); formActivityTimer = window.setTimeout(() => coordinate({ kind: 'claim', targets: [JSON.stringify([page, labelCell.id])] }).catch(err => status(err.message)), 250); return; // NEW
+            labelEditorRegistration?.touch(); labelClaim = labelEditorRegistration?.acquire() || Promise.resolve(); labelClaim = labelClaim.catch(error => status(error.message)); return; // CHANGE // NEW
         } // NEW
         if (!event.target.matches?.('input,textarea,select,[contenteditable="true"]')) return; // CHANGE: independent rich-text details participate in existing object holds.
         const binding = event.target.closest('[data-collaboration-object-id],[data-spacing-row-cell]'); // NEW
         const form = event.target.closest('[role="dialog"],.geDialog,.usl-scheduler-dialog'); if (!binding && !form) return; // NEW
+        rememberCreationDraft(event.target); // NEW: unregistered settings dialogs use the same existing selection/binding targets as their claim.
         const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
-        const id = binding?.dataset.collaborationObjectId || binding?.dataset.spacingRowCell; const targets = id ? [JSON.stringify([page, id])] : selectedObjectKeys(); if (!targets.length) return; // NEW
+        const id = binding?.dataset.collaborationObjectId || binding?.dataset.spacingRowCell; const targets = id ? [logicalObjectKey(JSON.stringify([page, id]))] : selectedObjectKeys(); if (!targets.length) return; // CHANGE
         editingForm = form || binding; formTargets = targets; window.clearTimeout(formActivityTimer); // CHANGE
-        formActivityTimer = window.setTimeout(() => coordinate({ kind: 'claim', targets }).then(result => { if (!result.ok && editingForm?.isConnected) { if (explicitMode) { rejectDialogs(targets, result.reason); return; } let message = editingForm.querySelector('[data-collaboration-notice]'); if (!message) { message = note(editingForm, ''); message.dataset.collaborationNotice = ''; message.setAttribute('role', 'status'); } message.textContent = result.reason + ' Your form entries remain here. Request release before applying them.'; } }).catch(err => status(err.message)), 250); // CHANGE
+        formActivityTimer = window.setTimeout(() => coordinate({ kind: 'claim', targets }).then(result => { if (!result) return; if (!result.ok && editingForm?.isConnected) { if (explicitMode) { recoverLostHolds(targets, result.reason).catch(() => {}); return; } let message = editingForm.querySelector('[data-collaboration-notice]'); if (!message) { message = note(editingForm, ''); message.dataset.collaborationNotice = ''; message.setAttribute('role', 'status'); } message.textContent = result.reason + ' Your form entries remain here. Request release before applying them.'; } }).catch(err => status(err.message)), 250); // CHANGE
     }, true); // NEW
     let badgeLayer = null, badgeFingerprint = '', popover = null, popoverKey = null, popoverPinned = false, popoverTimer = null; // NEW
     function closeObjectPopover() { if (popover) popover.remove(); popover = null; popoverKey = null; popoverPinned = false; window.clearTimeout(popoverTimer); } // NEW
-    function updateObjectPopover() { // NEW: live coordination details preserve focus and pinned state.
-        if (!popover) return; // NEW
-        const hold = collaboration?.holds.find(h => h.key === popoverKey), turn = collaboration?.reservations?.find(r => r.key === popoverKey); // NEW
-        const message = popover.querySelector('[data-editing-status]'), action = popover.querySelector('[data-hold-action]'); // NEW
-        message.textContent = hold ? hold.name + ' is editing.' + (hold.requested ? ' Release requested; ' + Math.max(0, Math.ceil((hold.expiresAt - Date.now()) / 1000)) + ' seconds left to finish.' : ' Holds remain until editing ends or release is requested.') : turn ? turn.name + ' has the next turn. Begin within ' + Math.max(0, Math.ceil((turn.until - Date.now()) / 1000)) + ' seconds.' : 'No editing hold is currently reported.'; // NEW
-        action.hidden = !hold; action.textContent = hold?.sessionId === localSessionId ? 'Release now' : 'Request release'; // NEW
-    } // NEW
+    /** A user can have several windows/devices; only this session may save this window's draft. */ // CHANGE
+    function isLocalActivity(source) { return !!localSessionId && source.sessionId === localSessionId && (!source.userId || source.userId === context().userId) && (!source.deviceId || !info?.deviceId || source.deviceId === info.deviceId); } // CHANGE
+    function activityPerson(source) { return isLocalActivity(source) ? source.name || 'You' : (source.name || source.userId || 'Unknown user') + (source.userId === context().userId ? ' (your other session)' : ''); } // CHANGE: retain familiar author names while distinguishing their other sessions.
+    /** Shared presentation records keep pending work, presence and ownership independent. No diagram serialization. */ // CHANGE
+    function objectActivity() { // CHANGE
+        const entries = new Map(), publishedLocal = new Set(), holds = collaboration?.holds || [], state = background?.getSaveStatus?.().state || 'pending'; // CHANGE
+        const add = (sourceKey, kind, source, visible = true) => { // CHANGE: aggregate display only; commands still address the original signed hold.
+            const key = logicalObjectKey(sourceKey), entry = { key, sourceKey, kind, source, visible }, list = entries.get(key) || []; // CHANGE
+            const previous = list.find(item => activityIdentity(item) === activityIdentity(entry)); // CHANGE
+            if (previous) previous.visible ||= visible; else list.push(entry); entries.set(key, list); // CHANGE
+        }; // CHANGE
+        for (const pending of collaboration?.pendingChanges || []) { // CHANGE
+            const local = isLocalActivity(pending), targets = local && pending.online ? creationPendingKeys(pending.targets, pending.saveState) : pending.targets; // CHANGE
+            for (const key of targets) { add(key, 'pending', pending); if (local) publishedLocal.add(logicalObjectKey(key)); } // CHANGE
+        } // CHANGE
+        for (const key of creationPendingKeys(dirtyObjects, state)) if (!publishedLocal.has(logicalObjectKey(key))) add(key, 'pending', { userId: context().userId, sessionId: localSessionId, deviceId: info?.deviceId, online: true, saveState: state, name: 'You' }); // CHANGE
+        for (const viewer of collaboration?.presence || []) for (const key of viewer.targets) add(key, 'viewing', viewer, !holds.some(hold => logicalObjectKey(hold.key) === logicalObjectKey(key) && hold.sessionId === viewer.sessionId && hold.deviceId === viewer.deviceId)); // CHANGE
+        for (const hold of holds) add(hold.key, 'editing', hold, !(isLocalActivity(hold) && !hold.requested && !collaboration?.losses?.some(loss => loss.key === hold.key) && untouchedCreationMember(hold.key, true) && !creationDrafts.has(hold.key))); // CHANGE
+        for (const turn of collaboration?.reservations || []) add(turn.key, 'turn', turn); // CHANGE
+        return entries; // CHANGE
+    } // CHANGE
+    /** Use the same wording in badges, the live object dialog and the Sharing overview. */ // CHANGE
+    function describeActivity(entry) { // CHANGE
+        const { kind, source, key } = entry, person = activityPerson(source), subject = isLocalActivity(source) ? person === 'You' ? 'This window' : person + ' (this window)' : person, uncertain = source.online === false, suffix = uncertain ? ' · offline · status unconfirmed' : ''; // CHANGE
+        if (kind === 'pending') { // CHANGE
+            const state = source.saveState, meaning = state === 'failed' ? 'save failed' : state === 'conflict' ? 'conflict' : state === 'saving' ? 'saving changes' : 'changed · pending project save'; // CHANGE
+            let detail = subject + (uncertain ? ' last reported ' : ' · ') + meaning + (uncertain ? '; current save status is unknown.' : '.'); // CHANGE
+            if (!isLocalActivity(source)) { // CHANGE
+                if (!(collaboration?.holds || []).some(hold => logicalObjectKey(hold.key) === key || hold.key === '*' || key === '*')) detail += ' No editing hold is reported for this object; this notice does not block editing.'; // CHANGE
+                detail += source.userId === context().userId ? ' Check private recovery drafts on this computer; a draft from another computer may only be available there.' : ' Their private recovery draft can only be checked by its author on the computer where it was stored.'; // CHANGE
+            } // CHANGE
+            return { label: person + ' · ' + meaning + suffix, detail }; // CHANGE
+        } // CHANGE
+        if (kind === 'editing') return { label: person + ' · editing' + suffix, detail: subject + ' is editing' + (uncertain ? ' (disconnected or presence unconfirmed)' : '') + '. ' + (source.requested ? 'Release requested. Editing ends in ' + Math.max(0, Math.ceil(((source.requestDeadline ?? source.expiresAt) - Date.now()) / 1000)) + ' seconds.' : 'The editing hold remains until editing ends or release is requested.') }; // CHANGE
+        if (kind === 'turn') return { label: person + ' · next turn', detail: subject + ' has the next editing turn. Begin within ' + Math.max(0, Math.ceil((source.until - Date.now()) / 1000)) + ' seconds.' }; // CHANGE
+        return { label: person + ' · viewing' + suffix, detail: subject + (uncertain ? ' last reported viewing; current presence is unconfirmed.' : ' is viewing.') }; // CHANGE
+    } // CHANGE
+    function activityIdentity(entry) { return JSON.stringify([entry.key, entry.kind, entry.source.userId || '', entry.source.deviceId || '', entry.source.sessionId || '', entry.kind === 'editing' || entry.kind === 'turn' ? entry.sourceKey : '']); } // CHANGE: deduplicate child viewing while retaining separate claims and stable controls through save-state changes.
+    /** A source's live state determines which existing workflow it may invoke. */ // CHANGE
+    function activityCommand(entry) { // CHANGE
+        if (entry.kind === 'editing') return { action: 'hold', label: isLocalActivity(entry.source) ? 'Release now' : 'Request release' }; // CHANGE
+        if (entry.kind === 'pending' && isLocalActivity(entry.source) && entry.source.saveState !== 'saving') return entry.source.saveState === 'conflict' ? { action: 'review', label: 'Review changes' } : { action: 'save', label: entry.source.saveState === 'failed' ? 'Retry save' : 'Save now' }; // CHANGE
+        if (entry.kind === 'pending' && entry.source.userId === context().userId && !isLocalActivity(entry.source) && bridge.recoveryAction) return { action: 'recovery', label: 'Check private recovery drafts' }; // CHANGE
+        return { action: '', label: '' }; // CHANGE
+    } // CHANGE
+    /** Reuse existing persistence/recovery commands; stale views cannot submit actions for a different author. */ // CHANGE
+    async function runActivityAction(panel, operation) { // CHANGE
+        const owner = panel.__activityContext, valid = () => panel.isConnected && file() === owner.file && contextGeneration === owner.generation && context().userId === owner.actor && info?.shareId === owner.shareId; // CHANGE
+        if (panel.__activityBusy || !valid()) return; panel.__activityBusy = true; // CHANGE
+        const error = panel.querySelector('[data-status]'); if (error) error.textContent = ''; // CHANGE
+        for (const control of panel.querySelectorAll('[data-activity-action]')) { control.disabled = true; control.dataset.keepDisabled = 'true'; } // CHANGE
+        try { await operation(); } catch (failure) { if (valid() && error) { error.textContent = failure.message; error.setAttribute('role', 'alert'); } } // CHANGE
+        finally { panel.__activityBusy = false; if (valid()) { announce(); for (const control of panel.querySelectorAll('[data-activity-action]')) { control.disabled = false; control.dataset.keepDisabled = 'false'; } } } // CHANGE
+    } // CHANGE
+    /** Keyed rows keep focused controls mounted while heartbeats update their descriptions. */ // CHANGE
+    function renderActivityRows(container, entries, includeObject = false) { // CHANGE
+        const panel = container.closest('[role="dialog"]'); panel.__activityContext ||= { file: file(), generation: contextGeneration, actor: context().userId, shareId: info?.shareId }; // CHANGE
+        const existing = new Map([...container.children].map(row => [row.dataset.activityId, row])), seen = new Set(); // CHANGE
+        for (const entry of entries) { // CHANGE
+            const id = activityIdentity(entry); seen.add(id); let row = existing.get(id); // CHANGE
+            if (!row) { row = document.createElement('div'); row.dataset.activityId = id; note(row, '').dataset.activityDescription = ''; container.appendChild(row); } // CHANGE
+            row.__activityEntry = entry; const description = describeActivity(entry); row.querySelector('[data-activity-description]').textContent = (includeObject ? objectLabel(entry.key) + ': ' : '') + description.detail; // CHANGE
+            const { action, label } = activityCommand(entry); // CHANGE
+            let control = row.querySelector('[data-activity-action]'); // CHANGE
+            if (action && !control) { // CHANGE
+                control = button(label, () => runActivityAction(panel, async () => { // CHANGE
+                    const current = row.__activityEntry, latest = [...objectActivity().values()].flat().find(item => activityIdentity(item) === id); // CHANGE
+                    if (!latest || !row.dataset.action || activityCommand(latest).action !== row.dataset.action || latest.kind === 'editing' && latest.source.claimId !== current.source.claimId) return; // CHANGE: queued or hidden controls cannot submit after their applicable action changes.
+                    if (row.dataset.action === 'save') await saveCurrent(); // CHANGE
+                    else if (row.dataset.action === 'review') { closeObjectPopover(); await showDraftConflicts(); } // CHANGE
+                    else if (row.dataset.action === 'recovery') { closeObjectPopover(); await showPrivateDrafts(); } // CHANGE
+                    else if (isLocalActivity(latest.source)) await (holdEditors ? holdEditors.handoff([latest.sourceKey]) : releaseHolds([latest.sourceKey])); // CHANGE
+                    else await coordinate({ kind: 'request', targets: [latest.sourceKey] }); // CHANGE
+                }), row); control.dataset.activityAction = ''; // CHANGE
+            } // CHANGE
+            row.dataset.action = action; // CHANGE
+            if (control) { const focused = document.activeElement === control; control.hidden = !action; control.textContent = label; control.disabled = !!panel.__activityBusy; control.dataset.keepDisabled = String(!!panel.__activityBusy); if (!action && focused) panel.querySelector('[data-activity-close]')?.focus(); } // CHANGE
+            let scope = row.querySelector('[data-save-scope]'); if (action === 'save' && !scope) { scope = note(row, 'Saves all committed pending changes in this window.'); scope.dataset.saveScope = ''; } if (scope) scope.hidden = action !== 'save'; // CHANGE
+        } // CHANGE
+        for (const [id, row] of existing) if (!seen.has(id)) { const focused = row.contains(document.activeElement); row.remove(); if (focused) panel.querySelector('[data-activity-close]')?.focus(); } // CHANGE
+    } // CHANGE
+    function updateObjectPopover() { // CHANGE: live pending status and ownership retain focus and pinned state.
+        if (!popover) return; // CHANGE
+        const entries = objectActivity(), records = [...(entries.get(popoverKey) || []), ...(popoverKey === '*' ? [] : entries.get('*') || [])]; // CHANGE
+        renderActivityRows(popover.querySelector('[data-activity-rows]'), records); // CHANGE
+        popover.querySelector('[data-editing-status]').textContent = records.length ? '' : 'No pending changes or editing hold are currently reported.'; // CHANGE
+        const peers = lastStatus?.connectedPeers ?? lastStatus?.connectedCollaborators; // CHANGE
+        popover.querySelector('[data-connection-status]').textContent = peers == null ? 'Connection status is unavailable; reported activity may be out of date.' : peers > 0 ? 'Other computers are connected; reported activity updates may be delayed.' : 'Working locally. No other computers are connected; their activity may be out of date.'; // CHANGE
+        if (popover.isConnected) { const bounds = popover.getBoundingClientRect(); if (bounds.bottom > window.innerHeight - 12) popover.style.top = Math.max(12, window.innerHeight - bounds.height - 12) + 'px'; } // CHANGE: expanded session explanations and actions stay within the viewport.
+    } // CHANGE
     function showObjectPopover(key, anchor, pinned) { // NEW
         window.clearTimeout(popoverTimer); if (popoverKey === key && popover) { if (pinned) { popoverPinned = !popoverPinned; if (popoverPinned) popover.querySelector('button:not([hidden])')?.focus(); } return; } closeObjectPopover(); // NEW
         popoverKey = key; popoverPinned = !!pinned; popover = document.createElement('section'); popover.setAttribute('role', 'dialog'); popover.setAttribute('aria-label', 'Activity for ' + objectLabel(key)); // NEW
-        popover.style.cssText = 'position:fixed;z-index:2147483099;width:300px;max-width:calc(100vw - 24px);max-height:300px;overflow:auto;padding:12px;background:#fff;color:#111827;border:1px solid #9ca3af;border-radius:6px;box-shadow:0 6px 18px #0003;font:13px Arial;'; // NEW
+        popover.style.cssText = 'position:fixed;z-index:2147483099;width:324px;max-width:calc(100vw - 24px);box-sizing:border-box;max-height:min(480px,calc(100vh - 24px));overflow:auto;padding:12px;background:#fff;color:#111827;border:1px solid #9ca3af;border-radius:6px;box-shadow:0 6px 18px #0003;font:13px Arial;'; // CHANGE: allow room for pending explanations and actions while bounding multi-session dialogs.
         const bounds = anchor.getBoundingClientRect(); popover.style.left = Math.max(12, Math.min(bounds.left, window.innerWidth - 324)) + 'px'; popover.style.top = Math.max(12, Math.min(bounds.bottom + 4, window.innerHeight - 312)) + 'px'; // NEW
         note(popover, objectLabel(key)); // NEW
-        for (const viewer of collaboration?.presence.filter(p => p.targets.includes(key)) || []) note(popover, (viewer.name || viewer.userId) + (viewer.online === false ? ' · offline · status unconfirmed' : ' is viewing')); // CHANGE
-        note(popover, '').dataset.editingStatus = ''; // NEW
-        const action = button('Request release', async () => { const hold = collaboration?.holds.find(h => h.key === key); if (hold?.sessionId === localSessionId) await (holdEditors ? holdEditors.handoff([key]) : releaseHolds([key])); else if (hold) await coordinate({ kind: 'request', targets: [key] }); updateObjectPopover(); }, popover); action.dataset.holdAction = ''; updateObjectPopover(); // NEW
-        note(popover, (lastStatus?.connectedPeers ?? lastStatus?.connectedCollaborators) ? 'Activity is reported by peers; updates may be delayed.' : 'Working locally — holds are unconfirmed.'); // NEW
-        button('Close', closeObjectPopover, popover, 'close'); // NEW
+        const rows = document.createElement('div'); rows.dataset.activityRows = ''; popover.appendChild(rows); // CHANGE
+        note(popover, '').dataset.editingStatus = ''; note(popover, '').dataset.connectionStatus = ''; // CHANGE
+        const error = note(popover, ''); error.dataset.status = ''; error.setAttribute('role', 'status'); // CHANGE
+        if (bridge.activityAction) { const refreshStatus = button('Refresh status', () => runActivityAction(popover, refreshActivity), popover); refreshStatus.dataset.activityAction = ''; } // CHANGE
+        button('Close', closeObjectPopover, popover, 'close').dataset.activityClose = ''; updateObjectPopover(); // CHANGE
         for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'click', 'keydown', 'keypress', 'keyup']) popover.addEventListener(type, e => { e.stopPropagation(); if (e.key === 'Escape') closeObjectPopover(); }); // NEW
-        popover.addEventListener('mouseenter', () => window.clearTimeout(popoverTimer)); popover.addEventListener('mouseleave', () => { if (!popoverPinned) popoverTimer = window.setTimeout(closeObjectPopover, 90); }); document.body.appendChild(popover); if (pinned) popover.querySelector('button:not([hidden])')?.focus(); // NEW
+        popover.addEventListener('mouseenter', () => window.clearTimeout(popoverTimer)); popover.addEventListener('mouseleave', () => { if (!popoverPinned) popoverTimer = window.setTimeout(closeObjectPopover, 90); }); document.body.appendChild(popover); updateObjectPopover(); if (pinned) popover.querySelector('button:not([hidden])')?.focus(); // CHANGE: clamp the measured dialog after mounting it.
     } // NEW
     function renderBadges() { // NEW
         if (!graph.container || !isCollaborative()) { badgeLayer?.remove(); badgeLayer = null; badgeFingerprint = ''; closeObjectPopover(); return; } // NEW
-        const entries = new Map(), pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
-        for (const pending of collaboration?.pendingChanges || []) for (const key of pending.targets) { const labels = entries.get(key) || []; labels.push((pending.name || pending.userId) + (pending.online ? pending.saveState === 'failed' ? ' · save failed' : pending.saveState === 'conflict' ? ' · conflict' : ' · changed · pending project save' : ' · offline · status unconfirmed')); entries.set(key, labels); } // NEW
-        for (const key of dirtyObjects) { const labels = entries.get(key) || []; if (!collaboration?.pendingChanges?.some(change => change.sessionId === localSessionId && change.targets.includes(key))) labels.push('You · changed · pending project save'); entries.set(key, labels); } // CHANGE: a peer's pending work cannot hide the local pending indication.
-        for (const viewer of collaboration?.presence || []) for (const key of viewer.targets) { const list = entries.get(key) || [], label = (viewer.name || viewer.userId) + (viewer.online === false ? ' · offline · status unconfirmed' : ' · viewing'); if (!collaboration?.holds.some(h => h.key === key && h.sessionId === viewer.sessionId) && !list.includes(label)) list.push(label); entries.set(key, list); } // CHANGE
-        for (const holder of collaboration?.holds || []) { const list = entries.get(holder.key) || []; list.push(holder.name + ' · editing'); entries.set(holder.key, list); } // NEW
-        for (const turn of collaboration?.reservations || []) { const list = entries.get(turn.key) || []; list.push(turn.name + ' · next turn'); entries.set(turn.key, list); } // NEW
+        pruneCreationDrafts(); // NEW
+        const entries = new Map(), pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+        for (const [key, records] of objectActivity()) { const labels = [...new Set(records.filter(entry => entry.visible).map(entry => describeActivity(entry).label))]; if (labels.length) entries.set(key, labels); } // CHANGE
         for (const [key] of entries) { // CHANGE: hidden objects remain listed in the overview, without thousands of hidden DOM badges.
             if (key === '*') { entries.delete(key); continue; } // CHANGE
             const [page, id] = JSON.parse(key); // CHANGE
@@ -964,7 +1350,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     const collaborationTimer = window.setInterval(async () => { // NEW
         if (!isCollaborative() || acquiring) return; try { // NEW
-            if (editingForm && !editingForm.isConnected) { editingForm = null; const pinned = holdEditors?.pinnedTargets() || []; const targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); if (targets.length) await releaseHolds(targets); } // CHANGE
+            if (editingForm && !editingForm.isConnected) { editingForm = null; const pinned = holdEditors?.pinnedTargets() || []; const targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); if (targets.length) await releaseHolds(targets, { automatic: true }); } // CHANGE
             await readRemote('view'); // CHANGE: retain cadence while serializing content applications.
         } catch (err) { status(err.message); } // NEW
     }, 5000); // NEW
@@ -980,16 +1366,15 @@ Draw.loadPlugin(function (ui) {
             const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; let planting = null; // NEW
             for (let cursor = cell; cursor; cursor = graph.getModel().getParent(cursor)) if (/(?:^|;)tiler_group=1(?:;|$)/.test(cursor.style || '') || cursor.getAttribute?.('planting_id') || cursor.getAttribute?.('tiler_group') === '1') planting = cursor; // NEW
             labelEditorRegistration?.dispose(); labelEditorRegistration = null; // NEW
-            if (planting) labelEditorRegistration = holdEditors?.register({ // NEW
-                kind: 'planting', targets: [JSON.stringify([page, planting.id])], capture: () => ({ pageId: page, objectId: planting.id, labelCellId: cell.id, labelHtml: graph.cellEditor?.textarea?.innerHTML || '' }), // NEW
+            labelEditorRegistration = holdEditors?.register({ // CHANGE: ordinary labels use the same editing lifecycle as planting labels. // NEW
+                kind: 'label', title: 'Object label', element: () => graph.cellEditor?.textarea, targets: [JSON.stringify([page, planting?.id || cell.id])], restore: draft => { if (graph.cellEditor?.textarea) graph.cellEditor.textarea.innerHTML = draft.labelHtml; }, capture: () => ({ pageId: page, objectId: planting?.id || cell.id, labelCellId: cell.id, labelHtml: graph.cellEditor?.textarea?.innerHTML || '' }), // NEW
                 save() { if (graph.cellEditor?.editingCell === cell) { stoppingForSave = true; try { graph.stopEditing(false); } finally { stoppingForSave = false; } } return true; }, // NEW
                 discard() { if (graph.cellEditor?.editingCell === cell) { stoppingForSave = true; try { graph.stopEditing(true); } finally { stoppingForSave = false; } } } // NEW
             }); // NEW
-            labelClaim = labelEditorRegistration ? labelEditorRegistration.acquire() : coordinate({ kind: 'claim', targets: [JSON.stringify([page, cell.id])] }).then(result => { if (!result.ok) { graph.stopEditing?.(true); status(result.reason); } }); // NEW
-            labelClaim = labelClaim.catch(error => status(error.message)); // NEW
+            labelClaim = Promise.resolve(); // CHANGE: opening an unchanged label does not claim editing activity.
         }); // CHANGE
-        graph.addListener('editingStarted', () => { editingLabel = true; }); // NEW
-        graph.addListener('editingStopped', () => { const wasEditing = editingLabel; editingLabel = false; if (!wasEditing || stoppingForSave || !isCollaborative()) return; labelEditorRegistration?.dispose(); labelEditorRegistration = null; labelClaim.then(() => { const pinned = holdEditors?.pinnedTargets() || [], targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); if (targets.length) return releaseHolds(targets); }).catch(err => status(err.message)); }); // CHANGE
+        graph.addListener('editingStarted', () => { editingLabel = true; labelEditorRegistration?.checkpoint?.(); }); // CHANGE // NEW
+        graph.addListener('editingStopped', () => { const wasEditing = editingLabel; editingLabel = false; if (!wasEditing || stoppingForSave || !isCollaborative()) return; labelEditorRegistration?.complete?.(); labelEditorRegistration?.dispose(); labelEditorRegistration = null; labelClaim.then(() => { const pinned = holdEditors?.pinnedTargets() || [], targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); if (targets.length) return releaseHolds(targets, { automatic: true }); }).catch(err => status(err.message)); }); // CHANGE
     } // NEW
     window.Trellis = window.Trellis || {};
     /** Explicit forms keep their private drafts until the existing claim and collaborative save have both settled. */ // CHANGE
@@ -997,7 +1382,7 @@ Draw.loadPlugin(function (ui) {
         if (!isCollaborative()) return; const current = file(); // CHANGE
         await acquisitionPromise; // CHANGE
         if (file() !== current) throw new Error('The diagram changed before the comment was accepted.'); // CHANGE
-        await saveCurrent(); // CHANGE
+        await saveCurrent(options); // CHANGE: object commands may use the automatic quiet queue.
         if (options.release) await releaseUnpinnedHolds(); // CHANGE: command cleanup must not release an active planner's hold.
     } // CHANGE
     /** Hand off completed edits while retaining holds pinned by an active editor. */ // NEW
@@ -1005,7 +1390,7 @@ Draw.loadPlugin(function (ui) {
         const pinned = holdEditors?.pinnedTargets() || [], targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); // NEW
         if (targets.length) await coordinate({ kind: 'release', targets }); // NEW
     } // NEW
-    window.Trellis.sharing = { ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: config => holdEditors?.register(config), getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE
+    window.Trellis.sharing = { ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: registerSharingEditor, rejectOperation: (edit, reason) => undoRejected(edit, reason), releaseRemovedCreations, registerObjectForm: config => holdEditors?.registerForm(config), whenEditingReady: async () => { const current = file(), generation = contextGeneration, actor = context().userId; await acquisitionPromise; if (current !== file() || generation !== contextGeneration || actor !== context().userId) throw new Error('The editing context changed before the operation could begin.'); }, transitionEditor: operation => holdEditors ? holdEditors.transition(operation) : Promise.resolve(operation()), activeEditorTargets: () => holdEditors?.activeTargets() || [], getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE: registered editors retain their API and report draft disposal to creation-badge presentation.
     /** Authenticate, initialize the remembered base, then claim and save the same account transition. */ // NEW
     window.Trellis.sharing.finishIdentityJoin = async function (options) { // NEW
         if (identityJoinInProgress) throw new Error('This invitation is already being completed.'); // NEW
@@ -1025,15 +1410,18 @@ Draw.loadPlugin(function (ui) {
     /** Generated descendants and derived tasks share source freshness; unrelated ancestors do not freeze content editing. */ // CHANGE
     function isPendingCell(cell) {
         const recoveryPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
+        const frozen = [...(holdEditors?.frozenTargets() || []), ...[...frozenForms].filter(([element]) => element.isConnected).flatMap(([, item]) => item.draft.targets)]; // CHANGE
+        if (frozen.length && cell && affectsTarget(frozen, cell.id, recoveryPage)) return true; // CHANGE: close-time handlers cannot submit into a frozen object's live graph.
         if (recoveringTargets.has('*')) return true; // CHANGE
-        for (let cursor = cell; cursor; cursor = graph.getModel?.().getParent(cursor)) if (recoveringTargets.has(JSON.stringify([recoveryPage, String(cursor.id)]))) return true; // NEW
+        if (recoveringTargets.size) for (let cursor = cell; cursor; cursor = graph.getModel?.().getParent(cursor)) if (recoveringTargets.has(JSON.stringify([recoveryPage, String(cursor.id)]))) return true; // CHANGE: an empty recovery index cannot match any ancestor.
         if (!explicitMode || !isCollaborative() || !cell) return false;
         if (!viewIdentity) return true; // NEW: loading/recovery cannot expose editing against an unknown remembered base.
         const pending = incoming?.getGroups() || [], page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '';
         if (pending !== indexedPending) { indexedPending = pending; pendingKeys = new Set(pending.flatMap(group => [...group.keys, ...group.targets])); pendingStructure = pending.some(group => group.structural); } // NEW
         if (refreshingTargets.has('*') || pendingStructure) return true; // CHANGE
+        if (!pendingKeys.size && !refreshingTargets.size) return false; // NEW: skip dependency parsing only after frozen, recovery, loading, and structural boundaries have been checked.
         let logical = cell; // NEW: ancestors are not automatically content dependencies; a new sibling must not freeze the entire canvas.
-        for (let cursor = cell; cursor; cursor = graph.getModel().getParent(cursor)) if (/(?:^|;)tiler_group=1(?:;|$)/.test(cursor.style || '') || cursor.getAttribute?.('planting_id')) logical = cursor; // NEW
+        for (let cursor = cell; cursor; cursor = graph.getModel().getParent(cursor)) if (/(?:^|;)tiler_group=1(?:;|$)/.test(cursor.style || '') || cursor.getAttribute?.('planting_id') || cursor.getAttribute?.('tiler_group') === '1') logical = cursor; // CHANGE
         const ids = new Set([String(cell.id), String(logical.id)]); // NEW
         const source = cell.getAttribute?.('derived_source_group_id'); if (source) ids.add(source); // NEW
         if (cell.getAttribute?.('kanban_card') === '1' || /(?:^|;)kanban_card=1(?:;|$)/.test(cell.style || '')) for (const id of String(cell.getAttribute?.('linkedTo') || '').split(',').map(value => value.trim()).filter(Boolean)) ids.add(id); // NEW
@@ -1044,46 +1432,95 @@ Draw.loadPlugin(function (ui) {
         return false;
     }
     function adoptPolicy(state) { // NEW: Users reads effective policy without rewriting stale content or acquiring editing holds.
+        if (state?.policyDelta && Number.isSafeInteger(graph.__trellisSharedPolicy?.policyRevision) && state.policyRevision <= graph.__trellisSharedPolicy.policyRevision) return false; // CHANGE: repeated status snapshots cannot request the predecessor of an already applied delta.
+        if (state?.policyDelta && !state.policy) { const previous = graph.__trellisSharedPolicy, delta = state.policyDelta; if (!previous || previous.policyHash !== delta.baseHash) { void coordinate({ kind: 'get' }).catch(error => status(error.message)); return false; } const cells = new Map(previous.cells); for (const key of delta.removed) cells.delete(key); for (const cell of delta.cells) cells.set(cell.key, cell); state = { ...state, policy: { store: delta.store, teams: delta.teams, cells: [...cells.values()] } }; } // CHANGE: a missing predecessor requests a full policy without applying an unbound delta.
         if (!explicitMode || !state?.policy) return;
+        if (state.actorUserId && state.actorUserId !== context().userId || state.sessionId && localSessionId && state.sessionId !== localSessionId) return false; // CHANGE
+        const previousRevision = graph.__trellisSharedPolicy?.policyRevision; // CHANGE
+        if (Number.isSafeInteger(previousRevision) && (!Number.isSafeInteger(state.policyRevision) || state.policyRevision <= previousRevision)) return false; // CHANGE
         const previous = graph.__trellisSharedPolicy?.cells || new Map();
         const cells = new Map([...previous.keys()].map(key => [key, { attributes: {} }]));
         for (const cell of state.policy.cells) cells.set(cell.key, cell);
-        graph.__trellisSharedPolicy = { ...state.policy, diagramId: info?.diagramId, cells }; // CHANGE
+        graph.__trellisSharedPolicy = { ...state.policy, diagramId: info?.diagramId, policyRevision: state.policyRevision, policyHash: state.policyHash, cells }; // CHANGE
+        collaboration = { ...collaboration, policy: state.policy, policyHash: state.policyHash, policyRevision: state.policyRevision }; if (lastStatus) lastStatus.collaboration = collaboration; // CHANGE
         users()?.revalidateCurrentSession?.();
+        return true; // CHANGE
     }
-    /** Lost holds discard only the affected forms; submitted diagram proposals retain the existing recovery copies. */ // NEW
-    function rejectDialogs(targets, reason) {
-        if (!targets?.length) return;
-        const page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
-        const all = targets.includes('*'), keys = new Set(targets);
-        const affected = id => { // NEW: a logical parent hold also protects the forms of its descendants.
-            let cell = graph.getModel().getCell(id);
-            do { if (keys.has(JSON.stringify([page, String(cell?.id || id)])) || keys.has(JSON.stringify(['', String(cell?.id || id)]))) return true; cell = cell && graph.getModel().getParent(cell); } while (cell);
-            return all;
-        };
-        const forms = new Set(); // NEW
-        graph.__trellisObjectDetails?.rejectHolds?.(targets);
-        const label = graph.cellEditor?.editingCell;
-        if (label && affected(label.id)) { stoppingForSave = true; try { graph.stopEditing?.(true); } finally { stoppingForSave = false; } }
-        for (const binding of document.querySelectorAll('[data-collaboration-object-id],[data-spacing-row-cell]')) {
-            if (!affected(binding.dataset.collaborationObjectId || binding.dataset.spacingRowCell)) continue; // CHANGE
-            const form = binding.closest('[role="dialog"],.geDialog,.usl-scheduler-dialog');
-            if (form) forms.add(form); // CHANGE
-        }
-        if (editingForm?.isConnected && (all || formTargets.some(key => targets.includes(key)))) {
-            forms.add(editingForm); // CHANGE
-        }
-        for (const dialog of [...(ui.dialogs || [])].reverse()) if ([...forms].some(form => dialog.container === form || dialog.container?.contains(form) || form.contains(dialog.container))) { // NEW
-            if (dialog === ui.dialog) ui.hideDialog(true, false, dialog.container.firstChild);
-            else { // NEW: use the native cancel lifecycle without dismissing an unrelated top dialog.
-                dialog.closing = true;
-                if (dialog.close(true, false) !== false) { const index = ui.dialogs.indexOf(dialog); if (index >= 0) ui.dialogs.splice(index, 1); ui.dialog = ui.dialogs[ui.dialogs.length - 1] || null; ui.editor.fireEvent(new mxEventObject('hideDialog', 'dialog', dialog)); }
-                delete dialog.closing;
-            }
-        }
-        if (all || formTargets.some(key => { const [targetPage, id] = JSON.parse(key); return (targetPage === page || !targetPage) && affected(id); })) { editingForm = null; formTargets = []; window.clearTimeout(formActivityTimer); } // CHANGE
-        status((reason || 'Editing hold rejected.') + ' The affected edit dialogs were closed and their unapplied entries discarded. Submitted diagram edits remain available in Recovery copies.');
-    }
+    /** Match a lost logical parent without confusing reused IDs on other pages. */ // CHANGE
+    function affectsTarget(targets, id, page = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '') { // CHANGE
+        let cell = graph.getModel?.().getCell(id); // CHANGE
+        do { if (targets.includes('*') || targets.includes(JSON.stringify([page, String(cell?.id || id)])) || targets.includes(JSON.stringify(['', String(cell?.id || id)]))) return true; cell = cell && graph.getModel().getParent(cell); } while (cell); // CHANGE
+        return false; // CHANGE
+    } // CHANGE
+    /** Only fields bound to a collaboration object are captured; credentials and unrelated dialogs are excluded. */ // CHANGE
+    function captureObjectFields(element) { // CHANGE
+        return [element, ...element.querySelectorAll('input,textarea,select,[contenteditable="true"]')].filter(field => field.matches('input,textarea,select,[contenteditable="true"]') && !['password', 'file', 'hidden'].includes(field.type) && !/password|\bpin\b|secret|token|credential/i.test(field.name + ' ' + field.id + ' ' + field.autocomplete)).map((field, index) => ({ index, id: field.id, name: field.name, type: field.type || 'rich-text', value: field.value ?? field.innerHTML, checked: !!field.checked })); // CHANGE
+    } // CHANGE
+    /** Keep the original label node available after mxCellEditor cancels its graph submission. */ // CHANGE
+    function freezeLabel(targets, reason) { // CHANGE
+        const editor = graph.cellEditor, cell = editor?.editingCell, field = editor?.textarea; // CHANGE
+        if (!cell || !field || !affectsTarget(targets, cell.id)) return; // CHANGE
+        const registration = labelEditorRegistration, draft = { kind: 'label', targets, objectId: String(cell.id), html: field.innerHTML, text: field.value ?? field.textContent }, bounds = field.getBoundingClientRect(); // CHANGE
+        stoppingForSave = true; try { graph.stopEditing?.(true); } finally { stoppingForSave = false; } // CHANGE
+        labelEditorRegistration = null; // CHANGE: a future label editor must not dispose or revive this frozen generation.
+        const panel = document.createElement('section'), close = document.createElement('button'); // CHANGE
+        panel.style.cssText = 'position:fixed;z-index:12001;background:white;border:1px solid #888;padding:10px;max-height:80vh;overflow:auto;min-width:260px;left:' + Math.max(8, bounds.left) + 'px;top:' + Math.max(8, Math.min(bounds.top, window.innerHeight - 200)) + 'px'; // CHANGE
+        panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Retained label draft'); field.style.cssText = 'position:static;min-height:50px;white-space:pre-wrap;user-select:text;'; // CHANGE
+        close.type = 'button'; close.textContent = 'Close'; close.addEventListener('click', () => { registration?.dispose(); frozenForms.get(panel)?.view?.dispose(); frozenForms.delete(panel); panel.remove(); }); panel.append(field, close); document.body.appendChild(panel); // CHANGE
+        frozenForms.set(panel, { draft, view: window.TrellisEditingHolds?.freezeElement(panel, reason) }); // CHANGE
+    } // CHANGE
+    /** Freeze only affected original surfaces. Their adapters guard programmatic commits as well as UI events. */ // CHANGE
+    function rejectDialogs(targets, reason) { // CHANGE
+        if (!targets?.length) return; // CHANGE
+        holdEditors?.freeze(targets, reason); // CHANGE
+        for (const item of graph.__trellisObjectDetails?.freezeHolds?.(targets, reason) || []) if (!frozenForms.has(item.element)) frozenForms.set(item.element, { draft: item.draft, view: window.TrellisEditingHolds?.freezeElement(item.element, reason) }); // CHANGE
+        freezeLabel(targets, reason); // CHANGE
+        for (const binding of document.querySelectorAll('[data-collaboration-object-id],[data-spacing-row-cell]')) { // CHANGE
+            if (!affectsTarget(targets, binding.dataset.collaborationObjectId || binding.dataset.spacingRowCell)) continue; // CHANGE
+            const form = binding.closest('[role="dialog"],.geDialog,.usl-scheduler-dialog') || binding; // CHANGE
+            if (form.querySelector('[data-trellis-collaborative-editor]') || form.matches('[data-trellis-collaborative-editor]') || frozenForms.has(form) || form.closest('[data-trellis-frozen]')) continue; // CHANGE
+            const draft = { kind: 'object-form', targets: [...targets], objectId: binding.dataset.collaborationObjectId || binding.dataset.spacingRowCell, fields: captureObjectFields(form) }; // CHANGE
+            frozenForms.set(form, { draft, view: window.TrellisEditingHolds?.freezeElement(form, reason) }); // CHANGE
+        } // CHANGE
+        if (formTargets.some(key => targets.includes(key)) || targets.includes('*')) { editingForm = null; formTargets = []; window.clearTimeout(formActivityTimer); } // CHANGE
+        status(reason + ' The affected editor is frozen for review and copying only.'); // CHANGE
+    } // CHANGE
+    function preservationStatus(targets, saved, error, retry) { // CHANGE
+        holdEditors?.preservation(targets, saved, error, retry); // CHANGE
+        for (const item of frozenForms.values()) if (item.draft.targets.some(key => targets.includes(key) || key === '*' || targets.includes('*'))) item.view?.update(saved, error, retry); // CHANGE
+    } // CHANGE
+    /** Capture once and start private preservation while the originating author and original controls still exist. */ // CHANGE
+    function stageLostDraft(targets, reason) { // CHANGE
+        rejectDialogs(targets, reason); // CHANGE
+        const generation = contextGeneration, expectedUserId = context().userId, current = file(), lossKey = JSON.stringify([generation, [...targets].sort()]); // CHANGE
+        let record = retainedLosses.get(lossKey); // CHANGE
+        if (!record && bridge.recoveryAction) { // CHANGE
+            const editors = [...(holdEditors?.capture(targets) || []), ...[...frozenForms.values()].map(item => item.draft).filter(draft => draft.targets.some(key => targets.includes(key) || targets.includes('*') || key === '*'))]; // CHANGE
+            if (current.isModified() || unsavedActions.length || editors.length) { record = { input: { shareId: info.shareId, expectedUserId, kind: 'retain', lossId: window.crypto.randomUUID(), reason, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: editors, ...(graph.__trellisProjectFormat === 2 ? { references: referenceDependencies() } : {}) }, saved: false, at: Date.now() }; retainedLosses.set(lossKey, record); } // CHANGE
+        } // CHANGE
+        if (bridge.activityAction && !record?.released) { if (record) record.released = true; void coordinate({ kind: 'release', targets }).catch(error => { if (generation === contextGeneration) status('The editor is frozen; releasing its activity report failed: ' + error.message); }); } // CHANGE
+        if (!record || record.saved) { if (record?.saved) preservationStatus(targets, true); return { lossKey, preservation: Promise.resolve() }; } // CHANGE
+        if (!record.task) { // CHANGE
+            const task = Promise.resolve(bridge.recoveryAction(record.input)).then(result => { if (!result?.ok) throw new Error(result?.reason || 'Private preservation failed.'); record.saved = true; if (generation === contextGeneration) preservationStatus(targets, true); }).catch(error => { if (generation === contextGeneration) preservationStatus(targets, false, error.message, () => recoverLostHolds(targets, reason).catch(() => {})); throw error; }).finally(() => { if (record.task === task) record.task = null; }); // CHANGE
+            record.task = task; // CHANGE
+        } // CHANGE
+        return { lossKey, preservation: record.task }; // CHANGE
+    } // CHANGE
+    /** Context teardown hides the previous author's frozen work, without deleting its durable private copy. */ // CHANGE
+    function resetFrozenEditors() { // CHANGE
+        resetGardenCreations(); // NEW: groups, native-edit identities and private intent cannot cross author/document boundaries.
+        activityRevision = -1; lossChecks.clear(); composingFields.clear(); for (const [key, record] of retainedLosses) if (record.saved) retainedLosses.delete(key); // CHANGE
+        for (const [element, item] of frozenForms) { item.view?.dispose(); element.remove(); } frozenForms.clear(); // CHANGE
+    } // CHANGE
+    /** Retry only private persistence for the originating author; never replay an old graph draft into a new context. */ // CHANGE
+    async function retryPrivatePreservation() { // CHANGE
+        if (!bridge.recoveryAction || !info?.shareId) return; // CHANGE
+        const shareId = info.shareId, expectedUserId = context().userId, generation = contextGeneration; // CHANGE
+        for (const [key, record] of retainedLosses) if (!record.saved && record.input.shareId === shareId && record.input.expectedUserId === expectedUserId) { // CHANGE
+            try { const result = await bridge.recoveryAction(record.input); if (!result?.ok) throw new Error(result?.reason || 'Private preservation failed.'); record.saved = true; retainedLosses.delete(key); } // CHANGE
+            catch (error) { if (generation === contextGeneration) status('A previous private draft remains only in memory. Open Sharing → Recovery copies to copy or export it. ' + error.message); } // CHANGE
+        } // CHANGE
+    } // CHANGE
     if (explicitMode && !window.TrellisIncomingChanges) { status('Incoming change review could not load. Reopen Trellis before editing shared canvases.'); graph.setEnabled?.(false); return; } // NEW
     if (explicitMode) incoming = window.TrellisIncomingChanges.create(ui, { // NEW
         coordinate, status, timing: timings,
@@ -1105,6 +1542,7 @@ Draw.loadPlugin(function (ui) {
         adopt: xml => { collaborationBaseline = xml; observedXml = file().isModified() ? ui.getFileData() : xml; file().data = xml; pendingHash = null; },
     }); // NEW
     for (const name of ['isCellEditable', 'isCellMovable', 'isCellResizable', 'isCellDeletable', 'isCellRotatable', 'isCellConnectable']) if (graph[name]) { const allowed = graph[name]; graph[name] = function (cell) { return !isPendingCell(cell) && allowed.apply(this, arguments); }; } // CHANGE
+    window.Trellis.sharing.portableXml = async xml => { if (graph.__trellisProjectFormat !== 2) return xml; const result = await coordinate({ kind: 'portable-export', xml }); if (!result?.ok) throw new Error(result?.reason || 'The portable export could not resolve its definitions.'); return result.xml; }; // CHANGE: a captured local draft can export without accepting a conflict.
     window.Trellis.sharing.refreshHistoryStorage = async function () { // NEW
         const captured = info; if (!captured?.managed || !bridge.historyStorage) return;
         try { // NEW
@@ -1131,7 +1569,12 @@ Draw.loadPlugin(function (ui) {
         applyRemote(result.xml, current, current.stat, current.isModified() ? before : undefined);
         incoming?.setGroups(result.groups || []); pendingHash = result.collaboration?.hash;
     };
-    window.Trellis.sharing.automationHolds = () => isCollaborative() ? (collaboration?.holds || []).map(hold => ({ ...hold, local: hold.sessionId === localSessionId })) : []; // CHANGE: preflight protects remote editors and unrelated local drafts.
+    /** Activity is always boolean: local persistence holds are inactive once their actual editor completes. */ // CHANGE
+    window.Trellis.sharing.automationHolds = () => { // CHANGE
+        if (!isCollaborative()) return []; // CHANGE
+        const activeTargets = new Set(holdEditors?.activeTargets() || []); // CHANGE
+        return (collaboration?.holds || []).map(hold => ({ ...hold, local: hold.sessionId === localSessionId, active: !!(hold.sessionId === localSessionId && (activeTargets.has(hold.key) || editingForm?.isConnected && formTargets.includes(hold.key))) })); // CHANGE: remote holds remain protected independently of their active flag.
+    }; // CHANGE
     graph.__trellisSharing = window.Trellis.sharing;
     ui.actions.addAction('trellisJoinSharedCanvas', showJoinDialog).label = 'Join Shared Canvas';
     ui.actions.addAction('trellisCanvasSync', () => showSharingDialog().catch(err => status(err.message))).label = 'Canvas Sync';
@@ -1148,13 +1591,13 @@ Draw.loadPlugin(function (ui) {
     window.addEventListener('trellisUsersSessionChanged', () => { // CHANGE
         if (!explicitMode) { refresh().catch(err => status(err.message)); return; }
         const nextIdentity = context().userId; if (nextIdentity === sessionIdentity) return;
-        sessionIdentity = nextIdentity;
+        sessionIdentity = nextIdentity; closeObjectPopover(); // CHANGE: actions and private recovery links belong to the previous author.
         invalidateDocumentReady(); // NEW
         const current = file(), previousIdentity = viewIdentity, shareId = info?.shareId, generation = ++contextGeneration; // CHANGE
         const privateDraft = previousIdentity && isCollaborative() && bridge.recoveryAction && (current?.isModified() || holdEditors?.pinnedTargets().length) ? { shareId, kind: 'checkpoint', expectedUserId: previousIdentity, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: holdEditors?.capture(['*']) || [] } : null; // NEW
         const privatePreservation = privateDraft ? bridge.recoveryAction(privateDraft) : null; // NEW: capture before disposing the previous author's editor registrations.
-        background?.dispose(); background = null; backgroundFile = null; savedObjects.clear(); dirtyObjects.clear(); // NEW
-        holdEditors?.reset(); labelEditorRegistration = null; unsavedActions.length = 0; recoveringTargets.clear(); recoveryQueue = Promise.resolve(); recoveryFailure = null; retryRecovery = null; saveFence = Promise.resolve(); // NEW
+        clearSaveStatus(); background?.dispose(); background = null; backgroundFile = null; savedObjects.clear(); dirtyObjects.clear(); // CHANGE
+        holdEditors?.reset(); resetFrozenEditors(); localSessionId = null; labelEditorRegistration = null; unsavedActions.length = 0; recoveringTargets.clear(); recoveryQueue = Promise.resolve(); recoveryFailure = null; retryRecovery = null; saveFence = Promise.resolve(); // NEW
         incoming?.reset(); viewIdentity = null; pendingHash = null;
         const draft = previousIdentity && isCollaborative() && current?.isModified() ? ui.getFileData() : null;
         const preservation = privatePreservation ? privatePreservation.then(() => ({ private: true })) : draft ? bridge.saveRecoveryCopy({ shareId, xml: draft }) : Promise.resolve(null); // CHANGE
@@ -1185,17 +1628,16 @@ Draw.loadPlugin(function (ui) {
         assetSequence = lastStatus?.folderSequence ?? null; // CHANGE
         if (info?.assetBaseUrl && lastStatus?.state === 'upToDate' && (previousState !== 'upToDate' || previousSequence !== null && assetSequence !== null && previousSequence !== assetSequence)) refreshManagedImages(); // CHANGE: downloads may complete between two otherwise identical idle observations.
         if (lastStatus?.collaboration) { // CHANGE
-            const next = { ...lastStatus.collaboration, sessionId: localSessionId }, previous = collaboration?.holds?.filter(hold => hold.sessionId === localSessionId) || [];
-            if (explicitMode) { const lost = previous.filter(hold => !releasingClaims.has(hold.claimId) && !next.holds?.some(item => item.claimId === hold.claimId && item.sessionId === localSessionId)); if (lost.length) recoverLostHolds(lost.map(hold => hold.key), 'Your editing hold expired, access changed, or another concurrent editor has priority.').catch(() => {}); adoptPolicy(next); } // CHANGE
-            adoptActivity(next); // CHANGE: polling preserves the same names and badge meanings as the independent subscription.
+            const next = { ...lastStatus.collaboration, sessionId: lastStatus.collaboration.sessionId || localSessionId }; // CHANGE
+            adoptActivity(next); adoptPolicy(next); if (collaboration) lastStatus.collaboration = collaboration; // CHANGE: policy and activity order independently.
         } // CHANGE
         if (lastStatus && info) importNewHistory().catch(err => status(err.message));
         if (explicitMode && isCollaborative() && viewIdentity && lastStatus?.collaboration?.hash !== pendingHash) readRemote('view').catch(err => status(err.message)); // NEW
         announce();
     });
-    ui.editor.addListener('pageSelected', () => { modelRevision++; }); // CHANGE: page switches invalidate pending captures too.
-    ui.editor.addListener('fileLoaded', () => { window.TrellisContentPolicy?.resetDocument(); contextGeneration++; modelRevision++; holdEditors?.reset(); labelEditorRegistration = null; unsavedActions.length = 0; recoveringTargets.clear(); recoveryQueue = Promise.resolve(); recoveryFailure = null; retryRecovery = null; saveFence = Promise.resolve(); // CHANGE
-         background?.dispose(); background = null; backgroundFile = null; savedObjects.clear(); dirtyObjects.clear(); conflictDialog?.remove(); conflictDialog = null; // NEW
+    ui.editor.addListener('pageSelected', () => { renderBadges(); }); // CHANGE: navigation updates presentation; it is not an authored content revision.
+    ui.editor.addListener('fileLoaded', () => { window.TrellisContentPolicy?.resetDocument(); contextGeneration++; modelRevision++; holdEditors?.reset(); resetFrozenEditors(); localSessionId = null; labelEditorRegistration = null; unsavedActions.length = 0; recoveringTargets.clear(); recoveryQueue = Promise.resolve(); recoveryFailure = null; retryRecovery = null; saveFence = Promise.resolve(); // CHANGE
+         clearSaveStatus(); background?.dispose(); background = null; backgroundFile = null; savedObjects.clear(); dirtyObjects.clear(); conflictDialog?.remove(); conflictDialog = null; // CHANGE
          invalidateDocumentReady(); classifiedFile = null; // CHANGE
          delete graph.__trellisSharedPolicy; remoteReadTask = null; window.clearTimeout(formActivityTimer); closeDialog(); acquiring = false; pendingEdits = []; acquisitionObjects.clear(); info = null; collaborationBaseline = null; observedXml = null; localSessionId = null; collaboration = null; viewIdentity = null; pendingHash = null; incoming?.reset(); refreshingTargets.clear(); formTargets = []; closeObjectPopover(); localRecovery = null; remoteBaselinePending = false; queuedHistory.clear(); publishedIds.clear(); installFileHooks(); refresh(); }); // CHANGE
     installFileHooks();

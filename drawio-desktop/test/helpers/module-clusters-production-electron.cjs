@@ -8,6 +8,7 @@ const childProcess = require('node:child_process'), { syncBuiltinESMExports } = 
 const ownedChildren = new Set(), originalSpawn = childProcess.spawn; // NEW
 childProcess.spawn = (...args) => { const child = originalSpawn(...args); ownedChildren.add(child); child.once('exit', () => ownedChildren.delete(child)); return child; }; syncBuiltinESMExports(); // NEW
 const { app, dialog, session } = require('electron'); // NEW
+let testStartup = { openAtLogin: false }; app.getLoginItemSettings = () => ({ ...testStartup }); app.setLoginItemSettings = value => { testStartup = { ...testStartup, ...value }; }; // NEW: isolated garden creation must never change the user's OS startup registration.
 const project = process.env.TRELLIS_RESPONSIVENESS_PROJECT || path.resolve(__dirname, '../..'); // CHANGE: frozen helpers retain the application resource root.
 const responsiveness = process.argv.includes('--responsiveness') ? require('./small-diagram-responsiveness.cjs')({ project, app, session }) : null; // CHANGE: opt-in production timing matrix, separate from CPU profiling.
 const output = path.join(project, '.test-artifacts/module-clusters'); // NEW
@@ -15,14 +16,15 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-clusters-producti
 for (const name of ['app-data', 'documents', 'session', 'user-data']) fs.mkdirSync(path.join(profile, name), { recursive: true }); // NEW
 app.setPath('appData', path.join(profile, 'app-data')); app.setPath('documents', path.join(profile, 'documents')); // NEW
 app.setPath('userData', path.join(profile, 'user-data')); app.setPath('sessionData', path.join(profile, 'session')); // NEW
-app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); // NEW
+if (!process.argv.includes('--saving-redesign')) { app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); } // CHANGE: interaction qualification uses the application's normal graphics settings.
+if (process.argv.includes('--creation-regression') || process.argv.includes('--saving-redesign')) app.commandLine.appendSwitch('no-sandbox'); // CHANGE: isolated native regression profiles must also run where Windows cannot initialize Chromium's renderer sandbox.
 app.commandLine.appendSwitch('disable-renderer-backgrounding'); // NEW
 app.commandLine.appendSwitch('disable-background-timer-throttling'); // NEW
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling'); // NEW
 app.commandLine.appendSwitch('js-flags', '--expose-gc'); // NEW
 let win, stage = 'startup', closing = false; const rendererErrors = []; // NEW
 app.on('browser-window-created', (_event, created) => { // NEW
-    win = created; created.hide(); created.webContents.setBackgroundThrottling(false); // NEW
+    win = created; if (process.argv.includes('--saving-redesign')) created.showInactive(); else created.hide(); created.webContents.setBackgroundThrottling(false); // CHANGE: qualify a visible window while preserving focus in the user's session.
     created.webContents.on('console-message', event => { // NEW
         if (event.level === 'error') { console.error('Renderer:', event.message, event.sourceId || '', event.lineNumber || ''); if (event.message?.includes('Uncaught')) rendererErrors.push(event.message); } // CHANGE: retain source locations for failed production fixtures.
         else if (event.message?.startsWith('CLUSTER_STAGE:')) console.log(event.message); // NEW
@@ -47,9 +49,24 @@ function finish(code) { // NEW
 } // NEW
 process.on('SIGINT', () => finish(130)); process.on('SIGTERM', () => finish(143)); // NEW: interrupted profiling runs must release only their own subprocesses.
 app.whenReady().then(async () => { // NEW
+    if (process.env.TRELLIS_REDESIGN_SOURCE_ROOT) require('../../scripts/check-coordinator-qualification.cjs').verifyRuntime(project, process.env.TRELLIS_REDESIGN_SOURCE_ROOT); // NEW: qualification never measures a different checkout silently.
+    if (process.argv.includes('--saving-redesign')) { // NEW: bounded transport timing excludes headers, bodies, and query strings.
+        const originalFetch = globalThis.fetch; let samples = 0; // NEW
+        globalThis.fetch = async function (url, options) { const started = performance.now(); try { return await originalFetch.apply(this, arguments); } catch (error) { if (samples++ < 32) console.log('CLUSTER_STAGE: local transport failure ' + JSON.stringify({ endpoint: new URL(url).pathname, elapsed: Math.round(performance.now() - started), reason: error.message })); throw error; } }; // NEW
+    } // NEW
     session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_details, callback) => callback({ cancel: true })); // NEW
     responsiveness?.install(); // CHANGE: install source comparisons and main-process observers before importing production services.
-    await import(pathToFileURL(responsiveness?.entry || path.join(project, 'src/main/electron.js'))); // CHANGE
+    let applicationEntry = responsiveness?.entry || path.join(project, 'src/main/electron.js'); // CHANGE
+    if (process.argv.includes('--saving-redesign') && process.env.TRELLIS_REDESIGN_PROTOCOL === '4') { // NEW: seed historical-format registrations using the same isolated-copy mechanics as responsiveness tests.
+        const main = path.join(project, 'src/main'), staged = path.join(project, '.test-artifacts/saving-redesign/legacy-application-' + process.pid, 'main'); fs.mkdirSync(staged, { recursive: true }); fs.cpSync(main, staged, { recursive: true }); // NEW
+        for (const name of fs.readdirSync(staged).filter(name => name.endsWith('.js'))) { // NEW
+            const filename = path.join(staged, name), source = fs.readFileSync(filename, 'utf8'); // NEW
+            fs.writeFileSync(filename, source.replace(/(['"])(\.\.\/\.\.\/drawio\/[^'"]+)\1/g, (_match, _quote, relative) => JSON.stringify(pathToFileURL(path.resolve(main, relative)).href))); // NEW
+        } // NEW
+        const library = path.join(staged, 'trellis-garden-library-service.js'); fs.writeFileSync(library, fs.readFileSync(library, 'utf8').replaceAll('protocolVersion: SYNC_PROTOCOL.newGarden', 'protocolVersion: SYNC_PROTOCOL.garden')); // NEW: only fixture creation chooses the historical format; edit/permission/save modules are exact copies.
+        applicationEntry = path.join(staged, 'electron.js'); fs.writeFileSync(applicationEntry, fs.readFileSync(applicationEntry, 'utf8').replace('const __dirname = path.dirname(url.fileURLToPath(import.meta.url));', 'const __dirname = ' + JSON.stringify(main) + ';').replace("'./trellis-asset-scheme.cjs'", JSON.stringify(pathToFileURL(path.join(main, 'trellis-asset-scheme.cjs')).href))); // NEW: native assets retain their production locations without replacing Electron's module loader.
+    } // NEW
+    await import(pathToFileURL(applicationEntry)); // CHANGE
     await until(async () => !!win, 'application window'); // NEW
     const run = script => win.webContents.executeJavaScript(script); // NEW
     await until(() => run('!!window.Draw?.loadPlugin && !!window.TrellisGardenHome').catch(() => false), 'plugin loader'); // NEW
@@ -73,6 +90,8 @@ app.whenReady().then(async () => { // NEW
         window.write=(cell,attrs)=>{const node=cell.value.cloneNode(true);Object.entries(attrs).forEach(([key,text])=>node.setAttribute(key,String(text)));graph.model.setValue(cell,node);}; // NEW
         void 0; // NEW
     `); // NEW
+    if (process.argv.includes('--saving-redesign')) { await require('./saving-redesign-production.cjs')({ run, win, project, profile }); if (process.env.TRELLIS_REDESIGN_SOURCE_ROOT) require('../../scripts/check-coordinator-qualification.cjs').verifyRuntime(project, process.env.TRELLIS_REDESIGN_SOURCE_ROOT); finish(0); return; } // CHANGE: incident copies are exercised only in the test-owned identity/profile.
+    if (process.argv.includes('--creation-regression')) { await require('./module-creation-production.cjs')({ run, win, project }); finish(0); return; } // CHANGE
     await run(fs.readFileSync(path.join(__dirname, 'module-cluster-fixture.js'), 'utf8')); // NEW
     const count = Number(process.env.TRELLIS_CLUSTER_COUNT || 5000); // NEW
     stage = 'production benchmark'; // NEW

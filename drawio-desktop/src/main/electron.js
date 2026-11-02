@@ -39,6 +39,9 @@ import { createGardenLibraryService } from './trellis-garden-library-service.js'
 import { createGardenJoinService } from './trellis-garden-join-service.js'; // NEW
 import { createGardenCommunityService } from './trellis-garden-community-service.js'; // NEW
 import { createFieldService } from './trellis-field-service.js'; // NEW
+import { createInventoryService } from './trellis-inventory-service.js'; // NEW
+import { createExchangeService } from './trellis-exchange-service.js'; // NEW
+import { createExchangeRates } from './trellis-exchange-rates.js'; // NEW
 import { EventEmitter } from 'node:events'; // NEW
 import { createLifecycleCoordinator, requestWindowReply, cleanupClosedWindow, lastWindowPolicy } from './trellis-lifecycle.js'; // NEW
 
@@ -60,13 +63,13 @@ let sharingTray = null; // NEW
 let sharingTrayCreation = null; // NEW: concurrent Share/Join requests must not create duplicate trays.
 const sharingEvents = new EventEmitter(); // CHANGE: one tray subscription observes all transports.
 let configuredIdentities = []; // NEW: installed, non-revoked identities determine background eligibility.
-let backgroundReady = null, backgroundFailureShown = false, identityRefreshTask = null; // NEW
+let backgroundReady = null, backgroundFailureShown = false, identityRefreshTask = null, backgroundInitializing = false; // NEW
 const sharingWindowPaths = new Map(); // NEW: bind sharing IPC to the caller's watched document.
 const sharingWindowServices = new Map(); // NEW: scoped status routing reuses a validated identity generation instead of scanning its catalog on each heartbeat.
 const assetContexts = new Map(); // NEW
 const assetBroker = createAssetBroker({ currentContext: id => sharingWindowPaths.has(id) ? JSON.stringify([sharingWindowPaths.get(id), assetContexts.get(id)]) : null, readImage: async (id, input) => (await getScopedSharingService(id)).readAsset(id, input, true) }); // NEW
 const identityTransports = new Map(); // NEW: each identity has a separate daemon and registry.
-let identityService = null, gardenLibraryService = null, gardenJoinService = null, gardenCommunityService = null, fieldService = null, identityRefreshTimer = null; // CHANGE
+let identityService = null, gardenLibraryService = null, gardenJoinService = null, gardenCommunityService = null, fieldService = null, inventoryService = null, exchangeService = null, identityRefreshTimer = null; // CHANGE
 
 try {
 	const drawioUserDataPath = path.join(app.getPath('appData'), 'draw.io'); // CHANGE: preserve the existing legacy runtime profile.
@@ -2376,6 +2379,7 @@ function dirname(path_p) {
 
 async function readFile(filename, encoding) {
 	const abs = path.resolve(filename);
+	if (abs.startsWith(appBaseDir)) throw new Error('This file is inside Trellis’s application folder. Copy it to Documents or another folder, then open the copy.'); // NEW: explain the existing protected-path rejection before reading or classifying content.
 	const data = await readBounded(filename, LIMITS.diagram, encoding || null); // CHANGE: actual reads are bounded, including private documents.
 
 	// Allow trusted text reads explicitly requested as UTF-8
@@ -2503,7 +2507,7 @@ function hasConfiguredSync() { return !!sharingService?.hasBackgroundWork() || c
 function configuredTransports() { return [sharingService?.hasBackgroundWork() ? sharingService : null, ...configuredIdentities.map(identity => identityTransports.get(identity.id))].filter(Boolean); } // NEW
 const sharingGroup = createSharingGroup({ // NEW
 	getServices: configuredTransports, canStart: () => lifecycle.acceptsWork, // NEW
-	getIdentityStatuses: () => configuredIdentities.map(identity => ({ label: identity.username + ' identity', connectedCollaborators: null, ...identityTransports.get(identity.id)?.backgroundStatus() })), // NEW
+	getIdentityStatuses: () => configuredIdentities.map(identity => ({ label: identity.username + ' identity', connectedCollaborators: null, ...(identityTransports.get(identity.id)?.backgroundStatus() || { state: 'initializing' }) })), // NEW
 	subscribe: listener => { sharingEvents.on('status', listener); return () => sharingEvents.off('status', listener); } // NEW
 }); // NEW
 /** A background-only Windows/Linux session exits when its final configured share is retired. */ // NEW
@@ -2526,12 +2530,18 @@ async function refreshIdentityBackground() { // NEW
 /** Startup and last-window close share one initialization of configured background owners. */ // NEW
 function initializeBackgroundSync() { // NEW
 	if (backgroundReady) return backgroundReady; // NEW
-	backgroundReady = (async () => { // NEW
+	backgroundInitializing = true; // NEW
+	backgroundReady = (async () => { // CHANGE
+		const started = performance.now(); // NEW
 		const legacy = await getSharingService(); // NEW
 		await refreshConfiguredIdentities(); // NEW
+		log.info('Trellis startup:', { phase: 'account-registry', durationMs: performance.now() - started }); // NEW
+		await ensureSharingTray(); // NEW: tray controls are ready before transport and content maintenance.
+		log.info('Trellis startup:', { phase: 'tray-ready', durationMs: performance.now() - started }); // NEW
 		await Promise.allSettled([legacy.hasBackgroundWork() ? legacy.start() : Promise.resolve(), refreshIdentityBackground()]); // NEW
 		assertTrellisRunning(); await ensureSharingTray(); // NEW
-	})(); // NEW
+		log.info('Trellis startup:', { phase: 'transports-ready', durationMs: performance.now() - started }); // NEW
+	})().finally(() => { backgroundInitializing = false; }); // CHANGE
 	return backgroundReady; // NEW
 } // NEW
 /** A missing tray never leaves an unreachable daemon behind after the final window closes. */ // NEW
@@ -2684,10 +2694,16 @@ async function stopTrellisResources({ deadline }) { // NEW
 	if (results.some(result => result.status === 'rejected')) throw new Error('An owned transport did not finish shutdown. See the shutdown log for its termination outcome.'); // NEW: do not proceed to installer launch after unverified termination.
 } // NEW
 
+/** Keep operational timings useful without recording document contents or credentials. */ // NEW
+function logCollaborationTiming(sample) { // NEW
+	const { phase, durationMs, sequence, checkpointSequence, acceptedTailBytes, code, retryable } = sample; // NEW
+	if (phase === 'checkpoint-error') log.warn('Trellis checkpoint:', { phase, code, retryable }); // NEW
+	else if (phase === 'checkpoint' || phase === 'read' && durationMs >= 250) log.info('Trellis verification:', { phase, durationMs, sequence, checkpointSequence, acceptedTailBytes }); // NEW
+} // NEW
 async function getSharingService() { // NEW: single service for all application windows.
 	assertTrellisRunning(); // NEW
 	if (!sharingService) {
-		sharingService = createSyncthingService({ historyService: getHistoryService, listCities: async () => (await gardenLibraryService?.cities())?.cities || [], beforeProjectionRename: prepareProjectionRename, userDataPath: app.getPath('userData'), documentsPath: app.getPath('documents'), privatePaths: [path.join(app.getPath('userData'), 'trellis-sharing'), path.join(app.getPath('userData'), 'trellis-identities')], beforeStart: async () => { for (const identity of configuredIdentities) await gardenLibraryService?.fenceTransport(identity.id); }, binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onLifecycle: entry => log.info('Syncthing lifecycle:', entry) }); // CHANGE // CHANGE: explicit asset import cannot copy identity credentials.
+		sharingService = createSyncthingService({ historyService: getHistoryService, listCities: async () => (await gardenLibraryService?.cities())?.cities || [], beforeProjectionRename: prepareProjectionRename, userDataPath: app.getPath('userData'), documentsPath: app.getPath('documents'), privatePaths: [path.join(app.getPath('userData'), 'trellis-sharing'), path.join(app.getPath('userData'), 'trellis-identities')], beforeStart: async () => { for (const identity of configuredIdentities) await gardenLibraryService?.fenceTransport(identity.id); }, binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onCollaborationTiming: logCollaborationTiming, onLifecycle: entry => log.info('Syncthing lifecycle:', entry) }); // CHANGE // CHANGE: explicit asset import cannot copy identity credentials.
 		sharingService.onStatus(status => {
 			sharingEvents.emit('status'); maybeFinishBackground(); // CHANGE
 			for (const win of windowsRegistry) if (canNotifyWindow(win)) win.webContents.send('trellisShareStatus', sharingService.listStatus(win.webContents.id)); // CHANGE: exclude each window's current actor from its count.
@@ -2714,7 +2730,7 @@ async function getIdentityService() { // NEW
 			transportFactory: async (identityId, profileRoot) => {
 				assertTrellisRunning(); // NEW
 				if (!identityTransports.has(identityId)) {
-					const service = createSyncthingService({ historyService: getHistoryService, listCities: async () => (await gardenLibraryService?.cities())?.cities || [], beforeProjectionRename: prepareProjectionRename, userDataPath: profileRoot, profilePath: path.join(profileRoot, 'transport'), privatePaths: [root, path.join(app.getPath('userData'), 'trellis-sharing')], beforeStart: () => gardenLibraryService?.fenceTransport(identityId), documentsPath: app.getPath('documents'), canvasesRoot: path.join(app.getPath('documents'), 'Trellis', 'Garden Library', identityId), binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onLifecycle: entry => log.info('Syncthing lifecycle:', entry) }); // CHANGE // CHANGE
+					const service = createSyncthingService({ historyService: getHistoryService, listCities: async () => (await gardenLibraryService?.cities())?.cities || [], beforeProjectionRename: prepareProjectionRename, userDataPath: profileRoot, profilePath: path.join(profileRoot, 'transport'), privatePaths: [root, path.join(app.getPath('userData'), 'trellis-sharing')], beforeStart: () => gardenLibraryService?.fenceTransport(identityId), documentsPath: app.getPath('documents'), canvasesRoot: path.join(app.getPath('documents'), 'Trellis', 'Garden Library', identityId), binaryRoot: app.isPackaged ? path.join(process.resourcesPath, 'syncthing') : path.join(__dirname, '../../vendor/syncthing'), setStartup: enabled => setSharingStartup(app, enabled, store), canStart: () => lifecycle.acceptsWork, onCollaborationTiming: logCollaborationTiming, onLifecycle: entry => log.info('Syncthing lifecycle:', entry) }); // CHANGE // CHANGE
 					service.onStatus(() => { sharingEvents.emit('status'); maybeFinishBackground(); for (const win of windowsRegistry) if (canNotifyWindow(win)) { win.webContents.send('trellisIdentityStatus', { session: identityService.session() }); win.webContents.send('trellisShareStatus', service.listStatus(win.webContents.id)); } }); // CHANGE: managed gardens reuse existing sharing status and conflict UI.
 					identityTransports.set(identityId, service);
 					service.onActivity(() => { if (identityService?.session()?.identityId !== identityId) return; for (const win of windowsRegistry) if (canNotifyWindow(win)) { const snapshot = service.activityForCaller(win.webContents.id); if (snapshot) win.webContents.send('trellisShareActivity', snapshot); } }); // NEW
@@ -2760,9 +2776,11 @@ async function getIdentityService() { // NEW
 		gardenCommunityService = createGardenCommunityService({ identities: identityService, library: gardenLibraryService }); // NEW
 		gardenCommunityService.onStatus(() => { for (const win of windowsRegistry) if (canNotifyWindow(win)) win.webContents.send('trellisGardenCommunitiesStatus'); }); // NEW
 		fieldService = createFieldService({ identities: identityService, library: gardenLibraryService }); // NEW
-		identityService.onChange(session => { for (const owner of sharingWindowPaths.keys()) assetBroker.revoke(owner); assetContexts.clear(); if (lifecycle.acceptsWork) void refreshConfiguredIdentities().catch(error => log.warn('Identity registry:', error.message)); sharingEvents.emit('status'); for (const win of windowsRegistry) if (canNotifyWindow(win)) win.webContents.send('trellisIdentityStatus', { session }); });
+        inventoryService = createInventoryService({ identities: identityService, library: gardenLibraryService }); // NEW
+        exchangeService = createExchangeService({ identities: identityService, library: gardenLibraryService, communities: gardenCommunityService, rates: createExchangeRates({ directory: path.join(app.getPath('userData'), 'exchange-rates') }) }); // NEW
+		identityService.onChange(session => { for (const service of [sharingService, ...identityTransports.values()].filter(Boolean)) service.cancelVerification(); /* NEW: obsolete account work cannot publish. */ for (const owner of sharingWindowPaths.keys()) assetBroker.revoke(owner); assetContexts.clear(); if (lifecycle.acceptsWork) void refreshConfiguredIdentities().catch(error => log.warn('Identity registry:', error.message)); sharingEvents.emit('status'); for (const win of windowsRegistry) if (canNotifyWindow(win)) win.webContents.send('trellisIdentityStatus', { session }); });
 		identityRefreshTimer = setInterval(() => { // CHANGE: never overlap refresh or acquire transports during committed Quit.
-			if (!lifecycle.acceptsWork || identityRefreshTask) return; // NEW
+			if (!lifecycle.acceptsWork || identityRefreshTask || backgroundInitializing) return; // NEW
 			identityRefreshTask = refreshIdentityBackground().catch(error => log.warn('Identity sync:', error.message)).finally(() => { identityRefreshTask = null; }); // NEW
 		}, 5000); // CHANGE
 		identityRefreshTimer.unref();
@@ -3016,6 +3034,16 @@ ipcMain.on("rendererReq", async (event, args) => {
 				if (['start', 'resume'].includes(args.method)) await ensureSharingTray(await identityService.transport(identityService.session().identityId)); // NEW
 				break; // NEW
 			} // NEW
+            case 'trellisInventories': { // NEW
+                await getIdentityService(); // NEW
+                if (!['list', 'read', 'saveSeeds', 'saveEquipment'].includes(args.method)) throw new Error('Unsupported inventory operation.'); // NEW
+                ret = await inventoryService[args.method](args.payload || {}); break; // NEW
+            } // NEW
+            case 'trellisExchange': { // NEW
+                await getIdentityService(); // NEW
+                if (!['status', 'list', 'command', 'estimate'].includes(args.method)) throw new Error('Unsupported Exchange operation.'); // NEW
+                ret = await exchangeService[args.method](args.payload || {}); break; // NEW
+            } // NEW
 			case 'trellisGardenCommunities': { // NEW
 				await getIdentityService(); // NEW
 				if (!['list', 'create', 'update', 'addGarden', 'decideAdmission', 'detachGarden', 'describeGarden', 'setAdministrators', 'requestAccess', 'decideAccess', 'listRequests'].includes(args.method)) throw new Error('Unsupported garden community operation.'); // NEW
@@ -3033,7 +3061,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 					if (!payload.path || path.resolve(payload.path) !== path.resolve(sharingWindowPaths.get(event.sender.id) || '')) throw new Error('Import the currently opened, saved diagram.');
 					await assertSharingFileAccess(payload.path, path.join(app.getPath('userData'), 'trellis-identities'));
 				}
-				if (!['referenceTemplates', 'sendReferenceProposal', 'list', 'create', 'completeStarter', 'importCurrent', 'rename', 'setSuffix', 'duplicate', 'download', 'setOffline', 'removeLocal', 'listLocal', 'cities', 'getReferenceCity', 'setReferenceCity', 'actions', 'trash', 'restore', 'purge', 'leave', 'listTrash'].includes(args.method)) throw new Error('Unsupported Garden library operation.'); // CHANGE
+				if (!['prepareOpen', 'referenceTemplates', 'sendReferenceProposal', 'list', 'create', 'completeStarter', 'importCurrent', 'rename', 'setSuffix', 'duplicate', 'download', 'setOffline', 'removeLocal', 'listLocal', 'cities', 'getReferenceCity', 'setReferenceCity', 'actions', 'trash', 'restore', 'purge', 'leave', 'listTrash'].includes(args.method)) throw new Error('Unsupported Garden library operation.'); // CHANGE
 				ret = await gardenLibraryService[args.method](payload, event.sender.id); // CHANGE: naming can identify the originating view without trusting renderer actor fields.
 				for (const project of [...(ret?.gardens || []), ret?.entry].filter(Boolean)) if (project.summary?.members) { const { members, ...summary } = project.summary; project.summary = summary; } // NEW: private portable rosters never cross the renderer bridge, including creation and Trash responses.
 				break;

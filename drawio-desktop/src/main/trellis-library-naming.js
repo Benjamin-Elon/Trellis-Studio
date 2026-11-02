@@ -85,7 +85,8 @@ export function createLibraryNaming({ identities, own, getEntry, catalog, localS
             try { // CHANGE
                 const source = await localSource(identityId, entry.diagramId), daemon = await sourceService(identityId, source); // NEW
                 if (!registries.has(daemon)) registries.set(daemon, await daemon.listCanvases()); // NEW
-                const local = registries.get(daemon).find(canvas => canvas.shareId === entry.shareId), personalSuffix = personalSuffixes.get(entry.diagramId) || ''; // NEW
+                const local = registries.get(daemon).find(canvas => canvas.shareId === entry.shareId), personalSuffix = personalSuffixes.get(entry.diagramId) || '';
+                if (daemon.isProjectReady?.(entry.shareId) === false) continue; // NEW: routine naming never reconstructs unopened gardens. // NEW
                 const stamp = async filename => fs.stat(filename).then(stat => [stat.mtimeMs, stat.ctimeMs, stat.size]).catch(error => { if (error.code === 'ENOENT') return null; throw error; }); // NEW
                 const token = JSON.stringify([local, personalSuffix, entry.projectName, current.devices, local?.path && await stamp(local.path), local?.folderPath && await stamp(path.join(local.folderPath, '.trellis', 'collaboration-v3', 'records'))]); // NEW
                 const key = identityId + ':' + entry.diagramId; // NEW

@@ -579,6 +579,14 @@ test('legacy link conversion preserves direct, effect and capability matches wit
     h.api.openDialog(h.moduleCell); clickButton(h.document, 'Save'); // NEW
     assert.deepEqual(Array.from(h.api.readEquipmentInventory(h.moduleCell)[0].relevantTaskTypes), []); // NEW
 }); // NEW
+test('detached task-type editing cannot mutate the accepted snapshot used by Home', () => { // NEW
+    const h = loadPlugin(); // NEW
+    const snapshot = { garden: { gardenId: 'garden' }, canEdit: true, equipment: { items: h.api.readEquipmentInventory(h.moduleCell) }, taskTypes: { items: h.api.readTaskTypeRegistry(h.moduleCell) }, capabilities: { items: h.api.readCapabilityRegistry(h.moduleCell) } }; // NEW
+    const baseline = JSON.stringify(snapshot); h.context.window.TrellisEquipmentEditor.open(snapshot, async () => {}); // NEW
+    openPlanningSettings(h.document, 'taskTypes'); const name = fieldElement(h.document, 'Name').querySelector('input'); // NEW
+    name.value = 'Edited draft'; name.dispatchEvent(new h.document.defaultView.Event('input', { bubbles: true })); // NEW
+    assert.equal(JSON.stringify(snapshot), baseline); h.context.window.close(); // NEW
+}); // NEW
 
 test('explicit task links prevent capabilities or inactive effects from restoring removed matches', () => { // NEW
     const h = equipmentPlanningFixture(); // NEW
@@ -647,3 +655,19 @@ test('export retains conversion markers and historical fields for a repeatable i
     const restored = h.api.__test.buildImportPreview({ inventory: [], taskTypes: [], capabilities: [] }, payload); // NEW
     assert.equal(restored.report.errors, 0); assert.deepEqual(Array.from(restored.inventory[0].relevantTaskTypes), []); assert.equal(restored.inventory[0].efficiencyEffects[0].multiplier, 0.5); assert.equal(restored.capabilities.length, payload.capabilities.length); // NEW
 }); // NEW
+
+test('equipment section changes resolve drafts and Commit releases a clean open editor', async t => { // CHANGE
+    const h = loadPlugin(), window = h.context.window; t.after(() => window.close()); // CHANGE
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/js/trellis-editing-holds.js'), 'utf8'), { window }); // CHANGE
+    let choice = 'stay'; const registry = window.TrellisEditingHolds.create({}, { isCollaborative: () => false, status() {}, release: async () => {}, decide: async () => choice }); // CHANGE
+    h.graph.__trellisSharing = { registerEditor: config => registry.register(config), transitionEditor: operation => registry.transition(operation) }; // CHANGE
+    h.api.writeEquipmentInventory(h.moduleCell, [{ id: 'tool', name: 'Original tool', capabilities: [], relevantTaskTypes: [], efficiencyEffects: [] }]); // CHANGE
+    await h.api.openDialog(h.moduleCell); // CHANGE
+    const name = fieldElement(h.document, 'Name').querySelector('input'); name.value = 'Unfinished tool'; name.dispatchEvent(new window.Event('input', { bubbles: true })); // CHANGE
+    clickButton(h.document, 'Planning settings'); await flushPromises(); assert.equal(fieldElement(h.document, 'Name').querySelector('input').value, 'Unfinished tool'); // CHANGE
+    choice = 'discard'; clickButton(h.document, 'Planning settings'); await new Promise(resolve => setImmediate(resolve)); // CHANGE
+    assert.equal(h.api.readEquipmentInventory(h.moduleCell)[0].name, 'Original tool'); // CHANGE
+    clickButton(h.document, 'Equipment'); await new Promise(resolve => setImmediate(resolve)); const next = fieldElement(h.document, 'Name').querySelector('input'); assert.equal(next.value, 'Original tool'); // CHANGE
+    next.value = 'Committed tool'; next.dispatchEvent(new window.Event('input', { bubbles: true })); choice = 'commit'; clickButton(h.document, 'Planning settings'); await new Promise(resolve => setImmediate(resolve)); // CHANGE
+    assert.equal(h.api.readEquipmentInventory(h.moduleCell)[0].name, 'Committed tool'); assert.deepEqual(Array.from(registry.pinnedTargets()), []); assert.ok(h.document.querySelector('.trellis-eq-dialog')); // CHANGE
+}); // CHANGE

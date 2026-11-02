@@ -7,7 +7,7 @@ app.setPath('userData', fs.mkdtempSync(path.join(require('node:os').tmpdir(), 't
 const project = path.resolve(__dirname, '../..'), output = path.join(project, '.test-artifacts', 'collaboration'); // NEW
 fs.mkdirSync(output, { recursive: true }); // NEW
 async function click(win, label) { // NEW
-    const point = await win.webContents.executeJavaScript(`(() => { const b = [...document.querySelectorAll('button')].find(b => b.textContent === ${JSON.stringify(label)}); if (!b) throw new Error('Missing button'); const r = b.getBoundingClientRect(); return {x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2)}; })()`); // NEW
+    const point = await win.webContents.executeJavaScript(`(() => { const b = [...document.querySelectorAll('button')].find(b => b.textContent === ${JSON.stringify(label)}); if (!b) throw new Error('Missing button: ' + ${JSON.stringify(label)} + '; available: ' + [...document.querySelectorAll('button')].map(button=>button.textContent).join(', ')); const r = b.getBoundingClientRect(); return {x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2)}; })()`); // CHANGE: report the actual missing status control when native assertions fail.
     win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point }); win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point }); // NEW
     await new Promise(resolve => setTimeout(resolve, 50)); // NEW
 } // NEW
@@ -17,12 +17,13 @@ app.whenReady().then(async () => { // NEW
     try { // NEW
         await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<!doctype html><body style="margin:0;background:#edf3e8;font-family:Arial"><div style="padding:18px;background:white;border-bottom:1px solid #ccc">Community garden · Trellis</div><div id="graph" tabindex="0" style="position:relative;height:720px"><div style="position:absolute;left:50px;top:50px;width:240px;height:160px;background:#d9e9c5;border:1px solid #54823b;padding:10px">Planting A</div></div></body>')); // NEW
         const cleanup = fs.readFileSync(path.join(project, 'drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8'); // NEW
+        await win.webContents.executeJavaScript(fs.readFileSync(path.join(project, 'drawio/src/main/webapp/js/trellis-sync-contract.js'), 'utf8')); // NEW: use the production protocol contract.
         const plugin = fs.readFileSync(path.join(project, 'drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_Syncthing.js'), 'utf8'); // NEW
         const baselinePlugin = 'window.__trellisLiveUpdatesForBenchmark=true;\n' + plugin; // NEW: retain the existing live-path comparison; the explicit fixture exercises the new default against a real journal.
         const setupResult = await win.webContents.executeJavaScript(` (() => { try { // NEW
             window.calls = []; window.editorEvents = 0;
             const xml = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
-            const info = { managed: true, ok: true, protocolVersion: 3, shareId: 'garden', diagramId: 'diagram', diagramPath: 'C:/test/Garden.drawio', folderLabel: 'Community garden', deviceId: 'local' };
+            const info = { managed: true, ok: true, protocolVersion: window.TrellisSyncContract.garden, shareId: 'garden', diagramId: 'diagram', diagramPath: 'C:/test/Garden.drawio', folderLabel: 'Community garden', deviceId: 'local' }; // CHANGE: exercise the supported production protocol.
             const state = { ...info, state: 'upToDate', connectedCollaborators: 1, collaborators: [{id:'alice', name:'Alice'}], collaboration: { holds:[{key:JSON.stringify(['','planting']), userId:'alice', name:'Alice', sessionId:'remote', expiresAt:Date.now()+300000}], presence:[], recoveries:[] } };
             const file = { data:xml, fileObject:{path:info.diagramPath}, getTitle:()=> 'Community garden.drawio', isModified:()=>false, setModified(){}, save(_r,done){done();}, fileSaved(_x,_d,done){done();} };
             const graph = {container:document.getElementById('graph'), getDefaultParent:()=>({getAttribute:()=> 'diagram'}), getModel:()=>({getCell:id=>id==='planting'? {id,label:'Planting A',getAttribute:k=>k==='label'?'Planting A':null}:null}), view:{getState:()=>({x:50,y:50,width:240,height:160})}, getSelectionCells:()=>[], refresh(){}};
@@ -55,9 +56,33 @@ app.whenReady().then(async () => { // NEW
         assert.equal(await win.webContents.executeJavaScript("document.querySelector('[data-object-key]').style.left"), '384px', 'Badges follow graph view geometry'); // NEW
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); await new Promise(resolve => setTimeout(resolve, 50)); // NEW
         assert.equal(await win.webContents.executeJavaScript("!!document.querySelector('[aria-label=\"Activity for Planting A\"]')"), false); // NEW
+        await win.webContents.executeJavaScript(`(async()=>{ // CHANGE
+            window.statusFixture=(await trellisShare.getStatus()).canvases[0];window.statusRevision=0;window.statusCalls=[];statusFixture.connectedCollaborators=0; // CHANGE
+            window.pendingStatus=[{userId:'alice',name:'Alice',deviceId:'peer',sessionId:'old-session',online:false,saveState:'pending',targets:[JSON.stringify(['','planting'])]}]; // CHANGE
+            window.statusSnapshot=()=>({sessionId:'native-local',actorUserId:'admin',observationRevision:++statusRevision,holds:[],presence:[],reservations:[],pendingChanges:pendingStatus}); // CHANGE
+            trellisShare.activityAction=async input=>{statusCalls.push(input);return{ok:true,collaboration:statusSnapshot()}};statusFixture.collaboration=statusSnapshot();fireStatus([statusFixture]); // CHANGE
+        })()`); // CHANGE
+        await click(win, 'Alice · changed · pending project save · offline · status unconfirmed'); // CHANGE
+        const pendingStatus = await win.webContents.executeJavaScript(`(()=>{const p=document.querySelector('[aria-label="Activity for Planting A"]');return{text:p.textContent,buttons:[...p.querySelectorAll('button')].filter(b=>!b.hidden).map(b=>b.textContent),focused:document.activeElement.textContent}})()`); // CHANGE
+        assert.match(pendingStatus.text, /current save status is unknown/); assert.match(pendingStatus.text, /this notice does not block editing/); assert.match(pendingStatus.text, /Working locally\. No other computers are connected/); // CHANGE
+        assert.deepEqual(pendingStatus.buttons, ['Refresh status', 'Close']); assert.equal(pendingStatus.focused, 'Refresh status'); // CHANGE
+        await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); // CHANGE: capture the committed pending-status frame in the hidden window.
+        fs.writeFileSync(path.join(output, 'pending-without-hold.png'), (await win.webContents.capturePage()).toPNG()); // CHANGE
+        await win.webContents.executeJavaScript('window.eventsBeforeStatus=editorEvents;window.focusedStatusControl=document.activeElement;window.statusPanel=document.querySelector(\'[aria-label="Activity for Planting A"]\');void 0;'); // CHANGE
+        await click(win, 'Refresh status'); assert.deepEqual(await win.webContents.executeJavaScript('statusCalls.map(call=>call.kind)'), ['snapshot']); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript('editorEvents===eventsBeforeStatus'), true, 'Status actions do not reach graph shortcuts'); // CHANGE
+        await win.webContents.executeJavaScript('pendingStatus=[];statusFixture.collaboration=statusSnapshot();fireStatus([statusFixture]);void 0;'); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript('document.activeElement===focusedStatusControl'), true, 'Live completion keeps keyboard focus'); // CHANGE
+        assert.match(await win.webContents.executeJavaScript('statusPanel.textContent'), /No pending changes or editing hold/); // CHANGE
+        await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); // CHANGE: wait for resolved-status paint before visual QA.
+        fs.writeFileSync(path.join(output, 'resolved-pending-status.png'), (await win.webContents.capturePage()).toPNG()); // CHANGE
+        win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); await new Promise(resolve => setTimeout(resolve, 50)); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript('statusPanel.isConnected'), false, 'Escape closes the pinned status dialog'); // CHANGE
         await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<!doctype html><div id="graph" style="position:relative;width:800px;height:600px"></div>')); // NEW
+        await win.webContents.executeJavaScript(fs.readFileSync(path.join(project, 'drawio/src/main/webapp/js/trellis-sync-contract.js'), 'utf8')); // CHANGE: navigation creates a fresh renderer global.
         await win.webContents.executeJavaScript('window.mxLoadResources=false;window.mxLoadStylesheets=false;'); // NEW
         await win.webContents.executeJavaScript(fs.readFileSync(path.join(project, 'drawio/src/main/webapp/mxgraph/mxClient.js'), 'utf8')); // NEW
+        await win.webContents.executeJavaScript(fs.readFileSync(path.join(project, 'drawio/src/main/webapp/js/trellis-editing-holds.js'), 'utf8')); // CHANGE: genuine label typing uses the production editing lifecycle.
         await win.webContents.executeJavaScript(` // NEW
             window.graph = new mxGraph(document.getElementById('graph')); graph.isSpecialColor=()=>false;graph.getCompositeParent=cell=>cell;graph.convertValueToString=cell=>cell.value?.getAttribute?.('label')||'';
             const value = mxUtils.createXmlDocument().createElement('object'); value.setAttribute('label','Planting'); value.setAttribute('planting_id','planting');
@@ -66,7 +91,7 @@ app.whenReady().then(async () => { // NEW
             const serialize = () => mxUtils.getXml(new mxCodec().encode(graph.model));
             graph.model.addListener(mxEvent.CHANGE,()=>window.modified=true);
             window.currentFile = {data:serialize(), fileObject:{path:'C:/test/Live.drawio'},getTitle:()=> 'Live.drawio',isModified:()=>window.modified,setModified:x=>window.modified=x,save(_r,done){window.rawSaves++;done();},fileSaved(_x,_d,done){done();}};
-            window.liveInfo = {ok:true,managed:true,protocolVersion:3,shareId:'live',diagramId:'live',diagramPath:currentFile.fileObject.path};
+            window.liveInfo = {ok:true,managed:true,protocolVersion:window.TrellisSyncContract.garden,shareId:'live',diagramId:'live',diagramPath:currentFile.fileObject.path}; // CHANGE: use the same supported contract for real-graph persistence.
             window.holds = [];
             window.Trellis = {users:{getCurrentUser:()=>({id:'admin'}),isAdmin:()=>true,listUsers:()=>[]}};
             window.trellisShare = {setContext:async()=>{},getStatus:async()=>({canvases:[{...liveInfo,state:'upToDate',connectedCollaborators:0}]}),getSyncthingShareInfo:async()=>liveInfo,importHistory:async()=>({entries:[]}),onStatus:()=>{},collaborationAction:async payload=>{window.calls.push(payload);if(payload.kind==='claim'){await new Promise(r=>setTimeout(r,40));window.holds=[{key:JSON.stringify(['','planting']),sessionId:'local',userId:'admin',name:'Admin',expiresAt:Date.now()+300000}];}if(payload.kind==='release')window.holds=[];if(payload.kind==='save')window.persisted=payload.xml;return{ok:true,xml:payload.xml||serialize(),collaboration:{sessionId:'local',holds:window.holds,presence:[],reservations:[],recoveries:[]}};}};
@@ -86,7 +111,8 @@ app.whenReady().then(async () => { // NEW
         const releasesBefore = await win.webContents.executeJavaScript("calls.filter(c=>c.kind==='release').length"); // NEW
         await win.webContents.executeJavaScript("graph.stopEditing(false); void 0;"); await new Promise(resolve => setTimeout(resolve, 80)); // NEW
         assert.equal(await win.webContents.executeJavaScript("calls.filter(c=>c.kind==='release').length"), releasesBefore, 'An idle editingStopped event must not release the hold'); // NEW
-        await win.webContents.executeJavaScript("graph.cellLabelChanged=(cell,label)=>{const next=cell.value.cloneNode(true);next.setAttribute('label',label);graph.model.setValue(cell,next);};graph.startEditingAtCell(planting);graph.cellEditor.textarea.innerText='Native label draft'; void 0;"); // NEW
+        await win.webContents.executeJavaScript("graph.cellLabelChanged=(cell,label)=>{const next=cell.value.cloneNode(true);next.setAttribute('label',label);graph.model.setValue(cell,next);};graph.startEditingAtCell(planting);graph.cellEditor.textarea.innerText='';graph.cellEditor.textarea.focus(); void 0;"); // CHANGE: acquire through actual user input rather than a programmatic value replacement.
+        await win.webContents.insertText('Native label draft'); // CHANGE
         await new Promise(resolve => setTimeout(resolve, 80)); // NEW
         await win.webContents.executeJavaScript("new Promise((resolve,reject)=>currentFile.save(false,resolve,reject))"); // NEW
         assert.equal(await win.webContents.executeJavaScript("graph.isEditing()"), true, 'Autosave must preserve the native label editor'); // NEW

@@ -118,6 +118,7 @@ function createHarness() {
         }
     });
 
+    vm.runInContext(fs.readFileSync(path.join(path.dirname(PLUGIN_PATH), "Trellis_Allocation_Core.js"), "utf8"), context); // NEW
     vm.runInContext(PLUGIN_SOURCE, context, { filename: PLUGIN_PATH });
 
     function addCell(parent, cell) {
@@ -226,7 +227,8 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
             harvestWindowSource: "manual",
             useActualHarvest: false
         }],
-        version: 2,
+        version: 3, // CHANGE
+        channelPriorityLevels: { self: 1, csa: 2, "sales:farm_store": 3, "sales:restaurant_1": 3, "sales:farmers_market": 3, "sales:wholesale": 3 }, // NEW
         weekStartDow: 1,
         demandChannels: [
             { id: "farm_store", label: "Farm Store", type: "farm_store", enabled: true }, // CHANGE
@@ -240,7 +242,7 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
     });
 });
 
-test("PlanningCore treats CSA components as committed demand", () => {
+test("PlanningCore assigns CSA components the plan channel level", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
     plan.crops.push(emptyCrop({ harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }));
@@ -257,8 +259,8 @@ test("PlanningCore treats CSA components as committed demand", () => {
 
     const coverage = api.PlanningCore.computeYearCoverage({ plan, year: 2026 });
 
-    assert.equal(coverage.prioritySummaries.committed.targetKg, 10);
-    assert.equal(coverage.prioritySummaries.committed.shortKg, 10);
+    assert.equal(coverage.prioritySummaries[2].targetKg, 10);
+    assert.equal(coverage.prioritySummaries[2].shortKg, 10);
     assert.equal(coverage.totals.targetKg, 10);
 });
 
@@ -327,7 +329,7 @@ test("PlanSchema adds default demand channels only when the collection is absent
     api.PlanSchema.normalizeForRuntime(intentionallyEmpty, 2026);
     assert.deepEqual(Array.from(missing.demandChannels, channel => channel.id), ["farm_store", "restaurant_1", "farmers_market", "wholesale"]);
     assert.deepEqual(Array.from(intentionallyEmpty.demandChannels), []);
-    assert.equal(missing.version, 2);
+    assert.equal(missing.version, 3); // CHANGE
 });
 
 test("Planting-method SQL starts directly with SQL text", () => {
@@ -944,7 +946,7 @@ test("PlanMath expands daily, weekly, and prorated monthly demand on calendar an
     assert.equal(leapPartial.reduce((sum, value) => sum + value, 0), 15);
 });
 
-test("PlanMath allocates CSA first, then priority and channel order, with requested and fulfilled revenue", () => {
+test("PlanMath allocates CSA then splits equal sales levels proportionally, ignoring obsolete line priorities", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
     const crop = emptyCrop({ actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] });
@@ -962,9 +964,9 @@ test("PlanMath allocates CSA first, then priority and channel order, with reques
     const farm = weekly.perDemandLine.get("farm_target");
     const restaurant = weekly.perDemandLine.get("restaurant_committed");
     assert.equal(weekly.csa.usableSupply.reduce((sum, value) => sum + value, 0), 2);
-    assert.equal(restaurant.usableSupply.reduce((sum, value) => sum + value, 0), 6);
-    assert.equal(farm.usableSupply.reduce((sum, value) => sum + value, 0), 2);
-    assert.equal(farm.short.reduce((sum, value) => sum + value, 0), 4);
+    assert.equal(restaurant.usableSupply.reduce((sum, value) => sum + value, 0), 4); // CHANGE
+    assert.equal(farm.usableSupply.reduce((sum, value) => sum + value, 0), 4); // CHANGE
+    assert.equal(farm.short.reduce((sum, value) => sum + value, 0), 2); // CHANGE
 
     const dashboard = api.YearPlanDashboard.compute(plan, { weekly, cropTotals: api.PlanMath.computePlanCropTotals(plan, weekly), warnings: [] });
     assert.equal(dashboard.potentialRevenue, 24);
@@ -973,9 +975,9 @@ test("PlanMath allocates CSA first, then priority and channel order, with reques
     assert.equal(dashboard.csaMetric.fulfilledRevenue, 4);
     assert.equal(dashboard.totalPotentialRevenue, 28);
     assert.equal(dashboard.totalFulfilledRevenue, 20);
-    assert.equal(dashboard.channelMetricsById.get("restaurant_1").status, "OK");
-    assert.equal(dashboard.channelMetricsById.get("farm_store").shortKg, 4);
-    assert.equal(dashboard.priorityMetrics.find(metric => metric.priority === "committed").usableSupplyKg, 8); // CSA demand is committed in Allocate V1.
+    assert.equal(dashboard.channelMetricsById.get("restaurant_1").status, "Short"); // CHANGE
+    assert.equal(dashboard.channelMetricsById.get("farm_store").shortKg, 2); // CHANGE
+    assert.equal(dashboard.priorityMetrics.find(metric => String(metric.priority) === "3").usableSupplyKg, 8); // CHANGE: both sales channels share level 3.
 });
 
 test("PlanMath derives CSA box value and prorates CSA revenue by component fulfillment", () => {
@@ -1164,7 +1166,7 @@ test("PlanMath prices demand from package unit matches only", () => {
     assert.equal(weekly.perDemandLine.get("lb_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 2);
 });
 
-test("PlanMath breaks equal-priority shortages by stored channel order", () => {
+test("PlanMath splits equal-priority shortages equally despite channel order", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
     const crop = emptyCrop({ actualPlants: 8, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07" });
@@ -1173,8 +1175,8 @@ test("PlanMath breaks equal-priority shortages by stored channel order", () => {
     addDemand(plan, { id: "later", channelId: "restaurant_1", qty: 5, priority: "committed" });
     addDemand(plan, { id: "earlier", channelId: "farm_store", qty: 5, priority: "committed" });
     const weekly = api.PlanMath.computePlanWeekly(plan, []);
-    assert.equal(weekly.perDemandLine.get("earlier").usableSupply.reduce((sum, value) => sum + value, 0), 5);
-    assert.equal(weekly.perDemandLine.get("later").usableSupply.reduce((sum, value) => sum + value, 0), 3);
+    assert.equal(weekly.perDemandLine.get("earlier").usableSupply.reduce((sum, value) => sum + value, 0), 4); // CHANGE
+    assert.equal(weekly.perDemandLine.get("later").usableSupply.reduce((sum, value) => sum + value, 0), 4); // CHANGE
 });
 
 test("PlanMath keeps raw harvest stable and never pools inventory across crops", () => {
@@ -1769,3 +1771,23 @@ test('companion count overrides include lost supply and never mutate saved group
     assert.ok(Math.abs(sum(same.coverage, 'tomato') - 7) < 1e-6); assert.equal(group.getAttribute('plant_count'), '10'); // CHANGE
     assert.throws(() => api.PlanningCore.simulateCandidatePlanting({ moduleCell, year: 2026, plan, plantingCountOverrides: { 'existing-tomato': -1 }, candidate }), /Invalid planting count/); // CHANGE
 }); // CHANGE
+
+test('configured channel levels override household-first order and proportionally split lines across tied channels', () => { // NEW
+    const { api } = createHarness(), plan = api.PlanSchema.createEmptyPlan(2026), crop = emptyCrop({ harvestStart: '2026-06-01', harvestEnd: '2026-06-07' }); // NEW
+    plan.crops.push(crop); setActualHarvest(api, plan, crop, [['2026-06-01', 10]]); // NEW
+    addSelfUse(plan, { id: 'household', qty: 4, from: '2026-06-01', to: '2026-06-07' }); // NEW
+    plan.csa = { enabled: true, boxesPerWeek: 1, start: '2026-06-01', end: '2026-06-07', salePriceMode: 'auto', components: [{ cropId: crop.id, qty: 4, unit: 'kg', everyNWeeks: 1 }] }; // NEW
+    addDemand(plan, { id: 'small', channelId: 'farm_store', qty: 1 }); addDemand(plan, { id: 'large', channelId: 'farm_store', qty: 3 }); addDemand(plan, { id: 'restaurant', channelId: 'restaurant_1', qty: 8 }); // NEW
+    plan.channelPriorityLevels = { self: 4, csa: 4, 'sales:farm_store': 1, 'sales:restaurant_1': 4 }; // NEW
+    const weekly = api.PlanMath.computePlanWeekly(plan, []), sum = values => values.reduce((sum, value) => sum + value, 0); // NEW
+    assert.equal(sum(weekly.perDemandLine.get('small').usableSupply), 1); assert.equal(sum(weekly.perDemandLine.get('large').usableSupply), 3); // NEW
+    assert.equal(sum(weekly.selfSufficiency.usableSupply), 1.5); assert.equal(sum(weekly.csa.usableSupply), 1.5); assert.equal(sum(weekly.perDemandLine.get('restaurant').usableSupply), 3); // NEW
+    plan.channelPriorityLevels['sales:farm_store'] = 4; // NEW
+    const tied = api.PlanMath.computePlanWeekly(plan, []); assert.equal(sum(tied.perDemandLine.get('large').usableSupply), 3 * sum(tied.perDemandLine.get('small').usableSupply)); // NEW
+}); // NEW
+
+test('version-three saves remove obsolete line priorities without mutating the live legacy draft', () => { // NEW
+    const { api } = createHarness(), plan = api.PlanSchema.createEmptyPlan(2026); plan.crops.push(emptyCrop()); const line = addDemand(plan, { priority: 'committed' }); // NEW
+    const saved = api.PlanSchema.serializeForPersistence(plan); assert.equal(saved.version, 3); assert.equal(saved.demands[0].priority, undefined); assert.equal(line.priority, 'committed'); // NEW
+    assert.equal(saved.channelPriorityLevels.self, 1); assert.equal(saved.channelPriorityLevels.csa, 2); assert.equal(saved.channelPriorityLevels['sales:farm_store'], 3); // NEW
+}); // NEW

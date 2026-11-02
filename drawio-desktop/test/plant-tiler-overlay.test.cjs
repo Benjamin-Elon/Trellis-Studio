@@ -72,7 +72,7 @@ test('Garden Settings entry points route through the overlay-suppressed opener',
     assert.match(source, /await openGardenSettingsDialogWithOverlaySuppressed\(targetMod\);/);
 
     const directDialogReferences = source.match(/showGardenSettingsDialog\(ui, graph,/g) || [];
-    assert.equal(directDialogReferences.length, 4);
+    assert.equal(directDialogReferences.length, 5); // CHANGE: includes the guarded continuation after resolving an unfinished editor.
 });
 
 test('planting geometry ranks bed-first overlap candidates by relationship severity', () => {
@@ -437,8 +437,128 @@ function loadBedPanelFixture(t, pluginOrder = ['Planting_Group.js', 'Garden_Beds
         assert.equal(actions()?.style.display === 'flex', visible && !allocation, 'floating action visibility'); // CHANGE
         assert.equal(conditions().length, visible ? 1 : 0, 'bed conditions visibility'); // CHANGE
     }; // CHANGE
-    return { window, graph, moduleCell, bed, bed2, mouse, click, flush, actions, conditions, assertPanels }; // CHANGE
+    return { window, graph, ui, xml, moduleCell, bed, bed2, mouse, click, flush, actions, conditions, assertPanels }; // CHANGE: expose existing fixture objects for creation and dialog integration checks.
 } // CHANGE
+
+/** Exercise Add Garden Bed through its production toolbar and track real model history. */ // NEW
+async function loadBedCreationFixture(t, pluginOrder) { // NEW
+    const f = loadBedPanelFixture(t, pluginOrder); // NEW
+    f.graph.removeCells([f.bed, f.bed2]); // NEW
+    for (const [key, value] of Object.entries({ city_name: 'Test garden', unit_system: 'metric', default_bed_width_cm: '100', default_bed_length_cm: '200' })) f.moduleCell.value.setAttribute(key, value); // NEW
+    const undoManager = new f.window.mxUndoManager(); // NEW
+    f.graph.model.addListener(f.window.mxEvent.UNDO, (_sender, event) => undoManager.undoableEditHappened(event.getProperty('edit'))); // NEW
+    const addBed = async (moduleCell = f.moduleCell) => { // NEW
+        await f.click(moduleCell); // NEW
+        const button = f.actions().querySelector('[data-trellis-quickstart="add-bed"]'); // NEW
+        assert.equal(button.disabled, false, 'garden settings enable creation'); // NEW
+        button.click(); // NEW
+        const bed = f.graph.getSelectionCell(); // NEW
+        assert.equal(bed.getAttribute('garden_bed'), '1'); // NEW
+        await f.flush(); // NEW
+        return bed; // NEW
+    }; // NEW
+    await f.flush(); // NEW
+    return { ...f, undoManager, addBed }; // NEW
+} // NEW
+
+test('Add Garden Bed assigns count-based names and skips custom and canvas name collisions', async t => { // NEW
+    const cases = [ // NEW
+        { title: 'empty garden', attrs: [], expected: 'Bed 1' }, // NEW
+        { title: 'four beds', attrs: [1, 2, 3, 4].map(n => ({ label: 'Bed ' + n })), expected: 'Bed 5' }, // NEW
+        { title: 'number gap', attrs: [{ label: 'Bed 1' }, { label: 'Bed 5' }], expected: 'Bed 3' }, // NEW
+        { title: 'occupied count plus one', attrs: [{ label: 'Bed 1' }, { label: 'Bed 3' }], expected: 'Bed 4' }, // NEW
+        { title: 'trimmed case-insensitive custom and canvas collisions', attrs: [{ user_bed_name: ' bED 3 ', label: 'East' }, { label: ' BeD 4 ' }], expected: 'Bed 5' }, // NEW
+        { title: 'JSON-only custom name', attrs: [{ bed_conditions_json: JSON.stringify({ userBedName: 'Bed 3' }), label: 'East' }, { label: 'Bed 4' }], expected: 'Bed 5' }, // NEW
+        { title: 'unnamed and hidden beds count', attrs: [{ label: '' }, { label: 'West', hidden: true }], expected: 'Bed 3' }, // NEW
+    ]; // NEW
+    for (const entry of cases) await t.test(entry.title, async t => { // NEW
+        const f = await loadBedCreationFixture(t); // NEW
+        const beds = entry.attrs.map(({ hidden, ...attrs }, index) => { // NEW
+            const bed = f.graph.insertVertex(f.moduleCell, null, f.xml({ garden_bed: '1', ...attrs }), 100 + index * 100, 100, 80, 80); // NEW
+            if (hidden) f.graph.model.setVisible(bed, false); // NEW
+            return bed; // NEW
+        }); // NEW
+        await f.flush(); // NEW
+        const previousValues = beds.map(bed => f.window.mxUtils.getXml(bed.value)); // NEW
+        const created = await f.addBed(); // NEW
+        assert.equal(created.getAttribute('label'), entry.expected); // NEW
+        assert.equal(created.getAttribute('user_bed_name'), entry.expected); // NEW
+        assert.equal(created.value.hasAttribute('bed_conditions_json'), false, 'initial identity needs no profile JSON'); // NEW
+        assert.equal(f.window.TrellisGardenBeds.readBedConditions(created).userBedName, entry.expected); // NEW
+        assert.deepEqual(beds.map(bed => f.window.mxUtils.getXml(bed.value)), previousValues, 'creation preserves existing bed values'); // NEW
+    }); // NEW
+}); // NEW
+
+test('bed numbering includes grouped hidden beds and stays independent across separate and nested gardens', async t => { // NEW
+    const f = await loadBedCreationFixture(t); // NEW
+    const group = f.graph.insertVertex(f.moduleCell, null, f.xml({ label: 'Ordinary group' }), 100, 100, 200, 200); // NEW
+    const hidden = f.graph.insertVertex(group, null, f.xml({ garden_bed: '1', label: 'West' }), 10, 10, 80, 80); // NEW
+    f.graph.model.setVisible(hidden, false); // NEW
+    const attrs = Object.fromEntries([...f.moduleCell.value.attributes].map(attr => [attr.name, attr.value])); // NEW
+    const nested = f.graph.insertVertex(f.moduleCell, null, f.xml(attrs), 400, 100, 300, 300, 'swimlane;module=1;'); // NEW
+    const separate = f.graph.insertVertex(null, null, f.xml(attrs), 2100, 0, 1000, 1000, 'swimlane;module=1;'); // NEW
+    for (const moduleCell of [nested, separate]) f.graph.insertVertex(moduleCell, null, f.xml({ garden_bed: '1', label: 'Bed 2' }), 20, 20, 80, 80); // NEW
+    assert.equal((await f.addBed()).getAttribute('label'), 'Bed 2'); // NEW
+    assert.equal((await f.addBed()).getAttribute('label'), 'Bed 3'); // NEW
+    assert.equal((await f.addBed(nested)).getAttribute('label'), 'Bed 3'); // NEW
+    assert.equal((await f.addBed(separate)).getAttribute('label'), 'Bed 3'); // NEW
+}); // NEW
+
+test('automatic names work without the conditions plugin and remain editable when it loads later', async t => { // NEW
+    const f = await loadBedCreationFixture(t, ['Planting_Group.js']); // NEW
+    f.graph.insertVertex(f.moduleCell, null, f.xml({ garden_bed: '1', user_bed_name: ' BED 2 ', label: 'East' }), 100, 100, 80, 80); // NEW
+    const created = await f.addBed(); // NEW
+    assert.equal(created.getAttribute('label'), 'Bed 3'); // NEW
+    f.window.eval(fs.readFileSync(path.join(path.dirname(plantTilerPath), 'Garden_Beds.js'), 'utf8')); // NEW
+    f.window.TrellisGardenBeds._test.syncSelectedBedOverlays(); // NEW
+    assert.equal(f.conditions()[0].querySelector('input').value, 'Bed 3'); // NEW
+}); // NEW
+
+test('new bed names populate both editors, persist through reload, and share creation undo history', async t => { // NEW
+    const f = await loadBedCreationFixture(t); // NEW
+    f.undoManager.clear(); // NEW
+    const created = await f.addBed(); // NEW
+    const id = created.id; // NEW
+    assert.equal(f.undoManager.history.length, 1, 'creation and identity form one undo edit'); // NEW
+    f.undoManager.undo(); await f.flush(); // NEW
+    assert.equal(f.graph.model.getCell(id), undefined); // NEW
+    f.undoManager.redo(); await f.flush(); // NEW
+    assert.equal(f.graph.model.getCell(id).getAttribute('user_bed_name'), 'Bed 1'); // NEW
+    f.graph.setSelectionCell(created); await f.flush(); // NEW
+    let input = f.conditions()[0].querySelector('input'); // NEW
+    assert.equal(input.value, 'Bed 1'); // NEW
+    assert.equal(input.getAttribute('aria-label'), 'Bed name (optional)'); // NEW
+    assert.equal(input.placeholder, 'Name this bed…'); // NEW
+    f.ui.showDialog = div => { f.ui.lastDialog = div; }; // NEW
+    f.window.TrellisGardenBeds._test.showConditionEditorDialog(created); // NEW
+    const nameRow = [...f.ui.lastDialog.querySelectorAll('label')].find(row => row.firstChild.textContent === 'Bed name (optional)'); // NEW
+    assert.equal(nameRow.querySelector('input').value, 'Bed 1'); // NEW
+    assert.equal(nameRow.querySelector('input').placeholder, 'Name this bed…'); // NEW
+    f.window.Trellis = { interactionModes: { getActive: () => ({ mode: 'allocate' }) } }; // NEW
+    f.window.dispatchEvent(new f.window.CustomEvent('trellisInteractionModeChanged')); await f.flush(); // NEW
+    assert.equal(f.conditions()[0].children.length, 1); // NEW
+    input = f.conditions()[0].querySelector('input'); // NEW
+    assert.equal(input.value, 'Bed 1'); // NEW
+    input.value = '  East tomatoes  '; // NEW
+    input.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await f.flush(); // NEW
+    assert.equal(created.getAttribute('label'), 'East tomatoes'); // NEW
+    f.window.TrellisGardenBeds.writeBedConditions(created, { ...f.window.TrellisGardenBeds.readBedConditions(created), bedType: 'raised_bed', bedHeightCm: 30 }); await f.flush(); // NEW: dialog saves retain the current identity alongside type and height.
+    assert.equal(created.getAttribute('label'), 'Raised bed (30 cm) - East tomatoes'); // NEW
+    const saved = f.window.mxUtils.getXml(new f.window.mxCodec().encode(f.graph.model)); // NEW
+    const savedDocument = f.window.mxUtils.parseXml(saved); // NEW
+    new f.window.mxCodec(savedDocument).decode(savedDocument.documentElement, f.graph.model); // NEW
+    const restored = f.graph.model.getCell(id); // NEW
+    f.graph.setSelectionCell(restored); await f.flush(); // NEW
+    assert.equal(f.conditions()[0].querySelector('input').value, 'East tomatoes'); // NEW
+    assert.equal(restored.getAttribute('label'), 'Raised bed (30 cm) - East tomatoes'); // NEW
+    input = f.conditions()[0].querySelector('input'); input.value = '   '; // NEW
+    input.dispatchEvent(new f.window.Event('blur')); await f.flush(); // NEW
+    assert.equal(restored.getAttribute('label'), 'Raised bed (30 cm)'); // NEW
+    input = f.conditions()[0].querySelector('input'); // NEW
+    assert.equal(input.value, ''); // NEW
+    assert.equal(input.placeholder, 'Name this bed…'); // NEW
+    assert.equal(f.window.TrellisGardenBeds.readBedConditions(restored).userBedName, '', 'hint is never saved as a name'); // NEW
+}); // NEW
 
 for (const order of [['Planting_Group.js', 'Garden_Beds.js'], ['Garden_Beds.js', 'Planting_Group.js']]) { // CHANGE
     test(`selected-bed clicks toggle both panels without a press blink (${order.join(' then ')})`, async t => { // CHANGE

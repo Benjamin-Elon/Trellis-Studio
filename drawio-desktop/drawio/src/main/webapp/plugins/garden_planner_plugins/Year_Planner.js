@@ -981,7 +981,7 @@ Draw.loadPlugin(function (ui) {
             const salesWeekly = { target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0) }; // NEW
             const csaWeekly = { target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0), boxFillRatio: Array(n).fill(0), potentialRevenueByCropId: new Map(), fulfilledRevenueByCropId: new Map(), componentValuePerBox: 0, salePricePerBox: 0 };
             const csaComponentRequests = [];
-            const priorityRank = new Map([["committed", 0], ["target", 1], ["optional", 2]]);
+            const channelLevels = window.TrellisAllocationCore.priorities(plan); // CHANGE: one priority system for every channel.
 
             function ensureSelfValueArrays(cropId) {
                 const key = String(cropId || "");
@@ -1062,7 +1062,7 @@ Draw.loadPlugin(function (ui) {
                     line,
                     cropId: String(crop.id),
                     channelId: String(line.channelId || ""),
-                    priority: String(line.priority || "target"),
+                    priority: channelLevels["sales:" + line.channelId], // CHANGE
                     kgPerUnit,
                     unitPrice,
                     target,
@@ -1227,8 +1227,6 @@ Draw.loadPlugin(function (ui) {
                 const demandResults = Array.from(perDemandLine.values())
                     .filter(result => result.cropId === String(crop.id))
                     .sort((a, b) => {
-                        const priorityDifference = (priorityRank.get(a.priority) ?? 1) - (priorityRank.get(b.priority) ?? 1);
-                        if (priorityDifference) return priorityDifference;
                         const channelDifference = (channelOrder.get(a.channelId) ?? Number.MAX_SAFE_INTEGER) - (channelOrder.get(b.channelId) ?? Number.MAX_SAFE_INTEGER);
                         if (channelDifference) return channelDifference;
                         return (demandLineOrder.get(String(a.line.id)) ?? 0) - (demandLineOrder.get(String(b.line.id)) ?? 0);
@@ -1268,8 +1266,14 @@ Draw.loadPlugin(function (ui) {
                     const unattributedHarvestKg = Math.max(0, harvestedKg - sourceHarvestedKg); // CHANGE
                     if (unattributedHarvestKg > EPS) inventory.push({ kg: unattributedHarvestKg, expiresWeek: weekIndex + lifetimeWeeks, sourceRow: null, weekIndex }); // CHANGE
                     arr.availableSupply[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0);
+                    const requests = [ // NEW: compute quotas before consuming FIFO batches.
+                        ...selfResults.map(result => ({ id: result, demand: result.target[weekIndex], level: channelLevels.self })), // NEW
+                        { id: 'csa', demand: arr.csaTarget && arr.csaTarget[weekIndex], level: channelLevels.csa }, // NEW
+                        ...demandResults.map(result => ({ id: result, demand: result.target[weekIndex], level: channelLevels['sales:' + result.channelId] })) // NEW
+                    ]; // NEW
+                    const quotas = new Map(window.TrellisAllocationCore.allocate(arr.availableSupply[weekIndex], requests).rows.map(row => [row.id, row.allocated])); // NEW
                     for (const result of selfResults) {
-                        const allocation = consume(result.target[weekIndex]);
+                        const allocation = consume(quotas.get(result) || 0); allocation.short = Math.max(0, result.target[weekIndex] - allocation.used); // CHANGE
                         result.usableSupply[weekIndex] = allocation.used;
                         result.short[weekIndex] = allocation.short;
                         result.fulfilledGroceryValue[weekIndex] = Number.isFinite(result.unitPrice)
@@ -1284,7 +1288,7 @@ Draw.loadPlugin(function (ui) {
                         selfWeekly.fulfilledGroceryValue[weekIndex] += result.fulfilledGroceryValue[weekIndex];
                         ensureSelfValueArrays(crop.id).fulfilled[weekIndex] += result.fulfilledGroceryValue[weekIndex];
                     } // NEW: household food is allocated before CSA and sales.
-                    const csaAllocation = consume(arr.csaTarget && arr.csaTarget[weekIndex]);
+                    const csaAllocation = consume(quotas.get('csa') || 0); csaAllocation.short = Math.max(0, (arr.csaTarget?.[weekIndex] || 0) - csaAllocation.used); // CHANGE
                     csaWeekly.usableSupply[weekIndex] += csaAllocation.used;
                     csaWeekly.short[weekIndex] += csaAllocation.short;
                     arr.csaUsableSupply[weekIndex] = csaAllocation.used;
@@ -1302,7 +1306,7 @@ Draw.loadPlugin(function (ui) {
                     arr.usableSupply[weekIndex] += csaAllocation.used;
                     arr.short[weekIndex] += csaAllocation.short;
                     for (const result of demandResults) {
-                        const allocation = consume(result.target[weekIndex]);
+                        const allocation = consume(quotas.get(result) || 0); allocation.short = Math.max(0, result.target[weekIndex] - allocation.used); // CHANGE
                         result.usableSupply[weekIndex] = allocation.used;
                         result.short[weekIndex] = allocation.short;
                         result.fulfilledRevenue[weekIndex] = Number.isFinite(result.unitPrice)
@@ -1376,20 +1380,15 @@ Draw.loadPlugin(function (ui) {
                 const channelId = String(channel && channel.id || "");
                 perChannel.set(channelId, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.channelId === channelId)));
             }
-            for (const priority of ["committed", "target", "optional"]) {
-                perPriority.set(priority, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.priority === priority)));
-            }
-            const committedAggregate = perPriority.get("committed");
-            if (committedAggregate && csaWeekly && csa && csa.enabled) { // CHANGE
-                committedAggregate.lineIds.push("__csa__");
-                for (let i = 0; i < n; i++) {
-                    committedAggregate.target[i] += Math.max(0, Number(csaWeekly.target[i]) || 0);
-                    committedAggregate.usableSupply[i] += Math.max(0, Number(csaWeekly.usableSupply[i]) || 0);
-                    committedAggregate.short[i] += Math.max(0, Number(csaWeekly.short[i]) || 0);
-                    committedAggregate.potentialRevenue[i] += Math.max(0, Number(csaWeekly.potentialRevenue[i]) || 0);
-                    committedAggregate.fulfilledRevenue[i] += Math.max(0, Number(csaWeekly.fulfilledRevenue[i]) || 0);
-                }
-            }
+            for (const priority of [...new Set(Object.values(channelLevels))].sort((a, b) => a - b)) { // CHANGE
+                const aggregate = aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.priority === priority)); // CHANGE
+                for (const [id, source] of [['self', selfWeekly], ['csa', csaWeekly]]) { // NEW
+                    if (channelLevels[id] !== priority) continue; // NEW
+                    aggregate.lineIds.push('__' + id + '__'); // NEW
+                    for (let i = 0; i < n; i++) for (const field of ['target', 'usableSupply', 'short', 'potentialRevenue', 'fulfilledRevenue']) aggregate[field][i] += Number(source[field]?.[i]) || 0; // NEW
+                } // NEW
+                perPriority.set(priority, aggregate); // CHANGE
+            } // CHANGE
 
             // Aggregate all per-crop series into total series before returning.
             for (const v of perCrop.values()) {
@@ -1612,7 +1611,6 @@ Draw.loadPlugin(function (ui) {
         ];
         const DEMAND_CHANNEL_TYPES = ["farm_store", "restaurant", "market", "wholesale", "other"];
         const DEMAND_FREQUENCIES = ["day", "week", "month"];
-        const DEMAND_PRIORITIES = ["committed", "target", "optional"];
         const HARVEST_WINDOW_SOURCES = ["manual", "actual_harvest", "sowing_window_estimate"]; // CHANGE: persist the selected harvest-window authority.
 
         function clonePlain(obj) {
@@ -1639,7 +1637,7 @@ Draw.loadPlugin(function (ui) {
 
         function createEmptyPlan(year) {
             return normalizeForRuntime({
-                version: 2,
+                version: 3, // CHANGE: channel priority levels replace demand-line priorities.
                 year: Number(year),
                 weekStartDow: 1,
                 crops: [],
@@ -1717,7 +1715,7 @@ Draw.loadPlugin(function (ui) {
 
         function normalizeForRuntime(plan, year) {
             const normalized = plan && typeof plan === "object" ? plan : {};
-            normalized.version = 2;
+            normalized.version = 3; // CHANGE
             normalized.year = Number.isFinite(Number(year)) ? Number(year) : Number(normalized.year);
             if (!Number.isFinite(normalized.year)) normalized.year = new Date().getFullYear();
             const weekStartDow = Math.trunc(Number(normalized.weekStartDow));
@@ -1735,6 +1733,7 @@ Draw.loadPlugin(function (ui) {
             if (!Array.isArray(normalized.demandChannels)) normalized.demandChannels = clonePlain(DEFAULT_DEMAND_CHANNELS);
             for (const channel of normalized.demandChannels) channel.enabled = channel && channel.enabled === false ? false : true; // CHANGE
             normalized.demands = Array.isArray(normalized.demands) ? normalized.demands : [];
+            normalized.channelPriorityLevels = window.TrellisAllocationCore.priorities(normalized); // NEW
 
             if (!normalized.csa || typeof normalized.csa !== "object") {
                 normalized.csa = { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] };
@@ -1763,6 +1762,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function stripRuntimeFields(plan, options) {
+            for (const line of plan.demands || []) delete line.priority; // NEW: obsolete priorities never survive an explicit save.
             const forTemplate = !!(options && options.forTemplate);
             delete plan.cropFilterId;
             delete plan.__carryoverCrops;
@@ -1795,6 +1795,7 @@ Draw.loadPlugin(function (ui) {
         function runtimeStrippedCloneInput(plan, options) {
             const source = plan && typeof plan === "object" ? plan : {};
             const copy = Object.assign({}, source);
+            if (Array.isArray(source.demands)) copy.demands = source.demands.map(line => Object.assign({}, line)); // NEW: dirty checks cannot strip live draft metadata.
             if (Array.isArray(source.crops)) copy.crops = source.crops.map(crop => Object.assign({}, crop));
             if (source.selfSufficiency && typeof source.selfSufficiency === "object") copy.selfSufficiency = Object.assign({}, source.selfSufficiency);
             if (source.csa && typeof source.csa === "object") copy.csa = Object.assign({}, source.csa);
@@ -1991,7 +1992,8 @@ Draw.loadPlugin(function (ui) {
                 if (!Number.isFinite(Number(line && line.qty)) || Number(line.qty) <= 0) errors.push(makeValidation("demand", "demand.line_invalid_quantity", `Enter quantity greater than 0 for ${lineLabel}.`, { field: "qty", target: demandTarget("qty", { lineId: id, lineIndex }) })); // CHANGE
                 if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(makeValidation("demand", "demand.line_invalid_frequency", `Choose a valid frequency for ${lineLabel}.`, { field: "frequency", target: demandTarget("frequency", { lineId: id, lineIndex }) })); // CHANGE
                 if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(makeValidation("demand", "demand.line_invalid_every_n", `Enter every value greater than 0 for ${lineLabel}.`, { field: "everyN", target: demandTarget("everyN", { lineId: id, lineIndex }) })); // CHANGE
-                if (!DEMAND_PRIORITIES.includes(String(line && line.priority || ""))) errors.push(makeValidation("demand", "demand.line_invalid_priority", `Choose a valid priority for ${lineLabel}.`, { field: "priority", target: demandTarget("priority", { lineId: id, lineIndex }) })); // CHANGE
+                // CHANGE: demand lines inherit their channel level.
+
                 if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("demand", "demand.line_missing_dates", `Enter demand dates for ${lineLabel}.`, { field: "from", relatedFields: ["from", "to"], target: demandTarget("from", { lineId: id, lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
                 if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("demand", "demand.line_reversed_dates", `Set demand start on or before end for ${lineLabel}.`, { field: "from", relatedFields: ["from", "to"], target: demandTarget("from", { lineId: id, lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
                 if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(makeValidation("demand", "demand.line_unresolved_unit", `Choose a valid unit for ${lineLabel}.`, { cropId: String(crop.id || ""), field: "unit", target: demandTarget("unit", { lineId: id, lineIndex }) })); // CHANGE
@@ -2043,7 +2045,6 @@ Draw.loadPlugin(function (ui) {
             DEFAULT_DEMAND_CHANNELS,
             DEMAND_CHANNEL_TYPES,
             DEMAND_FREQUENCIES,
-            DEMAND_PRIORITIES,
             createEmptyPlan,
             normalizeYieldFieldsForRuntime,
             normalizeForRuntime,
@@ -3213,7 +3214,7 @@ Draw.loadPlugin(function (ui) {
             const plan = runtime && runtime.plan;
             const weekly = runtime && runtime.weekly;
             const prioritySummaries = {};
-            for (const priority of ["committed", "target", "optional"]) {
+            for (const priority of (weekly?.perPriority?.keys() || [])) { // CHANGE
                 prioritySummaries[priority] = summarizeAggregate(weekly && weekly.perPriority && weekly.perPriority.get(priority));
             }
             return {
@@ -3709,14 +3710,14 @@ Draw.loadPlugin(function (ui) {
                 const channelId = String(channel && channel.id || "");
                 const summary = summarizeDemandAggregate(weekly && weekly.perChannel && weekly.perChannel.get(channelId));
                 summary.lineCount = ((plan && plan.demands) || []).filter(line => String(line && line.channelId || "") === channelId).length;
-                const priorityKg = { committed: 0, target: 0, optional: 0 };
+                const priorityKg = {}; // CHANGE: aggregate configured numeric levels.
                 for (const result of (weekly && weekly.perDemandLine ? weekly.perDemandLine.values() : [])) {
                     if (result.channelId !== channelId) continue;
                     priorityKg[result.priority] = (priorityKg[result.priority] || 0) + result.target.reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
                 }
                 return { channel, ...summary, priorityKg, status: summary.shortKg > EPS ? "Short" : "OK" };
             });
-            const priorityMetrics = ["committed", "target", "optional"].map(priority => ({
+            const priorityMetrics = Array.from(weekly?.perPriority?.keys() || []).map(priority => ({ // CHANGE
                 priority,
                 ...summarizeDemandAggregate(weekly && weekly.perPriority && weekly.perPriority.get(priority))
             }));
@@ -4354,7 +4355,7 @@ Draw.loadPlugin(function (ui) {
             return date && Number.isFinite(date.getTime()) ? date : null;
         } // CHANGE
 
-        function open(moduleCell, year) {
+        function open(moduleCell, year, options = {}) { // CHANGE: callers may request a return to their original Allocate year.
             if ((moduleCell.getAttribute?.('trellis_references_json') || moduleCell.getAttribute?.('trellis_reference_pending') === '1') && !graph.__trellisReferences) throw new Error('Load Garden references before opening this garden planner.'); // NEW
             const DbClient = graph.__trellisReferences && moduleCell.getAttribute?.('trellis_references_json') ? createReferenceDbClient(moduleCell) : legacyDbClient; // CHANGE
             const referenceScheduler = window.USL?.scheduler?.forGarden ? window.USL.scheduler.forGarden(moduleCell) : null; // CHANGE
@@ -4385,6 +4386,7 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
             state.lastDraftSavedAt = parseStoredDate(initialWorkingYear.draftUpdatedAt); // CHANGE
             const session = SessionController.start(moduleCell, currentYear, plan);
+            session.returnToAllocate = options.returnToAllocate === true ? { moduleCellId: session.moduleCellId, year: currentYear } : null; // CHANGE: capture the original target once; changing planner years cannot redirect it.
             session.disposers.push(() => DbClient.release().catch(() => {})); // NEW: close captured SQL views on every modal close path.
             const varietyCache = new Map();
             const growthStageCache = new Map(); // CHANGE: one active-stage query per plant and refresh.
@@ -4402,9 +4404,14 @@ Draw.loadPlugin(function (ui) {
             session.holdLost = false; // NEW
             const plannerPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
             const plannerHold = window.Trellis?.sharing?.registerEditor?.({ // NEW
-                kind: 'year-planner', targets: [JSON.stringify([plannerPage, cellStableId(moduleCell)])], // NEW
+                kind: 'year-planner', title: 'Year plan', isDirty: () => !!state.baselineSnapshot && YearPlanDashboard.isDirty(state, plan), targets: [JSON.stringify([plannerPage, cellStableId(moduleCell)])], // NEW
+                element: () => card, freeze() { session.holdLost = true; if (refreshTimer) clearTimeout(refreshTimer); pendingRefreshOptions = null; }, // CHANGE: retain the original editor while existing save guards reject all submissions.
                 capture: () => ({ pageId: plannerPage, objectId: cellStableId(moduleCell), year: currentYear, plan: PlanSchema.serializeForPersistence(plan), fields: [...card.querySelectorAll('[data-year-plan-field]')].map(field => ({ field: field.dataset.yearPlanField, value: field.value, checked: field.checked })) }), // CHANGE
-                save: () => saveCurrent(false), // NEW
+                save: navigation => saveCurrent(false, navigation?.closeAfter === false), // CHANGE: navigation validates; explicit handoff retains existing draft semantics.
+                restore: draft => { // CHANGE
+                    if (!draft) return; const restored = PlanSchema.normalizeForRuntime(JSON.parse(JSON.stringify(draft.plan)), currentYear); Object.keys(plan).forEach(key => delete plan[key]); Object.assign(plan, restored);
+                    YearPlanDashboard.markBaseline(state, plan, null); refreshDerived(); renderSelectedEditor(); renderFooter();
+                }, // CHANGE // NEW
                 discard() { session.holdLost = true; if (refreshTimer) clearTimeout(refreshTimer); if (SessionController.isActive(session)) SessionController.close(); } // NEW
             }); // NEW
             session.disposers.push(() => plannerHold?.dispose(!session.holdLost)); // NEW
@@ -4444,6 +4451,7 @@ Draw.loadPlugin(function (ui) {
             const wrap = document.createElement("div");
             wrap.style.cssText = "position:fixed;inset:0;z-index:" + TRELLIS_DIALOG_Z + ";background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;";
             const card = document.createElement("div");
+            card.dataset.trellisCollaborativeEditor = 'year-planner'; // CHANGE
             card.className = "yp-modal-card";
             card.dataset.quickstartSurface = 'plan'; card.dataset.quickstartGarden = String(moduleCell.id); card.dataset.quickstartYear = String(currentYear); // NEW
             card.style.cssText = "position:relative;width:1180px;max-width:97vw;height:92vh;background:#fff;border:1px solid #777;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden;font:12px Arial,sans-serif;"; // CHANGE: card-local overlay positioning needs a containing block.
@@ -4807,6 +4815,7 @@ Draw.loadPlugin(function (ui) {
             card.appendChild(diagnosticsLayer); // CHANGE: popovers render above scrollable content without inheriting clipped overflow.
             wrap.appendChild(card);
             document.body.appendChild(wrap);
+            card.dataset.trellisCollaborativeEditor = 'year-planner'; plannerHold?.checkpoint?.(); // CHANGE
             session.ui.modalEl = wrap;
             SessionController.addWindowListener(session, "keydown", event => { if (event.key === "Escape") closeDiagnosticsPopovers(null); });
             SessionController.addWindowListener(session, "click", event => { if (!event.target || !event.target.closest || !event.target.closest(".yp-diagnostics-wrap")) closeDiagnosticsPopovers(null); });
@@ -6984,6 +6993,12 @@ Draw.loadPlugin(function (ui) {
                 const settings = options || {};
                 const crop = (plan.crops || []).find(item => String(item && item.id || "") === String(cropId));
                 if (!crop) return false;
+                if (!settings.editTransitionResolved && plannerHold?.dirty?.() && (String(state.selectedCropId) !== String(crop.id) || settings.activeTab && settings.activeTab !== state.activeTab)) { // CHANGE
+                    void plannerHold.transition(() => { // CHANGE
+                        if (!setSelectedCropEverywhere(cropId, { ...settings, editTransitionResolved: true })) return false; // CHANGE
+                        renderSelectedEditor(); renderCropList(); refreshDerived(); plannerHold.checkpoint(); return true; // CHANGE
+                    }); return false; // CHANGE
+                } // CHANGE
                 const selectedId = String(crop.id);
                 state.selectedCropId = selectedId;
                 state.activeTab = settings.activeTab || "basics";
@@ -7734,7 +7749,7 @@ Draw.loadPlugin(function (ui) {
                     : (chartScope === "csa" ? csaSourceRow : (chartScope === "sales" ? salesChannelRows : selfSourceRow + csaSourceRow + salesChannelRows));
                 const priorityRows = (chartScope === "self" || chartScope === "csa")
                     ? ""
-                    : dashboard.priorityMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.priority)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td></tr>`).join("");
+                    : dashboard.priorityMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities("Level " + metric.priority)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td></tr>`).join("");
                 const shortageRows = dashboard.shortageWeeks.filter(row => {
                     if (chartScope === "self") return Number(row.selfShortKg) > EPS;
                     if (chartScope === "csa") return Number(row.csaShortKg) > EPS;
@@ -8310,9 +8325,7 @@ Draw.loadPlugin(function (ui) {
                     createChip("Usable", formatKg(metric.usableSupplyKg), metric.usableSupplyKg > EPS ? "success" : "neutral"),
                     createChip(metric.shortKg > EPS ? "Short" : "Status", metric.shortKg > EPS ? formatKg(metric.shortKg) : "OK", metric.shortKg > EPS ? "danger" : "success", null, metric.shortKg > EPS ? { title: 'Inspect shortage weeks in Plan Check.', primaryTarget: { area: 'plan-check', rowKind: 'shortage-weeks' } } : null), // CHANGE
                     createChip("Lines", String(metric.lineCount), "neutral"),
-                    createChip("Committed", formatKg(metric.priorityKg.committed), "neutral"),
-                    createChip("Target", formatKg(metric.priorityKg.target), "neutral"),
-                    createChip("Optional", formatKg(metric.priorityKg.optional), "neutral"),
+                    ...Object.entries(metric.priorityKg).map(([level, quantity]) => createChip("Level " + level, formatKg(quantity), "neutral")), // CHANGE
                     createChip("Potential", formatMoney(metric.potentialRevenue), "neutral"),
                     createChip("Fulfilled", formatMoney(metric.fulfilledRevenue), metric.fulfilledRevenue > EPS ? "success" : "neutral")
                 ];
@@ -8347,7 +8360,7 @@ Draw.loadPlugin(function (ui) {
                 const fulfilledRevenue = result ? sumPositiveValues(result.fulfilledRevenue) : 0;
                 const from = YearPlanDashboard.formatYmd(line && line.from) || "?";
                 const to = YearPlanDashboard.formatYmd(line && line.to) || "?";
-                const priorityValue = String(line && line.priority || "target");
+                const priorityValue = "Level " + window.TrellisAllocationCore.priorities(plan)["sales:" + line.channelId]; // CHANGE
                 const priorityLabel = priorityValue.charAt(0).toUpperCase() + priorityValue.slice(1);
                 const datesInvalid = from === "?" || to === "?" || (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to); // CHANGE
                 const priceTarget = missingPackagePriceTargetForLine(line); // CHANGE
@@ -8376,7 +8389,6 @@ Draw.loadPlugin(function (ui) {
                     everyN: 1,
                     from: crop && crop.harvestStart || "",
                     to: crop && crop.harvestEnd || "",
-                    priority: "target",
                     notes: ""
                 };
             }
@@ -8420,7 +8432,7 @@ Draw.loadPlugin(function (ui) {
                 every.min = "1"; every.step = "1";
                 const from = mkInput("date", line.from || "");
                 const to = mkInput("date", line.to || "");
-                const priority = mkSelect([{ value: "committed", label: "Committed" }, { value: "target", label: "Target" }, { value: "optional", label: "Optional" }], line.priority || "target");
+                const priority = document.createElement("span"); priority.textContent = "Level " + window.TrellisAllocationCore.priorities(plan)["sales:" + line.channelId]; // CHANGE
                 const unitPrice = PlanMath.resolvePackagePriceForUnit(crop, line.unit);
                 const price = mkInput("number", Number.isFinite(unitPrice) ? unitPrice : "");
                 price.min = "0"; price.step = "any"; price.readOnly = true;
@@ -8472,7 +8484,7 @@ Draw.loadPlugin(function (ui) {
                 unit.addEventListener("change", () => handlePackageUnitSelection(unit, line.cropId, value => { line.unit = value; }, () => refreshDerived(null, { rebuildDemand: true }))); // CHANGE
                 frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(); });
                 every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); });
-                priority.addEventListener("change", () => { line.priority = priority.value; refreshDerived(); });
+                // CHANGE: priority is edited on the channel, never a demand line.
                 notes.addEventListener("input", () => { line.notes = notes.value; renderFooter(); });
                 bindPairedDateControls(from, to, {
                     diagnostic: `Demand line start date cannot be after end date for "${crop ? cropLabel(crop) : line.cropId}".`,
@@ -8496,6 +8508,7 @@ Draw.loadPlugin(function (ui) {
                 box.dataset.demandChannelId = channelId;
                 const header = document.createElement("div");
                 header.className = "yp-demand-channel-header";
+                appendChannelLevel(header, "sales:" + channel.id); // NEW
                 const label = mkInput("text", channel.label || "");
                 label.setAttribute("aria-label", "Channel name");
                 label.style.minWidth = "160px";
@@ -8561,6 +8574,13 @@ Draw.loadPlugin(function (ui) {
                 });
             }
 
+            /** Editing a level recalculates the same engine used by distributions. */ // NEW
+            function appendChannelLevel(host, key) { // NEW
+                const label = document.createElement('label'); label.textContent = 'Priority level '; // NEW
+                const input = document.createElement('input'); input.type = 'number'; input.min = '1'; input.step = '1'; input.value = plan.channelPriorityLevels[key] || (key === 'self' ? 1 : key === 'csa' ? 2 : 3); input.style.width = '64px'; input.title = 'Lower levels allocate first; equal levels split proportionally.'; // NEW
+                input.addEventListener('change', () => { const value = Number(input.value); if (!Number.isSafeInteger(value) || value < 1) { input.value = plan.channelPriorityLevels[key] || (key === 'self' ? 1 : key === 'csa' ? 2 : 3); return; } plan.channelPriorityLevels[key] = value; refreshDerived(); }); // NEW
+                label.appendChild(input); host.appendChild(label); // NEW
+            } // NEW
             function renderDemand(content) {
                 pruneCollapseState();
                 demandRefs = { channelSummaries: new Map(), lineSummaries: new Map() };
@@ -8786,6 +8806,7 @@ Draw.loadPlugin(function (ui) {
             } // NEW
 
             function renderSelfSufficiency(details) {
+                appendChannelLevel(details, "self"); // NEW
                 plan.selfSufficiency = plan.selfSufficiency || { adults: 0, children: 0, nutritionMultiplier: 1, lines: [] };
                 plan.selfSufficiency.lines = Array.isArray(plan.selfSufficiency.lines) ? plan.selfSufficiency.lines : [];
                 const controls = document.createElement("div");
@@ -8990,7 +9011,7 @@ Draw.loadPlugin(function (ui) {
                 for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }]) {
                     const button = mkBtn(tab.label, "neutral");
                     if (tab.id === 'basics') button.setAttribute('data-trellis-quickstart', 'plan-basics'); // NEW
-                    button.addEventListener("click", () => { state.activeTab = tab.id; renderSelectedEditor(); syncEditorDerived(); });
+                    button.addEventListener("click", () => { const change = () => { state.activeTab = tab.id; renderSelectedEditor(); syncEditorDerived(); plannerHold?.checkpoint?.(); }; if (state.activeTab !== tab.id && plannerHold?.transition) void plannerHold.transition(change); else change(); }); // CHANGE
                     tabs.appendChild(button);
                 }
                 editorBox.appendChild(head); editorBox.appendChild(tabs); editorBox.appendChild(content);
@@ -9035,6 +9056,9 @@ Draw.loadPlugin(function (ui) {
             }
 
             function renderCsaDetails(details) {
+                appendChannelLevel(details, "csa"); // NEW
+                const exchange = document.createElement('button'); exchange.textContent = 'Publish CSA in The Grand Exchange'; exchange.title = 'Publish the saved year plan as a CSA season.'; // NEW
+                exchange.addEventListener('click', () => window.TrellisInventories?.openExchange({ ui, garden: moduleCell, year: plan.year, publishCsa: true })); details.appendChild(exchange); // NEW
                 const controls = document.createElement("div");
                 controls.className = "yp-row";
                 const pricingControls = document.createElement("div");
@@ -9183,20 +9207,21 @@ Draw.loadPlugin(function (ui) {
                 else if (planCheckHeader) focusAndHighlight(planCheckHeader); // CHANGE: empty-plan save failures have only the Plan Check list.
             }
 
-            function saveCurrent(closeAfter) { return withPlannerHold(() => commitCurrent(closeAfter)); } // CHANGE
-            function commitCurrent(closeAfter) { // NEW
+            function saveCurrent(closeAfter, requireCommit = false) { return withPlannerHold(() => commitCurrent(closeAfter, requireCommit)); } // CHANGE
+            function commitCurrent(closeAfter, requireCommit = false) { // NEW
                 state.saveValidationErrors = validateSaveReadiness(); // CHANGE: save-only rule runs for Save/commit readiness and draft diagnostics.
                 refreshDerived();
                 const validationErrors = commitValidationErrors(); // CHANGE
                 if (validationErrors.length) {
-                    saveDraft(validationErrors); // CHANGE
+                    if (!requireCommit) { saveDraft(validationErrors); plannerHold?.complete?.(); } // CHANGE: a navigation failure retains the unfinished draft.
+ // CHANGE
                     state.planCheckExpanded = true;
                     if (state.saveValidationErrors.some(error => error && error.code === "plan.empty_crops")) state.cropPlanExpanded = true; // CHANGE: show where to add the required crop.
                     if (PlanSchema.validateCsa(plan).length) state.csaExpanded = true;
                     if (closeAfter) { SessionController.close(); return true; } // CHANGE: Save draft & Close should not block leaving.
                     renderCsa(true); renderPlanCheck(); renderFooter();
                     focusSaveValidationFailure();
-                    return true;
+                    return !requireCommit; // CHANGE
                 }
                 persistPackageDefaults();
                 PlanRepository.savePlanForYear(moduleCell, currentYear, plan);
@@ -9209,11 +9234,17 @@ Draw.loadPlugin(function (ui) {
                 state.extraDiagnostics = [];
                 state.lastDraftSavedAt = null; // CHANGE
                 refreshDerived();
-                if (closeAfter) SessionController.close();
+                plannerHold?.complete?.(); // CHANGE: the open, clean planner stops pinning the garden.
+                if (closeAfter) { // CHANGE: only a committed Save & Close can complete this round trip.
+                    const returnTarget = session.returnToAllocate; // CHANGE
+                    SessionController.close(); // CHANGE: remove the modal and release its session resources before reopening Allocate.
+                    if (returnTarget) window.dispatchEvent(new CustomEvent("usl:allocatePlanRequested", { detail: returnTarget })); // CHANGE: drafts, ordinary saves, and other close paths never return automatically.
+                } // CHANGE
                 return true;
             }
 
             function requestClose() {
+                if (session.holdLost) { SessionController.close(); DbClient.release()?.catch(() => {}); return; } // CHANGE: closing a frozen editor must neither save nor reacquire its old hold.
                 const close = () => { refreshDerived(); saveDraftIfDirty(); SessionController.close(); DbClient.release()?.catch(() => {}); }; // CHANGE
                 return YearPlanDashboard.isDirty(state, plan) ? withPlannerHold(close) : close(); // NEW
             }
@@ -10267,12 +10298,14 @@ Draw.loadPlugin(function (ui) {
     }
 
     /** Starts the single year-plan modal session. */
-    function openPlanModal(moduleCell, year) {
+    function openPlanModal(moduleCell, year, options = {}) {
+        const sharing = graph.__trellisSharing; // CHANGE
+        if (!options.editTransitionResolved && sharing?.transitionEditor) return sharing.transitionEditor(() => openPlanModal(moduleCell, year, { ...options, editTransitionResolved: true })); // CHANGE // CHANGE: preserve optional return behavior across the existing event entry point.
         if (window.Trellis && window.Trellis.interactionModes && typeof window.Trellis.interactionModes.closeActive === "function") {
             const activeMode = window.Trellis.interactionModes.getActive && window.Trellis.interactionModes.getActive();
             if (activeMode && activeMode.mode === "allocate") window.Trellis.interactionModes.closeActive("year-planner-opened");
         }
-        return YearPlanModalController.open(moduleCell, year);
+        return YearPlanModalController.open(moduleCell, year, options); // CHANGE
     }
 
     // -------------------- Event listener --------------------
@@ -10289,7 +10322,7 @@ Draw.loadPlugin(function (ui) {
         const moduleCell = model.getCell(moduleCellId);
         if (!moduleCell) return;
 
-        openPlanModal(moduleCell, year);
+        openPlanModal(moduleCell, year, { returnToAllocate: d.returnToAllocate === true }); // CHANGE: normal planner requests retain their existing close behavior.
     }
 
     if (__YP_GLOBAL.planYearRequestedHandler) {

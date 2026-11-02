@@ -1,0 +1,739 @@
+✔ sole garden remains active for empty, unrelated, descendant, and mixed selections (175.1939ms)
+✔ only companions associated with the active garden determine its workspace (49.8383ms)
+✔ zero and multiple gardens preserve selection and ambiguity rules (85.1323ms)
+✔ default context follows garden count, conversion, undo, and current-page changes (48.7135ms)
+✔ default activation preserves selection, viewport, and selection-based share eligibility (19.7019ms)
+✔ picker matches every word across name and city and retains sorted city groups (37.2311ms)
+✔ garden dashboard toolbar is mounted to the graph viewport and sized from the viewport (2.1447ms)
+✔ garden dashboard toolbar width follows a narrowed graph container rect (0.2557ms)
+✔ garden dashboard toolbar follows garden module and descendant selection (1.5993ms)
+✔ garden dashboard blank toolbar leaves module-scoped flash lookup to active render (2.1505ms)
+✖ garden dashboard toolbar controls use module scoped plugin contracts (3.8404ms)
+✔ garden dashboard toolbar exposes share only for eligible selected scopes (2.5286ms)
+✔ garden dashboard toolbar groups tools left and messages export share table right (2.0364ms)
+✔ garden dashboard toolbar disables Allocate until the selected year has saved crops (2.2881ms)
+✔ garden dashboard blank state keeps controls visible and exposes searchable garden picker (2.0713ms)
+✔ garden dashboard waits for an opened diagram before rendering toolbar (2.2246ms)
+✔ garden dashboard picker searches names and cities while preserving city grouping (1.1025ms)
+✔ garden dashboard picker selection and no-garden create path select and zoom gardens (2.8893ms)
+✔ garden dashboard startup focuses sole garden only once (2.016ms)
+✔ garden dashboard persists the last selected garden by diagram page and user (1.957ms)
+✔ garden dashboard updates last garden memory only for unambiguous garden contexts (1.1171ms)
+✔ garden dashboard startup uses selected remembered then sole-garden fallback (1.2171ms)
+✔ garden dashboard last garden restore runs only on file open, not page switch (0.9145ms)
+✔ garden dashboard resolves linked and ambiguous module contexts (1.4981ms)
+✔ garden dashboard applies selected year to linked task module cards (1.1556ms)
+✔ garden dashboard derives active workspace from selection (0.7808ms)
+✔ garden workspace switcher repairs companions and pulses destinations (1.0469ms)
+✔ garden dashboard disables garden tools outside Garden workspace (2.4574ms)
+✔ garden dashboard toolbar exposes Garden Workspace Switcher with task badge and selector (3.0192ms)
+✔ garden dashboard toolbar uses task manager API for boards and unseen counts (3.0604ms)
+✔ garden dashboard toolbar persists the selected task board in local user storage (1.7034ms)
+✔ garden dashboard selected task board resolver is strict across selected cells (0.5524ms)
+✔ garden dashboard toolbar marks Irrigation active with existing blue (1.979ms)
+✔ garden dashboard irrigation buttons close active irrigation mode (1.7166ms)
+✔ garden dashboard messages button calls users API for active module and prompts auth (1.7137ms)
+✔ garden dashboard table is collapsed by default and session scoped (1.2645ms)
+✔ legacy dashboard cell code is removed from the viewport dashboard plugin (3.6249ms)
+✔ defaults normalize legacy frequency effects to hours multipliers (165.6066ms)
+✔ defaults include scheduler task type integration records (13.8227ms)
+✔ yearly replacement reserve counts owned capital only (17.8173ms)
+✔ equipment dialog shows yearly reserve tile and native tooltips (287.3718ms)
+✔ equipment inventory persists with existing module attribute schema (50.8295ms)
+✔ validation blocks missing references and invalid effect rows (13.9353ms)
+✔ capability rename repairs equipment and task type references (15.72ms)
+✔ task type delete removes dependent links and effects (12.1032ms)
+✔ import preview merges with imported records winning (54.4842ms)
+✔ structured effect editor can add and persist an effect (262.5229ms)
+✔ typing names does not replace the focused input (212.4508ms)
+✔ typing checklist search and notes keeps focus (64.455ms)
+✔ Helps with shows task names and supports keyboard focus and category selection (156.278ms)
+✔ task registry groups category first with canonical before other tasks (87.441ms)
+✔ loaded crop and bed checklists preserve unmatched legacy preferences on save (79.216ms)
+✔ equipment setup removes preference and capability controls without fetching crop catalogs (143.7147ms)
+✔ legacy preferences and capabilities survive save while no longer appearing in setup (53.5799ms)
+✔ equipment warnings describe saved selections without declaring capabilities required (80.1936ms)
+✔ equipment date fields calculate replacement dates with override support (53.5781ms)
+✔ date normalization infers legacy overrides and blocks invalid saved dates (71.5683ms)
+✔ equipment ranking uses time rather than historical crop or bed preferences without mutating tasks (19.1619ms)
+✔ equipment context derives crop, bed, plants, area and an unknown crew from linked plan data (19.6935ms)
+✔ crew checks use distinct valid assignees and keep unknown skill and zero scale bounds conditional (23.4224ms)
+✔ selected tools retain legacy IDs, explicit no tools, suggestions and unavailable selections (19.2988ms)
+✔ selected tool estimates use the best nonstackable effect, explicit stacking and one overhead per tool (14.3547ms)
+✔ draft equipment preview uses detached values and never replaces accepted task estimates (15.2589ms)
+✔ equipment editor presets preserve inventory ownership and optional sections remain collapsed (81.4906ms)
+✔ equipment planned task lists exclude completed work and other gardens (16.9383ms)
+✔ public task-hour estimates never automatically use merely available equipment (31.5288ms)
+✔ legacy link conversion preserves direct, effect and capability matches without writing accepted values (113.383ms)
+✔ explicit task links prevent capabilities or inactive effects from restoring removed matches (18.8106ms)
+✔ time rules target linked types and stay saved but inactive when a link is removed (141.3168ms)
+✔ crew controls share an accessible operator range and retain focus while maintaining whole-number bounds (58.5438ms)
+✔ import conversion uses the merged registry and respects explicit empty links on repeated round trips (10.9538ms)
+✔ legacy conversion uses only scoped task definitions and keeps unknown direct links as saved values (14.5119ms)
+✔ export retains conversion markers and historical fields for a repeatable import round trip (60.7222ms)
+✔ seed conversions require estimates for weight and packets (4.5539ms)
+✔ current-stock initialization baselines historical work; reopening and recompleting remain reversible (3.068ms)
+✔ sowing completion survives repeated delivery, restart, reopen and corrected recompletion (0.5721ms)
+✔ negative balances are retained and shortages remain visible (0.3907ms)
+✔ published needs aggregate growth stages before subtracting completed work once (1.1645ms)
+✔ competing acceptances cannot reserve protected or already reserved stock (0.6746ms)
+✔ barter source lines combine; handover and receipt each affect stock exactly once (1.7984ms)
+✔ copies preserve definitions and conversions while resetting all operational records (0.4747ms)
+✔ priority levels fill in order with proportional equal-level shortages and capped demand (0.9494ms)
+✔ season quotes use eligible scheduled pickups and preserve original currency (15.4848ms)
+✔ plant requirements round per member and shortages rotate to seasonally underserved members (39.1579ms)
+✔ browser and main cores agree on action permissions for every existing user category (107.2993ms)
+✔ a coordination rank cannot authorize changing another user’s planting or task (161.0781ms)
+✔ team membership is authoritative even when stale derived mirrors remain stored (65.6525ms)
+✔ combined changes reject atomically and a proposal cannot grant itself authority (39.2311ms)
+✔ pure snapshots and repeated queries never mutate their inputs or use wall-clock time (13.3392ms)
+✔ comments retain author restrictions even for administrators and combined metadata edits (34.9475ms)
+✔ generated children require an authorized planting and cannot borrow a foreign parent (13.3761ms)
+✔ model attribute changes cannot bypass object permission checks (4.4523ms)
+✔ delayed project saves retain authored comments while rejecting future timestamps and impersonation (15.0276ms)
+✔ access fields require real scopes and the last active administrator is retained (26.2308ms)
+✔ new-object comments require the actual author and ordinary creation permission (28.7862ms)
+✔ nested XML value changes cannot bypass permission checks with unchanged attributes (61.5336ms)
+✔ generated presentation cannot authorize hidden model or XML payload changes (102.5161ms)
+✔ standalone first-save wrapping preserves object authority and journal validation (275.1438ms)
+✔ task planning attributes use task-detail permissions and cannot authorize a foreign task or planting (19.8014ms)
+✖ fresh Electron settings use Trellis startup defaults (48.1147ms)
+✖ empty stored plugin settings are normalized to the full Trellis default set (1.766ms)
+✔ non-empty stored plugin settings are preserved (1.5233ms)
+✔ old editor autosave transition no longer forces Trellis autosave off (1.8093ms)
+✔ Trellis splash is not suppressed by stored false Electron preference (36.6742ms)
+✔ Trellis plugin defaults stay aligned across source and bundled runtime (754.4209ms)
+✔ new blank diagram runtime flag is carried through fileLoaded (624.3945ms)
+✔ desktop startup migrates saved profiles to object details once and loads its script (129.8884ms)
+✖ App.js actual registry, public list, and defaults register Roadmap dependencies (4.2485ms)
+✔ App.js waits for Core completion, deduplicates requests, and retries failures (9.155ms)
+✖ app.min.js actual registry, public list, and defaults register Roadmap dependencies (106.7265ms)
+✔ app.min.js waits for Core completion, deduplicates requests, and retries failures (325.2297ms)
+✖ integrate.min.js actual registry, public list, and defaults register Roadmap dependencies (146.7146ms)
+✔ integrate.min.js waits for Core completion, deduplicates requests, and retries failures (628.3428ms)
+✔ App.js canonical and legacy planting plugins normalize and load once (5.6439ms)
+✔ app.min.js canonical and legacy planting plugins normalize and load once (63.3085ms)
+✔ integrate.min.js canonical and legacy planting plugins normalize and load once (202.9571ms)
+✔ App.js desktop roadmap URLs include the separator and share stored-plugin keys (3.0991ms)
+✔ app.min.js desktop roadmap URLs include the separator and share stored-plugin keys (59.9232ms)
+✔ integrate.min.js desktop roadmap URLs include the separator and share stored-plugin keys (155.6549ms)
+✔ crop picker counts distinct plants and user varieties across all included stages (1248.3461ms)
+✔ crop picker tree counts retain explicit units and full totals during search (473.7736ms)
+✔ crop picker totals follow staged entries, filtered bulk actions, undo, apply and cancel (933.8256ms)
+✔ crop picker excludes built-ins and action-only branches when all entries are included (164.801ms)
+✔ crop picker deduplicates garden and catalog entries using plant and variety identities (164.5127ms)
+✔ crop picker classifies deleted varieties by saved name and known varieties by profile (329.2616ms)
+✔ modal renders ordered strips with the expected defaults and crop tabs (299.5639ms)
+✔ Crop Plan Basics separates editable controls, derived totals, tooltips, and yield reset (776.0262ms)
+✔ crop menu is searchable and renders compact status dots (213.1914ms)
+✔ every crop dot opens a summary and keyboard activation leaves crop selection unchanged (201.882ms)
+✔ a single crop issue previews on hover and click pins instead of navigating (400.4598ms)
+✔ crop dot groups linked diagnostics and navigates to their existing repair controls (253.206ms)
+✔ crop dots refresh after repair and remove stale popovers after filtering (283.6054ms)
+✔ crop dots expose missing prices and navigate to the exact package row (249.2628ms)
+✔ Basics crop timeline renders diagram-backed harvest, demand, and inventory bars (357.2512ms)
+✔ Basics crop timeline includes CSA demand and keeps carryover inventory visible (291.6672ms)
+✔ Sowing window defaults on per crop when no actual harvest exists (291.0032ms)
+✔ Unavailable sowing window is disabled and reports the scheduler reason (332.8137ms)
+✔ Harvest date source selector switches markers without replacing actual harvest bars (827.2808ms)
+✔ Packages render labeled compact package rows (284.6604ms)
+✔ Edit packages and Add package scroll to the package section (852.2173ms)
+✔ empty plans show Demand and Crop Plan guidance (246.7816ms)
+✔ empty year plans save as drafts until a crop exists (883.9705ms)
+✔ hero stays overview-only for clean and unsaved clean plans (359.6974ms)
+✔ Needs attention surfaces problems while the hero remains simple (764.7864ms)
+✔ Demand invalid badge shows count, tooltip, and navigates to the first invalid demand line (286.2553ms)
+✔ Demand invalid unit diagnostics use crop and unit instead of demand ids (133.4556ms)
+✔ Self Sufficiency invalid badge shows count, tooltip, and navigates to the first invalid line (265.4078ms)
+✔ CSA setup badge shows count, tooltip, and navigates to the first invalid field (249.7649ms)
+✔ crop metric warning badge selects crop, opens editor, and scrolls to Plan Check row (284.077ms)
+✔ Expired attention badge opens Plan Check and highlights the expired summary chip (265.8752ms)
+✔ Plan Check diagnostics badge opens and highlights diagnostics (175.8783ms)
+✔ crop diagnostics popover navigates to invalid basics and package fields (221.0558ms)
+✔ multi-item crop row warning badge opens a chooser before row navigation (267.0401ms)
+✔ diagnostics popovers render in the modal layer and clamp inside the card (310.2412ms)
+✔ duplicate crop identity diagnostics attach to the second crop and focus variety (457.5532ms)
+✔ missing plant diagnostics fall back to the trigger instead of disabled Plant (318.7615ms)
+✔ CSA diagnostics popover navigates to global and component fields (2136.8921ms)
+✔ save failure focuses diagnostics trigger and unavailable actual harvest is disabled (922.6402ms)
+✔ strip expansion preferences are year scoped and survive template application and clearing (1893.1599ms)
+✖ debounced Demand typing preserves the focused control (563.348ms)
+✔ Demand channels support editing, collapse state, safe removal, and labeled line controls (1570.3937ms)
+✖ Demand lines collapse to operational summaries without losing edits (776.2605ms)
+✔ Year Planner collapse preferences persist by garden and year (1462.741ms)
+✔ Demand validation auto-expands saved-collapsed demand lines (402.9508ms)
+✔ Demand line warning chips expand the line and highlight relevant fields (635.1075ms)
+✔ quantity unit dropdowns show crop packages only and open Packages from the add option (1519.7444ms)
+✔ Add package fills missing standard weight packages before a custom blank row (1126.4449ms)
+✔ unused package removal deletes without confirmation (598.3243ms)
+✔ package removal confirms and deletes linked demand self-use and CSA rows (1185.1267ms)
+✔ canceling linked package removal preserves package and rows (613.7832ms)
+✔ new crops without saved package defaults start with no demand unit choices (817.9886ms)
+✔ planned crop selector shows package counts and a clickable needs-packages badge (970.0047ms)
+✔ Demand package transfer manages included and available packages with staged apply (1374.0696ms)
+✔ Complete demand destinations can still open package management for removal (483.084ms)
+✔ Demand row package controls hide units used by other rows and auto-pick the next missing package on crop change (679.9047ms)
+✔ no-package crop dropdown choices open package unit repair without changing rows (1880.1759ms)
+✔ disabled demand sections show disabled headers and grey inactive controls (1899.9321ms)
+✔ Tree picker dirty close guard covers cancel, escape, outside click, and close (576.8421ms)
+✔ Package transfer search filters rows without persisting between opens (353.1547ms)
+✔ Self Sufficiency lines collapse, persist, expand, and prune on remove (606.0325ms)
+✔ Self Sufficiency validation auto-expands saved-collapsed self-use lines (461.8187ms)
+✔ Self Sufficiency line warning chips expand the line and highlight relevant fields (766.2369ms)
+✔ Demand price is read-only and follows matching package price edits (865.7219ms)
+✔ Demand with missing package price keeps the line listed and surfaces a warning (484.1596ms)
+✔ Missing package price badge targets self-use before demand and CSA prices (706.5691ms)
+✔ warning badge popovers bridge hover gaps and sticky close paths (963.7595ms)
+✔ Demand quantity edits update visible sales and total revenue (450.3294ms)
+✔ CSA box pricing updates component value, sale value, reset, and total revenue (2148.3681ms)
+✔ Add crop tree ignores legacy expansion and preserves other saved preferences (366.8884ms)
+✔ Add crop tree remembers expansion and collapse across picker and planner opens (1351.8696ms)
+✔ Add crop tree session expansion follows the active year (1300.5768ms)
+✔ Add crop tree session expansion is isolated by garden (1473.9235ms)
+✔ Add crop tree resets in a fresh window with the same persistent preferences (664.7324ms)
+✔ Add crop tree search reveals matches without remembering automatic expansion (332.4782ms)
+✔ Add crop prioritizes garden crops and groups remaining plants by lifecycle (325.3991ms)
+✔ Add crop picker groups Trellis defaults and user varieties per plant (404.8841ms)
+✔ Add crop picker shows user-only varieties flat and defaults-only add row (370.776ms)
+✔ Add crop picker Add variety row requests the variety editor and is not counted (328.2769ms)
+✔ Crop editor variety action opens add mode when no variety is selected (367.4717ms)
+✔ Crop editor variety action shows an edit icon and edits selected variety (370.4972ms)
+✔ Garden variety resolution preserves identity, applies yield override, and refreshes after add and remove (2022.1863ms)
+✔ Add crops transfer stages additions and removals before applying (2024.437ms)
+✔ Crop change labels distinguish pending actions and remember the latest applied action (1536.49ms)
+✔ Crop change history ignores canceled staging and declined deletion confirmations (421.107ms)
+✔ Added follows identity edits and individual deletion records the updated Removed identity (616.0477ms)
+✔ Unmarked crop edits and automatic metadata refreshes do not create change labels (1531.2487ms)
+✔ Crop labels survive Save and planner reopening but never enter persistence or a fresh window (5479.6049ms)
+✔ Crop change history is isolated by year and garden object even when cell IDs match (3859.2068ms)
+✔ Template replacement and draft reset clear only the affected crop history (2965.2094ms)
+✔ Add crops transfer add and remove actions reset both pane scroll positions (917.8303ms)
+✔ Add crops removal confirmation cancel keeps staged changes and linked rows intact (730.0881ms)
+✔ direct crop removal confirmation groups linked rows by crop variety (630.8025ms)
+✔ canceling direct crop removal preserves linked rows (442.1706ms)
+✔ direct crop removal without linked rows does not ask for confirmation (453.6896ms)
+✔ Centralized Demand remains visible and removes lines with their crop (899.5968ms)
+✔ crop selection syncs Crop Plan and Plan Check while preserving all-crop filter selection (794.7046ms)
+✔ Needs attention crop clicks expand related strips and sync Plan Check (469.444ms)
+✔ crop add and remove paths keep Plan Check filter aligned with valid crop selection (534.4354ms)
+✔ adding a crop selects it and syncs Plan Check filter (4636.3631ms)
+✔ Add crop stores planting method category from defaults and blank defaults use direct sow field (1083.9573ms)
+✔ Unavailable garden records are skipped while deleted persisted varieties remain selectable (968.8249ms)
+✔ Add crop options refresh after year changes, template application, and reset (1122.6886ms)
+✔ Footer and reset action follow the currently loaded year (1029.6459ms)
+✔ Stale Add crop loads cannot replace newer grouped options (417.5504ms)
+✔ Plan Check summary follows the crop filter and chart hover shows inventory details (436.6197ms)
+✔ Plan Check status badges group crops by coverage thresholds and navigate to crop timeline (809.9794ms)
+✔ Plan Check chart summary revenue follows crop filter and CSA value attribution (430.1302ms)
+✔ interactive chart legend controls drawing and hover details without changing Plan Check (1588.9335ms)
+✔ question mark diagnostics badge sections collapse for the dialog session (828.8878ms)
+✔ template input controls save state and saves without a native prompt (292.8923ms)
+✔ invalid enabled CSA auto-expands CSA and Plan Check (252.1459ms)
+✔ CSA summary updates as controls and components change (1160.1039ms)
+✔ Demand date controls reject reversed ranges and expose reciprocal picker constraints (715.7198ms)
+✔ CSA date controls reject reversed ranges and retain harvest-window clamping (992.7557ms)
+✔ Harvest date controls reject reversed ranges and allow same-day windows (618.914ms)
+✔ Existing reversed persisted dates remain visible, save as draft, and can be corrected (470.6547ms)
+✔ Sync and harvest date changes keep expanded CSA and reopened Demand dates current (946.5635ms)
+✔ Harvest-window suggestions synchronize visible Demand and CSA date controls (398.4759ms)
+✔ Self Sufficiency strip edits household fields, lines, package repair flow, and nutrition warnings (725.5522ms)
+✔ Self Sufficiency nutrition coverage rerenders when nutrition-affecting line fields change (1929.0796ms)
+✔ Plan Check scope selector filters combined, self, and sales demand (698.6778ms)
+✔ dirty close auto-saves a draft that can be discarded (1329.3725ms)
+✔ year changes auto-save dirty work as a draft without blocking (631.2548ms)
+✔ crop timeline details popover rows navigate to demand rows and planting cells (498.2195ms)
+✔ crop timeline details popover includes grouped demand action rows and supports keyboard close behavior (575.8356ms)
+✔ public plan request event opens one modal and replaces the active session (384.9564ms)
+✔ Year Plan adds multiple stages, rejects duplicate edits and retains manual yield after defaults change (1466.3309ms)
+✔ Year Plan reload refreshes stage-scaled plant defaults while preserving manual yield (748.9345ms)
+✔ Year Plan rejects growth-stage queries that finish after newer defaults are saved (2308.0631ms)
+✔ Year Plan ignores stale harvest suggestions after switching growth stage (847.1383ms)
+✔ PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields (38.3166ms)
+✔ PlanningCore assigns CSA components the plan channel level (12.9895ms)
+✔ PlanningCore coverage week summaries expose canonical week start dates (6.8339ms)
+✔ PlanningCore recommends the smallest whole plant count for reachable shortage (27.1871ms)
+✔ PlanSchema normalizes weekStartDow to an integer from zero through six (13.7966ms)
+✔ PlanSchema adds default demand channels only when the collection is absent (2.3057ms)
+✔ Planting-method SQL starts directly with SQL text (0.3988ms)
+✔ PlanSchema detects duplicate crop identities and validates invalid units (11.8738ms)
+✔ PlanSchema rejects duplicate crop package units (15.3284ms)
+✔ PlanSchema clears demand-like units that are not crop packages (6.1262ms)
+✔ PlanSchema strips legacy demand prices from persisted plans (6.5147ms)
+✔ PlanSchema exposes CSA validation independently from the full plan (2.9741ms)
+✔ PlanSchema rejects reversed demand and effective CSA date ranges (2.1236ms)
+✔ PlanMath excludes reversed demand ranges while retaining explicit valid CSA components (59.9172ms)
+✔ PlanMath ignores manual harvest windows for supply and validation still rejects reversed dates (4.6681ms)
+✔ PlanRepository round-trips plans, templates, defaults, and leap-day shifts (11.6658ms)
+✔ PlanRepository migrates legacy root maps on the first diagram-level write (5.055ms)
+✔ DiagramPlanReader aggregates perennial and cross-year tiler facts with one crop key (7.4246ms)
+✔ DiagramPlanReader resolves legacy variety names and rejects malformed harvest ranges (3.5435ms)
+✔ DiagramPlanReader reports ambiguous planned legacy variety matches (2.4688ms)
+✔ DiagramPlanReader returns normalized garden crop candidates and ignores groups without plant identity (2.8305ms)
+✔ PlanRuntimeService recalculation is idempotent and preserves manual harvest dates (18.2083ms)
+✔ PlanRuntimeService derives actual harvest windows and returns calculation warnings (6.4656ms)
+✔ PlanRuntimeService defaults legacy crops to sowing-window estimate only without actual harvest records (5.0058ms)
+✔ PlanRuntimeService does not default sowing-window estimate when actual harvest records exist (10.7828ms)
+✔ PlanRuntimeService keeps harvest windows independent from actual-only supply (29.9448ms)
+✔ PlanRuntimeService does not synthesize prior-year saved harvest windows as supply (7.3101ms)
+✔ PlanMath inventory uses conservative weekly shelf-life buckets and FIFO consumption (2.9059ms)
+✔ PlanMath tracks planting source provenance through FIFO inventory (5.6751ms)
+✔ PlanningCore keeps diagram planting provenance JSON-safe after allocation refresh (42.9569ms)
+✔ PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors (6.0589ms)
+✔ PlanMath allocates CSA then splits equal sales levels proportionally, ignoring obsolete line priorities (29.8083ms)
+✔ PlanMath derives CSA box value and prorates CSA revenue by component fulfillment (13.676ms)
+✔ PlanMath counts missing CSA component prices as zero with a non-blocking warning (4.6338ms)
+✔ PlanMath counts missing self-use and demand prices as zero with non-blocking warnings (10.9095ms)
+✔ PlanMath requires explicit packages for built-in unit names (4.3393ms)
+✔ PlanMath resolves standard package weight bases to kg (8.7529ms)
+✔ PlanMath still blocks demand-like rows when package quantity conversion is invalid (4.8653ms)
+✔ PlanMath prices demand from package unit matches only (16.0967ms)
+✔ PlanMath splits equal-priority shortages equally despite channel order (6.4444ms)
+✔ PlanMath keeps raw harvest stable and never pools inventory across crops (20.467ms)
+✔ PlanMath builds filtered and aggregate chart models with additive flow summaries (6.2184ms)
+✔ CropTimeline orders solid bars by value and keeps raw harvest in front (2.6083ms)
+✔ PlanRuntimeService syncs demand to harvest dates and collapses legacy shelf extensions (4.496ms)
+✔ YearPlanDashboard aggregates shortage and surplus without netting crops (4.967ms)
+✔ YearPlanDashboard classifies weekly timing and avoids inventory snapshot surplus double-counting (4.944ms)
+✔ YearPlanDashboard treats zero supply as a full shortage and validation errors as missing data (3.657ms)
+✔ YearPlanDashboard promotes a missing harvest window to missing data when demand exists (4.7835ms)
+✔ crop dots attribute linked validation to exact rows and keep shared setup global (5.5771ms)
+✔ crop dot issues deduplicate validations but retain distinct repair destinations (22.0497ms)
+✔ crop dots collect active price and nutrition warnings by identity without persisting them (37.1813ms)
+✔ disabled demand sections contribute no linked validation or price warnings to crop dots (9.5376ms)
+✔ crop stage and package warnings override no demand and disappear when repaired (9.3008ms)
+✔ YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines (6.6378ms)
+✔ YearPlanDashboard builds compact status and CSA summaries without timezone parsing (3.0248ms)
+✔ YearPlanDashboard expands checks only when blocking errors first appear (3.7919ms)
+✔ YearPlanDashboard resolves selection after crop removal and preserves unknown methods (3.5268ms)
+✔ PlanSchema infers method category for legacy dotted crop methods (2.6874ms)
+✔ Self Sufficiency demand expands separately from sales demand (16.3012ms)
+✔ disabled self-use, commercial channels, and CSA stay saved but leave demand totals (20.9952ms)
+✔ Harvest allocation satisfies Self Sufficiency before CSA and sales (8.1562ms)
+✔ Required plants and Plan Check default to combined demand (6.9178ms)
+✔ NutritionPlanner calculates requested and fulfilled self-use nutrition (5.944ms)
+✔ YearPlanDashboard opens Self Sufficiency strip on first self-use validation errors (5.1508ms)
+✔ growth stages allow the same variety while rejecting duplicate stage identities (4.983ms)
+✔ stage-specific diagram supply cannot cover another stage's demand (21.922ms)
+✔ companion count overrides include lost supply and never mutate saved groups, including same-crop additions (46.8939ms)
+ℹ tests 317
+ℹ suites 0
+ℹ pass 309
+ℹ fail 8
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 116108.4347
+
+✖ failing tests:
+
+test at test\garden-dashboard-toolbar.test.cjs:341:1
+✖ garden dashboard toolbar controls use module scoped plugin contracts (3.8404ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /equipmentApi\.openDialog\(activeToolbarModule\)/. Input:
+  
+  '// -------------------- Viewport toolbar (active dashboard UI) --------------------\r\n' +
+    '    const toolbarExpandedByModuleId = new Map();\r\n' +
+    '    const taskBoardSelectionByPreferenceKey = new Map(); // CHANGE: board memory is keyed by user/shared local preference\r\n' +
+    '    const lastGardenSelectionByPreferenceKey = new Map(); // NEW: cache local startup garden memory by diagram/page/user key.\r\n' +
+    '    let viewportToolbar = null;\r\n' +
+    '    let activeToolbarModule = null;\r\n' +
+    '    let toolbarRefreshTimer = null;\r\n' +
+    '    let gardenPickerOpen = false;\r\n' +
+    '    let gardenPickerSearchText = "";\r\n' +
+    '    let gardenPickerPage = 0; // NEW: render at most 100 matching picker rows at a time.\r\n' +
+    '    let lastToolbarContext = null;\r\n' +
+    '    let startupGardenFocusDone = false;\r\n' +
+    '    const pendingPlanButtonFlashByModuleId = new Map(); // CHANGE\r\n' +
+    '    const planButtonFlashTimersByModuleId = new Map(); // CHANGE\r\n' +
+    '\r\n' +
+    '    function dashboardDiagramIsOpen() {\r\n' +
+    '        return !!(ui && typeof ui.getCurrentFile === "function" && ui.getCurrentFile());\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function cellId(cell) {\r\n' +
+    '        return cell && cell.getId ? cell.getId() : (cell && cell.id) || "";\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function flashPlanButton(entry, moduleId, durationMs) {\r\n' +
+    '        if (!entry || !entry.planBtn || !moduleId) return;\r\n' +
+    '        const button = entry.planBtn;\r\n' +
+    '        if (planButtonFlashTimersByModuleId.has(moduleId)) clearTimeout(planButtonFlashTimersByModuleId.get(moduleId));\r\n' +
+    '        button.style.transition = "box-shadow .18s ease, background-color .18s ease, color .18s ease";\r\n' +
+    '        button.style.boxShadow = "0 0 0 3px rgba(47,111,237,.36),0 0 0 6px rgba(47,111,237,.14)";\r\n' +
+    '        button.style.backgroundColor = "#eef4ff";\r\n' +
+    '        button.style.color = "#1f4fbf";\r\n' +
+    '        planButtonFlashTimersByModuleId.set(moduleId, setTimeout(function () {\r\n' +
+    '            button.style.boxShadow = "";\r\n' +
+    '            button.style.backgroundColor = "";\r\n' +
+    '            button.style.color = "";\r\n' +
+    '            planButtonFlashTimersByModuleId.delete(moduleId);\r\n' +
+    '        }, Math.max(500, Number(durationMs) || 2000)));\r\n' +
+    '    } // CHANGE\r\n' +
+    '\r\n' +
+    '    function getViewportToolbarContainer() {\r\n' +
+    '        return graph && graph.container;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function getViewportToolbarHost() {\r\n' +
+    '        return ensureGraphBodyControlLayer();\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function ensureViewportToolbarHost() {\r\n' +
+    '        const host = getViewportToolbarHost();\r\n' +
+    '        return host;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function ensureGraphBodyControlLayer() {\r\n' +
+    '        const container = getViewportToolbarContainer();\r\n' +
+    '        if (!container || !document.body) return null;\r\n' +
+    '        try {\r\n' +
+    '            if (window.getComputedStyle && window.getComputedStyle(container).position === "static") container.style.position = "relative";\r\n' +
+    '        } catch (_) { }\r\n' +
+    '        let layer = document.body.querySelector(".trellis-body-control-layer");\r\n' +
+    '        if (!layer) {\r\n' +
+    '            layer = document.createElement("div");\r\n' +
+    '            layer.className = GRAPH_OVERLAY_LAYER_CLASS.control;\r\n' +
+    '            layer.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:" + GRAPH_OVERLAY_Z.CONTROL + ";";\r\n' +
+    '            document.body.appendChild(layer);\r\n' +
+    '        }\r\n' +
+    '        return layer;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function viewportToolbarWidth(host) {\r\n' +
+    '        if (!host) return 0;\r\n' +
+    '        const rect = host.getBoundingClientRect ? host.getBoundingClientRect() : null;\r\n' +
+    '        if (rect && rect.width) return rect.width;\r\n' +
+    '        return host.clientWidth || 0;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function getToolbarYear(moduleCell) {\r\n' +
+    '        const moduleYear = getModuleCurrentYear(moduleCell);\r\n' +
+    '        return isValidYear(moduleYear) ? moduleYear : new Date().getFullYear();\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function setToolbarYear(moduleCell, year) {\r\n' +
+    '        const y = toInt(year, NaN);\r\n' +
+    '        if (!moduleCell || !isGardenModule(moduleCell) || !isValidYear(y)) return;\r\n' +
+    '        model.beginUpdate();\r\n' +
+    '        try {\r\n' +
+    '            setModuleCurrentYear(moduleCell, y);\r\n' +
+    '        } finally {\r\n' +
+    '            model.endUpdate();\r\n' +
+    '        }\r\n' +
+    '        applyYearVisibilityToModule(moduleCell, y);\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function plainTextLabel(raw, fallback) {\r\n' +
+    '        const value = String(raw == null ? "" : raw);\r\n' +
+    '        if (document && document.createElement) {\r\n' +
+    '            const holder = document.createElement("template"); // CHANGE: parse in an inert template.\r\n' +
+    '            holder.innerHTML = value; // CHANGE\r\n' +
+    '            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(value) : holder.content.textContent || "").replace(/\\s+/g, " ").trim();\r\n' +
+    '            if (text) return text;\r\n' +
+    '        }\r\n' +
+    '        const stripped = value.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim();\r\n' +
+    '        return stripped || fallback || "";\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function gardenLabel(moduleCell) {\r\n' +
+    '        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n' +
+    '        if (clusters) return clusters.gardenLabel(moduleCell) || "Garden Module"; // NEW: use indexed labels rather than repeatedly parsing HTML during sorting.\r\n' +
+    '        const raw = getCellAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : "");\r\n' +
+    '        return plainTextLabel(raw, "Garden Module") || cellId(moduleCell) || "Garden Module";\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function gardenCity(moduleCell) {\r\n' +
+    '        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n' +
+    '        if (clusters) return clusters.gardenCity(moduleCell); // NEW: city grouping and sorting reuse indexed display labels.\r\n' +
+    '        return plainTextLabel(getCellAttr(moduleCell, "city_name", "") || getCellAttr(moduleCell, "city_id", ""), "");\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function allModelCells() {\r\n' +
+    '        const root = model.getRoot && model.getRoot();\r\n' +
+    '        const fromMap = model.cells ? Object.values(model.cells) : [];\r\n' +
+    '        if (fromMap.length) return fromMap;\r\n' +
+    '        return getDescendants(root);\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function collectGardenModules() {\r\n' +
+    '        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n' +
+    "        if (clusters) return clusters.listGardens(); // NEW: the controller maintains the current page's garden index.\r\n" +
+    '        const seen = new Set();\r\n' +
+    '        const gardens = [];\r\n' +
+    '        for (const cell of allModelCells()) {\r\n' +
+    '            const id = cellId(cell);\r\n' +
+    '            if (!id || seen.has(id) || !isGardenModule(cell)) continue;\r\n' +
+    '            seen.add(id);\r\n' +
+    '            gardens.push(cell);\r\n' +
+    '        }\r\n' +
+    '        return gardens;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function linkIdSet(cell) {\r\n' +
+    '        return new Set(String(getCellAttr(cell, "linkedTo", "") || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean));\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function linkedGardenModulesForCompanion(moduleCell) {\r\n' +
+    '        if (!moduleCell) return [];\r\n' +
+    '        const ids = linkIdSet(moduleCell);\r\n' +
+    '        const typedGardenId = getCellAttr(moduleCell, "trellis_garden_module_id", "") || getCellAttr(moduleCell, "roadmap_garden_module_id", ""); // CHANGE: Roadmap companions store their linked garden under a roadmap-specific key.\r\n' +
+    '        if (typedGardenId) ids.add(typedGardenId);\r\n' +
+    '        const seen = new Set();\r\n' +
+    '        const gardens = [];\r\n' +
+    '        ids.forEach(function (id) {\r\n' +
+    '            const garden = id && model.getCell ? model.getCell(id) : null;\r\n' +
+    '            const gardenId = cellId(garden);\r\n' +
+    '            if (!gardenId || seen.has(gardenId) || !isGardenModule(garden)) return;\r\n' +
+    '            seen.add(gardenId);\r\n' +
+    '            gardens.push(garden);\r\n' +
+    '        });\r\n' +
+    '        return sortGardensForPicker(gardens);\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function resolvedGardenCandidatesForCell(cell) {\r\n' +
+    '        const moduleCell = isGardenModule(cell) ? cell : findGardenModuleAncestor(graph, cell);\r\n' +
+    '        if (moduleCell) return [moduleCell];\r\n' +
+    '        const taskModule = isTaskModule(cell) ? cell : findTaskModuleAncestor(graph, cell);\r\n' +
+    '        if (taskModule) return linkedGardenModulesForCompanion(taskModule);\r\n' +
+    '        const teamModule = isTeamModule(cell) ? cell : findTeamModuleAncestor(graph, cell);\r\n' +
+    '        if (teamModule) return linkedGardenModulesForCompanion(teamModule);\r\n' +
+    '        const roadmapModule = isRoadmapModule(cell) ? cell : findRoadmapModuleAncestor(graph, cell); // NEW\r\n' +
+    '        if (roadmapModule) return linkedGardenModulesForCompanion(roadmapModule); // NEW\r\n' +
+    '        return [];\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function selectedCellsForDashboard() {\r\n' +
+    '        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [graph.getSelectionCell && graph.getSelectionCell()].filter(Boolean);\r\n' +
+    '        return selected.filter(Boolean);\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function uniqueGardenList(gardens) {\r\n' +
+    '        const seen = new Set();\r\n' +
+    '        const out = [];\r\n' +
+    '        for (const garden of (gardens || [])) {\r\n' +
+    '            const id = cellId(garden);\r\n' +
+    '            if (!id || seen.has(id) || !isGardenModule(garden)) continue;\r\n' +
+    '            seen.add(id);\r\n' +
+    '            out.push(garden);\r\n' +
+    '        }\r\n' +
+    '        return out;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function collectLinkedTaskBoardCards(moduleCell) {\r\n' +
+    '        const api = taskManagerApi();\r\n' +
+    '        if (!api || typeof api.listBoardsForGarden !== "function") return []; // NEW: task year filtering is best-effort when the task manager is unavailable\r\n' +
+    '        const cards = [];\r\n' +
+    '        const seen = new Set();\r\n' +
+    '        (api.listBoardsForGarden(moduleCell) || []).forEach(function (board) {\r\n' +
+    '            getDescendants(board).forEach(function (cell) {\r\n' +
+    '                const id = cellId(cell);\r\n' +
+    '                if (!isKanbanCard(cell) || (id && seen.has(id))) return;\r\n' +
+    '                if (id) seen.add(id);\r\n' +
+    '                cards.push(cell);\r\n' +
+    '            });\r\n' +
+    '        });\r\n' +
+    '        return cards;\r\n' +
+    '    }\r\n' +
+    '\r\n' +
+    '    function sortGardensForPicker(gardens) {\r\n' +
+    '        return uniqueGardenList(gardens).sort(function (left, right) {\r\n' +
+    '            const leftCity = gardenCity(left) || GARDEN_PICKER_NO_CITY;\r\n' +
+    '            const rightCity = gardenCity(right) || GARDEN_PICKER_NO_CITY;\r\n' +
+    '            const leftNoCity = leftCity === GARDEN_PICKER_NO_CITY;\r\n' +
+    '            const rightNoCity = rightCity === GARDEN_PICKER_NO_CITY;\r\n' +
+    '            '... 82130 more characters
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\garden-dashboard-toolbar.test.cjs:346:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `// -------------------- Viewport toolbar (active dashboard UI) --------------------\r\n    const toolbarExpandedByModuleId = new Map();\r\n    const taskBoardSelectionByPreferenceKey = new Map(); // CHANGE: board memory is keyed by user/shared local preference\r\n    const lastGardenSelectionByPreferenceKey = new Map(); // NEW: cache local startup garden memory by diagram/page/user key.\r\n    let viewportToolbar = null;\r\n    let activeToolbarModule = null;\r\n    let toolbarRefreshTimer = null;\r\n    let gardenPickerOpen = false;\r\n    let gardenPickerSearchText = "";\r\n    let gardenPickerPage = 0; // NEW: render at most 100 matching picker rows at a time.\r\n    let lastToolbarContext = null;\r\n    let startupGardenFocusDone = false;\r\n    const pendingPlanButtonFlashByModuleId = new Map(); // CHANGE\r\n    const planButtonFlashTimersByModuleId = new Map(); // CHANGE\r\n\r\n    function dashboardDiagramIsOpen() {\r\n        return !!(ui && typeof ui.getCurrentFile === "function" && ui.getCurrentFile());\r\n    }\r\n\r\n    function cellId(cell) {\r\n        return cell && cell.getId ? cell.getId() : (cell && cell.id) || "";\r\n    }\r\n\r\n    function flashPlanButton(entry, moduleId, durationMs) {\r\n        if (!entry || !entry.planBtn || !moduleId) return;\r\n        const button = entry.planBtn;\r\n        if (planButtonFlashTimersByModuleId.has(moduleId)) clearTimeout(planButtonFlashTimersByModuleId.get(moduleId));\r\n        button.style.transition = "box-shadow .18s ease, background-color .18s ease, color .18s ease";\r\n        button.style.boxShadow = "0 0 0 3px rgba(47,111,237,.36),0 0 0 6px rgba(47,111,237,.14)";\r\n        button.style.backgroundColor = "#eef4ff";\r\n        button.style.color = "#1f4fbf";\r\n        planButtonFlashTimersByModuleId.set(moduleId, setTimeout(function () {\r\n            button.style.boxShadow = "";\r\n            button.style.backgroundColor = "";\r\n            button.style.color = "";\r\n            planButtonFlashTimersByModuleId.delete(moduleId);\r\n        }, Math.max(500, Number(durationMs) || 2000)));\r\n    } // CHANGE\r\n\r\n    function getViewportToolbarContainer() {\r\n        return graph && graph.container;\r\n    }\r\n\r\n    function getViewportToolbarHost() {\r\n        return ensureGraphBodyControlLayer();\r\n    }\r\n\r\n    function ensureViewportToolbarHost() {\r\n        const host = getViewportToolbarHost();\r\n        return host;\r\n    }\r\n\r\n    function ensureGraphBodyControlLayer() {\r\n        const container = getViewportToolbarContainer();\r\n        if (!container || !document.body) return null;\r\n        try {\r\n            if (window.getComputedStyle && window.getComputedStyle(container).position === "static") container.style.position = "relative";\r\n        } catch (_) { }\r\n        let layer = document.body.querySelector(".trellis-body-control-layer");\r\n        if (!layer) {\r\n            layer = document.createElement("div");\r\n            layer.className = GRAPH_OVERLAY_LAYER_CLASS.control;\r\n            layer.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:" + GRAPH_OVERLAY_Z.CONTROL + ";";\r\n            document.body.appendChild(layer);\r\n        }\r\n        return layer;\r\n    }\r\n\r\n    function viewportToolbarWidth(host) {\r\n        if (!host) return 0;\r\n        const rect = host.getBoundingClientRect ? host.getBoundingClientRect() : null;\r\n        if (rect && rect.width) return rect.width;\r\n        return host.clientWidth || 0;\r\n    }\r\n\r\n    function getToolbarYear(moduleCell) {\r\n        const moduleYear = getModuleCurrentYear(moduleCell);\r\n        return isValidYear(moduleYear) ? moduleYear : new Date().getFullYear();\r\n    }\r\n\r\n    function setToolbarYear(moduleCell, year) {\r\n        const y = toInt(year, NaN);\r\n        if (!moduleCell || !isGardenModule(moduleCell) || !isValidYear(y)) return;\r\n        model.beginUpdate();\r\n        try {\r\n            setModuleCurrentYear(moduleCell, y);\r\n        } finally {\r\n            model.endUpdate();\r\n        }\r\n        applyYearVisibilityToModule(moduleCell, y);\r\n    }\r\n\r\n    function plainTextLabel(raw, fallback) {\r\n        const value = String(raw == null ? "" : raw);\r\n        if (document && document.createElement) {\r\n            const holder = document.createElement("template"); // CHANGE: parse in an inert template.\r\n            holder.innerHTML = value; // CHANGE\r\n            const text = String(window.TrellisContentPolicy ? window.TrellisContentPolicy.plainText(value) : holder.content.textContent || "").replace(/\\s+/g, " ").trim();\r\n            if (text) return text;\r\n        }\r\n        const stripped = value.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim();\r\n        return stripped || fallback || "";\r\n    }\r\n\r\n    function gardenLabel(moduleCell) {\r\n        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n        if (clusters) return clusters.gardenLabel(moduleCell) || "Garden Module"; // NEW: use indexed labels rather than repeatedly parsing HTML during sorting.\r\n        const raw = getCellAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : "");\r\n        return plainTextLabel(raw, "Garden Module") || cellId(moduleCell) || "Garden Module";\r\n    }\r\n\r\n    function gardenCity(moduleCell) {\r\n        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n        if (clusters) return clusters.gardenCity(moduleCell); // NEW: city grouping and sorting reuse indexed display labels.\r\n        return plainTextLabel(getCellAttr(moduleCell, "city_name", "") || getCellAttr(moduleCell, "city_id", ""), "");\r\n    }\r\n\r\n    function allModelCells() {\r\n        const root = model.getRoot && model.getRoot();\r\n        const fromMap = model.cells ? Object.values(model.cells) : [];\r\n        if (fromMap.length) return fromMap;\r\n        return getDescendants(root);\r\n    }\r\n\r\n    function collectGardenModules() {\r\n        const clusters = graph.__trellisModules && graph.__trellisModules.clusters; // NEW\r\n        if (clusters) return clusters.listGardens(); // NEW: the controller maintains the current page's garden index.\r\n        const seen = new Set();\r\n        const gardens = [];\r\n        for (const cell of allModelCells()) {\r\n            const id = cellId(cell);\r\n            if (!id || seen.has(id) || !isGardenModule(cell)) continue;\r\n            seen.add(id);\r\n            gardens.push(cell);\r\n        }\r\n        return gardens;\r\n    }\r\n\r\n    function linkIdSet(cell) {\r\n        return new Set(String(getCellAttr(cell, "linkedTo", "") || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean));\r\n    }\r\n\r\n    function linkedGardenModulesForCompanion(moduleCell) {\r\n        if (!moduleCell) return [];\r\n        const ids = linkIdSet(moduleCell);\r\n        const typedGardenId = getCellAttr(moduleCell, "trellis_garden_module_id", "") || getCellAttr(moduleCell, "roadmap_garden_module_id", ""); // CHANGE: Roadmap companions store their linked garden under a roadmap-specific key.\r\n        if (typedGardenId) ids.add(typedGardenId);\r\n        const seen = new Set();\r\n        const gardens = [];\r\n        ids.forEach(function (id) {\r\n            const garden = id && model.getCell ? model.getCell(id) : null;\r\n            const gardenId = cellId(garden);\r\n            if (!gardenId || seen.has(gardenId) || !isGardenModule(garden)) return;\r\n            seen.add(gardenId);\r\n            gardens.push(garden);\r\n        });\r\n        return sortGardensForPicker(gardens);\r\n    }\r\n\r\n    function resolvedGardenCandidatesForCell(cell) {\r\n        const moduleCell = isGardenModule(cell) ? cell : findGardenModuleAncestor(graph, cell);\r\n        if (moduleCell) return [moduleCell];\r\n        const taskModule = isTaskModule(cell) ? cell : findTaskModuleAncestor(graph, cell);\r\n        if (taskModule) return linkedGardenModulesForCompanion(taskModule);\r\n        const teamModule = isTeamModule(cell) ? cell : findTeamModuleAncestor(graph, cell);\r\n        if (teamModule) return linkedGardenModulesForCompanion(teamModule);\r\n        const roadmapModule = isRoadmapModule(cell) ? cell : findRoadmapModuleAncestor(graph, cell); // NEW\r\n        if (roadmapModule) return linkedGardenModulesForCompanion(roadmapModule); // NEW\r\n        return [];\r\n    }\r\n\r\n    function selectedCellsForDashboard() {\r\n        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [graph.getSelectionCell && graph.getSelectionCell()].filter(Boolean);\r\n        return selected.filter(Boolean);\r\n    }\r\n\r\n    function uniqueGardenList(gardens) {\r\n        const seen = new Set();\r\n        const out = [];\r\n        for (const garden of (gardens || [])) {\r\n            const id = cellId(garden);\r\n            if (!id || seen.has(id) || !isGardenModule(garden)) continue;\r\n            seen.add(id);\r\n            out.push(garden);\r\n        }\r\n        return out;\r\n    }\r\n\r\n    function collectLinkedTaskBoardCards(moduleCell) {\r\n        const api = taskManagerApi();\r\n        if (!api || typeof api.listBoardsForGarden !== "function") return []; // NEW: task year filtering is best-effort when the task manager is unavailable\r\n        const cards = [];\r\n        const seen = new Set();\r\n        (api.listBoardsForGarden(moduleCell) || []).forEach(function (board) {\r\n            getDescendants(board).forEach(function (cell) {\r\n                const id = cellId(cell);\r\n                if (!isKanbanCard(cell) || (id && seen.has(id))) return;\r\n                if (id) seen.add(id);\r\n                cards.push(cell);\r\n            });\r\n        });\r\n        return cards;\r\n    }\r\n\r\n    function sortGardensForPicker(gardens) {\r\n        return uniqueGardenList(gardens).sort(function (left, right) {\r\n            const leftCity = gardenCity(left) || GARDEN_PICKER_NO_CITY;\r\n            const rightCity = gardenCity(right) || GARDEN_PICKER_NO_CITY;\r\n            const leftNoCity = leftCity === GARDEN_PICKER_NO_CITY;\r\n            const rightNoCity = rightCity === GARDEN_PICKER_NO_CITY;\r\n            `... 82130 more characters,
+    expected: /equipmentApi\.openDialog\(activeToolbarModule\)/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at test\trellis-startup-defaults.test.cjs:175:1
+✖ fresh Electron settings use Trellis startup defaults (48.1147ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    [
+      'plugins/garden_planner_plugins/Trellis_Updates_Links.js',
+      'plugins/garden_planner_plugins/Trellis_Database_Tools.js',
+      'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js',
+      'plugins/garden_planner_plugins/Garden_References.js',
+  ...
+      'plugins/garden_planner_plugins/Created_Change_Map.js',
+  -   'plugins/garden_planner_plugins/Trellis_Allocation_Core.js',
+  -   'plugins/garden_planner_plugins/Trellis_Seeds_Core.js',
+  -   'plugins/garden_planner_plugins/Trellis_Exchange_Core.js',
+      'plugins/garden_planner_plugins/Trellis_Inventories.js',
+      'plugins/garden_planner_plugins/Garden_Dashboard.js',
+      'plugins/garden_planner_plugins/Year_Planner.js',
+      'plugins/garden_planner_plugins/Allocate_Planner.js',
+      'plugins/garden_planner_plugins/Garden_Scale.js',
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\trellis-startup-defaults.test.cjs:180:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.start (node:internal/test_runner/test:944:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'plugins/garden_planner_plugins/Trellis_Updates_Links.js', 'plugins/garden_planner_plugins/Trellis_Database_Tools.js', 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js', 'plugins/garden_planner_plugins/Garden_References.js', 'plugins/garden_planner_plugins/Trellis_Users.js', 'plugins/garden_planner_plugins/Trellis_Syncthing.js', 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', 'plugins/garden_planner_plugins/Trellis_Object_Details.js', 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js', 'plugins/garden_planner_plugins/Planting_Group.js', 'plugins/garden_planner_plugins/Garden_Task_Manager.js', 'plugins/garden_planner_plugins/Garden_Guide.js', 'plugins/garden_planner_plugins/Garden_Quickstart.js', 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', 'plugins/garden_planner_plugins/Modules_Standalone.js', 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js', 'plugins/garden_planner_plugins/Garden_Scheduler_Dialog.js', 'plugins/garden_planner_plugins/Deep_Click_Through.js', 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js', 'plugins/garden_planner_plugins/Tidy_Context_Menu.js', 'plugins/garden_planner_plugins/Created_Change_Map.js', 'plugins/garden_planner_plugins/Trellis_Inventories.js', 'plugins/garden_planner_plugins/Garden_Dashboard.js', 'plugins/garden_planner_plugins/Year_Planner.js', 'plugins/garden_planner_plugins/Allocate_Planner.js', 'plugins/garden_planner_plugins/Garden_Scale.js', 'plugins/garden_planner_plugins/Garden_Beds.js', 'plugins/garden_planner_plugins/Garden_Structures.js', 'plugins/garden_planner_plugins/Garden_Equipment.js', 'plugins/garden_planner_plugins/Garden_Irrigation_Planner.js' ],
+    expected: [ 'plugins/garden_planner_plugins/Trellis_Updates_Links.js', 'plugins/garden_planner_plugins/Trellis_Database_Tools.js', 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js', 'plugins/garden_planner_plugins/Garden_References.js', 'plugins/garden_planner_plugins/Trellis_Users.js', 'plugins/garden_planner_plugins/Trellis_Syncthing.js', 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', 'plugins/garden_planner_plugins/Trellis_Object_Details.js', 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js', 'plugins/garden_planner_plugins/Planting_Group.js', 'plugins/garden_planner_plugins/Garden_Task_Manager.js', 'plugins/garden_planner_plugins/Garden_Guide.js', 'plugins/garden_planner_plugins/Garden_Quickstart.js', 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', 'plugins/garden_planner_plugins/Modules_Standalone.js', 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js', 'plugins/garden_planner_plugins/Garden_Scheduler_Dialog.js', 'plugins/garden_planner_plugins/Deep_Click_Through.js', 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js', 'plugins/garden_planner_plugins/Tidy_Context_Menu.js', 'plugins/garden_planner_plugins/Created_Change_Map.js', 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js', 'plugins/garden_planner_plugins/Trellis_Seeds_Core.js', 'plugins/garden_planner_plugins/Trellis_Exchange_Core.js', 'plugins/garden_planner_plugins/Trellis_Inventories.js', 'plugins/garden_planner_plugins/Garden_Dashboard.js', 'plugins/garden_planner_plugins/Year_Planner.js', 'plugins/garden_planner_plugins/Allocate_Planner.js', 'plugins/garden_planner_plugins/Garden_Scale.js', 'plugins/garden_planner_plugins/Garden_Beds.js', 'plugins/garden_planner_plugins/Garden_Structures.js', 'plugins/garden_planner_plugins/Garden_Equipment.js', 'plugins/garden_planner_plugins/Garden_Irrigation_Planner.js' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test\trellis-startup-defaults.test.cjs:185:1
+✖ empty stored plugin settings are normalized to the full Trellis default set (1.766ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    [
+      'plugins/garden_planner_plugins/Trellis_Updates_Links.js',
+      'plugins/garden_planner_plugins/Trellis_Database_Tools.js',
+      'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js',
+      'plugins/garden_planner_plugins/Garden_References.js',
+  ...
+      'plugins/garden_planner_plugins/Created_Change_Map.js',
+  -   'plugins/garden_planner_plugins/Trellis_Allocation_Core.js',
+  -   'plugins/garden_planner_plugins/Trellis_Seeds_Core.js',
+  -   'plugins/garden_planner_plugins/Trellis_Exchange_Core.js',
+      'plugins/garden_planner_plugins/Trellis_Inventories.js',
+      'plugins/garden_planner_plugins/Garden_Dashboard.js',
+      'plugins/garden_planner_plugins/Year_Planner.js',
+      'plugins/garden_planner_plugins/Allocate_Planner.js',
+      'plugins/garden_planner_plugins/Garden_Scale.js',
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\trellis-startup-defaults.test.cjs:192:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'plugins/garden_planner_plugins/Trellis_Updates_Links.js', 'plugins/garden_planner_plugins/Trellis_Database_Tools.js', 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js', 'plugins/garden_planner_plugins/Garden_References.js', 'plugins/garden_planner_plugins/Trellis_Users.js', 'plugins/garden_planner_plugins/Trellis_Syncthing.js', 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', 'plugins/garden_planner_plugins/Trellis_Object_Details.js', 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js', 'plugins/garden_planner_plugins/Planting_Group.js', 'plugins/garden_planner_plugins/Garden_Task_Manager.js', 'plugins/garden_planner_plugins/Garden_Guide.js', 'plugins/garden_planner_plugins/Garden_Quickstart.js', 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', 'plugins/garden_planner_plugins/Modules_Standalone.js', 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js', 'plugins/garden_planner_plugins/Garden_Scheduler_Dialog.js', 'plugins/garden_planner_plugins/Deep_Click_Through.js', 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js', 'plugins/garden_planner_plugins/Tidy_Context_Menu.js', 'plugins/garden_planner_plugins/Created_Change_Map.js', 'plugins/garden_planner_plugins/Trellis_Inventories.js', 'plugins/garden_planner_plugins/Garden_Dashboard.js', 'plugins/garden_planner_plugins/Year_Planner.js', 'plugins/garden_planner_plugins/Allocate_Planner.js', 'plugins/garden_planner_plugins/Garden_Scale.js', 'plugins/garden_planner_plugins/Garden_Beds.js', 'plugins/garden_planner_plugins/Garden_Structures.js', 'plugins/garden_planner_plugins/Garden_Equipment.js', 'plugins/garden_planner_plugins/Garden_Irrigation_Planner.js' ],
+    expected: [ 'plugins/garden_planner_plugins/Trellis_Updates_Links.js', 'plugins/garden_planner_plugins/Trellis_Database_Tools.js', 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js', 'plugins/garden_planner_plugins/Garden_References.js', 'plugins/garden_planner_plugins/Trellis_Users.js', 'plugins/garden_planner_plugins/Trellis_Syncthing.js', 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', 'plugins/garden_planner_plugins/Trellis_Object_Details.js', 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js', 'plugins/garden_planner_plugins/Planting_Group.js', 'plugins/garden_planner_plugins/Garden_Task_Manager.js', 'plugins/garden_planner_plugins/Garden_Guide.js', 'plugins/garden_planner_plugins/Garden_Quickstart.js', 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', 'plugins/garden_planner_plugins/Modules_Standalone.js', 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js', 'plugins/garden_planner_plugins/Garden_Scheduler_Dialog.js', 'plugins/garden_planner_plugins/Deep_Click_Through.js', 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js', 'plugins/garden_planner_plugins/Tidy_Context_Menu.js', 'plugins/garden_planner_plugins/Created_Change_Map.js', 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js', 'plugins/garden_planner_plugins/Trellis_Seeds_Core.js', 'plugins/garden_planner_plugins/Trellis_Exchange_Core.js', 'plugins/garden_planner_plugins/Trellis_Inventories.js', 'plugins/garden_planner_plugins/Garden_Dashboard.js', 'plugins/garden_planner_plugins/Year_Planner.js', 'plugins/garden_planner_plugins/Allocate_Planner.js', 'plugins/garden_planner_plugins/Garden_Scale.js', 'plugins/garden_planner_plugins/Garden_Beds.js', 'plugins/garden_planner_plugins/Garden_Structures.js', 'plugins/garden_planner_plugins/Garden_Equipment.js', 'plugins/garden_planner_plugins/Garden_Irrigation_Planner.js' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test\trellis-startup-defaults.test.cjs:316:5
+✖ App.js actual registry, public list, and defaults register Roadmap dependencies (4.2485ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'plugins/garden_planner_plugins/Trellis_Inventories.js'
+  - 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js'
+  
+      at C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\trellis-startup-defaults.test.cjs:321:63
+      at Array.forEach (<anonymous>)
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\trellis-startup-defaults.test.cjs:321:33)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'plugins/garden_planner_plugins/Trellis_Inventories.js',
+    expected: 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\trellis-startup-defaults.test.cjs:316:5
+✖ app.min.js actual registry, public list, and defaults register Roadmap dependencies (106.7265ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'plugins/garden_planner_plugins/Trellis_Inventories.js'
+  - 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js'
+  
+      at C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\trellis-startup-defaults.test.cjs:321:63
+      at Array.forEach (<anonymous>)
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\trellis-startup-defaults.test.cjs:321:33)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'plugins/garden_planner_plugins/Trellis_Inventories.js',
+    expected: 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\trellis-startup-defaults.test.cjs:316:5
+✖ integrate.min.js actual registry, public list, and defaults register Roadmap dependencies (146.7146ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'plugins/garden_planner_plugins/Trellis_Inventories.js'
+  - 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js'
+  
+      at C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\trellis-startup-defaults.test.cjs:321:63
+      at Array.forEach (<anonymous>)
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\trellis-startup-defaults.test.cjs:321:33)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'plugins/garden_planner_plugins/Trellis_Inventories.js',
+    expected: 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\year-planner-dom.test.cjs:1723:1
+✖ debounced Demand typing preserves the focused control (563.348ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 7
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\year-planner-dom.test.cjs:1738:12)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 7,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\year-planner-dom.test.cjs:1779:1
+✖ Demand lines collapse to operational summaries without losing edits (776.2605ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Priority\s*Target/. Input:
+  
+  'Crop Tomato - MatureQty 7 kg / weekDates Jun 01-Jun 07Priority Level 3Demand 7.0 kgShort 7.0 kgPotential $14.00Fulfilled $0.00+CropTomato - Mature (1)Tomato - MatureQtyUnit-- Select package unit --kgAdd packages...FrequencyDayWeekMonthEveryFromToPriorityLevel 3PriceFrom matching crop packageNotesRemoveRemove'
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\year-planner-dom.test.cjs:1798:12)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Crop Tomato - MatureQty 7 kg / weekDates Jun 01-Jun 07Priority Level 3Demand 7.0 kgShort 7.0 kgPotential $14.00Fulfilled $0.00+CropTomato - Mature (1)Tomato - MatureQtyUnit-- Select package unit --kgAdd packages...FrequencyDayWeekMonthEveryFromToPriorityLevel 3PriceFrom matching crop packageNotesRemoveRemove',
+    expected: /Priority\s*Target/,
+    operator: 'match',
+    diff: 'simple'
+  }

@@ -6,7 +6,9 @@ test('source snapshots preserve preload and fixtures, reject replacement, and de
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-sources-')); t.after(() => fs.rmSync(root, { recursive: true, force: true })); // CHANGE
     for (const directory of ['src/main', 'drawio/src/main/webapp/js', 'drawio/src/main/webapp/plugins/garden_planner_plugins', 'test/helpers', 'drawio/src/main/webapp/mxgraph']) { fs.mkdirSync(path.join(root, directory), { recursive: true }); fs.writeFileSync(path.join(root, directory, directory.endsWith('main') ? 'electron-preload.js' : directory.endsWith('mxgraph') ? 'mxClient.js' : 'fixture.js'), 'original'); } // CHANGE
     for (const name of ['package.json', 'package-lock.json']) fs.writeFileSync(path.join(root, name), '{}'); // CHANGE
+    fs.writeFileSync(path.join(root, 'drawio/src/main/webapp/index.html'), '<html>original</html>'); // NEW: the loader is part of the frozen production inventory.
     const destination = captureSources(root, path.join(root, 'snapshot')); verifySources(destination); // CHANGE
+    assert.equal(fs.readFileSync(path.join(destination, 'index.html'), 'utf8'), '<html>original</html>'); fs.writeFileSync(path.join(destination, 'index.html'), 'changed'); assert.throws(() => verifySources(destination), /Frozen benchmark input changed: index\.html/); fs.writeFileSync(path.join(destination, 'index.html'), '<html>original</html>'); // NEW: changing the loader must invalidate otherwise identical runtime sources.
     fs.writeFileSync(path.join(root, 'src/main/electron-preload.js'), 'live change'); assert.equal(fs.readFileSync(path.join(destination, 'main/electron-preload.js'), 'utf8'), 'original'); // CHANGE
     assert.throws(() => captureSources(root, destination), /EEXIST/); fs.writeFileSync(path.join(destination, 'helpers/fixture.js'), 'changed'); assert.throws(() => verifySources(destination), /Frozen benchmark input changed/); // CHANGE
 }); // CHANGE

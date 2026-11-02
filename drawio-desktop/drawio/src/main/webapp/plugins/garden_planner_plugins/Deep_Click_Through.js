@@ -239,21 +239,20 @@ Draw.loadPlugin(function (ui) {
         return isWorkspaceContainer(cell) && !isCanonicalKanbanBoardLane(cell);
     }
 
-    function getOccupiedBedMoveUnit(cell) {
-        const api = graph && graph.__trellisBedSuccessionNavigator;
-        const resolve = api && api.resolveOccupiedBedMoveUnit;
-        if (typeof resolve !== 'function') return null;
-        const unit = resolve(cell);
-        if (!unit || !unit.bed || !Array.isArray(unit.cells) || unit.cells.length < 2) return null;
-        if (!graph.isCellVisible(unit.bed) || !graph.isCellMovable(unit.bed) || !graph.view || !graph.view.getState(unit.bed)) return null;
-        const transforms = graph.__trellisBedTransforms; // CHANGE: content locks protect independent edits, not movement with their bed.
-        if (transforms) { // CHANGE
-            if (!transforms.canCarry(unit)) return null; // CHANGE
-        } else for (let i = 0; i < unit.cells.length; i++) { // CHANGE
-            if (!unit.cells[i] || !graph.isCellMovable(unit.cells[i])) return null;
-        }
-        return unit;
-    }
+    let workspaceMoveUnits = null; // NEW: reuse read-only resolution only inside one synchronous handle refresh.
+    function getOccupiedBedMoveUnit(cell) { // CHANGE
+        if (workspaceMoveUnits?.has(cell)) return workspaceMoveUnits.get(cell); // NEW
+        const api = graph && graph.__trellisBedSuccessionNavigator, resolve = api && api.resolveOccupiedBedMoveUnit; // CHANGE
+        let unit = typeof resolve === 'function' ? resolve(cell) : null; // CHANGE
+        if (!unit || !unit.bed || !Array.isArray(unit.cells) || unit.cells.length < 2) unit = null; // CHANGE
+        if (unit && (!graph.isCellVisible(unit.bed) || !graph.isCellMovable(unit.bed) || !graph.view?.getState(unit.bed))) unit = null; // CHANGE
+        if (unit) { // CHANGE
+            const transforms = graph.__trellisBedTransforms; // CHANGE
+            if (transforms ? !transforms.canCarry(unit) : unit.cells.some(member => !member || !graph.isCellMovable(member))) unit = null; // CHANGE
+        } // CHANGE
+        if (workspaceMoveUnits) { workspaceMoveUnits.set(cell, unit); if (unit) workspaceMoveUnits.set(unit.bed, unit); } // NEW
+        return unit; // CHANGE: drag initiation runs outside the refresh scope and always rechecks live authority.
+    } // CHANGE
 
     function isOccupiedBedHandleCell(cell) {
         const unit = getOccupiedBedMoveUnit(cell);
@@ -807,6 +806,8 @@ Draw.loadPlugin(function (ui) {
         workspaceHandleRefreshThread = null;
         const host = ensureWorkspaceOverlayHost();
         if (!host) return;
+        const previousUnits = workspaceMoveUnits; workspaceMoveUnits = new Map(); // NEW
+        try { // NEW
         const cells = getWorkspaceHandleCells();
         const keep = {};
         for (let i = 0; i < cells.length; i++) {
@@ -827,6 +828,7 @@ Draw.loadPlugin(function (ui) {
                 workspaceHandleEntries.delete(id);
             }
         });
+        } finally { workspaceMoveUnits = previousUnits; } // NEW: permission or rendering errors cannot retain transient facts.
     }
 
     graph.addListener && graph.addListener('trellisOverlayVisibilityChanged', function (_sender, event) { // NEW

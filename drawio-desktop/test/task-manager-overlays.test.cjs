@@ -3888,3 +3888,16 @@ test('task planning preserves a previously selected deleted tool while rejecting
     await manager.applyTaskPlanningChange(h.card1, { equipmentIds: ['pruners'] }); // NEW
     assert.deepEqual(JSON.parse(attr(h.card1, 'task_equipment_ids')), ['pruners']); // NEW
 }); // NEW
+
+test('task work-hours forms support non-closing Commit and Discard through the shared editor lifecycle', async t => { // CHANGE
+    const h = makeHarness(); t.after(() => h.window.close()); // CHANGE
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/js/trellis-editing-holds.js'), 'utf8'), { window: h.window }); // CHANGE
+    let choice = 'discard', editor; const registry = h.window.TrellisEditingHolds.create(h.ui, { isCollaborative: () => false, status() {}, release: async () => {}, decide: async () => choice }); // CHANGE
+    h.graph.__trellisSharing = { transitionEditor: operation => registry.transition(operation), registerObjectForm: config => { editor = registry.registerForm(config); return editor; } }; // CHANGE
+    h.graph.setSelectionCell(h.weekWedLane); await nextTick(); buttonByText(h.document.querySelector('.trellis-task-board-header-controls'), 'Edit Hours').click(); await nextTick(); // CHANGE
+    const dialog = h.lastDialog, start = dialog.querySelector('input[type=time]'), baseline = start.value; // CHANGE
+    start.value = '09:15'; start.dispatchEvent(new h.window.Event('input', { bubbles: true })); await editor.transition(() => true); assert.equal(start.value, baseline); // CHANGE
+    start.value = '09:15'; start.dispatchEvent(new h.window.Event('input', { bubbles: true })); choice = 'commit'; await editor.transition(() => true); // CHANGE
+    assert.equal(h.lastDialog, dialog); assert.equal(JSON.parse(attr(h.board, 'task_work_hours_defaults_json')).days[0].startMinute, 555); assert.deepEqual(Array.from(registry.pinnedTargets()), []); // CHANGE
+    editor.dispose(true); // CHANGE
+}); // CHANGE

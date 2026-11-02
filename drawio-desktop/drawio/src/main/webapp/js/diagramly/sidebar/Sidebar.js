@@ -920,37 +920,54 @@
 	 */
 	Sidebar.prototype.initPalettes = function()
 	{
-		var imgDir = GRAPH_IMAGE_PATH;
-		var dir = STENCIL_PATH;
-		var signs = this.signs;
-		var rack = this.rack;
-		var pids = this.pids;
-		var cisco = this.cisco;
-		var sysml = this.sysml;
-		
-		if (urlParams['createindex'] == '1')
+var imgDir = GRAPH_IMAGE_PATH; // CHANGE
+var dir = STENCIL_PATH; // CHANGE
+var signs = this.signs; // CHANGE
+var rack = this.rack; // CHANGE
+var pids = this.pids; // CHANGE
+var cisco = this.cisco; // CHANGE
+var sysml = this.sysml; // CHANGE
+var trellisPaletteSteps = [ // CHANGE
+function() { // CHANGE
+if (urlParams['createindex'] == '1')
 		{
 			this.createdSearchIndex = [];
 		}
-
-		this.addSearchPalette(true);
-
-		if (!this.appendCustomLibraries)
+}, // CHANGE
+function() { // CHANGE
+this.addSearchPalette(true);
+}, // CHANGE
+function() { // CHANGE
+if (!this.appendCustomLibraries)
 		{
 			this.addCustomEntries();
 		}
-
-		this.addGeneralPalette(this.customEntries == null);
-		this.addMiscPalette(false);	
-		this.addAdvancedPalette(false);
-		this.addBasicPalette();
-		this.addStencilPalette('arrows', mxResources.get('arrows'), dir + '/arrows.xml',
+}, // CHANGE
+function() { // CHANGE
+this.addGeneralPalette(this.customEntries == null);
+}, // CHANGE
+function() { // CHANGE
+this.addMiscPalette(false);
+}, // CHANGE
+function() { // CHANGE
+this.addAdvancedPalette(false);
+}, // CHANGE
+function() { // CHANGE
+this.addBasicPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addStencilPalette('arrows', mxResources.get('arrows'), dir + '/arrows.xml',
 				';html=1;' + mxConstants.STYLE_VERTICAL_LABEL_POSITION + '=bottom;' + mxConstants.STYLE_VERTICAL_ALIGN + '=top;' + mxConstants.STYLE_STROKEWIDTH + '=2;strokeColor=#000000;',
 				null, null, null, null, null, 'arrows');
-		this.addArrows2Palette();
-		
-		this.setCurrentSearchEntryLibrary('clipart', 'computer');
-		this.addImagePalette('computer', 'Clipart / Computer', imgDir
+}, // CHANGE
+function() { // CHANGE
+this.addArrows2Palette();
+}, // CHANGE
+function() { // CHANGE
+this.setCurrentSearchEntryLibrary('clipart', 'computer');
+}, // CHANGE
+function() { // CHANGE
+this.addImagePalette('computer', 'Clipart / Computer', imgDir
 				+ '/lib/clip_art/computers/', '_128x128.png', ['Antivirus',
 				'Data_Filtering', 'Database', 'Database_Add', 'Database_Minus',
 				'Database_Move_Stack', 'Database_Remove', 'Fujitsu_Tablet',
@@ -970,18 +987,24 @@
 	            'Server', 'Server Rack', 'Server Rack Empty', 'Server Rack Partial',
 	            'Server Tower', 'Software', 'Stylus', 'Touch', 'USB Hub',
 	            'Virtual Application', 'Virtual Machine', 'Virus', 'Workstation']);
-		
-		this.setCurrentSearchEntryLibrary('clipart', 'finance');		
-		this.addImagePalette('finance', 'Clipart / Finance', imgDir
+}, // CHANGE
+function() { // CHANGE
+this.setCurrentSearchEntryLibrary('clipart', 'finance');
+}, // CHANGE
+function() { // CHANGE
+this.addImagePalette('finance', 'Clipart / Finance', imgDir
 				+ '/lib/clip_art/finance/', '_128x128.png', [ 'Arrow_Down',
 				'Arrow_Up', 'Coins', 'Credit_Card', 'Dollar', 'Graph',
 				'Pie_Chart', 'Piggy_Bank', 'Safe', 'Shopping_Cart',
 				'Stock_Down', 'Stock_Up'], ['Arrow_Down', 'Arrow Up',
 	            'Coins', 'Credit Card', 'Dollar', 'Graph', 'Pie Chart',
 	            'Piggy Bank', 'Safe', 'Shopping Basket', 'Stock Down', 'Stock Up']);
-		
-		this.setCurrentSearchEntryLibrary('clipart', 'clipart');		
-		this.addImagePalette('clipart', 'Clipart / Various', imgDir
+}, // CHANGE
+function() { // CHANGE
+this.setCurrentSearchEntryLibrary('clipart', 'clipart');
+}, // CHANGE
+function() { // CHANGE
+this.addImagePalette('clipart', 'Clipart / Various', imgDir
 				+ '/lib/clip_art/general/', '_128x128.png', [ 'Battery_0',
 				'Battery_100', 'Battery_50', 'Battery_75', 'Battery_allstates',
 				'Bluetooth', 'Earth_globe', 'Empty_Folder', 'Full_Folder',
@@ -990,9 +1013,12 @@
 	            'Battery 75%', 'Battery', 'Bluetooth', 'Globe',
 	            'Empty Folder', 'Full Folder', 'Gear', 'Keys', 'Lock', 'Mousepointer',
 	            'Plug', 'Ships Wheel', 'Star', 'Tire']);
-		
-		this.setCurrentSearchEntryLibrary('clipart', 'networking');
-		this.addImagePalette('networking', 'Clipart / Networking', imgDir
+}, // CHANGE
+function() { // CHANGE
+this.setCurrentSearchEntryLibrary('clipart', 'networking');
+}, // CHANGE
+function() { // CHANGE
+this.addImagePalette('networking', 'Clipart / Networking', imgDir
 				+ '/lib/clip_art/networking/', '_128x128.png', ['Bridge',
 				'Certificate', 'Certificate_Off', 'Cloud', 'Cloud_Computer',
 				'Cloud_Computer_Private', 'Cloud_Rack', 'Cloud_Rack_Private',
@@ -1014,9 +1040,12 @@
 				  'Wireless_Router_N': 'wireless router switch wap wifi access point wlan',
 				  'Router': 'router switch',
 				  'Router_Icon': 'router switch'});
-		
-		this.setCurrentSearchEntryLibrary('clipart', 'people');
-		this.addImagePalette('people', 'Clipart / People', imgDir
+}, // CHANGE
+function() { // CHANGE
+this.setCurrentSearchEntryLibrary('clipart', 'people');
+}, // CHANGE
+function() { // CHANGE
+this.addImagePalette('people', 'Clipart / People', imgDir
 				+ '/lib/clip_art/people/', '_128x128.png', ['Suit_Man',
 				'Suit_Man_Black', 'Suit_Man_Blue', 'Suit_Man_Green',
 				'Suit_Man_Green_Black', 'Suit_Woman', 'Suit_Woman_Black',
@@ -1040,92 +1069,226 @@
 				'Telesales_Woman_Black', 'Waiter', 'Waiter_Black',
 				'Waiter_Woman', 'Waiter_Woman_Black', 'Worker_Black',
 				'Worker_Man', 'Worker_Woman', 'Worker_Woman_Black']);
-		
-		this.setCurrentSearchEntryLibrary('clipart', 'telco');
-		this.addImagePalette('telco', 'Clipart / Telecommunication', imgDir
+}, // CHANGE
+function() { // CHANGE
+this.setCurrentSearchEntryLibrary('clipart', 'telco');
+}, // CHANGE
+function() { // CHANGE
+this.addImagePalette('telco', 'Clipart / Telecommunication', imgDir
 				+ '/lib/clip_art/telecommunication/', '_128x128.png', [
 				'BlackBerry', 'Cellphone', 'HTC_smartphone', 'iPhone',
 				'Palm_Treo', 'Signal_tower_off', 'Signal_tower_on' ],
 				['BlackBerry', 'Cellphone', 'HTC smartphone', 'iPhone',
 				  'Palm Treo', 'Signaltower off', 'Signaltower on']);
-		this.setCurrentSearchEntryLibrary();
-
-		this.addFlowchartPalette();
-		this.addActiveDirectoryPalette();
-		this.addAndroidPalette();
-		this.addAtlassianPalette();
-		this.addBootstrapPalette();
-		this.addDFDPalette();
-		this.addErPalette();
-		this.addIos7Palette();
-		this.addIosPalette();
-		this.addKubernetesPalette();
-		this.addMockupPalette();
-		this.addSitemapPalette();
-		this.addSalesforcePalette();
-		this.addUml25Palette();
-		this.addUmlPalette(false);
-		this.addAlibabaCloudPalette();
-		this.addAlliedTelesisPalette();
-		this.addAWS3Palette();
-		this.addAWS4bPalette();
-		this.addAWS4Palette();
-		this.addAWS3DPalette();
-		this.addAzurePalette();
-		this.addAzure2Palette();
-		this.addMSCAEPalette();
-		this.addC4Palette();
-		this.addCiscoPalette(cisco, dir);
-		this.addCisco19Palette();
-		this.addCiscoSafePalette();
-		this.addCumulusPalette();
-		this.addCitrix2Palette();
-		this.addCitrixPalette();
-		this.addDynamics365Palette();
-		this.addGCP2Palette();
-		this.addGCPIconsPalette();
-		this.addIBMPalette();
-		this.addIBMCloudPalette();
-		this.addNetwork2Palette();
-		this.addNetworkPalette();
-		this.addSAPPalette();
-		this.addOfficePalette();
-		this.addOpenStackPalette();
-		this.addRackPalette(rack, dir);
-		this.addVeeamPalette();
-		this.addVeeam2Palette();
-		this.addVVDPalette();
-		this.addArchimate3Palette();
-		this.addArchiMatePalette();
-		this.addBpmn2Palette();
-		this.addSysMLPalette(sysml, dir);
-		this.addLeanMappingPalette();
-		this.addCabinetsPalette();
-		this.addInfographicPalette();
-		this.addEipPalette();
-		this.addElectricalPalette();
-		this.addFloorplanPalette();
-		this.addFluidPowerPalette();
-		this.addGMDLPalette();
-		this.addPidPalette(pids, dir);
-		this.addThreatModelingPalette();
-		this.addWebIconsPalette();
-		this.addWebLogosPalette();
-		this.addSignsPalette(signs, dir);
-		
-		if (this.appendCustomLibraries)
+}, // CHANGE
+function() { // CHANGE
+this.setCurrentSearchEntryLibrary();
+}, // CHANGE
+function() { // CHANGE
+this.addFlowchartPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addActiveDirectoryPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addAndroidPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addAtlassianPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addBootstrapPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addDFDPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addErPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addIos7Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addIosPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addKubernetesPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addMockupPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addSitemapPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addSalesforcePalette();
+}, // CHANGE
+function() { // CHANGE
+this.addUml25Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addUmlPalette(false);
+}, // CHANGE
+function() { // CHANGE
+this.addAlibabaCloudPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addAlliedTelesisPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addAWS3Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addAWS4bPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addAWS4Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addAWS3DPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addAzurePalette();
+}, // CHANGE
+function() { // CHANGE
+this.addAzure2Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addMSCAEPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addC4Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addCiscoPalette(cisco, dir);
+}, // CHANGE
+function() { // CHANGE
+this.addCisco19Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addCiscoSafePalette();
+}, // CHANGE
+function() { // CHANGE
+this.addCumulusPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addCitrix2Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addCitrixPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addDynamics365Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addGCP2Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addGCPIconsPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addIBMPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addIBMCloudPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addNetwork2Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addNetworkPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addSAPPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addOfficePalette();
+}, // CHANGE
+function() { // CHANGE
+this.addOpenStackPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addRackPalette(rack, dir);
+}, // CHANGE
+function() { // CHANGE
+this.addVeeamPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addVeeam2Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addVVDPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addArchimate3Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addArchiMatePalette();
+}, // CHANGE
+function() { // CHANGE
+this.addBpmn2Palette();
+}, // CHANGE
+function() { // CHANGE
+this.addSysMLPalette(sysml, dir);
+}, // CHANGE
+function() { // CHANGE
+this.addLeanMappingPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addCabinetsPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addInfographicPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addEipPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addElectricalPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addFloorplanPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addFluidPowerPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addGMDLPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addPidPalette(pids, dir);
+}, // CHANGE
+function() { // CHANGE
+this.addThreatModelingPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addWebIconsPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addWebLogosPalette();
+}, // CHANGE
+function() { // CHANGE
+this.addSignsPalette(signs, dir);
+}, // CHANGE
+function() { // CHANGE
+if (this.appendCustomLibraries)
 		{
 			this.addCustomEntries();
 		}
-
-		// LATER: Check if conflicts with restore libs after loading file
-		this.showEntries();
-		
-		if (this.createdSearchIndex != null)
+}, // CHANGE
+function() { // CHANGE
+this.showEntries();
+}, // CHANGE
+function() { // CHANGE
+if (this.createdSearchIndex != null)
 		{
 			console.log('searchFileData', Graph.compress(JSON.stringify(this.createdSearchIndex)));
 		}
-	};
+} // CHANGE
+]; // CHANGE: yield between existing palette builders.
+if (window.TrellisStartupUI) return window.TrellisStartupUI.registerPalettes(this, trellisPaletteSteps); // NEW
+for (var trellisPaletteIndex = 0; trellisPaletteIndex < trellisPaletteSteps.length; trellisPaletteIndex++) trellisPaletteSteps[trellisPaletteIndex].call(this); // NEW
+};
 
 	/**
 	 * Adds custom entries to the sidebar.

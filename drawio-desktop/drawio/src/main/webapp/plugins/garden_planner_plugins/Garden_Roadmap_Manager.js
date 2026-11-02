@@ -125,7 +125,7 @@ Draw.loadPlugin(function (ui) {
         journal = [];
         commandDepth++;
         let result = null, failure = null; // CHANGE: return only after synchronous permission inspection accepts the edit.
-        try { result = fn(); resolveSavedCollisions(previousBounds); } // CHANGE
+        try { result = fn(); resolveSavedCollisions(previousBounds, options.creation === true); options.finish?.(result); } // CHANGE: placement runs after the starter cluster reaches its final size, before permission inspection.
         catch (error) {
             result = null; failure = error; // CHANGE: preserve the original command failure after rollback.
             const undo = journal; journal = null;
@@ -137,6 +137,7 @@ Draw.loadPlugin(function (ui) {
         } finally {
             journal = null; commandDepth--; invalidateLayouts(); committingCanonical = true; try { model.endUpdate(); } finally { committingCanonical = false; } refresh(); // CHANGE
         }
+        if (currentEdit?.__trellisUsersRejected) options.onRejected?.(currentEdit); // CHANGE: creation callers distinguish a refusal already explained by the native permission guard from an initialization exception.
         if (options.throwOnRejection && (failure || currentEdit?.__trellisUsersRejected)) throw failure || new Error(currentEdit.__trellisUsersRejectedReason || 'The cluster transaction was rejected.'); // NEW
         return currentEdit && currentEdit.__trellisUsersRejected ? null : result; // NEW
     }
@@ -437,15 +438,17 @@ Draw.loadPlugin(function (ui) {
     function differentBounds(a, b) { return !a || !b || ['x', 'y', 'width', 'height'].some(key => a[key] !== b[key]); } // NEW
 
     /** Plan every saved displacement before applying it; command rollback covers all mutations. */ // NEW
-    function resolveSavedCollisions(previous) { // NEW
+    function resolveSavedCollisions(previous, creation = false) { // CHANGE
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+        if (creation && context && context.current()?.kind !== 'generated-content') return context.scope('generated-content', () => resolveSavedCollisions(previous, creation)); // NEW: creation-time companion resizing is automatic even before the placement completion callback.
         const geometries = snapshotPeerBounds(), dirtyBoards = Array.from(geometries.keys()).filter(cell => kind(cell) === 'board' && differentBounds(previous.get(cell), geometries.get(cell))); // NEW
         const modules = new Set(dirtyBoards.map(parent)); // NEW
         previous.forEach((_geometry, cell) => { if (kind(cell) === 'board' && !model.getCell(id(cell))) { const oldParent = previous.parents.get(cell); if (oldParent && model.getCell(id(oldParent))) modules.add(oldParent); } }); // NEW
         modules.forEach(module => { const boards = typedChildren(module, 'board'); if (boards.length) applyPeerPlan(boards, peerPlan(boards, geometries, boards.filter(cell => dirtyBoards.includes(cell)), previous, boards.filter(cell => fixedBoardMoves.has(cell)).length ? boards.filter(cell => fixedBoardMoves.has(cell)) : undefined), geometries); const bounds = moduleBounds(module, geometries); if (bounds) geometries.set(module, bounds); }); // NEW
         const top = children(graph.getDefaultParent()).filter(cell => isModuleCell(cell) && geometries.has(cell)); // NEW
         const changed = top.filter(cell => differentBounds(previous.get(cell), geometries.get(cell))); // NEW
-        if (changed.length) applyPeerPlan(top, peerPlan(top, geometries, changed, previous), geometries); // NEW
-        const mutations = Array.from(geometries).filter(([cell, g]) => differentBounds(model.getGeometry(cell), g)); // NEW
+        if (changed.length && !creation) applyPeerPlan(top, peerPlan(top, geometries, changed, previous), geometries); // CHANGE
+        const mutations = Array.from(geometries).filter(([cell, g]) => (!creation || !previous.has(cell)) && differentBounds(model.getGeometry(cell), g)); // CHANGE: creation cannot resize or translate existing peers.
         mutations.forEach(([cell]) => requireEdit(cell)); mutations.forEach(([cell, g]) => setGeometry(cell, g)); // NEW
     } // NEW
 
@@ -1769,7 +1772,13 @@ Draw.loadPlugin(function (ui) {
     function refresh() {
         if (destroyed || refreshPending) return; refreshPending = true;
         const schedule = window.requestAnimationFrame || (fn => window.setTimeout(fn, 0));
-        schedule(() => { refreshPending = false; if (destroyed) return; if (graph.refresh) graph.refresh(); renderControls(); });
+        schedule(() => { // CHANGE
+            refreshPending = false; if (destroyed) return; // CHANGE
+            const boards = boardRegistry || (boardRegistry = allCells().filter(cell => kind(cell) === 'board')); // NEW
+            if (graph.view?.invalidate && graph.view?.validate) { boards.forEach(invalidateRoadmapViewStates); if (boards.length) graph.view.validate(); } // NEW: roadmap layout cannot invalidate unrelated planting glyphs.
+            else if (graph.refresh) graph.refresh(); // NEW: lightweight hosts retain their existing refresh adapter.
+            renderControls(); // CHANGE
+        }); // CHANGE
     }
     let controlsRefreshPending = false; // NEW
     /** Wait for native selection/pointer handlers to finish before reconciling overlays, without recreating labels. */ // NEW
@@ -1811,13 +1820,26 @@ Draw.loadPlugin(function (ui) {
         const timer = window.setInterval(checkToday, 60000); disposers.push(() => window.clearInterval(timer)); // NEW
     } // NEW
     /** Structural, policy, and roadmap edits invalidate projections; unrelated ordinary cell edits do not. */ // CHANGE
+    function inRoadmapScope(cell) { // NEW: check current and former parents without walking unrelated gardens.
+        for (let cursor = cell; cursor; cursor = parent(cursor)) if (TYPES.has(kind(cursor)) || attr(cursor, 'roadmap_module') === '1') return true; // NEW
+        return false; // NEW
+    } // NEW
+    function hasRoadmapLinks(value) { // NEW: planting/task links are not automatically roadmap dependencies.
+        return String(value || '').split(',').some(key => inRoadmapScope(model.getCell?.(key.trim()))); // NEW
+    } // NEW
     function affectsRoadmapProjection(change) { // CHANGE
         if (change.__trellisUsersActorStamp) return false; // CHANGE
-        if ('root' in change || 'child' in change || !change.cell) return true; // CHANGE: unknown/native hierarchy changes retain the conservative path.
+        if ('root' in change) return true; // CHANGE
+        if (change.child) { // NEW: native hierarchy edits identify their affected subtree and both parent boundaries.
+            if ([change.child, change.parent, change.previous].some(inRoadmapScope)) return true; // NEW
+            const pending = [change.child]; // NEW
+            while (pending.length) { const cell = pending.pop(); if (TYPES.has(kind(cell)) || attr(cell, 'roadmap_module') === '1' || hasRoadmapLinks(attr(cell, 'linkedTo'))) return true; pending.push(...children(cell)); } // CHANGE: moved containers can carry nested boards or actual roadmap links.
+            return false; // NEW
+        } // NEW
+        if (!change.cell) return true; // NEW: retain conservative handling of unknown change types.
         const cell = change.cell, previous = change.previous; // CHANGE
-        if (id(cell) === '0' || id(cell) === '1' || attr(cell, 'linkedTo') || previous?.getAttribute?.('linkedTo') || TYPES.has(previous?.getAttribute?.('roadmap_type'))) return true; // CHANGE
-        for (let cursor = cell; cursor; cursor = parent(cursor)) if (TYPES.has(kind(cursor)) || attr(cursor, 'roadmap_module') === '1') return true; // CHANGE
-        return false; // CHANGE
+        if (id(cell) === '0' || id(cell) === '1' || hasRoadmapLinks(attr(cell, 'linkedTo')) || hasRoadmapLinks(previous?.getAttribute?.('linkedTo')) || TYPES.has(previous?.getAttribute?.('roadmap_type'))) return true; // CHANGE
+        return inRoadmapScope(cell); // CHANGE
     } // CHANGE
     listenModel(model, mxEvent.CHANGE, (_sender, event) => { // CHANGE
         if (gesture && !committingCanonical && !commandDepth) { if (graph.escape) graph.escape(); clearGesture(); } // CHANGE

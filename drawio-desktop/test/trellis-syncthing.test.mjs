@@ -12,6 +12,7 @@ import { EventEmitter } from 'node:events';
 import { pathToFileURL } from 'node:url'; // NEW
 import { assertSharingFileAccess } from '../src/main/trellis-sharing-files.js'; // NEW
 import { createSyncthingService } from '../src/main/trellis-syncthing-service.js';
+import { createCurrentStateStore } from '../src/main/trellis-current-state.js'; // NEW
 import { replay } from '../src/main/trellis-collaboration-protocol.js'; // NEW
 import { inspectDiagram, hasCanvasAccess, encodeBlock, decodeBlock, digest, canonical, signRecord, inviteFingerprint } from '../src/main/trellis-share-protocol.js'; // CHANGE
 
@@ -60,7 +61,7 @@ async function fixture(t, letter = 'A', options = {}) {
         else if (endpoint === 'system/shutdown') { const target = process; if (shutdownGate) await shutdownGate; if (shutdownExits) target.emit('exit', 0); if (shutdownError) throw new Error('Shutdown response disconnected'); } // CHANGE
         return { ok: true, text: async () => JSON.stringify(result) };
     } });
-    t.after(async () => { await service.stop(); histories.close(); await fs.rm(root, { recursive: true, force: true }); });
+    t.after(async () => { await service.stop(); histories.close(); await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }); // CHANGE: allow Windows to finish releasing closed activity-directory watches.
     return { service, histories, root, calls, connections, setConfigurationFail: value => { configurationFail = value; }, setConnectionsFail: value => { connectionsFail = value; }, config: () => config, spawnCount: () => spawnCount, userDataPath, crash: () => process.emit('exit', 1), setStatusGate: gate => { statusGate = gate; }, processes, setShutdown: (gate, exits = true, error = false) => { shutdownGate = gate; shutdownExits = exits; shutdownError = error; }, setKillExits: value => { killExits = value; } }; // CHANGE
 }
 async function setup(f, content = xml()) {
@@ -71,13 +72,62 @@ async function setup(f, content = xml()) {
     return { source, result };
 }
 
+test('administrative and invitation authority ignores unaccepted projection edits and missing projections', async t => { // NEW
+    const f = await fixture(t), { result } = await setup(f); // NEW
+    const accepted = inspectDiagram(await fs.readFile(result.diagramPath, 'utf8')); // NEW
+    const forged = structuredClone(accepted.store); forged.users.find(user => user.id === 'alice').admin = true; forged.invites[0].createdBy = 'alice'; // NEW
+    accepted.cells.find(cell => cell.node.hasAttribute('trellis_users_json')).node.setAttribute('trellis_users_json', JSON.stringify(forged)); // NEW
+    await fs.writeFile(result.diagramPath, accepted.document.serialize()); // NEW: bypass the coordinator to exercise the actual authority boundary.
+    f.service.setContext(1, { diagramPath: result.diagramPath, diagramId: 'diagram-1', userId: 'alice' }); // NEW
+    await assert.rejects(f.service.createInviteBlock(1, { shareId: result.shareId, inviteId: 'invite-1', code: 'CODE' }), /Save a valid invitation/); // NEW
+    await assert.rejects(f.service.approveLibraryDevice({ shareId: result.shareId, userId: 'alice', deviceId: device('A') }), /approval from its coordinator\/admin/); // NEW
+    await fs.unlink(result.diagramPath); // NEW: accepted permissions remain usable even when the local projection is missing.
+    f.service.setContext(1, { diagramPath: result.diagramPath, diagramId: 'diagram-1', userId: 'admin' }); // NEW
+    assert.equal((await f.service.createInviteBlock(1, { shareId: result.shareId, inviteId: 'invite-1', code: 'CODE' })).ok, true); // NEW
+    assert.equal((await f.service.approveLibraryDevice({ shareId: result.shareId, userId: 'admin', deviceId: device('A') })).ok, true); // NEW
+}); // NEW
+
+test('inactive peer membership rejects requests and polling never enumerates the retained request journal', async t => { // NEW
+    const f = await fixture(t), { result } = await setup(f); // NEW
+    f.service.setContext(1, { diagramPath: result.diagramPath, diagramId: 'diagram-1', userId: 'admin' }); // NEW
+    await assert.rejects(f.service.requestMembership(1, { shareId: result.shareId, operation: 'remove', targetDeviceId: 'peer' }), { code: 'SYNC_CAPABILITY_UNAVAILABLE' }); // NEW
+    await assert.rejects(f.service.listRequests(1, { shareId: result.shareId }), { code: 'SYNC_CAPABILITY_UNAVAILABLE' }); // NEW
+    const original = fs.readdir, requestDirectory = path.join(path.dirname(result.diagramPath), '.trellis', 'requests'); let scans = 0; // NEW
+    fs.readdir = async function (directory, ...args) { if (directory === requestDirectory) { scans++; throw new Error('Inactive request archive was enumerated'); } return original.call(this, directory, ...args); }; // NEW
+    try { await f.service.poll(); assert.equal(scans, 0); assert.notEqual(f.service.listStatus(1)[0].state, 'unavailable'); } finally { fs.readdir = original; } // NEW: inspect real production polling rather than a mocked request processor.
+}); // NEW
+
+test('production receipt publication recovers after a partial temporary write without accepting a save twice', async t => { // NEW
+    const f = await fixture(t), { result } = await setup(f); // NEW
+    f.service.setContext(1, { diagramPath: result.diagramPath, diagramId: 'diagram-1', userId: 'admin' }); // NEW
+    const baseXml = await fs.readFile(result.diagramPath, 'utf8'), changedXml = baseXml.replace('label="Board"', 'label="Accepted once"'); // NEW
+    const input = { shareId: result.shareId, kind: 'save', proposalId: 'interrupted-production-receipt', baseXml, xml: changedXml }, original = fs.writeFile; let interrupted = false; // NEW
+    fs.writeFile = async function (filename, data, options) { if (!interrupted && filename.includes(path.sep + 'receipts' + path.sep) && filename.endsWith('.tmp')) { interrupted = true; await original(filename, data.slice(0, 12), options); throw new Error('Interrupted production receipt'); } return original(filename, data, options); }; // NEW
+    try { await assert.rejects(f.service.collaborationAction(1, input), /Interrupted production receipt/); } finally { fs.writeFile = original; } // NEW
+    assert.equal(interrupted, true); // NEW
+    const retry = await f.service.collaborationAction(1, input); assert.equal(retry.ok, true); assert.equal(retry.duplicate, true); // NEW
+    const directory = path.join(path.dirname(result.diagramPath), '.trellis', 'collaboration-v4'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', device('A') + '.json'), 'utf8')).payload; // NEW
+    assert.equal(head.sequence, 1); assert.match(await fs.readFile(result.diagramPath, 'utf8'), /Accepted once/); // NEW
+    assert.deepEqual(await fs.readdir(path.join(directory, 'receipts')), [input.proposalId + '.json']); // NEW
+}); // NEW
+
+test('activity status observes current holds and private loss retention cannot be overwritten or read by another author', async t => { // CHANGE
+    const f = await fixture(t), { result } = await setup(f), baseXml = await fs.readFile(result.diagramPath, 'utf8'), key = '["","board"]'; // CHANGE
+    const claim = await f.service.activityAction(1, { shareId: result.shareId, expectedUserId: 'admin', kind: 'claim', targets: [key] }), status = f.service.listStatus(1).find(item => item.shareId === result.shareId); // CHANGE
+    assert.ok(status.collaboration.observationRevision > claim.collaboration.observationRevision); assert.equal(status.collaboration.holds[0].claimId, claim.collaboration.holds[0].claimId); assert.equal(status.collaboration.actorUserId, 'admin'); // CHANGE
+    const input = { shareId: result.shareId, expectedUserId: 'admin', kind: 'retain', lossId: 'lost-hold', reason: 'Access changed', revision: 1, baseXml, xml: baseXml, editorDrafts: [{ kind: 'object-form', targets: [key], fields: [{ name: 'notes', value: 'private entry' }] }] }; // CHANGE
+    await f.service.recoveryAction(1, input); await f.service.recoveryAction(1, input); await f.service.recoveryAction(1, { ...input, kind: 'checkpoint', revision: 2, editorDrafts: [] }); // CHANGE
+    assert.equal((await f.service.recoveryAction(1, { shareId: result.shareId, kind: 'restore' })).drafts.filter(draft => draft.retained).length, 1); // CHANGE
+    f.service.setContext(1, { diagramPath: result.diagramPath, diagramId: 'diagram-1', userId: 'alice' }); await assert.rejects(f.service.recoveryAction(1, input), /author changed/); assert.equal((await f.service.recoveryAction(1, { shareId: result.shareId, kind: 'restore' })).drafts.length, 0); // CHANGE
+}); // CHANGE
 test('scoped activity and private recovery complete while a content commit is stalled, and reject a changed author', { timeout: 20000 }, async t => { // NEW
     let block = false, release, entered; const gate = new Promise(resolve => { release = resolve; }), waiting = new Promise(resolve => { entered = resolve; }); // NEW
     t.after(release); // NEW
-    const f = await fixture(t, 'A', { replayWorker: async (xml, records, time) => { if (block) { entered(); await gate; } return replay(xml, records, time); } }); // NEW
+    const f = await fixture(t); // CHANGE: current-state saving does not invoke the retired replayWorker hook.
     const { result } = await setup(f), baseXml = await fs.readFile(result.diagramPath, 'utf8'), key = '["","board"]'; // NEW
     await f.service.activityAction(1, { shareId: result.shareId, kind: 'claim', targets: [key] }); // NEW
-    block = true; let completed = false; const save = f.service.collaborationAction(1, { shareId: result.shareId, kind: 'save', baseXml, xml: baseXml.replace('label="Bed"', 'label="Changed"') }).finally(() => { completed = true; }); // NEW
+    const originalWrite = fs.writeFile; fs.writeFile = async function (file, data, options) { if (block && String(file).includes(path.join('collaboration-v4', 'epochs')) && String(file).endsWith('.tmp')) { entered(); await gate; } return originalWrite(file, data, options); }; t.after(() => { fs.writeFile = originalWrite; }); // CHANGE: stall an actual accepted-decision write, without blocking independent private/activity files.
+    block = true; let completed = false; const save = f.service.collaborationAction(1, { shareId: result.shareId, kind: 'save', baseXml, xml: baseXml.replace('label="Board"', 'label="Changed"') }).finally(() => { completed = true; }); // CHANGE
     await waiting; const activity = await f.service.activityAction(1, { shareId: result.shareId, kind: 'publish', expectedUserId: 'admin', revision: 1, pending: [key] }); // NEW
     assert.equal(activity.collaboration.pendingChanges[0].userId, 'admin'); assert.equal(completed, false); // NEW
     await f.service.recoveryAction(1, { shareId: result.shareId, kind: 'checkpoint', expectedUserId: 'admin', revision: 1, baseXml, xml: baseXml.replace('label="Bed"', 'label="Draft"'), editorDrafts: [] }); // NEW
@@ -237,6 +287,7 @@ test('member connection observations expire and are invalidated by polling failu
 
 test('presence sampling continues while garden processing is blocked', async t => { // NEW
     t.mock.timers.enable({ apis: ['setInterval'] }); let clock = Date.now(); const f = await fixture(t, 'A', { now: () => clock }); const { result } = await setup(f); // NEW
+    await f.service.prepareCanvas({ shareId: result.shareId }); // CHANGE: select this garden before exercising its content maintenance.
     const read = fs.readFile; let release, entered; const gate = new Promise(resolve => { release = resolve; }), waiting = new Promise(resolve => { entered = resolve; }); let blocked = false; // NEW
     t.mock.method(fs, 'readFile', async (...args) => { if (!blocked && String(args[0]) === result.diagramPath) { blocked = true; entered(); await gate; } return read(...args); }); // NEW
     const processing = f.service.poll(); await waiting; // NEW
@@ -245,6 +296,26 @@ test('presence sampling continues while garden processing is blocked', async t =
         for (let i = 0; i < 10 && !f.service.memberConnections().connections[device('B')]?.connected; i++) await new Promise(resolve => setImmediate(resolve)); // NEW
         assert.equal(f.service.memberConnections().connections[device('B')].connected, true); // NEW
     } finally { release(); await processing; t.mock.restoreAll(); } // NEW
+}); // NEW
+
+test('startup leaves an unchanged unopened garden deferred until it is selected', async t => { // NEW
+    const timings = [], f = await fixture(t, 'A', { onCollaborationTiming: sample => timings.push(sample) }), { result } = await setup(f); // NEW
+    await f.service.stop(); await f.service.start(); timings.length = 0; await f.service.poll(); // NEW
+    assert.equal(f.service.isProjectReady(result.shareId), false); assert.equal(timings.some(sample => sample.phase === 'read'), false); // NEW
+    await Promise.all([f.service.prepareCanvas({ shareId: result.shareId }), f.service.prepareCanvas({ shareId: result.shareId })]); // NEW
+    assert.equal(f.service.isProjectReady(result.shareId), true); assert.equal(f.service.listStatus()[0].verification.state, 'ready'); // NEW
+    assert.equal(timings.filter(sample => sample.phase === 'read').length, 1); // NEW
+}); // NEW
+
+test('an incoming accepted head prepares an unopened garden and catches up its projection', async t => { // NEW
+    const f = await fixture(t), { result } = await setup(f); await f.service.stop(); await f.service.start(); // NEW
+    const profile = path.join(f.userDataPath, 'trellis-sharing'), canvas = JSON.parse(await fs.readFile(path.join(profile, 'canvases.json'), 'utf8'))[0], keys = JSON.parse(await fs.readFile(path.join(profile, 'signing-key.json'), 'utf8')); // NEW
+    const writeAtomic = async (filename, value) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename + '.test-tmp', value); await fs.rename(filename + '.test-tmp', filename); }; // NEW
+    const writeImmutable = async (filename, value) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename, JSON.stringify(value), { flag: 'wx' }); }; // NEW
+    const writer = createCurrentStateStore({ canvas, deviceId: canvas.localDeviceId, keys, profile: path.join(f.root, 'remote-position'), writeAtomic, writeImmutable }); // NEW
+    const { diffObjects } = await import('../src/main/trellis-collaboration-protocol.js'); const state = await writer.read(), changed = state.xml.replace('label="Board"', 'label="Incoming accepted edit"'); // NEW
+    await writer.append({ userId: 'admin', sessionId: 'remote' }, 'save', diffObjects(state.xml, changed)); await f.service.poll(); // NEW
+    assert.equal(f.service.isProjectReady(result.shareId), true); assert.match(await fs.readFile(canvas.diagramPath, 'utf8'), /Incoming accepted edit/); // NEW
 }); // NEW
 
 test('v3 setup isolates records, keeps a backup, and permits local saving after transport stops', async t => { // CHANGE

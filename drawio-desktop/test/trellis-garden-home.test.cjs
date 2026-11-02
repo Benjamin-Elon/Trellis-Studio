@@ -400,6 +400,37 @@ test('unsaved navigation cancellation leaves draft and document untouched', asyn
     assert.equal(await f.window.TrellisGardenHome.openPath(f.ui, 'garden.drawio'), false);
     assert.deepEqual(f.calls, []);
 });
+test('Browse opening failures show an error dialog and restore focus without replacing library state', async () => { // NEW
+    for (const failure of [new Error('File not found'), new Error('Permission denied'), 'Read failed', null, {}]) { // NEW
+        const f = fixture(), previous = { isModified: () => false }; f.setCurrent(previous); // NEW
+        f.window.electron = { request(_payload, success) { success(['/chosen.drawio']); } }; // NEW
+        f.ui.readGraphFile = (_success, reject) => reject(failure); // NEW
+        let notification; f.ui.handleError = (error, title, onClose, invokeOnClose) => { notification = { error, title, onClose, invokeOnClose }; }; // NEW
+        f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // NEW
+        const state = f.ui.__trellisGardenHome, library = state.projectsRoot, browse = [...library.querySelectorAll('button')].find(button => button.textContent === 'Browse files…'); // NEW
+        state.searchControl.value = 'keep this search'; state.searchControl.dispatchEvent(new f.window.Event('input')); state.projectsBody.scrollTop = 150; // NEW
+        browse.click(); await tick(); // NEW
+        assert.equal(notification.title, 'Couldn’t open this file'); assert.equal(notification.invokeOnClose, true); // NEW
+        assert.equal(notification.error.message, failure?.message || (typeof failure === 'string' ? failure : 'The file could not be opened. Try again or choose another file.')); // NEW
+        assert.equal(f.ui.getCurrentFile(), previous); assert.equal(state.projectsRoot, library); assert.equal(library.isConnected, true); // NEW
+        notification.onClose(); await new Promise(resolve => f.window.setTimeout(resolve, 10)); // NEW
+        assert.equal(f.window.document.activeElement, browse); assert.equal(state.searchControl.value, 'keep this search'); assert.equal(state.projectsBody.scrollTop, 150); // NEW
+        f.ui.hideDialog(); notification.onClose(); await tick(); assert.equal(library.isConnected, false); // NEW: stale dismissal never reopens a closed library.
+    } // NEW
+}); // NEW
+test('Browse picker cancellation is silent and malformed page errors are visible', async () => { // NEW
+    const f = fixture(), previous = { isModified: () => false }; f.setCurrent(previous); let selected = [], reads = 0; const errors = []; // NEW
+    f.window.electron = { request(_payload, success) { success(selected); } }; // NEW
+    f.ui.handleError = (error, title) => errors.push({ error, title }); // NEW
+    f.ui.readGraphFile = success => { reads++; success({}, '<mxfile><diagram><bad/></diagram></mxfile>', {}, 'bad.drawio', false); }; // NEW
+    f.window.Editor = { parseDiagramNode: page => page.firstElementChild }; // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); // NEW
+    const library = f.ui.__trellisGardenHome.projectsRoot, browse = [...library.querySelectorAll('button')].find(button => button.textContent === 'Browse files…'); // NEW
+    browse.click(); await tick(); assert.equal(reads, 0); assert.equal(errors.length, 0); assert.equal(library.isConnected, true); // NEW
+    selected = ['/bad.drawio']; browse.click(); await tick(); // NEW
+    assert.equal(errors.length, 1); assert.equal(errors[0].title, 'Couldn’t open this file'); assert.match(errors[0].error.message, /invalid diagram page/); // NEW
+    assert.equal(f.ui.getCurrentFile(), previous); assert.equal(library.isConnected, true); // NEW
+}); // NEW
 test('creation retains the explicit reminder copy action after identity controls are replaced', async () => { // NEW
     const f = fixture(), copied = [];
     f.window.electron = { request(payload, success) { copied.push(payload); success(); } };

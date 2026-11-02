@@ -178,7 +178,7 @@ function overlayText(overlays) {
 }
 
 function getOverlayNameInput(overlay) {
-    const input = overlay.querySelector("input[aria-label='User name']");
+    const input = overlay.querySelector("input[aria-label='Bed name (optional)']"); // CHANGE
     assert.ok(input, "missing overlay bed name input");
     return input;
 }
@@ -271,10 +271,11 @@ test("bed identity dialog saves metric height and user name", () => {
     const { api, bed, ui } = loadPlugin();
     api._test.showConditionEditorDialog(bed);
 
-    assert.deepEqual(getSectionFieldLabels(ui, "Bed Identity"), ["Bed type", "Height (cm)", "User name"]);
+    assert.deepEqual(getSectionFieldLabels(ui, "Bed Identity"), ["Bed type", "Height (cm)", "Bed name (optional)"]); // CHANGE
+    assert.equal(getDialogFieldControl(ui, "Bed name (optional)").placeholder, "Name this bed…"); // NEW
     getDialogFieldControl(ui, "Bed type").value = "hugelkultur";
     getDialogFieldControl(ui, "Height (cm)").value = "60";
-    getDialogFieldControl(ui, "User name").value = "North berm";
+    getDialogFieldControl(ui, "Bed name (optional)").value = "North berm"; // CHANGE
     getDialogButton(ui, "Save").click();
 
     const stored = JSON.parse(bed.getAttribute("bed_conditions_json"));
@@ -646,6 +647,7 @@ test("selected bed overlay escape reverts and blank user names keep prefix only"
     api._test.syncSelectedBedOverlays();
     input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]);
     assert.equal(input.value, "");
+    assert.equal(input.placeholder, "Name this bed…"); // NEW
 });
 
 test("selected bed overlay position is not clamped to the viewport", () => {

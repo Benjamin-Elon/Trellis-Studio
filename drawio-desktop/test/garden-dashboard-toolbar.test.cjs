@@ -343,7 +343,7 @@ test("garden dashboard toolbar controls use module scoped plugin contracts", () 
     assert.match(text, /window\.dispatchEvent\(new CustomEvent\(PLAN_YEAR_EVENT, \{ detail: \{ moduleCellId: cellId\(activeToolbarModule\), year \} \}\)\)/);
     assert.match(text, /window\.dispatchEvent\(new CustomEvent\(ALLOCATE_PLAN_EVENT, \{ detail: \{ moduleCellId: cellId\(activeToolbarModule\), year \} \}\)\)/);
     assert.doesNotMatch(text, /dashCellId/);
-    assert.match(text, /equipmentApi\.openDialog\(activeToolbarModule\)/);
+    assert.match(text, /TrellisInventories\?\.showMenu\(equipmentBtn, \{ ui, garden: activeToolbarModule \}\)/); // CHANGE
     assert.match(text, /plannerApi\.openIrrigationMode\(moduleCell, \{ preserveViewport: true \}\);/);
     assert.match(text, /downloadCsv\(`\$\{safeName\}_\$\{year\}_dashboard\.csv`, buildDashboardCsvSingleTable\(metrics, year\)\);/);
 });
@@ -481,6 +481,8 @@ test("garden dashboard picker selection and no-garden create path select and zoo
     assert.match(text, /- moduleBounds\.height \/ 2/);
     assert.match(text, /modules\.createModuleAtPoint\(visibleViewportGardenInsertPoint\(\), "garden"\)/);
     assert.match(text, /entry\.createGardenBtn\.style\.display = candidates\.length \? "none" : "inline-block";/);
+    assert.ok(text.includes('createToolbarButton("Create a new garden", "Create a garden with companion team, task, and roadmap workspaces.", "add")')); // NEW
+    assert.ok(text.includes('setButtonDisabled(entry.createGardenBtn, false, "Create a garden with companion team, task, and roadmap workspaces.")')); // NEW: refreshing the toolbar must preserve the creation tooltip.
 });
 
 test("garden dashboard startup focuses sole garden only once", () => {

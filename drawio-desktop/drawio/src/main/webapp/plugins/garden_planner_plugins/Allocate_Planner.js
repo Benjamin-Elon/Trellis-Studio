@@ -1278,6 +1278,7 @@ Draw.loadPlugin(function (ui) {
 
         function beginBackgroundStateRefresh(state, options = {}) {
             if (!state || state.closed) return;
+            state.yearPlanActionAvailable = false; // CHANGE: hide plan navigation while its status is being reloaded.
             const previousCropId = String(options.previousCropId || state.selectedCropId || "");
             cancelDeferred(state.refreshTimer);
             state.scheduleProgress = createScheduleProgress("refreshing", state.scheduleRows && state.scheduleRows.length || 0);
@@ -1380,6 +1381,7 @@ Draw.loadPlugin(function (ui) {
 
         function scheduleStateRefresh(state) {
             if (!state || state.closed) return;
+            state.yearPlanActionAvailable = false; // CHANGE: a pending reload must not expose a stale empty-plan action.
             cancelSowWeekScheduleJob(state, "cancelled");
             const refreshId = (Number(state.refreshJobId) || 0) + 1;
             state.refreshJobId = refreshId;
@@ -1438,6 +1440,7 @@ Draw.loadPlugin(function (ui) {
                 year: Number(year),
                 ownerId,
                 plan: null,
+                yearPlanActionAvailable: false, // CHANGE: explicit plan status controls navigation independently of message wording.
                 coverage: null,
                 city: null,
                 beds: [], bedResults: new Map(), // CHANGE
@@ -1486,6 +1489,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         async function loadState(state) {
+            state.yearPlanActionAvailable = false; // CHANGE: prerequisite failures cannot inherit an earlier plan action.
             const loadRevision = state.refreshJobId; // CHANGE: a history reset invalidates pending climate resolution.
             const planning = window.USL && window.USL.planningCore;
             const scheduler = schedulerForCrop(state, state.plan?.crops?.find(crop => String(crop.id) === String(state.selectedCropId))); // CHANGE
@@ -1507,6 +1511,7 @@ Draw.loadPlugin(function (ui) {
             state.city = cityResult.city;
             state.plan = planning.loadPlanForYear(state.moduleCell, state.year);
             if (!state.plan) {
+                state.yearPlanActionAvailable = true; // CHANGE: offer creation of the missing plan for this garden and year.
                 state.message = "No saved Year Plan for " + state.year + ".";
                 return;
             }
@@ -1535,7 +1540,9 @@ Draw.loadPlugin(function (ui) {
             state.opportunityModel = buildSowWeekOpportunityModel(state, state.weekIndex);
             if (!state.awaitingBedSelection && state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = ""; // CHANGE: history choices are validated when the full opportunity scan finishes.
             state.noticeMessage = state.awaitingBedSelection ? "Choose a bed to preview another planting." : ""; // CHANGE
-            if (state.coverage.totals.targetKg <= EPS) state.message = "No demand to allocate.";
+            state.yearPlanActionAvailable = !(state.plan.crops || []).length || state.coverage.totals.targetKg <= EPS || state.coverage.totals.shortKg <= EPS; // CHANGE: distinguish plan navigation eligibility from unrelated errors.
+            if (!(state.plan.crops || []).length) state.message = "No crops in the Year Plan."; // CHANGE: explain the missing prerequisite directly.
+            else if (state.coverage.totals.targetKg <= EPS) state.message = "No demand to allocate."; // CHANGE
             else if (state.coverage.totals.shortKg <= EPS) state.message = "The plan is covered.";
             else {
                 state.message = "";
@@ -1695,6 +1702,13 @@ Draw.loadPlugin(function (ui) {
             status.style.cssText = "line-height:1.35;color:#374151;";
             panel.appendChild(status);
 
+            const openYearPlan = createButton("Open Year Plan", "open"); // CHANGE: keep navigation outside the hidden allocation controls.
+            openYearPlan.addEventListener("click", () => { // CHANGE
+                if (state.closed || !state.yearPlanActionAvailable) return; // CHANGE: ignore stale actions during reload or after cleanup.
+                window.dispatchEvent(new CustomEvent("usl:planYearRequested", { detail: { moduleCellId: cellId(state.moduleCell), year: state.year, returnToAllocate: true } })); // CHANGE: Year Plan owns Allocate cleanup and the optional return session.
+            }); // CHANGE
+            panel.appendChild(openYearPlan); // CHANGE
+
             const progress = document.createElement("div");
             progress.style.cssText = "font-size:11px;line-height:1.3;color:#4b5563;";
             panel.appendChild(progress);
@@ -1761,7 +1775,7 @@ Draw.loadPlugin(function (ui) {
 
             panel.dataset.quickstartSurface = 'allocation'; panel.dataset.quickstartGarden = cellId(state.moduleCell); panel.dataset.quickstartYear = String(state.year); // NEW
             for (const [key, node] of Object.entries({ 'allocation-week': weekSelect, 'allocation-crop': cropSelect, 'allocation-bed': findBest, 'allocation-defaults': defaultsBox, 'allocation-preview': draftBox, 'allocation-create': create, 'mode-close': closeBtn })) node.setAttribute('data-trellis-quickstart', key); // NEW
-            state.hudRefs = { title, status, progress, weekRow, prev, weekSelect, next, unresolvedBox, cropSelect, draftBox, defaultsBox, actions, findBest, rotate, create, companion }; // CHANGE
+            state.hudRefs = { title, status, openYearPlan, progress, weekRow, prev, weekSelect, next, unresolvedBox, cropSelect, draftBox, defaultsBox, actions, findBest, rotate, create, companion }; // CHANGE
             return state.hudRefs;
         }
 
@@ -1780,6 +1794,7 @@ Draw.loadPlugin(function (ui) {
             if (state.message) refs.status.textContent = state.message;
             else if (state.coverage && state.coverage.totals) refs.status.textContent = formatKg(state.coverage.totals.shortKg) + " unmet of " + formatKg(state.coverage.totals.targetKg) + " demand" + (state.noticeMessage ? " - " + state.noticeMessage : "");
             else refs.status.textContent = "Loading Allocate...";
+            showHudNode(refs.openYearPlan, !!state.yearPlanActionAvailable); // CHANGE: missing, empty, zero-demand, and covered plans provide a next step.
 
             refs.progress.textContent = progressText;
             showHudNode(refs.progress, !!progressText);

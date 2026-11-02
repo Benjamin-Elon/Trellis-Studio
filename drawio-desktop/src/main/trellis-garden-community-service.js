@@ -6,7 +6,7 @@ import { REVISION, listBounded, readJson as readBoundedJson, readBounded, parseJ
 import fs from 'node:fs/promises'; // NEW
 import path from 'node:path'; // NEW
 import { EventEmitter } from 'node:events'; // NEW
-import { safeId, makeId, canonical, digest, verifyRecord } from './trellis-share-protocol.js'; // NEW
+import { SYNC_PROTOCOL, safeId, makeId, canonical, digest, verifyRecord } from './trellis-share-protocol.js'; // NEW
 import { COMMUNITY_VERSION, COMMUNITY_PRESETS, communityHash, communityText, reduceCommunity, verifyGardenEvidence, evidenceSigner } from './trellis-community-protocol.js'; // NEW
 import { projectPeople } from './trellis-project-people.js'; // NEW
 import { nearestDistance } from './trellis-project-summary.js'; // NEW
@@ -32,7 +32,7 @@ export function createGardenCommunityService({ identities, library }) { // NEW
     const directory = (identityId, id) => path.join(identities.identityRoot(identityId), 'community-data', safeId(id)); // NEW
     const requestDirectory = (identityId, id) => path.join(identities.identityRoot(identityId), 'community-requests', safeId(id)); // NEW
     const privateArea = identityId => path.join(identities.identityRoot(identityId), 'community-local'); // NEW
-    async function own() { await identities.requireSession(); const session = identities.session(); if (!session) throw new Error('Log in before using garden communities.'); return session; } // NEW
+    async function own() { SYNC_PROTOCOL.requireCapability('communities'); await identities.requireSession(); const session = identities.session(); if (!session) throw new Error('Log in before using garden communities.'); return session; } // NEW
     const endpointDevices = endpoints => [...new Set(endpoints.map(e => e.payload.deviceId))]; // NEW
     async function registrations(identityId) { // NEW
         const errors = [], all = await library.verifiedRecords(identityId, path.join(identities.metadataRoot(identityId), 'community-registrations'), errors); // NEW
@@ -89,7 +89,7 @@ export function createGardenCommunityService({ identities, library }) { // NEW
     } // NEW
     async function source(identityId, diagramId, admin = false) { // NEW
         const located = await library.communitySource(identityId, diagramId); if (!located) throw new Error('Choose a garden in your library.'); // NEW
-        if (located.entry.protocolVersion !== 3) throw new Error('Unsupported Trellis sharing protocol. Only version 3 gardens are supported.'); // CHANGE
+        if (located.entry.protocolVersion !== SYNC_PROTOCOL.garden) throw new Error('Unsupported Trellis sharing protocol. Only version 4 gardens are supported.'); // CHANGE
         const daemon = await identities.transport(identityId); // NEW
         if (located.daemon !== daemon) throw new Error('Download the identity-managed garden copy before using communities.'); // NEW
         const info = await daemon.communities.garden({ shareId: located.entry.shareId, identityId }); // NEW
@@ -151,6 +151,7 @@ export function createGardenCommunityService({ identities, library }) { // NEW
 
     /** Registrations may outlive membership, but directory transport and UI eligibility may not. */ // NEW
     async function refreshInternal(identityId) { // NEW
+        if (!SYNC_PROTOCOL.capabilities.communities) return; // NEW: keep retained communities inactive without reading their journals.
         const daemon = await identities.transport(identityId), errors = []; // NEW
         for (const entry of await library.catalog(identityId, errors)) { // NEW
             try { // NEW
@@ -393,11 +394,12 @@ export function createGardenCommunityService({ identities, library }) { // NEW
         return { ok: true, requests }; // NEW
     } // NEW
     /** Browsing reads verified completed state without waiting behind background mutations. */ // NEW
-    async function listRequests() { const session = await own(), result = await listRequestsInternal(session.identityId); assertLogin(session); return result; } // CHANGE
+    async function listRequests() { if (!SYNC_PROTOCOL.capabilities.communities) return { ok: true, requests: [], inactive: true }; const session = await own(), result = await listRequestsInternal(session.identityId); assertLogin(session); return result; } // CHANGE
     const loginKey = session => session ? session.identityId + ':' + session.generation : ''; // CHANGE
     function assertLogin(session) { if (loginKey(identities.session()) !== loginKey(session)) throw new Error('The active identity changed while loading garden metadata.'); } // CHANGE
     /** Window renderers own display snapshots; each explicit browse reads current verified state. */ // CHANGE
     async function list(input = {}) { // CHANGE
+        if (!SYNC_PROTOCOL.capabilities.communities) return { ok: true, communities: [], inactive: true, reason: 'Local only · Re-creation required. Community synchronization awaits coordinator qualification.', errors: [] }; // NEW
         const scope = input.scope; if (scope !== undefined && !['accessible', 'discovery'].includes(scope)) throw new Error('Unsupported garden community browsing scope.'); // CHANGE
         return readListing(await own(), scope); // CHANGE
     } // CHANGE

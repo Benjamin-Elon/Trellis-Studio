@@ -766,7 +766,7 @@ var SplashDialog = function(editorUi)
 			} // NEW
 		} // NEW
 
-		function renderSaved() // NEW
+		function renderSaved(restored) // CHANGE
 		{ // NEW
 			center.innerHTML = ''; // NEW
 			writeHeader(); // CHANGE
@@ -796,7 +796,7 @@ var SplashDialog = function(editorUi)
 			status.style.cssText = 'margin-top:8px;color:#5f6a5f;font-size:12px;text-align:center;'; // NEW
 			trellisExitStatus = status; // CHANGE
 			center.appendChild(status); // NEW
-			scheduleTrellisActionReveal(status); // CHANGE
+			if (restored) revealTrellisActions(status); else scheduleTrellisActionReveal(status); // CHANGE: completed onboarding does not delay returning users' Home controls.
 		} // NEW
 
 		function renderIntro() // NEW
@@ -1230,7 +1230,7 @@ var SplashDialog = function(editorUi)
 
 		if (trellisSavedWizard != null) // NEW
 		{ // NEW
-			renderSaved(); // NEW
+			renderSaved(true); // CHANGE
 		} // NEW
 		else // NEW
 		{ // NEW

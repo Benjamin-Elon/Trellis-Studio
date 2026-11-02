@@ -2740,3 +2740,34 @@ test('retained delivery rejects rotated or revoked invitations before launch or 
     assert.equal(h.copies.length, 0); assert.equal(h.preview().value, ''); assert.equal(h.button('Copy Invitation').disabled, true); // NEW
     assert.match(h.status(), /rotated/); // NEW
 }); // NEW
+
+/** Seed accounting uses the same native undo edit as the task state. */ // NEW
+test('native sowing completion, correction and reopen update the garden balance before save', () => { // NEW
+    const h = loadUsersPlugin(), users = h.context.window.Trellis.users; users.enableUsers('Alice', '1234'); // NEW
+    vm.runInNewContext(fs.readFileSync(path.join(projectRoot, 'drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_Seeds_Core.js'), 'utf8'), h.context); // NEW
+    const S = h.context.window.TrellisSeedsCore, actor = users.getCurrentUser().id; // NEW
+    h.context.mxValueChange = class mxValueChange { // NEW
+        constructor(model, cell, value) { this.model = model; this.cell = cell; this.value = value; this.previous = value; } // NEW
+        execute() { const previous = this.cell.value; this.cell.value = this.previous; this.previous = previous; } // NEW
+    }; // NEW
+    h.module.setAttribute('garden_module', '1'); h.module.setAttribute('trellis_owner_user_id', actor); // NEW
+    const refs = { current: 'manifest', bindings: { tomato: { table: 'Plants', key: { plant_id: 1 } } }, manifests: { manifest: { heads: { tomato: 'revision' } } } }; // NEW
+    h.module.setAttribute('trellis_references_json', JSON.stringify(refs)); // NEW
+    h.module.setAttribute('plan_year_json', JSON.stringify({ 2026: { crops: [{ plantId: '1', germRate: 0.8 }] } })); // NEW
+    h.module.setAttribute(S.ATTR, JSON.stringify(S.normalize({ version: 1, initialized: true, items: [{ cropRef: 'tomato', seeds: 100 }] }))); // NEW
+    const planting = appendChild(h.module, makeXmlCell(h.document, 'seed-planting', { plant_id: '1', plant_count: '16', sow_date: '2026-06-01', tiler_group: '1', trellis_owner_user_id: actor })); // NEW
+    h.card.setAttribute('kanban_card', '1'); h.card.setAttribute('task_type_id', 'direct_sowing'); h.card.setAttribute('scheduler_task_key', 'sow::0'); h.card.setAttribute('linkedTo', planting.id); // NEW
+    function patch(attributes) { // NEW
+        const previous = h.card.value.cloneNode(true); // NEW
+        for (const [name, value] of Object.entries(attributes)) if (value == null) h.card.removeAttribute(name); else h.card.setAttribute(name, value); // NEW
+        const change = { constructor: { name: 'mxValueChange' }, cell: h.card, previous, value: h.card.value }; // NEW
+        const edit = { changes: [change], add(value) { this.changes.push(value); }, undo() { this.rejected = true; } }; // NEW
+        h.model.fireChange(edit); assert.equal(edit.rejected, undefined, edit.__trellisUsersRejectedReason); return edit; // NEW
+    } // NEW
+    const completion = patch({ completed: '2026-06-01', workflow_state: 'DONE' }); // NEW
+    assert.equal(S.normalize(h.module.getAttribute(S.ATTR)).items[0].seeds, 80); // NEW
+    assert.equal(completion.changes.some(change => change.cell === h.module), true); // NEW
+    patch({ trellis_seed_quantity: '25' }); assert.equal(S.normalize(h.module.getAttribute(S.ATTR)).items[0].seeds, 75); // NEW
+    patch({ completed: null, workflow_state: 'TODO' }); assert.equal(S.normalize(h.module.getAttribute(S.ATTR)).items[0].seeds, 100); // NEW
+    patch({ completed: '2026-06-01', workflow_state: 'DONE' }); assert.equal(S.normalize(h.module.getAttribute(S.ATTR)).items[0].seeds, 75); // NEW
+}); // NEW

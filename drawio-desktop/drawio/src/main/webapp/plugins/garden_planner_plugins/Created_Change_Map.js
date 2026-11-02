@@ -1108,11 +1108,12 @@ Draw.loadPlugin(function (ui) {
 
   // -------------------- Timestamp stamping --------------------
 
-  function stampTimeIntoEdit(cell, key, timestamp, edit) { // NEW: timestamps undo together with the content and actor stamps.
+  function stampAttributeIntoEdit(cell, key, value, edit) { // CHANGE: attribution metadata undoes together with content and actor stamps.
     const before = cell.value && cell.value.cloneNode ? cell.value.cloneNode(true) : cell.value;
     const node = cell.value && cell.value.cloneNode ? cell.value.cloneNode(true) : mxUtils.createXmlDocument().createElement('object');
     if (!cell.value?.cloneNode && cell.value != null) node.setAttribute('label', String(cell.value));
-    node.setAttribute(key, String(timestamp)); cell.value = node;
+    if (value == null) node.removeAttribute(key); else node.setAttribute(key, String(value)); // CHANGE: removing starter suppression shares the timestamp undo boundary.
+    cell.value = node; // CHANGE
     if (edit && Array.isArray(edit.changes)) {
       const change = { cell, previous: before, __trellisUsersActorStamp: true, execute() { const next = this.cell.value; this.cell.value = this.previous; this.previous = next; } };
       if (typeof edit.add === 'function') edit.add(change); else edit.changes.push(change);
@@ -1121,12 +1122,12 @@ Draw.loadPlugin(function (ui) {
 
   function stampCreatedIfMissing(cell, tNow, edit) {
     if (!shouldStyleCell(cell) || editContext?.recreated.has(cell)) return; // CHANGE
-    if (getAttrMs(cell, ATTR_CREATED) == null) { stampTimeIntoEdit(cell, ATTR_CREATED, tNow, edit); stampActor(cell, 'created', edit); } // CHANGE
+    if (getAttrMs(cell, ATTR_CREATED) == null) { stampAttributeIntoEdit(cell, ATTR_CREATED, tNow, edit); stampActor(cell, 'created', edit); } // CHANGE
   }
 
   function stampEdited(cell, tNow, edit) {
     if (!shouldStyleCell(cell)) return;
-    stampTimeIntoEdit(cell, ATTR_EDITED, tNow, edit); // CHANGE
+    stampAttributeIntoEdit(cell, ATTR_EDITED, tNow, edit); // CHANGE
     stampActor(cell, 'edited', edit);
   }
 
@@ -1134,6 +1135,7 @@ Draw.loadPlugin(function (ui) {
     const changes = (edit && edit.changes) || [];
     const inserted = new Set(changes.filter(change => change.constructor?.name === 'mxChildChange' && change.parent && !change.previous).map(change => change.child || change.cell)); // NEW
     const touched = new Map();
+    const manuallyEdited = new Set(); // NEW: generated updates may advance facts without enabling starter badges.
     const tNow = nowMs();
     let did = false;
 
@@ -1147,6 +1149,7 @@ Draw.loadPlugin(function (ui) {
       if (shouldIgnoreBecauseInTilerGroup(cell)) continue;
 
       touched.set(cell.id, cell);
+      if (!editContext || editContext.kindOf(ch) === 'manual') manuallyEdited.add(cell); // NEW
     }
 
     if (touched.size === 0) return false;
@@ -1154,6 +1157,7 @@ Draw.loadPlugin(function (ui) {
     model.beginUpdate();
     try {
       for (const cell of touched.values()) {
+        if (manuallyEdited.has(cell) && getAttrStr(cell, 'trellis_starter_attribution_pending') === '1') stampAttributeIntoEdit(cell, 'trellis_starter_attribution_pending', null, edit); // NEW: Undo/Redo and rejection restore eligibility with the actual edit.
         stampEdited(cell, tNow, edit);
         did = true;
       }
@@ -1189,7 +1193,7 @@ Draw.loadPlugin(function (ui) {
         if (!isAttach) continue;
 
         if (!editContext?.recreated.has(child) && getAttrMs(child, ATTR_CREATED) == null) { // CHANGE
-          stampTimeIntoEdit(child, ATTR_CREATED, tNow, edit); // CHANGE
+          stampAttributeIntoEdit(child, ATTR_CREATED, tNow, edit); // CHANGE
           stampActor(child, 'created', edit);
           did = true;
         }

@@ -561,7 +561,7 @@ test("New oath records require a complete email without invalidating legacy reco
     assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
 });
 
-test("Saved wizard records show summary, contact guidance, Change license, and delayed actions", () => {
+test("Saved wizard records show summary, contact guidance, Change license, and immediately usable actions", () => { // CHANGE
     const savedRecord = {
         path: "unsure",
         contactGuidance: true,
@@ -588,13 +588,10 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
     assert.doesNotMatch(dialog.container.textContent, /License oath completed/);
     assert.doesNotMatch(dialog.container.textContent, /Diagram options are ready/);
     const status = dialog.container.querySelector(".trellis-license-status");
-    assert.equal(status.textContent, "Diagram options will be ready shortly.");
-    assert.equal(status.style.display, "");
+    assert.equal(status.textContent, ""); // CHANGE
+    assert.equal(status.style.display, "none"); // CHANGE
     assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
-    assert.equal(actions.style.display, "none");
-    assert.equal(timers[0].delay, 2000);
-
-    timers[0].callback();
+    assert.equal(timers.length, 0); // CHANGE: restoring completed onboarding schedules no artificial delay.
     assert.equal(actions.style.display, "");
     assert.equal(status.style.display, "none");
     assert.equal(status.textContent, "");

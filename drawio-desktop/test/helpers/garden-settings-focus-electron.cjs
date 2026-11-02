@@ -102,7 +102,7 @@ async function initialize() { // NEW
     await until('document.hasFocus()', 'initial surface activation'); // NEW
 } // NEW
 
-/** Exercise the actual Add Garden Module overlay, with existing clusters left intact. */ // NEW
+/** Exercise the actual garden creation overlay, with existing clusters left intact. */ // CHANGE
 async function createGarden(pass, delayed) { // NEW
     stage = 'create garden ' + pass; holdCities = delayed; // NEW
     await run(`while(focusUi.dialogs?.length)focusUi.hideDialog();graph.view.setScale(1);const bounds=graph.getGraphBounds();const right=(bounds.x+bounds.width)/graph.view.scale-graph.view.translate.x;graph.view.setTranslate(-(right+1000),0);graph.container.scrollLeft=0;graph.container.scrollTop=0;graph.view.validate();void 0;`); // CHANGE: choose actual empty canvas beyond current content instead of assuming every module is narrower than 5,000 pixels.
@@ -110,7 +110,7 @@ async function createGarden(pass, delayed) { // NEW
     const point = await run('(()=>{const rect=graph.container.getBoundingClientRect();for(const y of [250,350,450])for(const x of [180,380,580]){const hit=document.elementFromPoint(rect.left+x,rect.top+y);if(hit&&graph.container.contains(hit)&&!graph.getCellAt(x+graph.container.scrollLeft,y+graph.container.scrollTop))return{x:Math.round(rect.left+x),y:Math.round(rect.top+y)};}throw Error("No unobstructed empty canvas point");})()'); // CHANGE: the dashboard must not intercept the fixture gesture.
     for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, ...point, button: 'left', clickCount: 1 }); // NEW
     await until('!!document.querySelector(".trellis-root-module-overlay") && getComputedStyle(document.querySelector(".trellis-root-module-overlay")).display!=="none"', 'creation controls'); // NEW
-    await click(await markButton('Add Garden Module', 'create-' + pass, false)); // NEW
+    await click(await markButton('Create a new garden', 'create-' + pass, false)); // CHANGE
     if (delayed) { // NEW
         const deadline = Date.now() + 10000; while (!heldQuery && Date.now() < deadline) await delay(20); // NEW
         assert.ok(heldQuery, 'the real city request must reach the held database boundary'); // NEW

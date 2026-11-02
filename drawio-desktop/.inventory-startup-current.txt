@@ -1,0 +1,31 @@
+✔ fresh Electron settings use Trellis startup defaults (10.2107ms)
+✔ empty stored plugin settings are normalized to the full Trellis default set (3.3903ms)
+✔ non-empty stored plugin settings are preserved (3.8728ms)
+✔ old editor autosave transition no longer forces Trellis autosave off (3.2558ms)
+✔ Trellis splash is not suppressed by stored false Electron preference (2.0631ms)
+✔ Trellis plugin defaults stay aligned across source and bundled runtime (779.406ms)
+✔ new blank diagram runtime flag is carried through fileLoaded (305.7547ms)
+✔ desktop startup migrates saved profiles to object details once and loads its script (268.784ms)
+✔ App.js actual registry, public list, and defaults register Roadmap dependencies (17.7319ms)
+✔ App.js waits for Core completion, deduplicates requests, and retries failures (24.5079ms)
+✔ app.min.js actual registry, public list, and defaults register Roadmap dependencies (111.5333ms)
+✔ app.min.js waits for Core completion, deduplicates requests, and retries failures (387.9405ms)
+✔ integrate.min.js actual registry, public list, and defaults register Roadmap dependencies (177.7703ms)
+✔ integrate.min.js waits for Core completion, deduplicates requests, and retries failures (896.2143ms)
+✔ App.js canonical and legacy planting plugins normalize and load once (6.2599ms)
+✔ app.min.js canonical and legacy planting plugins normalize and load once (91.9899ms)
+✔ integrate.min.js canonical and legacy planting plugins normalize and load once (209.0368ms)
+✔ App.js desktop roadmap URLs include the separator and share stored-plugin keys (18.6567ms)
+✔ app.min.js desktop roadmap URLs include the separator and share stored-plugin keys (99.4686ms)
+✔ integrate.min.js desktop roadmap URLs include the separator and share stored-plugin keys (188.9625ms)
+✔ App.js inventory consumers wait for shared cores, deduplicate, and retry failed loads (62.6634ms)
+✔ app.min.js inventory consumers wait for shared cores, deduplicate, and retry failed loads (125.306ms)
+✔ integrate.min.js inventory consumers wait for shared cores, deduplicate, and retry failed loads (221.726ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4231.5948

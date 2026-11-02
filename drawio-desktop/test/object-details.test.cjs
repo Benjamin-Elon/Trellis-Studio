@@ -2,6 +2,15 @@
 const assert = require('node:assert/strict'); // NEW
 const test = require('node:test'); // NEW
 const harness = require('./helpers/object-details-harness.cjs'); // NEW
+test('frozen details retain original text through reconciliation, serialization, undo and unrelated edits', async t => { // CHANGE
+    const h = harness(t), cell = h.vertex('held', '<p>Accepted</p>'), other = h.vertex('other', '<p>Other</p>'); h.controller.open(cell); h.type(cell, '<p>Unfinished private text</p>'); // CHANGE
+    const field = h.input(cell), items = h.controller.freezeHolds(['["page-a","held"]'], 'Access changed'); assert.equal(items.length, 1); assert.equal(items[0].draft.html, '<p>Unfinished private text</p>'); // CHANGE
+    assert.equal(h.controller.flush(), true); assert.equal(cell.getAttribute('trellis_details_html'), '<p>Accepted</p>'); // CHANGE
+    h.graph.__trellisSharingApplying = true; const accepted = cell.value.cloneNode(true); accepted.setAttribute('trellis_details_html', '<p>Changed elsewhere</p>'); h.graph.model.setValue(cell, accepted); h.graph.__trellisSharingApplying = false; h.ui.editor.fireEvent(new h.w.mxEventObject(h.w.mxEvent.UNDO)); h.controller.refresh(); // CHANGE
+    assert.equal(h.input(cell), field); assert.equal(field.innerHTML, '<p>Unfinished private text</p>'); assert.equal(field.contentEditable, 'false'); assert.ok(h.ui.getFileData().includes('Changed elsewhere')); assert.ok(!h.ui.getFileData().includes('Unfinished private text')); // CHANGE
+    h.controller.open(other); h.type(other, '<p>Unrelated change</p>'); h.controller.flush(); assert.equal(other.getAttribute('trellis_details_html'), '<p>Unrelated change</p>'); // CHANGE
+    items[0].element.querySelector('[aria-label="Close retained details"]').click(); assert.equal(items[0].element.isConnected, false); assert.equal(cell.getAttribute('trellis_details_html'), '<p>Changed elsewhere</p>'); // CHANGE
+}); // CHANGE
 
 /** Supply real-world layout outcomes explicitly; JSDOM has neither rendered boxes nor a native ResizeObserver. */ // NEW
 async function resizedPanel(t) { // NEW

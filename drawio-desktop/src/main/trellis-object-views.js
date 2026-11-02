@@ -3,7 +3,7 @@ import { readJson as readBoundedJson, readBounded, LIMITS } from './trellis-inpu
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { XMLSerializer } from '@xmldom/xmldom';
-import { applyChanges, diffObjects, objects, targetsForChange, objectContentHash, envelope } from './trellis-collaboration-protocol.js'; // CHANGE
+import { applyChanges, diffObjects, objects, targetsForChange, objectContentHash, envelope, documentContentHash } from './trellis-collaboration-protocol.js'; // CHANGE
 import { canonical, digest, inspectDiagram, makeId } from './trellis-share-protocol.js';
 
 const serialize = node => new XMLSerializer().serializeToString(node);
@@ -31,7 +31,7 @@ export function incomingGroups(viewXml, state, indexes) { // CHANGE
     const before = indexes?.before || objects(viewXml), after = indexes?.after || objects(state.xml); // CHANGE
     if (delta.changes[0].key === '*') return [{ id: '*', keys: [...new Set([...before.keys(), ...after.keys()])], targets: ['*'], changes: delta.changes, structural: true }];
     const pending = new Map(delta.changes.map(change => [change.key, change]));
-    const nodes = new Map(delta.changes.map(change => [change.key, { parent: change.key, targets: new Set(targetsForChange(before, after, change.key)) }])); // CHANGE
+    const nodes = new Map(delta.changes.map(change => [change.key, { parent: change.key, targets: new Set(targetsForChange(before, after, change.key, true)) }])); // CHANGE: new logical parents and linked sources participate before their first acceptance.
     function find(key) { let cursor = key; while (nodes.get(cursor).parent !== cursor) cursor = nodes.get(cursor).parent; while (key !== cursor) { const next = nodes.get(key).parent; nodes.get(key).parent = cursor; key = next; } return cursor; } // NEW
     function join(a, b) { a = find(a); b = find(b); if (a !== b) nodes.get(b).parent = a; } // NEW
     const accepted = new Set(state.accepted || []);
@@ -44,6 +44,7 @@ export function incomingGroups(viewXml, state, indexes) { // CHANGE
     }
     const targetOwner = new Map(), groups = new Map(); // CHANGE
     for (const [key, node] of nodes) for (const target of node.targets) { // NEW: union by dependency avoids pairwise group comparisons.
+        if (nodes.has(target)) join(key, target); // CHANGE: a newly created dependency belongs to the same transaction even when its own lock is its existing parent.
         if (targetOwner.has(target)) join(key, targetOwner.get(target)); else targetOwner.set(target, key);
     }
     for (const [key, node] of nodes) { const id = find(key), group = groups.get(id) || { keys: [], targets: new Set() }; group.keys.push(key); for (const target of node.targets) group.targets.add(target); groups.set(id, group); } // NEW
@@ -146,6 +147,25 @@ export function createObjectViews({ profile, canvas, writeAtomic, now = Date.now
         view.xml = capturedXml;
     }
 
+    /** Complete an interrupted accepted save without regressing another window's newer checkpoint. */ // NEW
+    async function accepted(actor, changes, state, capturedBaseXml) { // CHANGE
+        const view = await open(actor, state), record = await load(actor.userId, view.xml); // NEW
+        function reconcile(xml) { // NEW
+            const index = objects(xml); // NEW
+            if (changes.some(change => change.key === '*')) { // CHANGE
+                if (!capturedBaseXml) return null; // NEW
+                const target = applyChanges(capturedBaseXml, changes), currentHash = documentContentHash(xml); // NEW
+                return currentHash === documentContentHash(target) ? xml : currentHash === documentContentHash(capturedBaseXml) ? target : null; // NEW: a structural receipt cannot replace a newer page structure.
+            } // NEW
+            const pending = changes.filter(change => index.get(change.key)?.hash !== (change.xml ? objectContentHash(change.xml) : undefined)); // NEW
+            if (pending.some(change => (index.get(change.key)?.hash || null) !== change.before)) return null; // NEW: preserve divergent or newer content as one dependency-complete capture.
+            return pending.length ? applyChanges(xml, pending) : xml; // NEW
+        } // NEW
+        const rememberedXml = reconcile(record.xml); // NEW
+        if (rememberedXml !== null && rememberedXml !== record.xml) await remember(actor, record.xml, rememberedXml, diffObjects(record.xml, rememberedXml).changes, ++sequence); // NEW
+        const visibleXml = reconcile(view.xml); if (visibleXml !== null) view.xml = visibleXml; // NEW
+    } // NEW
+
     async function action(actor, input, state) {
         for (const [id, receipt] of receipts) if (receipt.expires < now()) receipts.delete(id); // NEW
         const view = await open(actor, state, input.kind === 'reset-view');
@@ -176,5 +196,5 @@ export function createObjectViews({ profile, canvas, writeAtomic, now = Date.now
         }
         throw new Error('Unsupported object view action.');
     }
-    return { action, open, saved, pending: (actor, state) => analyze(sessions.get(keyFor(actor)), state).groups, get: actor => sessions.get(keyFor(actor)), forget(callerId) { for (const key of sessions.keys()) if (JSON.parse(key)[0] === callerId) sessions.delete(key); for (const [id, receipt] of receipts) if (JSON.parse(receipt.actor)[0] === callerId) receipts.delete(id); } }; // CHANGE
+    return { action, open, saved, accepted, pending: (actor, state) => analyze(sessions.get(keyFor(actor)), state).groups, get: actor => sessions.get(keyFor(actor)), forget(callerId) { for (const key of sessions.keys()) if (JSON.parse(key)[0] === callerId) sessions.delete(key); for (const [id, receipt] of receipts) if (JSON.parse(receipt.actor)[0] === callerId) receipts.delete(id); } }; // CHANGE
 }

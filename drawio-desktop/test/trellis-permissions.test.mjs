@@ -5,7 +5,8 @@ import fs from 'node:fs'; // NEW
 import { JSDOM } from 'jsdom'; // NEW
 import { inspectDiagram } from '../src/main/trellis-share-protocol.js'; // NEW
 import { permissions as C, permissionSnapshot, validatePermissionChanges } from '../src/main/trellis-permission-policy.js'; // NEW
-import { replay, diffObjects } from '../src/main/trellis-collaboration-protocol.js'; // NEW
+import { diffObjects } from '../src/main/trellis-collaboration-protocol.js'; // CHANGE
+import { transactCurrent } from './helpers/current-transaction.mjs'; // NEW: security protections run through the replacement validator.
 const escaped = value => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); // NEW
 const key = id => JSON.stringify(['', id]); // NEW
 const users = [{ id: 'admin', name: 'Admin', admin: true }, { id: 'owner', name: 'Owner' }, { id: 'gardener', name: 'Gardener' }, { id: 'coordinator', name: 'Coordinator' }, { id: 'visitor', name: 'Visitor' }, { id: 'other', name: 'Other' }, { id: 'disabled', name: 'Disabled', disabled: true }]; // NEW
@@ -27,10 +28,10 @@ function fixture(options = {}) { // NEW
         cell('role', 'team', { trellis_role_user_id: 'visitor', ...(options.inactive ? { trellis_role_inactive: '1' } : {}) }, 'role_card=1;') + '</root></mxGraphModel>'; // NEW
 } // NEW
 function transact(before, after, actor) { // NEW
-    const delta = diffObjects(before, after), base = { schema: 3, userId: actor, sessionId: 'session', deviceId: 'device', at: 1000 }; // NEW
+    const delta = diffObjects(before, after), base = { schema: 4, userId: actor, sessionId: 'session', deviceId: 'device', at: 1000 }; // NEW
     const claim = { ...base, id: 'claim', kind: 'claim', targets: delta.targets, clock: 1, parents: [] }; // NEW
     const edit = { ...base, ...delta, id: 'edit', kind: 'edit', at: 1001, clock: 2, parents: ['claim'], claimIds: ['claim'] }; // NEW
-    return replay(before, [claim, edit], 2000); // NEW
+    return transactCurrent(before, [claim, edit], 2000); // NEW
 } // NEW
 
 test('browser and main cores agree on action permissions for every existing user category', t => { // NEW
@@ -88,6 +89,12 @@ test('pure snapshots and repeated queries never mutate their inputs or use wall-
     assert.equal(C.invitationStatus({ status: 'pending', expiresAt: 1000 }, 999), 'pending'); // NEW
     assert.equal(C.invitationStatus({ status: 'pending', expiresAt: 1000 }, 1000), 'expired'); // NEW
     assert.equal(C.invitationStatus({ status: 'pending', expiresAt: 1000 }, 1001), 'expired'); // NEW
+}); // NEW
+test('resident permission facts match full snapshots and invalidate changed, removed and reparented objects', () => { // NEW
+    const resident = new Map(), original = fixture(), first = permissionSnapshot(inspectDiagram(original), resident); // NEW
+    const nextXml = original.replace('label="Own"', 'label="Updated"'), next = permissionSnapshot(inspectDiagram(nextXml), resident), full = permissionSnapshot(inspectDiagram(nextXml)); // NEW
+    assert.deepEqual(next, full); assert.equal(first.cells[key('garden')], next.cells[key('garden')]); assert.notEqual(first.cells[key('own')], next.cells[key('own')]); // NEW
+    const removed = nextXml.replace(/<object id="own"[^]*?<\/object>/, ''); permissionSnapshot(inspectDiagram(removed), resident); assert.equal(resident.has(key('own')), false); // NEW
 }); // NEW
 
 test('comments retain author restrictions even for administrators and combined metadata edits', () => { // NEW
@@ -184,6 +191,16 @@ test('standalone first-save wrapping preserves object authority and journal vali
     assert.equal(C.authorizePendingCreation(snapshot, snapshot, 'admin', 'edit', key('foreign'), 1001, { policy: snapshot }).allowed, false); // NEW
 }); // NEW
 
+test('cached pending creation evidence expires with invitations and cannot retain revoked policy', () => { // NEW
+    const base = permissionSnapshot(inspectDiagram(fixture())), actor = 'invited', pending = { id: actor, name: 'Invited' }; // NEW
+    const input = { store: { ...base.store, invites: [{ pendingUserId: actor, status: 'pending', expiresAt: 2000 }] }, cells: Object.values(base.cells).map(cell => cell.id === 'garden' ? { ...cell, attributes: { ...cell.attributes, trellis_owner_user_id: actor } } : cell), provisionalUsers: [pending] }; // NEW
+    const before = C.snapshot(input), after = C.snapshot({ ...input, cells: [...input.cells, { key: key('created'), id: 'created', parent: key('garden'), vertex: true, attributes: { label: 'New', trellis_owner_user_id: actor }, style: '' }] }); // NEW
+    assert.equal(C.authorizePendingCreation(before, after, actor, 'edit', key('created'), 1999, { policy: before }).allowed, true); // NEW
+    assert.equal(C.authorizePendingCreation(before, after, actor, 'edit', key('created'), 2000, { policy: before }).allowed, false); // NEW
+    const revoked = C.snapshot({ ...input, store: { ...input.store, invites: [] } }); // NEW
+    assert.equal(C.authorizePendingCreation(before, after, actor, 'edit', key('created'), 1999, { policy: revoked }).allowed, false); // NEW
+}); // NEW
+
 
 test('task planning attributes use task-detail permissions and cannot authorize a foreign task or planting', () => { // NEW
     const before = fixture(); // NEW
@@ -200,3 +217,27 @@ test('task planning attributes use task-detail permissions and cannot authorize 
     mixed.cells.find(cell => cell.id === 'foreign').node.setAttribute('task_template_json', '{"version":2,"rules":[]}'); // NEW
     assert.equal(validatePermissionChanges(before, mixed.document.serialize(), 'gardener', 1001).allowed, false); // NEW
 }); // NEW
+
+test('Exchange permissions require explicit garden grants and never imply plan editing or CSA publication', () => { // NEW
+    const state = permissionSnapshot(inspectDiagram(fixture({ grants: [{ userId: 'gardener', preset: 'visitor', capabilities: ['manage_seed_exchange'] }] }))); // NEW
+    assert.equal(C.authorize(state, 'gardener', 'manage_seed_exchange', key('garden'), 1000).allowed, true); // NEW
+    for (const action of ['manage_csa', 'publish_csa', 'manageContent']) assert.equal(C.authorize(state, 'gardener', action, key('garden'), 1000).allowed, false, action); // NEW
+    const csa = permissionSnapshot(inspectDiagram(fixture({ grants: [{ userId: 'gardener', preset: 'visitor', capabilities: ['manage_csa'] }] }))); // NEW
+    assert.equal(C.authorize(csa, 'gardener', 'manage_csa', key('garden'), 1000).allowed, true); assert.equal(C.authorize(csa, 'gardener', 'publish_csa', key('garden'), 1000).allowed, false); // NEW
+    const coordinator = permissionSnapshot(inspectDiagram(fixture({ grants: [{ userId: 'gardener', preset: 'coordinator' }] }))); // NEW
+    assert.equal(C.authorize(coordinator, 'gardener', 'manage_seed_exchange', key('garden'), 1000).allowed, false); // NEW
+    for (const actor of ['owner', 'admin']) for (const action of ['manage_seed_exchange', 'manage_csa', 'publish_csa']) assert.equal(C.authorize(state, actor, action, key('garden'), 1000).allowed, true); // NEW
+    const inherited = fixture({ grants: [] }).replace('<object id="1"', '<object id="1" trellis_access_grants_json="' + escaped(JSON.stringify([{ userId: 'gardener', preset: 'visitor', capabilities: ['manage_seed_exchange'] }])) + '"'); // NEW
+    assert.equal(C.authorize(permissionSnapshot(inspectDiagram(inherited)), 'gardener', 'manage_seed_exchange', key('garden'), 1000).allowed, false, 'a document grant cannot become authority over every garden'); // NEW
+}); // NEW
+
+/** Pending task reflow is checked against creation authority, never proposed ownership or grants. */ // CHANGE
+test('new task movement initialization requires authorized native creation and cannot bless an existing task', () => { // CHANGE
+    const xml = fixture(), before = permissionSnapshot(inspectDiagram(xml)); // CHANGE
+    const added = '<object id="new-task" kanban_card="1" title="Water"><mxCell parent="board" vertex="1"/></object>'; // CHANGE
+    const after = permissionSnapshot(inspectDiagram(xml.replace('</root>', added + '</root>'))); // CHANGE
+    assert.equal(C.authorizePendingCreation(before, after, 'admin', 'moveTask', key('new-task'), 1001, { policy: before }).allowed, true); // CHANGE
+    assert.equal(C.authorizePendingCreation(before, after, 'visitor', 'moveTask', key('new-task'), 1001, { policy: before }).allowed, false); // CHANGE
+    assert.equal(C.authorizePendingCreation(before, after, 'gardener', 'moveTask', key('foreign-task'), 1001, { policy: before }).allowed, false); // CHANGE
+    assert.equal(C.authorizePendingCreation(before, after, 'admin', 'moveTask', key('foreign'), 1001, { policy: before }).allowed, false); // CHANGE
+}); // CHANGE

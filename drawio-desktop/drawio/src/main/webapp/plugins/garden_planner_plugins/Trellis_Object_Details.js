@@ -82,6 +82,7 @@
         } // CHANGE
         function exists(entry) { return !disposed && entry.model === model() && entry.root === model().getRoot() && model().getCell(entry.cell.id) === entry.cell; } // NEW
         function canEdit(entry) { // NEW
+            if (entry.frozen) return false; // CHANGE
             const policy = users(); // NEW
             return exists(entry) && entry.user === userKey() && entry.page === pageKey() && entry.identity.key === preferenceIdentity(entry.cell).key && graph.isEnabled() && (!graph.isCellLocked || !graph.isCellLocked(entry.cell)) && (!policy || !policy.canEditCell || policy.canEditCell(entry.cell)); // CHANGE: a stale panel cannot write into another page or diagram context.
         } // NEW
@@ -123,10 +124,11 @@
         function removeEntry(entry) { // NEW
             if (entry.comments) entry.comments.destroy(); // CHANGE
             if (ui.getActiveRichTextTarget() === entry.target) toolbar.deactivate(); // NEW
-            entry.target.dispose(); entry.draft.dispose(); if (entry.observer) entry.observer.disconnect(); // NEW
+            entry.editHold?.dispose(true); entry.target.dispose(); entry.draft.dispose(); if (entry.observer) entry.observer.disconnect(); // CHANGE
             entry.panel.remove(); if (entries.get(entry.cell) === entry) entries.delete(entry.cell); retainedEntries.delete(entry); // NEW
         } // NEW
         function flushEntry(entry, retry = false) { // NEW
+            if (entry.frozen) return true; // CHANGE: unrelated graph saves never flush a rejected details draft.
             if (entry.error && !retry) return false; // NEW: background serialization must never replay a rejected collaboration edit.
             if (!entry.draft.composing()) entry.draft.edit(entry.editor.innerHTML); // NEW
             return entry.draft.flush(); // NEW
@@ -134,7 +136,7 @@
         function flushAll() { // NEW
             if (writing || flushing) return true; // NEW
             flushing = true; let ok = true; // NEW
-            try { for (const entry of entries.values()) if (entry.user === userKey()) { if (entry.comments) entry.comments.persist(); if (entry.draft.dirty() || entry.draft.composing()) ok = flushEntry(entry) && ok; } } // CHANGE
+            try { for (const entry of entries.values()) if (entry.user === userKey()) { if (entry.comments) entry.comments.persist(); if (!entry.editHold && (entry.draft.dirty() || entry.draft.composing())) ok = flushEntry(entry) && ok; } } // CHANGE
             finally { flushing = false; } // NEW
             return ok; // NEW
         } // NEW
@@ -171,10 +173,10 @@
             for (const [key, label] of [['info', 'Additional info'], ['comments', 'Comments'], ['alerts', 'Alerts']]) { // CHANGE
                 const button = makeButton(label, 'Show ' + label.toLowerCase(), () => { // CHANGE
                     if (key === entry.activeTab) return; // CHANGE
-                    if (entry.activeTab === 'info' && !flushEntry(entry)) return; // CHANGE
-                    entry.comments.persist(); toolbar.deactivate(); entry.activeTab = key; entry.creating = true; updateTabs(entry); // CHANGE
+                    const change = () => { if (!entry.editHold && entry.activeTab === 'info' && !flushEntry(entry)) return false; entry.comments.persist(); toolbar.deactivate(); entry.activeTab = key; entry.creating = true; updateTabs(entry); entry.editHold?.checkpoint?.(); return true; }; // CHANGE
+                    if (entry.editHold?.transition) void entry.editHold.transition(change); else change(); // CHANGE
                 }); // CHANGE
-                button.dataset.detailsTab = key; toggle.appendChild(button); entry.tabButtons.push(button); // CHANGE
+                button.dataset.detailsTab = key; button.dataset.trellisReviewAllow = ''; toggle.appendChild(button); entry.tabButtons.push(button); // CHANGE: section navigation remains available in a frozen details editor.
             } // CHANGE
             entry.panel.insertBefore(row, entry.editor); entry.panel.insertBefore(entry.comments.element, entry.status); updateTabs(entry); // CHANGE
         } // CHANGE
@@ -213,19 +215,19 @@
             entry.recovery.appendChild(makeButton('Copy', 'Copy retained details', () => { const range = document.createRange(); range.selectNodeContents(entry.editor); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); document.execCommand('copy'); })); // NEW
             entry.recovery.appendChild(makeButton('Discard', 'Discard unsaved details', () => { entry.draft.reload(); removeEntry(entry); requestRefresh(); })); // NEW
             panel.append(header, entry.editor, entry.status, entry.recovery); layer.appendChild(panel); entries.set(cell, entry); // NEW
-            entry.draft = core.createDraft({ read: () => read(cell), write: (html, baseline) => write(entry, html, baseline), state: (name, error) => state(entry, name, error) }); // NEW
-            entry.target = toolbar.createTarget({ cell, element: entry.editor, canEdit: () => canEdit(entry), changed: () => entry.draft.edit(entry.editor.innerHTML) }); // NEW
+            entry.draft = core.createDraft({ defer: () => !!entry.editHold, read: () => read(cell), write: (html, baseline) => write(entry, html, baseline), state: (name, error) => state(entry, name, error) }); // NEW
+            entry.target = toolbar.createTarget({ cell, element: entry.editor, canEdit: () => canEdit(entry), changed: () => { entry.draft.edit(entry.editor.innerHTML); entry.editHold?.touch(); } }); // NEW
             installTabs(entry); // CHANGE
             for (const name of ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick', 'keydown', 'keyup', 'keypress']) panel.addEventListener(name, event => event.stopPropagation()); // NEW
             panel.addEventListener('pointerdown', () => bringToFront(entry)); // CHANGE: reparenting here interrupts Chromium focus and native click delivery.
             entry.editor.addEventListener('focus', () => { if (canEdit(entry)) toolbar.activate(entry.target); else toolbar.deactivate(); }); // NEW
-            entry.editor.addEventListener('input', () => { if (canEdit(entry)) entry.draft.edit(entry.editor.innerHTML); }); // NEW
+            entry.editor.addEventListener('input', () => { if (canEdit(entry)) { entry.draft.edit(entry.editor.innerHTML); entry.editHold?.touch(); } }); // CHANGE // NEW
             entry.editor.addEventListener('compositionstart', () => entry.draft.beginComposition()); // NEW
             entry.editor.addEventListener('compositionend', () => { entry.draft.endComposition(entry.editor.innerHTML); requestRefresh(); }); // NEW
-            entry.editor.addEventListener('blur', () => { entry.target.saveSelection(); flushEntry(entry); entry.creating = false; requestRefresh(); }); // NEW
+            entry.editor.addEventListener('blur', event => { entry.target.saveSelection(); if (entry.editHold && (entry.panel.contains(event.relatedTarget) || event.relatedTarget?.closest?.('[data-trellis-details-toolbar],[data-trellis-edit-decision]'))) return; if (flushEntry(entry)) entry.editHold?.complete?.(); entry.creating = false; requestRefresh(); }); // CHANGE // NEW
             entry.editor.addEventListener('keydown', event => { // NEW
                 if (event.key === 'Escape') { event.preventDefault(); flushEntry(entry); toolbar.deactivate(); graph.container.focus(); return; } // NEW
-                if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') { event.preventDefault(); if (flushAll()) { const action = ui.actions.get(event.shiftKey ? 'saveAs' : 'save'); if (action) action.funct(); } return; } // NEW: the field consumes graph shortcuts but retains the native Save shortcut.
+                if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') { event.preventDefault(); const save = () => { if (flushAll()) ui.actions.get(event.shiftKey ? 'saveAs' : 'save')?.funct(); }; if (entry.editHold) void entry.editHold.commit().then(applied => { if (applied) save(); }); else save(); return; } // CHANGE // NEW: the field consumes graph shortcuts but retains the native Save shortcut.
                 const command = (event.ctrlKey || event.metaKey) && !event.altKey ? { b: 'bold', i: 'italic', u: 'underline', z: event.shiftKey ? 'redo' : 'undo', y: 'redo' }[event.key.toLowerCase()] : null; // NEW
                 if (command) { event.preventDefault(); entry.target.saveSelection(); entry.target.execute(command); } // NEW
             }); // NEW
@@ -245,6 +247,14 @@
                     if (width !== entry.preferences.width || height !== entry.preferences.height) { entry.preferences = savePreferences(cell, { ...entry.preferences, width, height }); positionEntry(entry); } // NEW
                 }); entry.observer.observe(panel); // NEW
             } // NEW
+            entry.editHold = root.Trellis?.sharing?.registerEditor?.({ // CHANGE
+                kind: 'details', title: 'Details for ' + title(cell), element: panel, targets: [JSON.stringify([entry.page, String(core.detailsOwner(cell, model())?.id || cell.id)])], // CHANGE
+                isDirty: () => entry.activeTab === 'info' ? core.normalizeHtml(entry.editor.innerHTML) !== entry.draft.baseline() : entry.comments.hasDraft(), // CHANGE
+                capture: () => ({ pageId: entry.page, objectId: String(cell.id), html: entry.editor.innerHTML, comments: entry.comments.snapshot() }), // CHANGE
+                save: async () => { await entry.editHold.acquire(); if (entry.activeTab !== 'info') return entry.comments.submit(); const applied = flushEntry(entry, true); if (applied) entry.editHold.complete(); return applied; }, // CHANGE
+                restore: draft => { entry.draft.cancel(); entry.editor.innerHTML = entry.draft.reload(); if (draft) entry.comments.restore(draft.comments); requestRefresh(); }, // CHANGE
+                freeze() { entry.frozen = true; entry.draft.cancel(); entry.comments.freeze(); }, discard: () => removeEntry(entry), // CHANGE
+            }); // CHANGE
             entry.editor.contentEditable = String(canEdit(entry)); state(entry, 'saved'); positionEntry(entry); bringToFront(entry); return entry; // CHANGE
         } // NEW
 
@@ -263,10 +273,12 @@
             if (!bounds || !status.hasDetails && status.commentCount === 0) { if (badge) { badge.remove(); badges.delete(cell); } return; } // CHANGE
             if (!badge) { // NEW
                 badge = makeButton('', '', () => { // CHANGE
+                    const change = () => { // CHANGE
                     const selected = selectedOwners().has(cell), preferences = getPreferences(cell); // NEW
                     if (!selected) graph.setSelectionCell(cell); // NEW
                     const entry = entries.get(cell); if (selected && entry && !flushEntry(entry)) return; // NEW
                     savePreferences(cell, { ...preferences, visible: selected ? !preferences.visible : true }); requestRefresh(); // NEW
+                    }; if (root.Trellis?.sharing?.transitionEditor) void root.Trellis.sharing.transitionEditor(change); else change(); // CHANGE
                 }); // NEW
                 badge.className = 'trellis-object-details-badge'; badge.dataset.cellId = cell.id; // NEW
                 badge.style.cssText = 'position:absolute;z-index:' + GRAPH_OVERLAY_Z.CONTROL_TOP + ';pointer-events:auto;box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:20px;height:20px;min-width:20px;padding:2px;border:1px solid #2563eb;border-radius:50%;color:#1e40af;font:bold 12px Arial;cursor:pointer;'; // CHANGE
@@ -288,7 +300,7 @@
             const selected = selectedOwners(), currentUser = userKey(), live = new Set(); // NEW
             for (const cell of Object.values(model().cells || {})) if (core.detailsOwner(cell, model()) === cell && hasContent(cell)) { live.add(cell); updateBadge(cell); } // CHANGE
             for (const [cell, badge] of badges) if (!live.has(cell)) { badge.remove(); badges.delete(cell); } // NEW
-            for (const entry of Array.from(entries.values())) if (entry.user === currentUser && !entry.draft.dirty() && (entry.page !== pageKey() || entry.identity.key !== preferenceIdentity(entry.cell).key)) removeEntry(entry); // CHANGE: private comment drafts never follow reused cell IDs into another context.
+            for (const entry of Array.from(entries.values())) if (!entry.frozen && entry.user === currentUser && !entry.draft.dirty() && (entry.page !== pageKey() || entry.identity.key !== preferenceIdentity(entry.cell).key)) removeEntry(entry); // CHANGE
             for (const entry of Array.from(entries.values())) if (entry.user !== currentUser) { // NEW
                 if (entry.draft.dirty()) { entry.draft.cancel(); entry.panel.hidden = true; entry.panel.style.display = 'none'; entries.delete(entry.cell); retainedEntries.add(entry); } // NEW
                 else removeEntry(entry); // NEW
@@ -297,6 +309,7 @@
             for (const cell of selected) { const preferences = getPreferences(cell); if (preferences.visible && (hasContent(cell) || hasCommentDraft(cell)) && !entries.has(cell)) createEntry(cell); } // CHANGE
             for (const entry of Array.from(entries.values())) { // NEW
                 if (entry.user !== currentUser) { entry.panel.hidden = true; entry.panel.style.display = 'none'; entry.draft.cancel(); continue; } // NEW
+                if (entry.frozen) { entry.panel.hidden = false; entry.panel.style.display = 'flex'; continue; } // CHANGE: preserve fields and placement through remote reconciliation.
                 const onPage = exists(entry) && entry.page === pageKey(), preferences = onPage ? getPreferences(entry.cell) : entry.preferences; // NEW
                 entry.preferences = preferences; // NEW
                 if (onPage && !cellBounds(entry.cell)) { entry.panel.hidden = true; entry.panel.style.display = 'none'; entry.draft.cancel(); continue; } // CHANGE: retain private work without showing an unanchored overlay.
@@ -314,7 +327,8 @@
             for (const [cell, badge] of badges) { const entry = entries.get(cell); badge.setAttribute('aria-expanded', String(!!entry && !entry.panel.hidden)); } // CHANGE: announce the final panel state after creation or removal in this refresh.
         } // NEW
         function requestRefresh() { if (!disposed && refreshTimer == null) refreshTimer = root.setTimeout(refresh, 0); } // NEW
-        function open(cell) { // NEW
+        function open(cell, transitionResolved = false) { // CHANGE
+            if (!transitionResolved && root.Trellis?.sharing?.transitionEditor && !entries.has(core.detailsOwner(cell, model()))) return root.Trellis.sharing.transitionEditor(() => open(cell, true)); // CHANGE
             cell = core.detailsOwner(cell, model()); if (!cell) return; // NEW
             if (!graph.isCellSelected(cell)) graph.addSelectionCell(cell); // NEW
             const preferences = savePreferences(cell, { ...getPreferences(cell), visible: true }); // NEW
@@ -401,10 +415,10 @@
         } // NEW
         listen(graph.getSelectionModel(), mxEvent.CHANGE, () => { flushAll(); if (!selectedOwners().size) toolbar.deactivate(); requestRefresh(); }); // NEW
         listen(model(), mxEvent.CHANGE, () => { // NEW
-            if (!writing && graph.__trellisSharingApplying) for (const entry of entries.values()) if (exists(entry) && read(entry.cell) !== entry.draft.baseline()) { entry.draft.retain(entry.editor.innerHTML); state(entry, 'failed', new Error('The collaboration change was rejected or replaced.')); } // NEW
+            if (!writing && graph.__trellisSharingApplying) for (const entry of entries.values()) if (!entry.frozen && exists(entry) && read(entry.cell) !== entry.draft.baseline()) { entry.draft.retain(entry.editor.innerHTML); state(entry, 'failed', new Error('The collaboration change was rejected or replaced.')); } // CHANGE
             requestRefresh(); // NEW
         }); // NEW
-        for (const name of [mxEvent.UNDO, mxEvent.REDO]) listen(ui.editor.undoManager, name, () => { for (const entry of entries.values()) if (exists(entry)) { entry.editor.innerHTML = entry.draft.reload(); entry.error = null; } requestRefresh(); }); // NEW
+        for (const name of [mxEvent.UNDO, mxEvent.REDO]) listen(ui.editor.undoManager, name, () => { for (const entry of entries.values()) if (!entry.frozen && exists(entry)) { entry.editor.innerHTML = entry.draft.reload(); entry.error = null; } requestRefresh(); }); // CHANGE
         for (const name of [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE]) listen(graph.view, name, requestRefresh); // NEW
         listen(graph, mxEvent.PAN, requestRefresh); listen(graph.container, 'scroll', requestRefresh, true); // NEW
         listen(root, 'resize', requestRefresh, true); // NEW
@@ -423,13 +437,19 @@
         } // NEW
         listen(graph, mxEvent.DESTROY, destroy); // NEW
         graph.__trellisObjectDetails = { open, refresh, flush: flushAll, exportProjection, createExportGraph, destroy,
-            rejectHolds(keys) { // NEW: this is an explicit discard, unlike ordinary selection/page changes.
+            freezeHolds(keys, reason) { // CHANGE
+                const result = []; // CHANGE
                 const rejected = new Set(keys); // CHANGE: page-scoped IDs can repeat in different pages.
                 const affected = entry => { let cell = entry.cell; while (cell) { if (rejected.has(JSON.stringify([entry.page, String(cell.id)])) || rejected.has(JSON.stringify(['', String(cell.id)]))) return true; cell = entry.model.getParent(cell); } return rejected.has('*'); }; // NEW
                 for (const entry of [...entries.values(), ...retainedEntries]) if (affected(entry)) {
-                    entry.error = 'Editing hold rejected'; entry.draft.dispose(); entry.comments?.discard();
-                    savePreferences(entry.cell, { ...entry.preferences, visible: false }); removeEntry(entry);
+                    if (!entry.frozen) { // CHANGE
+                        entry.frozenCapture = { kind: 'details', targets: [JSON.stringify([entry.page, String(entry.cell.id)])], objectId: String(entry.cell.id), html: entry.editor.innerHTML, comments: entry.comments?.snapshot() }; // CHANGE
+                        entry.frozen = true; entry.error = reason; entry.draft.cancel(); entry.comments?.freeze(); toolbar.deactivate(); entry.editor.contentEditable = 'false'; // CHANGE
+                        const close = makeButton('Close', 'Close retained details', () => removeEntry(entry)); close.dataset.trellisReviewAllow = ''; entry.panel.appendChild(close); // CHANGE
+                    } // CHANGE
+                    result.push({ element: entry.panel, draft: entry.frozenCapture }); // CHANGE
                 }
+                return result; // CHANGE
             }
         }; // CHANGE
         function registerMenu() { // NEW

@@ -1,13 +1,17 @@
 /** Native production components in an isolated profile; excludes mail handlers and live transport. */ // NEW
-const { app, BrowserWindow, ipcMain } = require('electron'); // NEW
+const { app, BrowserWindow, ipcMain, powerMonitor, powerSaveBlocker } = require('electron'); // CHANGE: qualification owns an idle-sleep blocker only for this process lifetime.
 const fs = require('node:fs/promises'), syncFs = require('node:fs'), path = require('node:path'), os = require('node:os'), crypto = require('node:crypto'); // NEW
 const { pathToFileURL } = require('node:url'), { execFileSync } = require('node:child_process'); // NEW
 const parser = require('@babel/parser'), traverse = require('@babel/traverse').default, assert = require('node:assert/strict'); // NEW
+const { installAutosaveClock } = require('./autosave-benchmark-clock.cjs'); // NEW
+const autosaveTimingMode = process.argv.find(arg => arg.startsWith('--autosave-timing='))?.slice(18) || 'real'; // NEW
+if (!['real', 'split'].includes(autosaveTimingMode)) throw Error('Unsupported autosave timing mode.'); // NEW
 const project = process.env.TRELLIS_SAVE_PROJECT || path.resolve(__dirname, '../..'), webapp = path.join(project, 'drawio/src/main/webapp'); // NEW
 const baseline = process.argv.includes('--baseline'), smoke = process.argv.includes('--smoke'), stress = process.argv.includes('--stress'); // NEW
 const badgeOnly = process.argv.includes('--badges'); // NEW: renderer latency is measured independently from save execution and network delivery.
 const stallContent = badgeOnly && process.argv.includes('--stall-content'); // NEW
 let blockContent = false, releaseContent, enteredContent; const checkpointAttempts = []; // NEW: bounded diagnostics record timing only, never recovery contents.
+const gardenProtocol = Number(process.argv.find(arg => arg.startsWith('--protocol='))?.slice(11) || 4); if (![4,5].includes(gardenProtocol)) throw Error('Unsupported benchmark protocol.'); // CHANGE
 const requestedMode = process.argv.find(arg => arg.startsWith('--mode='))?.slice(7); // NEW
 if (requestedMode && !['local','private','shared'].includes(requestedMode)) throw new Error('Invalid benchmark mode.'); // NEW
 const sampleCount = smoke ? 1 : 30, recordCount = Number(process.argv.find(arg => arg.startsWith('--edits='))?.slice(8) ?? (process.argv.includes('--fresh') ? 0 : stress ? 10000 : 1000)); // CHANGE: measure genuinely new projects separately from accumulated journal history.
@@ -17,6 +21,7 @@ const sources = path.join(output, 'runtime-' + process.pid); // NEW: imports are
 const profile = syncFs.mkdtempSync(path.join(os.tmpdir(), 'trellis-save-performance-')); app.setPath('userData', path.join(profile, 'browser')); // NEW
 syncFs.writeFileSync(path.join(profile,'owner.json'),JSON.stringify({pid:process.pid,script:__filename})); // NEW
 app.on('window-all-closed', () => {}); // NEW: serial cases own app shutdown, including failure reporting.
+app.commandLine.appendSwitch('no-sandbox'); // CHANGE: isolated test profile only.
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); // NEW
 let window, journal, history, historyTransport, activity, drafts, service, createActivity, createDrafts, transactions, canvas, protocol, timings = [], started = Date.now(), exitCode = 1; // CHANGE
 let archiveAudit = null; // NEW
@@ -25,14 +30,14 @@ for (const method of ['open', 'readFile', 'readdir', 'opendir']) { // NEW: obser
     fs[method] = async function (filename, ...args) { // NEW
         if (archiveAudit && typeof filename === 'string') { // NEW
             const relative = path.relative(canvas.folderPath, filename).replaceAll('\\', '/'); // NEW
-            const archived = /^\.trellis\/collaboration-v4\/epochs\/[^/]+\/(\d{12})\.json$/.exec(relative); // NEW
-            if (['readdir', 'opendir'].includes(method) && /^\.trellis\/(?:collaboration-v4\/epochs|membership|history-v2\/[^/]+\/records)(?:\/|$)/.test(relative)) { archiveAudit.archiveScans++; throw new Error('Ordinary saving attempted to enumerate committed archives.'); } // NEW
+            const archived = /^\.trellis\/collaboration-v[45]\/epochs\/[^/]+\/(\d{12})\.json$/.exec(relative); // CHANGE: both supported formats must detect covered-record reads.
+            if (['readdir', 'opendir'].includes(method) && /^\.trellis\/(?:collaboration-v[45]\/epochs|membership|requests|acknowledgements|history-v2\/[^/]+\/records)(?:\/|$)/.test(relative)) { archiveAudit.archiveScans++; throw new Error('Ordinary saving attempted to enumerate committed archives.'); } // CHANGE: retained requests, acknowledgements, and either protocol's epochs are historical data.
             if (['open', 'readFile'].includes(method) && archived && Number(archived[1]) <= archiveAudit.coveredSequence) { archiveAudit.historicalRecordsRead++; throw new Error('Ordinary saving attempted to read a covered historical decision.'); } // NEW
         } // NEW
         return original.call(this, filename, ...args); // NEW
     }; // NEW
 } // NEW
-const report = { baseline, smoke, stress, sampleCount, recordCount, complete: false, accepted: false, cases: [], stages: [], hardware: { platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, cores: os.cpus().length, memoryBytes: os.totalmem(), electron: process.versions.electron }, profile, pid: process.pid, sourceRoot: frozen || sourceInput, sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: project, encoding: 'utf8', windowsHide: true }).trim() }; // NEW
+const report = { gardenProtocol, baseline, smoke, stress, sampleCount, recordCount, complete: false, accepted: false, cases: [], stages: [], hardware: { platform: process.platform, arch: process.arch, cpu: os.cpus()[0]?.model, cores: os.cpus().length, memoryBytes: os.totalmem(), electron: process.versions.electron }, profile, pid: process.pid, sourceRoot: frozen || sourceInput, sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: project, encoding: 'utf8', windowsHide: true }).trim() }; // NEW
 const target = process.env.TRELLIS_SAVE_REPORT || path.join(output, `${baseline ? 'before' : 'after'}-${stress ? 'stress-' : ''}${Date.now()}.json`); // CHANGE
 const persist = async () => { await fs.mkdir(output, { recursive: true }); await fs.writeFile(target, JSON.stringify(report, null, 2)); }; // NEW
 const writeAtomic = async (filename, contents) => { const start = performance.now(); await fs.mkdir(path.dirname(filename), { recursive: true }); const temporary = filename + '.' + crypto.randomUUID() + '.tmp'; await fs.writeFile(temporary, contents, {mode:0o600,flush:true}); for (let attempt = 0; ; attempt++) { try { await fs.rename(temporary, filename); break; } catch (error) { if (!['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || attempt >= 4) throw error; await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1))); } } timings.push({ phase: 'disk write', durationMs: performance.now() - start, bytes: Buffer.byteLength(contents) }); }; // CHANGE: use the production Windows retry policy for native diagnostics.
@@ -54,26 +59,28 @@ async function seed(xml, keys) { // CHANGE
     assert.equal(firstDelta.changes.length, 1); // CHANGE
     const firstXml = applyChanges(xml, firstDelta.changes), secondDelta = diffObjects(firstXml, xml), secondXml = applyChanges(firstXml, secondDelta.changes); // CHANGE
     let previous = initial.headHash, last; // CHANGE
-    const directory = path.join(canvas.folderPath, '.trellis', 'collaboration-v4'); // CHANGE
+    const directory = path.join(canvas.folderPath, '.trellis', 'collaboration-v' + gardenProtocol); // CHANGE
     for (let index = 0; index < recordCount; index++) { // CHANGE
         const sequence = initial.sequence + index + 1, changed = index % 2 === 0, delta = changed ? firstDelta : secondDelta; // CHANGE
-        const proposal = protocol.signRecord({ schema: 4, shareId: canvas.shareId, diagramId: canvas.diagramId, id: 'historical-edit-' + index, deviceId: 'device', userId: actor.userId, sessionId: actor.sessionId, kind: 'edit', at: started, ...delta, claimIds: [hold.claimId] }, keys.privateKey); // CHANGE
-        const commit = protocol.signRecord({ schema: 4, shareId: canvas.shareId, diagramId: canvas.diagramId, kind: 'commit', epoch: initial.epoch, sequence, previous, proposal, contentHash: protocol.digest(changed ? firstXml : secondXml) }, keys.privateKey); // CHANGE
+        const proposal = protocol.signRecord({ schema: gardenProtocol, shareId: canvas.shareId, diagramId: canvas.diagramId, id: 'historical-edit-' + index, deviceId: 'device', userId: actor.userId, sessionId: actor.sessionId, kind: 'edit', at: started, ...delta, claimIds: [hold.claimId] }, keys.privateKey); // CHANGE
+        const commit = protocol.signRecord({ schema: gardenProtocol, shareId: canvas.shareId, diagramId: canvas.diagramId, kind: 'commit', epoch: initial.epoch, sequence, previous, acceptedAt: started, proposal, contentHash: protocol.digest(changed ? firstXml : secondXml) }, keys.privateKey); // CHANGE
         await writeImmutable(path.join(directory, 'epochs', initial.epoch, String(sequence).padStart(12, '0') + '.json'), commit); previous = protocol.digest(protocol.canonical(commit)); last = proposal.payload; // CHANGE
     } // CHANGE
-    const state = { xml: secondXml, sequence: initial.sequence + recordCount, epoch: initial.epoch, headHash: previous, snapshotHash: initial.snapshotHash, attribution: { [objectKey]: { id: last.id, kind: 'edit', userId: last.userId, deviceId: last.deviceId, at: last.at, key: objectKey, hash: objects(secondXml).get(objectKey).hash, targets: last.targets } }, holds: initial.holds, presence: [], reservations: [], lastEditId: last.id }; // CHANGE
-    const checkpoint = protocol.signRecord({ schema: 4, shareId: canvas.shareId, diagramId: canvas.diagramId, kind: 'checkpoint', deviceId: 'device', state, members: canvas.members, membershipVersion: canvas.membershipVersion }, keys.privateKey); // CHANGE
+    const state = { xml: secondXml, sequence: initial.sequence + recordCount, epoch: initial.epoch, headHash: previous, snapshotHash: initial.snapshotHash, objectVersions: { ...initial.objectVersions, [objectKey]: { version: initial.sequence + recordCount, hash: objects(secondXml).get(objectKey).hash } }, attribution: { [objectKey]: { id: last.id, kind: 'edit', userId: last.userId, deviceId: last.deviceId, at: last.at, key: objectKey, hash: objects(secondXml).get(objectKey).hash, targets: last.targets } }, holds: initial.holds, presence: [], reservations: [], lastEditId: last.id }; // CHANGE
+    const checkpoint = protocol.signRecord({ schema: gardenProtocol, shareId: canvas.shareId, diagramId: canvas.diagramId, kind: 'checkpoint', deviceId: 'device', state, members: canvas.members, membershipVersion: canvas.membershipVersion }, keys.privateKey); // CHANGE
     const checkpointId = protocol.digest(protocol.canonical(checkpoint)); // CHANGE
     await writeImmutable(path.join(directory, 'checkpoints', checkpointId + '.json'), checkpoint); // CHANGE
-    await writeAtomic(path.join(directory, 'heads', 'device.json'), JSON.stringify(protocol.signRecord({ schema: 4, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId: 'device', epoch: initial.epoch, sequence: state.sequence, hash: previous, checkpointId, checkpointSequence: state.sequence }, keys.privateKey))); // CHANGE
+    await writeAtomic(path.join(directory, 'heads', 'device.json'), JSON.stringify(protocol.signRecord({ schema: gardenProtocol, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId: 'device', epoch: initial.epoch, sequence: state.sequence, hash: previous, checkpointId, checkpointSequence: state.sequence }, keys.privateKey))); // CHANGE
     await journal.action(99, 'alice', { kind: 'release' }); // CHANGE
 } // CHANGE
 async function runCase(mode, keys, createStore, nativeMethods, inviteFunction) { // NEW
     timings = []; archiveAudit = null; const directory = path.join(profile, mode), shareId = 'benchmark-' + mode, folderPath = path.join(directory, 'gardens', shareId); await fs.mkdir(folderPath, { recursive: true }); // CHANGE
-    canvas = { protocolVersion: 4, shareId, diagramId: 'save-diagram', filename: 'Garden.drawio', folderId: 'trellis-v4-' + shareId, folderPath, diagramPath: path.join(folderPath, 'Garden.drawio'), localDeviceId: 'device', coordinatorDeviceId: 'device', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'device', publicKey: keys.publicKey, userId: 'alice' }], membershipVersion: 1 }; // CHANGE
+    canvas = { protocolVersion: gardenProtocol, shareId, diagramId: 'save-diagram', filename: 'Garden.drawio', folderId: 'trellis-v' + gardenProtocol + '-' + shareId, folderPath, diagramPath: path.join(folderPath, 'Garden.drawio'), localDeviceId: 'device', coordinatorDeviceId: 'device', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'device', publicKey: keys.publicKey, userId: 'alice' }], membershipVersion: 1 }; // CHANGE
     console.log('SAVE_STAGE', mode, 'browser'); // NEW
     if (mode === 'shared' || badgeOnly) canvas.members.push({ deviceId: 'peer', publicKey: keys.publicKey, userId: 'alice' }); // CHANGE
     window = new BrowserWindow({ show: false, width: 1000, height: 720, webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false, offscreen: true } }); // CHANGE: render hidden qualification windows at a controlled frame rate instead of Chromium's hidden-window frame throttle.
+    window.webContents.on('unresponsive', () => { report.rendererUnresponsive = { operation: report.progress, atMs: performance.now() }; }); // NEW: distinguish a stalled renderer from save-path execution failures.
+    window.webContents.on('render-process-gone', (_event, details) => { report.rendererExit = details; }); // NEW
     window.webContents.setFrameRate(60); // NEW: execution includes actual UI frames, with the same 60 Hz budget as the responsiveness fixture.
     window.webContents.on('console-message',(_event,...details)=>console.log('RENDERER',...details.filter(value=>typeof value==='string'||typeof value==='number'))); // NEW
     const html = path.join(directory, 'fixture.html'); await fs.writeFile(html, '<!doctype html><body><div id="graph" style="width:950px;height:650px;overflow:auto"></div></body>'); await window.loadFile(html); // NEW
@@ -113,7 +120,7 @@ async function runCase(mode, keys, createStore, nativeMethods, inviteFunction) {
     if (journal) await historyTransport.maintain(); // NEW
     if (journal) { // NEW: covered content archives are physically unavailable throughout measured saves.
         await journal.checkpoint(); const covered = await journal.snapshot(); // NEW
-        await fs.rename(path.join(canvas.folderPath, '.trellis', 'collaboration-v4', 'epochs', covered.epoch), path.join(directory, 'unavailable-accepted-archive')).catch(error => { if (error.code !== 'ENOENT') throw error; }); // NEW
+        await fs.rename(path.join(canvas.folderPath, '.trellis', 'collaboration-v' + gardenProtocol, 'epochs', covered.epoch), path.join(directory, 'unavailable-accepted-archive')).catch(error => { if (error.code !== 'ENOENT') throw error; }); // NEW
         archiveAudit = { coveredSequence: covered.sequence, historicalRecordsRead: 0, archiveScans: 0 }; // NEW
         const { encodeRevision } = await import(pathToFileURL(path.join(sources, 'trellis-history-codec.js'))); // NEW
         const variants = [xml, xml.replace('label="A0"', 'label="A1"')], patterns = []; // NEW
@@ -144,7 +151,8 @@ async function runCase(mode, keys, createStore, nativeMethods, inviteFunction) {
     } // NEW
     console.log('SAVE_STAGE', mode, 'seeded'); // NEW
     const coldStart = performance.now(); // NEW
-    for (const file of ['js/trellis-local-view.js', 'js/trellis-incoming-changes.js', 'js/trellis-background-saving.js']) await evaluate(await fs.readFile(frozen ? path.join(frozen, 'browser-js', file.slice(3)) : path.join(webapp, file), 'utf8')); // NEW
+    for (const file of ['js/trellis-reference-core.js', 'js/trellis-object-transactions.js', 'js/trellis-sync-contract.js', 'js/trellis-local-view.js', 'js/trellis-incoming-changes.js', 'js/trellis-background-saving.js']) await evaluate(await fs.readFile(frozen ? path.join(frozen, 'browser-js', file.slice(3)) : path.join(webapp, file), 'utf8')); // NEW
+    await evaluate(`window.autosaveClock=(${installAutosaveClock.toString()})(window,${JSON.stringify(autosaveTimingMode)});void 0`); // NEW: inject only the controller clock before sharing initializes.
     const plugin = frozen ? path.join(frozen, 'plugins/Trellis_Syncthing.js') : baseline ? path.join(output, 'baseline/plugins/Trellis_Syncthing.js') : path.join(webapp, 'plugins/garden_planner_plugins/Trellis_Syncthing.js'); await evaluate(await fs.readFile(plugin, 'utf8')); // NEW
     if (journal) await evaluate('Trellis.sharing.refresh()'); // NEW
     await evaluate('window.TrellisContextMenu={install(){},register(){}};void 0'); // NEW: isolate context-menu loading while running the complete history recorder.
@@ -153,7 +161,7 @@ async function runCase(mode, keys, createStore, nativeMethods, inviteFunction) {
     if (service) await evaluate("const details=document.createElement('details');details.className='trellis-history-storage-details';details.open=true;document.body.appendChild(details);trellisShare.historyStorage=input=>require('electron').ipcRenderer.invoke('save-performance-history-storage',input);void 0"); // NEW: leaving storage details open cannot reintroduce archive accounting on a save.
     if (journal) assert.equal(await evaluate('Trellis.sharing.isExplicitRefresh()'), true, 'The benchmark must use coordinator saves, not native local fallback.'); // NEW
 
-    const result = { mode, historyRequests: [], archiveAudit, historicalContentRevisions: journal ? recordCount : 0, productionService: !!service, autosaveScheduling: [], configuredPeers: mode === 'shared' ? 1 : 0, bytes: Buffer.byteLength(xml), records: journal ? recordCount : 0, coldMs: performance.now() - coldStart, samples: {}, p95: {}, timings }; // CHANGE
+    const result = { gardenProtocol, mode, historyRequests: [], archiveAudit, historicalContentRevisions: journal ? recordCount : 0, productionService: !!service, autosaveTiming: { version: 1, mode: autosaveTimingMode, records: [] }, configuredPeers: mode === 'shared' ? 1 : 0, bytes: Buffer.byteLength(xml), records: journal ? recordCount : 0, coldMs: performance.now() - coldStart, samples: {}, p95: {}, timings }; // CHANGE
     console.log('SAVE_STAGE', mode, 'ready'); // NEW
     report.cases.push(result); await persist(); // NEW
     if (badgeOnly) { // NEW
@@ -179,25 +187,29 @@ async function runCase(mode, keys, createStore, nativeMethods, inviteFunction) {
     for (const operation of operations) { // NEW
         result.samples[operation] = []; // NEW
         for (let index = 0; index < sampleCount; index++) { // NEW
-            if (operation === 'autosave' && journal) { // NEW: the native timer's existing five-second delay is preserved and measured outside execution.
-                const delay = await evaluate('(async()=>{if(current.autosaveDelay!==5000)throw Error("Autosave scheduling changed");const started=performance.now();editFixture();const due=performance.now()+current.autosaveDelay;while(performance.now()<due)await new Promise(resolve=>setTimeout(resolve,Math.max(1,due-performance.now())));if(!current.isAutosaveNow())throw Error("Native autosave was not ready");if(!current.__trellisAutomaticRequest)throw Error("Missing native automatic request");return performance.now()-started})()'); // CHANGE
-                result.autosaveScheduling.push(delay); // NEW
+            if (operation === 'autosave' && journal) { // NEW: the native timer's configured delay is preserved and measured outside execution.
+                const scheduling = await evaluate(`(async()=>{if(current.autosaveDelay!==20000||TrellisBackgroundSaving.QUIET_PERIOD_MS!==20000)throw Error('Autosave scheduling changed');const progress=phase=>require('electron').ipcRenderer.send('save-performance-progress',{phase,sampleIndex:${index},atMs:performance.now()});progress('autosave-delay');const record=await autosaveClock.prepare(${index},editFixture);progress('autosave-ready');return record})()`); // CHANGE: expire the production countdown using real or controlled time.
+                result.autosaveTiming.records.push(scheduling); // CHANGE
             } // NEW
             const preparation = ['unchanged','refresh'].includes(operation) || operation === 'autosave' && journal ? '' : operation === 'invitation' ? 'inviteFixture();' : 'editFixture();'; // CHANGE
             const action = operation === 'invitation' ? "const draft=await Trellis.sharing.prepareInvite({invite:{id:'invite'},code:'CODE',emailDraft:{to:'guest@example.org',subject:'Invitation',body:'Join the garden'}});if(!draft.body.includes('TRELLIS'))throw Error('Incomplete invitation');" : operation === 'refresh' ? 'await Trellis.sharing.refresh();' : operation === 'overlap' ? 'await Promise.all([save(),save(),save()]);' : 'await save();'; // CHANGE
             const checkpoint = operation === 'checkpoint' ? "await require('electron').ipcRenderer.invoke('save-performance-checkpoint');" : ''; // CHANGE
-            const duration = await evaluate(`(async()=>{const start=performance.now();${preparation}const save=()=>new Promise((resolve,reject)=>current.save(false,resolve,reject));${action}await Trellis.sharing.whenHistoryPublished();${checkpoint}if(graph.__ccHistoryWarning)throw Error(graph.__ccHistoryWarning);await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const durationMs=performance.now()-start;rendererTimings.push({phase:'save UI completion',operation:${JSON.stringify(operation)},durationMs});return durationMs})()`); // CHANGE: complete UI frame delivery and history publication before stopping the execution timer.
-            result.samples[operation].push(duration); await persist(); // NEW
+            const execution = await evaluate(`(async()=>{autosaveClock.beginExecution();const start=performance.now();${preparation}const save=()=>new Promise((resolve,reject)=>{${operation === 'autosave' && journal ? 'if(!current.isAutosaveNow()||!current.__trellisAutomaticRequest)throw Error("Native autosave was not ready at execution");' : ''}current.save(false,resolve,reject)});${action}await Trellis.sharing.whenHistoryPublished();${checkpoint}if(graph.__ccHistoryWarning)throw Error(graph.__ccHistoryWarning);await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const durationMs=performance.now()-start;const executionAdvanceMs=autosaveClock.endExecution();rendererTimings.push({phase:'save UI completion',operation:${JSON.stringify(operation)},durationMs});return {durationMs,executionAdvanceMs}})()`); // CHANGE: complete UI frame delivery and history publication before stopping the execution timer.
+            if (operation === 'autosave' && journal) result.autosaveTiming.records.at(-1).executionAdvanceMs = execution.executionAdvanceMs; // NEW
+            result.samples[operation].push(execution.durationMs); await persist(); // CHANGE
         } // NEW
-        result.p95[operation] = result.samples[operation].slice().sort((a,b)=>a-b)[Math.ceil(sampleCount*.95)-1]; console.log(mode, operation, result.p95[operation].toFixed(1)); // NEW
+        result.p95[operation] = result.samples[operation].slice().sort((a,b)=>a-b)[Math.ceil(sampleCount*.95)-1]; console.log(mode, operation, result.p95[operation].toFixed(1)); if(!smoke && result.p95[operation]>5000){await persist();throw Error('Five-second p95 exceeded: '+operation);} // CHANGE: stop after a failed controlled workload without claiming qualification.
     } // NEW
-    if (journal) { assert.ok(timings.some(item => item.phase === 'acceptance'), 'Coordinator acceptance was not exercised.'); assert.ok(result.historyRequests.some(item => item.method === 'record'), 'Real history recording was not exercised.'); assert.ok(result.historyRequests.some(item => item.method === 'export'), 'History publication was not exercised.'); assert.equal(archiveAudit.historicalRecordsRead,0); assert.equal(archiveAudit.archiveScans,0); } // CHANGE
+    if (journal && !badgeOnly) { assert.ok(timings.some(item => item.phase === 'acceptance'), 'Coordinator acceptance was not exercised.'); assert.ok(result.historyRequests.some(item => item.method === 'record'), 'Real history recording was not exercised.'); assert.ok(result.historyRequests.some(item => item.method === 'export'), 'History publication was not exercised.'); assert.equal(archiveAudit.historicalRecordsRead,0); assert.equal(archiveAudit.archiveScans,0); } // CHANGE: independent input/paint diagnostics do not submit content saves.
     result.memory = { main:process.memoryUsage(),renderer:await evaluate('process.getProcessMemoryInfo()') }; // CHANGE: Electron exposes per-process memory on process in its owning process.
     result.timings = timings; result.rendererTimings = await evaluate('rendererTimings'); // CHANGE
     if (journal && !badgeOnly) assert.equal(result.rendererTimings.filter(item => item.phase === 'save queue' && item.automatic === true).length,sampleCount,'Every autosave sample must execute the native automatic branch.'); // NEW
     result.statuses = await evaluate('statuses'); await service?.stop(); service = null; history?.close(); history = null; await activity?.close(); activity = null; drafts = null; window.destroy(); window = null; await persist(); // CHANGE
 } // NEW
 app.whenReady().then(async () => { // NEW
+    ipcMain.on('save-performance-progress', (_event, progress) => { report.progress = progress; }); // NEW
+    const sleepBlocker = powerSaveBlocker.start('prevent-app-suspension'); report.idleSleepBlocked = powerSaveBlocker.isStarted(sleepBlocker); // NEW: leave display sleep and OS settings unchanged.
+    powerMonitor.on('suspend', () => { report.suspended = true; }); // NEW: machine suspension invalidates a controlled campaign.
     const watchdog = setTimeout(() => { report.error = 'Benchmark watchdog expired'; void persist().finally(() => app.exit(1)); }, 45 * 60 * 1000); // NEW
     try { // NEW
         await fs.cp(sourceInput, sources, { recursive: true }); // NEW
@@ -222,9 +234,9 @@ app.whenReady().then(async () => { // NEW
         ipcMain.handle('save-performance-invite', (_event, input) => service ? service.createInviteBlock(1,input) : inviteFunction(1, input)); // CHANGE
         ipcMain.handle('save-performance-native', async (_event, input) => { if (input.action === 'saveFile') await writeAtomic(input.fileObject.path, input.data); return { mtimeMs: Date.now() }; }); // NEW
         for (const mode of requestedMode ? [requestedMode] : stress || badgeOnly ? ['private'] : ['local', 'private', 'shared']) await runCase(mode, keys, createCollaborationStore, nativeMethods, inviteFunction); // CHANGE
-        report.complete = true; report.badgeOnly = badgeOnly; report.accepted = !badgeOnly && !smoke && !stress && report.cases.every(result => Object.values(result.p95).every(value => value <= 5000)); // CHANGE
-        report.notes = ['Native Graph, desktop save methods, sharing renderer, production sharing service, real SQLite recording and signed history publication; isolated IPC/profile boundaries.', 'Shared has an approved peer; live Syncthing transport, full plugin startup, external mail and rendering responsiveness are separate acceptance checks.', 'Invitation samples commit pending-invitation metadata before preparation; the Users form is tested separately.', 'Autosave measures production save(false) execution after its timer fires; timer debounce is excluded.', 'Fixed 100-object diagram with notes; both signed collaboration archives and SQLite narrative history contain the reported number of content edits. Covered collaboration archives are unavailable during measurement.']; // CHANGE
+        report.complete = true; report.badgeOnly = badgeOnly; report.accepted = !report.suspended && !badgeOnly && !smoke && !stress && report.cases.every(result => Object.values(result.p95).every(value => value <= 5000)); // CHANGE
+        report.notes = ['Native Graph, desktop save methods, sharing renderer, production sharing service, real SQLite recording and signed history publication; isolated IPC/profile boundaries.', 'Shared has an approved peer; live Syncthing transport, full plugin startup, external mail and rendering responsiveness are separate acceptance checks.', 'Invitation samples commit pending-invitation metadata before preparation; the Users form is tested separately.', 'Autosave explicitly invokes the production automatic branch after quiet preparation; real waits and controlled advances are reported separately, outside real execution timing.', 'Fixed 100-object diagram with notes; both signed collaboration archives and SQLite narrative history contain the reported number of content edits. Covered collaboration archives are unavailable during measurement.']; // CHANGE
         await persist(); console.log('REPORT', target); exitCode = report.complete && (badgeOnly || smoke || stress || report.accepted) ? 0 : 1; // CHANGE
     } catch (error) { console.error('SAVE_FAILURE',error); report.error = error.stack; await persist(); if (window) { try { report.statuses = await evaluate('statuses'); } catch (_) {} window.destroy(); } await persist(); console.error(error); exitCode = 1; } // NEW
-    finally { clearTimeout(watchdog); app.exit(exitCode); } // CHANGE: parent runner removes the isolated Chromium profile after process exit. // NEW
+    finally { clearTimeout(watchdog); powerSaveBlocker.stop(sleepBlocker); app.exit(exitCode); } // CHANGE: release the process-scoped blocker on success and failure.
 }); // NEW

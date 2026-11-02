@@ -2289,16 +2289,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 ensureXmlValue(laneCell).setAttribute('label', lane.label);
                 setAttrNoUndo(laneCell, 'status', lane.label, true);
 
-                // Keep existing boards visually aligned with the current LANES array.
-                const geo = laneCell.getGeometry() ? laneCell.getGeometry().clone() : new mxGeometry(x, y, LANE_W, LANE_H);
-                geo.x = x;
-                geo.y = y;
-                geo.width = LANE_W;
-                geo.height = LANE_H;
-                model.setGeometry(laneCell, geo);
+                // applyBoardViewLayout below owns final geometry; resetting it first creates false edits on every deferred initialization. // CHANGE
 
                 // Keep child order aligned with LANES order.
-                if (model.getParent(laneCell) === board) {
+                if (model.getParent(laneCell) === board && model.getChildAt(board, idx) !== laneCell) { // CHANGE: repeating initialization must not emit no-op structural edits.
                     model.add(board, laneCell, idx);
                 }
             }
@@ -3436,6 +3430,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
           id: 'generated-tasks:' + targetGroupId, // NEW
           title: 'Generate tasks', // NEW
+          includeAncestors: false, // CHANGE: actual task boards own reflow; unrelated garden siblings are not dependencies.
           cells: () => taskAutomationCells(targetGroupId), // NEW
           retry: () => window.USL.scheduler.retryGeneratedTasks(model.getCell(targetGroupId)), // NEW
           deferredValue: [] // NEW
@@ -3615,7 +3610,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const source = buildDifferentialTaskSyncRecords(targetGroupId);
         if (!source) return [];
         const garden = findGardenModuleAncestor(source.group); // NEW: newly generated tasks can reflow an existing board even when the source has no old tasks.
-        return [source.group, ...source.records.map(record => record.card), ...new Set([...source.records.map(record => findBoardAncestor(record.card)), ...(garden ? listBoardsForGarden(garden) : [])].filter(Boolean))]; // CHANGE
+        return [source.group, ...source.records.map(record => record.card), ...new Set([...source.records.map(record => findBoardAncestor(record.card)), ...(garden ? [findBoardsIn(boardContainerForGarden(garden)).main].filter(Boolean) : [])].filter(Boolean))]; // CHANGE
     }
 
     /** Preserve facts only across unique stable occurrence identities; ambiguous replacements are new objects. */ // NEW
@@ -3638,6 +3633,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
           id: 'generated-tasks:' + targetGroupId, // NEW
           title: 'Replace generated tasks', // NEW
+          includeAncestors: false, // CHANGE: actual task boards own reflow; unrelated garden siblings are not dependencies.
           cells: () => taskAutomationCells(targetGroupId), // NEW
           retry: () => window.USL.scheduler.retryGeneratedTasks(model.getCell(targetGroupId)), // NEW
           deferredValue: [] // NEW
@@ -3700,6 +3696,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
           id: 'generated-tasks:' + opts.targetGroupId, // NEW
           title: 'Synchronize generated tasks', // NEW
+          includeAncestors: false, // CHANGE: actual task boards own reflow; unrelated garden siblings are not dependencies.
           cells: () => taskAutomationCells(opts.targetGroupId), // NEW
           retry: () => window.USL.scheduler.retryGeneratedTasks(model.getCell(opts.targetGroupId)), // NEW
           deferredValue: [] // NEW
@@ -5485,7 +5482,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     }
 
     // -------------------- Dialog commands --------------------
-    function showEditCardDialogImpl(card) { // CHANGE: notes are editable on every Kanban card
+    function showEditCardDialogImpl(card, transitionResolved = false) {
+        if (!transitionResolved && graph.__trellisSharing?.transitionEditor) return graph.__trellisSharing.transitionEditor(() => showEditCardDialogImpl(card, true)); // CHANGE // CHANGE: notes are editable on every Kanban card
         if (!card || !isKanbanCard(card)) return;
 
         const datesEditableAtOpen = canEditCardDates(card);
@@ -5539,6 +5537,14 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         noteFeedback.style.fontSize = '12px';
         div.appendChild(noteFeedback);
 
+        let seedQuantityInput = null; // NEW
+        if (['direct_sowing', 'seedling_starting'].includes(getAttr(card, 'task_type_id'))) { // NEW
+            seedQuantityInput = document.createElement('input'); seedQuantityInput.type = 'number'; seedQuantityInput.min = '0'; seedQuantityInput.step = '1'; // NEW
+            seedQuantityInput.value = getAttr(card, 'trellis_seed_quantity') || ''; seedQuantityInput.placeholder = 'Use planned requirement'; // NEW
+            seedQuantityInput.title = 'Correct the seed count used by this sowing. Blank uses the germination-adjusted planting requirement.'; // NEW
+            addRow('Seeds used:', seedQuantityInput); // NEW
+        } // NEW
+
         let startInput = null;
         let endInput = null;
 
@@ -5591,28 +5597,34 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             ui.hideDialog();
         });
         applyTaskButtonStyle(cancelButton, 'close'); // CHANGE: card-edit cancellation uses the red outline.
-        const saveButton = mxUtils.button('Save', async function () {
+        let cardEditor = null; // CHANGE
+        async function applyCardEdit(saveOptions = {}) { // CHANGE
             const attributes = {};
             const notePatch = buildCardNotePatch(card.value, noteInput.value);
             if (notePatch && notePatch.changed) Object.assign(attributes, notePatch.attributes);
 
+            if (seedQuantityInput && seedQuantityInput.value !== (getAttr(card, 'trellis_seed_quantity') || '')) { // NEW
+                const value = seedQuantityInput.value; // NEW
+                if (value !== '' && (!Number.isSafeInteger(Number(value)) || Number(value) < 0)) { error.textContent = 'Enter a nonnegative whole seed count.'; seedQuantityInput.focus(); return false; } // NEW
+                attributes.trellis_seed_quantity = value === '' ? null : String(Number(value)); // NEW
+            } // NEW
             let dateChanged = false;
             if (startInput && currentRange && startInput.value !== currentRange.startISO) {
                 const nextEnd = updateComputedEnd();
                 if (!nextEnd) {
                     startInput.focus();
-                    return;
+                    return false;
                 }
 
                 if (!canEditCardDates(card)) { // CHANGE: reject the entire combined save if changed dates are no longer eligible
                     error.textContent = 'This card is no longer eligible for date editing.';
-                    return;
+                    return false;
                 }
 
                 const datePatch = buildCardDateOverridePatch(card.value, startInput.value);
                 if (!datePatch || datePatch.changed === false) {
                     error.textContent = 'The card dates could not be updated.';
-                    return;
+                    return false;
                 }
 
                 Object.assign(attributes, datePatch.attributes);
@@ -5620,17 +5632,19 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             }
 
             if (Object.keys(attributes).length === 0) { // NEW: unchanged combined submission is a no-op
-                ui.hideDialog();
-                return;
+                if (saveOptions.closeAfter !== false) ui.hideDialog();
+                return true;
             }
 
             if (!taskCommands.commitCardPatch(card, attributes, { reflow: dateChanged })) {
                 error.textContent = 'The card could not be updated.';
-                return;
+                return false;
             }
 
-            ui.hideDialog();
-        });
+            if (saveOptions.closeAfter !== false) ui.hideDialog();
+            if (currentRange) Object.assign(currentRange, getTaskDateRange(card.value)); return true; // CHANGE
+        } // CHANGE
+        const saveButton = mxUtils.button('Save', () => cardEditor ? cardEditor.commit() : applyCardEdit()); // CHANGE
         saveButton.title = "Save the edits to this task card."; // CHANGE: explicit action tooltip.
 
         applyTaskButtonStyle(saveButton, 'add');
@@ -5643,7 +5657,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (evt.key === 'Escape') ui.hideDialog();
         });
 
-        taskDialogs.showTaskManagerDialog(div, 420, datesEditableAtOpen ? 310 : 230, true, true);
+        cardEditor = taskDialogs.showTaskManagerDialog(div, 420, datesEditableAtOpen ? 310 : 230, true, true, { title: 'Task card', cells: [card], save: applyCardEdit }); // CHANGE
         noteInput.focus();
     }
 
@@ -5813,9 +5827,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z);
     }
 
-    function showTaskManagerDialogImpl(node, width, height, modal, closable) {
-        ui.showDialog(node, width, height, modal, closable);
-        elevateTaskManagerDialogImpl();
+    function showTaskManagerDialogImpl(node, width, height, modal, closable, editorSpec) {
+        const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+        const editor = editorSpec && graph.__trellisSharing?.registerObjectForm?.({ ...editorSpec, element: node, targets: editorSpec.cells.map(cell => JSON.stringify([pageId, String(cell.id)])), discard: () => ui.hideDialog() }); // CHANGE
+        ui.showDialog(node, width, height, modal, closable, () => editor?.dispose(true));
+        elevateTaskManagerDialogImpl(); return editor; // CHANGE
     }
 
     function formatMinuteTimeInput(minutes) {
@@ -5834,7 +5850,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return snapScheduleMinutes((h * 60) + m, fallback);
     }
 
-    function showEditHoursDialogImpl(board) {
+    function showEditHoursDialogImpl(board, transitionResolved = false) {
+        if (!transitionResolved && graph.__trellisSharing?.transitionEditor) return graph.__trellisSharing.transitionEditor(() => showEditHoursDialogImpl(board, true)); // CHANGE
         if (!board) return;
         const weekStart = getSelectedWeekStart(board);
         const defaults = normalizeWeekWorkHours(parseJsonObject(getAttr(board, TASK_WORK_HOURS_DEFAULTS_ATTR)));
@@ -5908,7 +5925,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const buttons = document.createElement('div');
         buttons.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:12px;';
         const cancel = mxUtils.button('Cancel', function () { ui.hideDialog(); });
-        const save = mxUtils.button('Save', function () {
+        let hoursEditor = null; // CHANGE
+        function applyWeekHours(saveOptions = {}) { // CHANGE
             const nextDefaults = defaults.slice();
             const nextWeek = weekOverrides.slice();
             rows.forEach(row => {
@@ -5916,20 +5934,22 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 const endMinute = parseMinuteTimeInput(row.end.value, row.fallback.endMinute);
                 const target = row.kind === 'default' ? nextDefaults : nextWeek;
                 target[row.index] = normalizeWorkHourWindow({ closed: row.closed.checked, startMinute, endMinute });
-            });
+            }); // CHANGE
             taskCommands.saveBoardWeekWorkHours(board, weekStart, weeks, nextDefaults, nextWeek);
-            ui.hideDialog();
-        });
+            if (saveOptions.closeAfter !== false) ui.hideDialog(); return true; // CHANGE
+        } // CHANGE
+        const save = mxUtils.button('Save', () => hoursEditor ? hoursEditor.commit() : applyWeekHours()); // CHANGE
         save.title = "Save this task board's weekly work hours."; // CHANGE: explicit action tooltip.
         applyTaskButtonStyle(cancel, 'close'); // CHANGE: work-hours cancellation uses the red outline.
         applyTaskButtonStyle(save, 'add');
         buttons.appendChild(cancel);
         buttons.appendChild(save);
         div.appendChild(buttons);
-        taskDialogs.showTaskManagerDialog(div, 660, 600, true, true);
+        hoursEditor = taskDialogs.showTaskManagerDialog(div, 660, 600, true, true, { title: 'Board work hours', cells: [board], save: applyWeekHours }); // CHANGE
     }
 
-    function showEditDayHoursDialogImpl(board, laneKey) {
+    function showEditDayHoursDialogImpl(board, laneKey, transitionResolved = false) {
+        if (!transitionResolved && graph.__trellisSharing?.transitionEditor) return graph.__trellisSharing.transitionEditor(() => showEditDayHoursDialogImpl(board, laneKey, true)); // CHANGE
         if (!board || !isWeekDayLane(laneKey)) return;
         const dayIndex = getWeekDayIndexForLaneKey(laneKey);
         const editState = getBoardWeekWorkHourEditState(board);
@@ -5978,19 +5998,21 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const buttons = document.createElement('div');
         buttons.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:12px;';
         const cancel = mxUtils.button('Cancel', function () { ui.hideDialog(); });
-        const save = mxUtils.button('Save', function () {
+        let hoursEditor = null; // CHANGE
+        function applyDayHours(saveOptions = {}) { // CHANGE
             const startMinute = parseMinuteTimeInput(start.value, day.startMinute);
             const endMinute = parseMinuteTimeInput(end.value, day.endMinute);
             taskCommands.saveSelectedWeekDayWorkHours(board, dayIndex, normalizeWorkHourWindow({ closed: closed.checked, startMinute, endMinute }));
-            ui.hideDialog();
-        });
+            if (saveOptions.closeAfter !== false) ui.hideDialog(); return true; // CHANGE
+        } // CHANGE
+        const save = mxUtils.button('Save', () => hoursEditor ? hoursEditor.commit() : applyDayHours()); // CHANGE
         save.title = "Save work hours for the selected day."; // CHANGE: explicit action tooltip.
         applyTaskButtonStyle(cancel, 'close'); // CHANGE: work-hours cancellation uses the red outline.
         applyTaskButtonStyle(save, 'add');
         buttons.appendChild(cancel);
         buttons.appendChild(save);
         div.appendChild(buttons);
-        taskDialogs.showTaskManagerDialog(div, 360, 210, true, true);
+        hoursEditor = taskDialogs.showTaskManagerDialog(div, 360, 210, true, true, { title: 'Day work hours', cells: [board], save: applyDayHours }); // CHANGE
     }
 
     function saveBoardWeekWorkHours(board, weekStart, weeks, nextDefaults, nextWeek) {
@@ -6355,7 +6377,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             })); // CHANGE
         }; // CHANGE
         const editContext = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
-        const result = editContext ? editContext.run('manual', { id: 'task-planning:' + card.id, title: 'Task planning', cells: () => series ? [info.source, ...affected] : affected, deferredValue: false, retry: () => graph.setSelectionCell(card) }, commit) : commit(); // CHANGE
+        const result = editContext ? editContext.run('manual', { id: 'task-planning:' + card.id, title: 'Task planning', manualSources: [card], cells: () => series ? [info.source, ...affected] : affected, deferredValue: false, retry: () => graph.setSelectionCell(card) }, commit) : commit(); // CHANGE
         if (result === false) throw new Error('A related editor is active. Close it and save this selection again.'); // CHANGE
         return result; // CHANGE
     } // CHANGE
@@ -7660,7 +7682,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         requestRefresh();
     }
 
-    function showBulkEditCardsDialogImpl(cards) {
+    function showBulkEditCardsDialogImpl(cards, transitionResolved = false) {
+        if (!transitionResolved && graph.__trellisSharing?.transitionEditor) return graph.__trellisSharing.transitionEditor(() => showBulkEditCardsDialogImpl(cards, true)); // CHANGE
         const selected = uniqueKanbanCards(cards);
         if (!selected.length) return;
         if (selected.length === 1) { taskDialogs.showEditCardDialog(selected[0]); return; }
@@ -7738,24 +7761,27 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         buttons.style.justifyContent = 'flex-end';
         buttons.style.gap = '8px';
         const cancelButton = mxUtils.button('Cancel', function () { ui.hideDialog(); });
-        const saveButton = mxUtils.button('Save', function () {
+        let bulkEditor = null; // CHANGE
+        function applyBulkEdit(saveOptions = {}) { // CHANGE
             const replaceNote = noteCheck.checked;
             const setStartDate = dateCheck.checked;
-            if (!replaceNote && !setStartDate) { ui.hideDialog(); return; }
+            if (!replaceNote && !setStartDate) { if (saveOptions.closeAfter !== false) ui.hideDialog(); return true; }
             if (setStartDate && !parseTaskCalendarISO(startInput.value)) {
                 error.style.color = '#b91c1c';
                 error.textContent = 'Enter a valid start date.';
                 startInput.focus();
-                return;
+                return false;
             }
             const result = taskCommands.applyBulkCardEdit(selected, { replaceNote, note: noteInput.value, setStartDate, startDate: startInput.value });
             if (setStartDate && result.dateSkipped > 0) {
                 error.style.color = '#374151';
                 error.textContent = 'Saved. Skipped ' + result.dateSkipped + ' card' + (result.dateSkipped === 1 ? '' : 's') + ' not eligible for date editing.';
-                return;
+                return true;
             }
-            ui.hideDialog();
-        });
+            if (saveOptions.closeAfter !== false) ui.hideDialog();
+            return true; // CHANGE
+        } // CHANGE
+        const saveButton = mxUtils.button('Save', () => bulkEditor ? bulkEditor.commit() : applyBulkEdit()); // CHANGE
         saveButton.title = "Apply the enabled edits to all selected task cards."; // CHANGE: explicit action tooltip.
         applyTaskButtonStyle(cancelButton, 'close'); // CHANGE: card-edit cancellation uses the red outline.
         applyTaskButtonStyle(saveButton, 'add');
@@ -7767,7 +7793,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (evt.key === 'Enter') saveButton.click();
             if (evt.key === 'Escape') ui.hideDialog();
         });
-        taskDialogs.showTaskManagerDialog(div, 460, dateEditable.length ? 260 : 230, true, true);
+        bulkEditor = taskDialogs.showTaskManagerDialog(div, 460, dateEditable.length ? 260 : 230, true, true, { title: 'Selected tasks', cells: selected, save: applyBulkEdit }); // CHANGE
         noteInput.focus();
     }
 
@@ -7793,7 +7819,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     function showEditHoursDialog(board) { return taskDialogs.showEditHoursDialog(board); }
     function showEditDayHoursDialog(board, laneKey) { return taskDialogs.showEditDayHoursDialog(board, laneKey); }
     function showBulkEditCardsDialog(cards) { return taskDialogs.showBulkEditCardsDialog(cards); }
-    function showTaskManagerDialog(node, width, height, modal, closable) { return taskDialogs.showTaskManagerDialog(node, width, height, modal, closable); }
+    function showTaskManagerDialog(node, width, height, modal, closable, editorSpec) { return taskDialogs.showTaskManagerDialog(node, width, height, modal, closable, editorSpec); } // CHANGE
     function elevateTaskManagerDialog() { return taskDialogs.elevateTaskManagerDialog(); }
 
     function installSelectedDayLaneActionOverlay() {
@@ -8362,11 +8388,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         planning.addEventListener('toggle', () => requestRefresh(), true); // NEW: remeasure expanded controls.
         planning.addEventListener('keydown', event => { if (event.key === 'Escape') { planningSignature = ''; requestRefresh(); } }); // NEW
         overlay.appendChild(planning); // CHANGE
-        let planningSignature = '', planningCard = null; // CHANGE
+        let planningSignature = '', planningCard = null, planningHold = null, planningTransition = false; // CHANGE // CHANGE
 
         /** Keep an open checkbox draft and keyboard focus during unrelated graph/view refreshes. */ // NEW
         function renderPlanningControls(card) { // CHANGE
-            if (!card || !graph.__trellisEquipment) { planning.style.display = 'none'; planningSignature = ''; planningCard = null; return; } // CHANGE
+            if (!card || !graph.__trellisEquipment) { if (!planningHold?.dirty?.()) { planningHold?.dispose(true); planningHold = null; } planning.style.display = planningHold?.dirty?.() ? 'flex' : 'none'; planningSignature = ''; planningCard = null; return; } // CHANGE
             const equipment = graph.__trellisEquipment; // CHANGE
             let result; // CHANGE
             try { result = equipment.recommendForTask(card); } // CHANGE
@@ -8375,6 +8401,13 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const signature = JSON.stringify([card.id, card.value?.outerHTML, context.taskTypeId, context.quantity, context.crewSize, context.bedConditions, context.cropId, context.inventory, result.candidates.map(item => [item.equipment.id, item.unmet, item.unknown]), canEditTaskPlanning(card)]); // CHANGE
             planning.style.display = 'flex'; // CHANGE
             if (planningCard === card && planningSignature === signature) return; // CHANGE
+            if (planningHold?.dirty?.()) { // CHANGE: model/view refresh must not replace an unfinished tool selection.
+                if (!planningTransition && planningCard !== card) { // CHANGE
+                    planningTransition = true; void planningHold.transition(() => { planningHold?.dispose(true); planningHold = null; planningSignature = ''; renderPlanningControls(card); }).finally(() => { planningTransition = false; }); // CHANGE
+                } // CHANGE
+                return; // CHANGE
+            } // CHANGE
+            planningHold?.dispose(true); planningHold = null; // CHANGE
             planningCard = card; planningSignature = signature; planning.replaceChildren(); // CHANGE
             const editable = canEditTaskPlanning(card), originalValue = card.value; // CHANGE
             const message = document.createElement('div'); message.setAttribute('role', 'status'); message.style.cssText = 'font-size:11px;max-width:320px;white-space:normal;'; // CHANGE
@@ -8384,15 +8417,17 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 parent.appendChild(node); return node; // CHANGE
             } // CHANGE
             async function save(patch, scope) { // CHANGE
-                if (model.getCell(card.id) !== card || card.value !== originalValue || selectedKanbanCards().length !== 1 || selectedKanbanCards()[0] !== card) { message.textContent = 'The selected task changed. Open the selection again.'; return; } // CHANGE
+                if (model.getCell(card.id) !== card || card.value !== originalValue || selectedKanbanCards().length !== 1 || selectedKanbanCards()[0] !== card) { message.textContent = 'The selected task changed. Open the selection again.'; return false; } // CHANGE
                 try { // CHANGE
                     planning.querySelectorAll('button,select,input').forEach(node => { node.disabled = true; }); // CHANGE
-                    await applyTaskPlanningChange(card, patch, scope); // CHANGE
-                    planningSignature = ''; requestRefresh(); // CHANGE
+                    if (planningHold) await planningHold.acquire(); // CHANGE
+                    await applyTaskPlanningChange(card, patch, scope);
+                    planningHold?.complete?.(); // CHANGE // CHANGE
+                    planningSignature = ''; requestRefresh(); return true; // CHANGE
                 } catch (error) { // CHANGE
                     message.textContent = error.message; // CHANGE
                     planningSignature = ''; // Allow the next model refresh to rebuild permission-sensitive controls. // CHANGE
-                    planning.querySelectorAll('button,select,input').forEach(node => { node.disabled = !editable || node.dataset.unavailable === 'true'; }); // CHANGE
+                    planning.querySelectorAll('button,select,input').forEach(node => { node.disabled = !editable || node.dataset.unavailable === 'true'; }); return false; // CHANGE
                 } // CHANGE
             } // CHANGE
             function chooseScope(patch, parent) { // CHANGE
@@ -8462,6 +8497,16 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             button('No tools', () => chooseScope({ equipmentIds: [] }, tools), actions).disabled = !editable; // CHANGE
             button('Use suggestions', () => chooseScope({ equipmentIds: null }, tools), actions).disabled = !editable; // CHANGE
             planning.appendChild(tools); // CHANGE
+            const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+            planningHold = graph.__trellisSharing?.registerEditor?.({ // CHANGE
+                kind: 'object-form', title: 'Task planning', element: planning, targets: [JSON.stringify([pageId, String(card.id)])], // CHANGE
+                capture: () => ({ pageId, objectId: String(card.id), equipmentIds: [...draft] }), // CHANGE
+                restore: baseline => { draft.clear(); for (const id of baseline?.equipmentIds || []) draft.add(id); planning.querySelectorAll('input[type="checkbox"]').forEach(field => { field.checked = draft.has(field.value); }); updateEstimate(); }, // CHANGE
+                save: () => { if (taskPlanningSeriesInfo(card).recurring) { chooseScope({ equipmentIds: [...draft] }, tools); message.textContent = 'Choose This occurrence or Series before leaving this edit.'; return false; } return save({ equipmentIds: [...draft] }, 'occurrence'); }, // CHANGE
+                freeze() { planning.querySelectorAll('input,select,button').forEach(field => { field.disabled = true; }); }, discard() { planning.style.display = 'none'; }, // CHANGE
+            }); // CHANGE
+            planning.onchange = () => planningHold?.touch(); // CHANGE
+
             const quantity = document.createElement('details'), quantityLabel = document.createElement('summary'); quantityLabel.textContent = 'Set job quantity'; quantityLabel.style.cursor = 'pointer'; quantity.appendChild(quantityLabel); // CHANGE
             const units = document.createElement('select'); units.setAttribute('aria-label', 'Job quantity unit'); // CHANGE
             (context.taskType?.allowedQuantityBases || ['plants', 'm2', 'row_meters', 'beds', 'harvest_kg', 'tasks', 'irrigation_zones']).forEach(unit => { const option = document.createElement('option'); option.value = unit; option.textContent = unit.replace(/_/g, ' '); units.appendChild(option); }); // CHANGE
@@ -8700,7 +8745,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const createMainBoard = !!(evt && typeof evt.getProperty === "function" && evt.getProperty("createMainBoard"));
             if (!createMainBoard) return;
             if (!taskModule || !model.isVertex(taskModule) || !isTaskModule(taskModule)) return;
-            setTimeout(function () { taskCommands.ensureBoardTemplateInUpdate(taskModule); }, 0);
+            setTimeout(function () { // CHANGE: enter provenance at the deferred mutation boundary, preserving explicit board-command behavior.
+                if (model.getCell(taskModule.id) !== taskModule) return; // NEW: a cancelled/undone cluster cannot be rebuilt by a stale initialization timer.
+                const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
+                if (context) context.scope('generated-content', () => taskCommands.ensureBoardTemplateInUpdate(taskModule)); // NEW
+                else taskCommands.ensureBoardTemplateInUpdate(taskModule); // NEW
+            }, 0); // CHANGE
         });
     }
 

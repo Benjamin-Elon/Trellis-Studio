@@ -38,6 +38,7 @@ var mxSettings =
 		'gardenLinking', // NEW
 		'tidyContextMenu', // NEW
 		'createdChangeMap', // NEW
+		'trellisInventories', // NEW
 		'gardenDashboard', // NEW
 		'gardenPlanner', // NEW
 		'gardenAllocate', // NEW
@@ -71,6 +72,10 @@ var mxSettings =
 		gardenLinking: 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js', // NEW
 		tidyContextMenu: 'plugins/garden_planner_plugins/Tidy_Context_Menu.js', // NEW
 		createdChangeMap: 'plugins/garden_planner_plugins/Created_Change_Map.js', // NEW
+		trellisAllocationCore: 'plugins/garden_planner_plugins/Trellis_Allocation_Core.js', // NEW
+		trellisSeedsCore: 'plugins/garden_planner_plugins/Trellis_Seeds_Core.js', // NEW
+		trellisExchangeCore: 'plugins/garden_planner_plugins/Trellis_Exchange_Core.js', // NEW
+		trellisInventories: 'plugins/garden_planner_plugins/Trellis_Inventories.js', // NEW
 		gardenDashboard: 'plugins/garden_planner_plugins/Garden_Dashboard.js', // NEW
 		gardenPlanner: 'plugins/garden_planner_plugins/Year_Planner.js', // NEW
 		gardenAllocate: 'plugins/garden_planner_plugins/Allocate_Planner.js', // NEW

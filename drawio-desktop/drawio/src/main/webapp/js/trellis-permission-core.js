@@ -77,26 +77,32 @@
     STORE = 'trellis_users_json'; // NEW
   /** @typedef {{key:string,id:string,pageId:string,parent:string|null,attributes:Object,style:string,root?:boolean,layer?:boolean,vertex?:boolean,edge?:boolean}} PermissionCell Plain facts produced by a host adapter. */ // NEW
   /** @typedef {{store:Object,cells:PermissionCell[],memberships?:Object,provisionalUsers?:Object[]}} SnapshotInput The host supplies proven session context separately from stored policy. */ // NEW
-  const CAPABILITIES = Object.freeze(['create_plantings', 'manage_own_plantings', 'move_tasks', 'edit_task_details', 'manage_scope_content', 'manage_access']); // NEW
+  const CAPABILITIES = Object.freeze(['create_plantings', 'manage_own_plantings', 'move_tasks', 'edit_task_details', 'manage_scope_content', 'manage_access', 'manage_seed_exchange', 'manage_csa']); // CHANGE // NEW
   const PRESETS = Object.freeze({ // NEW
     visitor: [], // NEW
     gardener: CAPABILITIES.slice(0, 4), // NEW
-    coordinator: CAPABILITIES // NEW
+    coordinator: CAPABILITIES.slice(0, 6) // CHANGE: Exchange grants are explicitly delegated.
   }); // NEW
   const ACCESS = new Set(['trellis_access_user_ids_json', GRANTS, 'trellis_access_open']); // NEW
   const PROTECTED = new Set([STORE, OWNER, ...ACCESS, 'trellis_role_user_id', 'trellis_role_garden_module_id', 'trellis_role_team_module_id', 'trellis_role_archived_user_id', 'trellis_role_inactive', 'trellis_team_module_id', 'trellis_garden_module_id', 'trellis_team_role_archive_json', 'trellis_team_section', 'trellis_team_id', 'trellis_team_archived', 'trellis_team_unassigned']); // NEW
-  const TASK_DETAILS = new Set(['label', 'title', 'notes', 'card_note', 'task_instruction_override', 'trellis_details_html', 'trellis_comments_json', 'start', 'end', 'due', 'assigned_day', 'task_estimated_hours', 'task_type_id', 'task_equipment_ids', 'task_planning_override_json', 'task_quantity_basis', 'task_quantity_value', 'task_equipment_estimate_note', 'scheduler_dates_locked']); // NEW
+  const TASK_DETAILS = new Set(['trellis_seed_quantity', 'label', 'title', 'notes', 'card_note', 'task_instruction_override', 'trellis_details_html', 'trellis_comments_json', 'start', 'end', 'due', 'assigned_day', 'task_estimated_hours', 'task_type_id', 'task_equipment_ids', 'task_planning_override_json', 'task_quantity_basis', 'task_quantity_value', 'task_equipment_estimate_note', 'scheduler_dates_locked']); // NEW
+  const TASK_WORKFLOW = new Set(['workflow_state', 'assigned_day', 'completed', 'incomplete_day', 'manual_staged', 'scheduler_dates_locked', 'status']); // NEW
   const AUDIT = new Set(['lastEditedByUserId', 'trellis_actor_name', 'trellis_actor_role']); // NEW
   const PRESENTATION = new Set(['lod_collapsed', 'lod_layout_snapshot_v1', 'lod_layout_snapshot_at', 'plant_count', 'plant_count_capacity', 'plant_count_actual', 'planting_expected_yield_kg']); // NEW
   const decision = (allowed, reason = 'This action is not permitted.') => ({ // NEW
     allowed: !!allowed, // NEW
     reason: allowed ? '' : reason // NEW
   }); // NEW
-  const equal = (a, b) => canonical(a) === canonical(b); // NEW
+  const equal = (a, b) => a === b || canonical(a) === canonical(b); // CHANGE: immutable facts are shared across incremental snapshots.
+  const encodings = new WeakMap(); // CHANGE: only deeply frozen snapshots enter the encoding cache.
+  const immutableFacts = new WeakSet(); // CHANGE
+  function immutable(value) { if (!value || typeof value !== 'object') return true; if (immutableFacts.has(value)) return true; if (!Object.isFrozen(value) || !Object.values(value).every(immutable)) return false; immutableFacts.add(value); return true; } // CHANGE: shallow freezing never qualifies for structural sharing.
   function canonical(value) { // NEW
-    return JSON.stringify(value, function (_key, item) { // NEW
+    if (value && typeof value === 'object' && immutable(value) && encodings.has(value)) return encodings.get(value); // CHANGE
+    const result = JSON.stringify(value, function (_key, item) { // CHANGE
       return item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item; // NEW
     }); // NEW
+    if (value && typeof value === 'object' && immutable(value)) encodings.set(value, result); return result; // CHANGE
   } // NEW
   function freeze(value) { // NEW
     if (value && typeof value === 'object' && !Object.isFrozen(value)) { // NEW
@@ -124,7 +130,7 @@
     if (!Array.isArray(values)) throw new Error('Invalid permission grants.'); // NEW
     return values.filter(value => value && value.derived !== true && value.derived !== '1').map(value => ({ // NEW
       ...value, // NEW
-      capabilities: value.preset === undefined ? Array.isArray(value.capabilities) ? value.capabilities.filter(cap => CAPABILITIES.includes(cap)) : [] : PRESETS[preset(value.preset)] // NEW
+      capabilities: value.preset === undefined ? Array.isArray(value.capabilities) ? value.capabilities.filter(cap => CAPABILITIES.includes(cap)) : [] : [...PRESETS[preset(value.preset)], ...(value.capabilities || []).filter(cap => ['manage_seed_exchange', 'manage_csa'].includes(cap))] // CHANGE: only explicit Exchange additions augment a preset. // NEW
     })); // NEW
   } // NEW
   function flag(cell, name) { // NEW
@@ -167,11 +173,11 @@
   } // NEW
   /** Copy and freeze caller data. A snapshot contains no mutable references to its graph/XML source. */ // NEW
   function snapshot(input) { // NEW
-    const data = JSON.parse(JSON.stringify(input)), // NEW
+    const data = { ...JSON.parse(JSON.stringify({ ...input, cells: undefined })), cells: (input.cells || []).map(cell => immutable(cell) ? cell : JSON.parse(JSON.stringify(cell))) }, // CHANGE: trusted immutable facts remain caller-immutable; mutable inputs retain defensive copying.
       cells = Object.create(null); // NEW
     for (const cell of data.cells || []) { // NEW
       if (!cell.key || Object.hasOwn(cells, cell.key)) throw new Error('Duplicate permission object.'); // NEW
-      cells[cell.key] = { // NEW
+      cells[cell.key] = immutable(cell) && cell.attributes && typeof cell.style === 'string' ? cell : { // CHANGE: retain unchanged fact identity across transaction projections.
         ...cell, // NEW
         attributes: cell.attributes || {}, // NEW
         style: cell.style || '' // NEW
@@ -198,7 +204,7 @@
   function directCapabilities(snapshot, actor, key) { // NEW
     const teams = new Set(snapshot.memberships?.[actor] || activeTeams(snapshot, actor)), // NEW
       result = new Set(); // NEW
-    for (const cell of chain(snapshot, key)) for (const grant of grants(cell)) if (grant.userId === actor || grant.subjectType === 'team' && teams.has(grant.teamId)) grant.capabilities.forEach(cap => result.add(cap)); // NEW
+    for (const cell of chain(snapshot, key)) for (const grant of grants(cell)) if (grant.userId === actor || grant.subjectType === 'team' && teams.has(grant.teamId)) grant.capabilities.forEach(cap => { if (!['manage_seed_exchange', 'manage_csa'].includes(cap) || flag(cell, 'garden_module') && nearest(snapshot, key, 'garden_module')?.key === cell.key) result.add(cap); }); // CHANGE: Exchange grants are garden-scoped. // NEW
     if (result.has('manage_scope_content')) CAPABILITIES.slice(0, 4).forEach(cap => result.add(cap)); // NEW
     return [...result].sort(); // NEW
   } // NEW
@@ -214,9 +220,9 @@
   /** Action permissions exclude freshness, activity reservations, document locks and UI state. */ // NEW
   function authorize(snapshot, actor, action, key, at) { // NEW
     try { // NEW
-      if (!['edit', 'move', 'add', 'delete', 'createPlanting', 'managePlanting', 'moveTask', 'editTaskDetails', 'manageContent', 'manageAccess', 'manageScopeGrants', 'transferOwnership', 'configureCircleLimits'].includes(action)) return decision(false, 'Unknown permission action.'); // NEW
+      if (!['edit', 'move', 'add', 'delete', 'createPlanting', 'managePlanting', 'moveTask', 'editTaskDetails', 'manageContent', 'manageAccess', 'manageScopeGrants', 'transferOwnership', 'configureCircleLimits', 'manage_seed_exchange', 'manage_csa', 'publish_csa'].includes(action)) return decision(false, 'Unknown permission action.'); // NEW
       const accessAction = ['manageAccess', 'transferOwnership', 'manageScopeGrants'].includes(action); // NEW
-      if (!snapshot.store.usersEnabled) return decision(!accessAction); // NEW
+      if (!snapshot.store.usersEnabled) return decision(!accessAction && !['manage_seed_exchange', 'manage_csa', 'publish_csa'].includes(action)); // NEW
       const account = user(snapshot, actor, at), // NEW
         cell = snapshot.cells[key]; // NEW
       if (!account) return decision(false, 'Log in as an active project user.'); // NEW
@@ -225,6 +231,8 @@
       const caps = new Set(effectiveCapabilities(snapshot, actor, key, at)), // NEW
         has = cap => caps.has(cap), // NEW
         unowned = chain(snapshot, key).some(candidate => type(candidate, 'module') && !candidate.attributes[OWNER]); // NEW
+      if (action === 'publish_csa') return decision(flag(cell, 'garden_module') && (account.admin || cell.attributes[OWNER] === actor)); // NEW
+      if (action === 'manage_seed_exchange' || action === 'manage_csa') return decision(flag(cell, 'garden_module') && (account.admin || cell.attributes[OWNER] === actor || has(action))); // CHANGE // NEW
       if (action === 'configureCircleLimits') return decision(flag(cell, 'garden_module') && (account.admin || cell.attributes[OWNER] === actor)); // NEW
       if (action === 'transferOwnership') return decision(account.admin || owns(snapshot, key, actor, true)); // NEW
       if (action === 'manageAccess' || action === 'manageScopeGrants') return decision((action !== 'manageScopeGrants' || !cell.layer && (type(cell, 'module') || type(cell, 'board') || type(cell, 'bed'))) && (account.admin || owns(snapshot, key, actor, true) || has('manage_access'))); // NEW
@@ -330,9 +338,14 @@
     return invite.status === 'pending' && invite.expiresAt <= at ? 'expired' : invite.status; // NEW
   } // NEW
   /** Validate a whole proposal. All authorization uses the prior snapshot; new grants never authorize sibling effects. */ // NEW
+  const transitionEffects = new WeakMap(); // NEW: immutable object effects are independent of actor and time; authorization is still recomputed.
   function transitionContext(before, after, actor, at, options) { // NEW
-    const effects = changes(before, after), // NEW
-      policy = options.policy || before, // NEW
+    let effects; // CHANGE
+    if (immutable(before) && immutable(after)) { // NEW
+      let targets = transitionEffects.get(before); if (!targets) transitionEffects.set(before, targets = new WeakMap()); // NEW
+      effects = targets.get(after); if (!effects) { effects = freeze(changes(before, after)); targets.set(after, effects); } // NEW
+    } else effects = changes(before, after); // NEW: mutable callers can never reuse stale effects.
+    const policy = options.policy || before, // CHANGE
       account = user(policy, actor, at), // NEW
       setup = !equal(before.store, after.store) && invitationAcceptance(policy, after, actor, at); // NEW
     const created = new Set(), // NEW
@@ -500,12 +513,14 @@
         nextBoard = board && after.cells[board.key]; // NEW
       return type(board, 'board') && can('manageAccess', board.key) && links(nextBoard).includes(old.id); // NEW
     }); // NEW
+    if (!structure && content.length && options.seedChangeAllowed?.(old, next, content) === true) return decision(true); // NEW: independently verified sowing effects only.
     if (!structure && content.length && options.referenceChangeAllowed?.(old, next, content) === true) return decision(true); // NEW: the host independently validates these exact domain fields.
     if (!structure && (navigationTransfer || membershipLink)) return decision(true); // NEW
     const derived = planting && derivedPlanting(planting) && content.every(name => PRESENTATION.has(name)) && !structure; // CHANGE
     const generatedStructure = ['parent', 'source', 'target', 'collapsed', 'visible', 'order', 'vertex', 'edge', 'root', 'layer', 'model', 'modelContent', 'valueContent'].every(name => equal(old[name], next[name])); // NEW: generated presentation cannot alter relationships, object types or hidden payloads.
     if ((type(old, 'tile') || type(old, 'summary')) && planting && old.parent === planting.key && generatedStructure && derivedPlanting(planting)) return decision(true); // CHANGE: only direct generated children may receive derived value/style/geometry changes.
     if (!structure && (navigationCleanup || derived)) return decision(true); // NEW
+    if (!structure && type(old, 'task') && content.length && content.every(name => TASK_WORKFLOW.has(name)) && can('moveTask', key)) return decision(true); // NEW: completion and reopening use the existing task-movement permission.
     if (content.length && !(type(old, 'task') ? content.every(name => TASK_DETAILS.has(name)) && can('editTaskDetails', key) || can('manageContent', key) : planting ? can('managePlanting', key) : can('edit', key))) return decision(false, 'You cannot change this object content.'); // NEW
     if (structure && !can('move', key)) return decision(false, 'You cannot change this object structure.'); // NEW
 
@@ -527,11 +542,21 @@
     } // NEW
   } // NEW
   /** Preflight only new native objects, using prior parent authority. Final whole-transaction validation remains mandatory. */ // NEW
+  const pendingContexts = new WeakMap(); // NEW
   function authorizePendingCreation(before, after, actor, action, key, at, options = {}) { // NEW
     try { // NEW
       const policy = options.policy || before; // NEW
-      if (!['edit', 'move', 'add', 'transferOwnership', 'manageAccess', 'manageScopeGrants', 'configureCircleLimits'].includes(action) || before.cells[key] || policy.cells[key] || !after.cells[key]) return decision(false); // NEW
-      const context = transitionContext(before, after, actor, at, options); // NEW
+      const taskInitialization = ['moveTask', 'editTaskDetails'].includes(action) && type(after.cells[key], 'task'); // CHANGE: generated task reflow is initialization until its creation is accepted.
+      if ((!taskInitialization && !['edit', 'move', 'add', 'transferOwnership', 'manageAccess', 'manageScopeGrants', 'configureCircleLimits', 'manage_seed_exchange', 'manage_csa', 'publish_csa'].includes(action)) || before.cells[key] || policy.cells[key] || !after.cells[key]) return decision(false); // CHANGE: existing tasks still require ordinary movement/detail authority. // NEW
+      let context; // CHANGE
+      if (immutable(before) && immutable(after) && immutable(policy) && Object.keys(options).every(name => name === 'policy')) { // NEW: callbacks may depend on arbitrary time and never enter this cache.
+        let cached = pendingContexts.get(after); // NEW
+        if (!cached || cached.before !== before || cached.policy !== policy || cached.actor !== actor || at < cached.at || at >= cached.expires) { // NEW
+          const expires = [before, after, policy].flatMap(snapshot => snapshot.store.invites || []).reduce((next, invite) => Number.isFinite(invite.expiresAt) && invite.expiresAt > at ? Math.min(next, invite.expiresAt) : next, Infinity); // NEW: invitation expiry is the only time boundary in callback-free creation checks.
+          cached = { before, policy, actor, at, expires, context: transitionContext(before, after, actor, at, Object.freeze({ policy })) }; pendingContexts.set(after, cached); // NEW: caller-owned option objects cannot mutate cached validation rules.
+        } // NEW
+        context = cached.context; // NEW: reuse structural provenance, never a renderer assertion of authority.
+      } else context = transitionContext(before, after, actor, at, options); // NEW
       for (const cell of chain(after, key)) { // NEW
         if (before.cells[cell.key] || policy.cells[cell.key]) break; // NEW
         const result = validateObjectChange(context, { key: cell.key, after: cell }); // NEW

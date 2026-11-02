@@ -18,9 +18,10 @@ app.whenReady().then(async () => { // NEW
             window.graph=new mxGraph(document.getElementById('graph')); graph.isSpecialColor=()=>false; // NEW
             graph.convertValueToString=cell=>cell.value?.getAttribute?.('label')||''; // NEW
             window.undoManager=new mxUndoManager(); graph.model.addListener(mxEvent.UNDO,(_,event)=>undoManager.undoableEditHappened(event.getProperty('edit'))); // NEW
-            window.ui={editor:{graph,undoManager},actions:{get:()=>null},getCurrentFile:()=>({getId:()=> 'growth-preview'}),hideDialog(){}}; // NEW
+            window.ui={editor:Object.assign(new mxEventSource(),{graph,undoManager}),actions:{get:()=>null},getXmlFileData:()=>new mxCodec().encode(graph.model),getCurrentFile:()=>({getId:()=> 'growth-preview'}),hideDialog(){}}; // CHANGE: exercise production local-view and file-encoding hooks.
             window.Draw={loadPlugin:callback=>callback(ui)}; void 0; // NEW
         `); // NEW
+        await win.webContents.executeJavaScript(fs.readFileSync(path.join(webapp, 'js/trellis-local-view.js'), 'utf8')); // NEW
         for (const file of ['Garden_Scheduler_Shared_Core.js', 'Planting_Group.js', 'Garden_Dashboard.js']) await win.webContents.executeJavaScript(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins', file), 'utf8')); // NEW
         const result = await win.webContents.executeJavaScript(` // NEW
             (async()=>{ // NEW
@@ -52,7 +53,8 @@ app.whenReady().then(async () => { // NEW
                 graph.setSelectionCell(garden); await new Promise(resolve=>setTimeout(resolve,100)); checkbox.click();growth.refresh(); // NEW
                 const allGroupsOutlined=[growing,seed,harvest,rotated].every(cell=>graph.getChildVertices(cell).filter(child=>child.getAttribute('plant_tiler')==='1').every(child=>graph.view.getState(child).shape.node.querySelector('ellipse[stroke="#2563eb"]')?.hasAttribute('stroke-dasharray'))); // CHANGE
                 graph.setSelectionCell(growing);growth.refresh(); const checkedSelection=ellipses().length===2; graph.setSelectionCell(garden);growth.refresh(); // CHANGE
-                const badge=document.querySelector('[data-trellis-growth-badge="rotated"]'), box=badge.getBoundingClientRect(), title=graph.view.getState(rotated).text.node.getBoundingClientRect(); // NEW
+                const badge=document.querySelector('[data-trellis-growth-badge="rotated"]'), box=badge.getBoundingClientRect(), rotatedState=graph.view.getState(rotated), container=graph.container.getBoundingClientRect(),angle=25*Math.PI/180,dx=rotatedState.width/2-17,dy=-rotatedState.height/2+17; // CHANGE
+                const expectedBadge={x:container.left-graph.container.scrollLeft+rotatedState.x+rotatedState.width/2+dx*Math.cos(angle)-dy*Math.sin(angle),y:container.top-graph.container.scrollTop+rotatedState.y+rotatedState.height/2+dx*Math.sin(angle)+dy*Math.cos(angle)}; // NEW: independently rotate the fixed-size control's logical header corner.
                 const labelChecks=[]; // CHANGE: inspect live glyphs synchronously, before any scheduled growth refresh can mask a flash.
                 graph.isHtmlLabel=cell=>String(graph.getCellStyle(cell).html)==='1'; // CHANGE: native style parsing may represent the flag as a number.
                 for(const html of [0,1]) { // CHANGE
@@ -88,7 +90,7 @@ app.whenReady().then(async () => { // NEW
                     if(!glyph||Math.abs(parseFloat(glyph.getAttribute('font-size')||glyph.style.fontSize)-state.text.size)>0.01)throw new Error('Export label lost its native font size'); // CHANGE
                 } // CHANGE
                 graph.setSelectionCell(garden); growth.refresh(); // CHANGE
-                const checks={toggled,unchanged,selected,groupOff,multiOff,growthSizePreserved,dashed,checkedSelection,moved,allGroupsOutlined,labelChecks,gardenStyle:garden.style,selectedIds:graph.getSelectionCells().map(cell=>cell.id),checkboxDisabled:checkbox.disabled,checkboxChecked:checkbox.checked,outlineEnabled:growth.getShowHarvestSize(garden),ellipseCount:ellipses().length,badgeCount:document.querySelectorAll('[data-trellis-growth-badge]').length,rotatedBadgeVisible:box.width===30&&box.height===30&&Math.abs((box.top+15)-(title.top+title.height/2))<4}; // CHANGE
+                const checks={toggled,unchanged,selected,groupOff,multiOff,growthSizePreserved,dashed,checkedSelection,moved,allGroupsOutlined,labelChecks,gardenStyle:garden.style,selectedIds:graph.getSelectionCells().map(cell=>cell.id),checkboxDisabled:checkbox.disabled,checkboxChecked:checkbox.checked,outlineEnabled:growth.getShowHarvestSize(garden),ellipseCount:ellipses().length,badgeCount:document.querySelectorAll('[data-trellis-growth-badge]').length,badgeBounds:{width:box.width,height:box.height,centerX:box.left+box.width/2,centerY:box.top+box.height/2,expected:expectedBadge},rotatedBadgeVisible:box.width===30&&box.height===30&&Math.hypot(box.left+15-expectedBadge.x,box.top+15-expectedBadge.y)<1}; // CHANGE
                 return checks; // NEW
             })(); // NEW
         `); // NEW
@@ -96,9 +98,25 @@ app.whenReady().then(async () => { // NEW
         assert.equal(result.badgeCount, 6); // NEW
         for (const check of result.labelChecks) { assert.equal(check.visible, true, JSON.stringify(check)); assert.ok(Math.abs(check.actual-check.expected)<0.1, JSON.stringify(check)); if (check.centerError != null) assert.ok(check.centerError<2, JSON.stringify(check)); } // CHANGE: both dialects render centered text at the 8 px minimum before growth.refresh().
         assert.equal(result.checkboxDisabled, false); assert.equal(result.checkboxChecked, true); assert.equal(result.outlineEnabled, true); // NEW
-        await win.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 150))))'); // NEW: let Chromium composite the final checkbox and outline frame before capture.
+        await win.webContents.executeJavaScript('graph.setSelectionCell(graph.model.getCell("rotated"));graph.__trellisPlantingGroup.overlay.syncSelection();graph.__trellisPlantingGroup.growth.refresh();new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 150))))'); // CHANGE: capture both upright controls on the rotated planting.
         const screenshot = await win.webContents.capturePage(); // NEW
         fs.mkdirSync(path.join(root, 'test-results'), { recursive: true }); fs.writeFileSync(path.join(root, 'test-results/plant-growth-verified.png'), screenshot.toPNG()); // NEW
+        const drawing = await win.webContents.executeJavaScript(`(()=>{const before=mxUtils.getXml(ui.getXmlFileData());USL.tiler.setPlantingGroupDetail(graph.model.getCell('growing'),false);return{canonical:mxUtils.getXml(ui.getXmlFileData()),before,projection:graph.getExportVariables().__trellisPlantingProjection};})()`); // NEW
+        assert.equal(drawing.canonical, drawing.before, 'folding before export cannot change editable diagram data'); // NEW
+        const exportWindow = new BrowserWindow({ show: false, width: 1200, height: 1000, webPreferences: { sandbox: false, backgroundThrottling: false } }); // NEW
+        try { // NEW
+            await exportWindow.loadFile(path.join(webapp, 'export3.html')); // NEW
+            await exportWindow.webContents.executeJavaScript('Editor.MathJaxRender=null;void 0;'); // NEW
+            const options = { xml: '<mxfile><diagram id="page-a">' + drawing.canonical + '</diagram></mxfile>', format: 'png', scale: 1, border: 0, extras: JSON.stringify({ globalVars: { __trellisPlantingProjection: { 'page-a': drawing.projection[''] } } }) }; // NEW
+            for (const format of ['png', 'pdf']) { // NEW
+                options.format = format; if (format === 'pdf') Object.assign(options, { allPages: '1', pageWidth: 827, pageHeight: 1169, pageScale: 1 }); // NEW
+                await exportWindow.webContents.executeJavaScript('window.exportGraph=render(' + JSON.stringify(options) + ');void 0;'); // NEW
+                const painted = await exportWindow.webContents.executeJavaScript(`(()=>{const cell=exportGraph.model.getCell('growing'),children=exportGraph.getChildVertices(cell);return{collapsed:cell.getAttribute('lod_collapsed'),summaries:children.filter(child=>child.getAttribute('lod_summary')==='1').length,circles:children.filter(child=>child.getAttribute('plant_tiler')==='1').length,controls:document.querySelectorAll('.trellis-planting-detail-toggle').length};})()`); // NEW
+                assert.deepEqual(painted, { collapsed: '1', summaries: 1, circles: 0, controls: 0 }, format + ' artwork uses current local planting detail'); // NEW
+            } // NEW
+            assert.equal(await win.webContents.executeJavaScript('mxUtils.getXml(ui.getXmlFileData())'), drawing.canonical); // NEW
+            process.stdout.write('PLANTING_EXPORT_RESULT: PNG and PDF rendering preserve canonical editable data\n'); // NEW
+        } finally { exportWindow.destroy(); } // NEW
         process.stdout.write('GROWTH_RESULT:' + JSON.stringify(result) + '\n'); // NEW
     } finally { win.destroy(); } // NEW
     app.quit(); // NEW
