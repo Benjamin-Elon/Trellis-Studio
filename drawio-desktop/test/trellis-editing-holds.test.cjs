@@ -23,12 +23,38 @@ function fixture(t, overrides = {}) { // NEW
     const hold = (id = 'garden', overrides = {}) => ({ key: key(id), claimId: 'claim', sessionId: 'local', requested: true, expiresAt: 301000, objectLabel: 'Garden plan', requesters: [{ name: 'Bob' }], ...overrides }); // NEW
     return { window, calls, instance, register, hold, tick: () => timers[0](), setNow(value) { now = value; }, save(fn) { onSave = fn; }, release(fn) { onRelease = fn; } }; // NEW
 } // NEW
+test('safe resume preserves unfinished fields and original disabled policy under a new claim', async t => { // CHANGE
+    const f = fixture(t, { captureBaseline: () => ({ baseXml: 'saved opening view', targets: [key('garden')], dependencies: [] }) }); // CHANGE
+    const panel = f.window.document.createElement('section'); panel.innerHTML = '<input value="unfinished"><select disabled><option>unavailable</option></select><button>Save</button>'; f.window.document.body.append(panel); let resumed = 0, saves = 0; // CHANGE
+    const editor = f.instance.register({ kind: 'year-planner', title: 'Year plan', element: panel, targets: [key('garden')], capture: () => ({ plan: panel.querySelector('input').value }), resume() { resumed++; }, save() { saves++; }, discard() {} }); // CHANGE
+    await editor.acquire(); f.instance.freeze([key('garden')], 'Editing hold released after 30 seconds offline.'); // CHANGE
+    const recovery = f.instance.recoveryEditors([key('garden')])[0]; assert.equal(recovery.baseline.baseXml, 'saved opening view'); assert.equal(panel.querySelector('input').readOnly, true); // CHANGE
+    f.instance.update([{ key: key('garden'), claimId: 'replacement', sessionId: 'local', expiresAt: null }], 'local'); // CHANGE
+    await recovery.resume({ collaboration: { holds: [{ key: key('garden'), claimId: 'replacement', sessionId: 'local', expiresAt: null }] } }); // CHANGE
+    assert.equal(resumed, 1); assert.equal(saves, 0); assert.equal(editor.frozen(), false); assert.equal(panel.querySelector('input').value, 'unfinished'); assert.equal(panel.querySelector('input').readOnly, false); assert.equal(panel.querySelector('select').disabled, true); assert.equal(panel.hasAttribute('data-trellis-frozen'), false); // CHANGE
+    assert.equal(f.instance.recoveryEditors([key('garden')]).length, 0); // CHANGE
+}); // CHANGE
+test('recovery controls retain focus through updates, coalesce clicks and keep failures beside the action', async t => { // CHANGE
+    const f = fixture(t), panel = f.window.document.createElement('section'); panel.innerHTML = '<textarea>draft</textarea>'; f.window.document.body.append(panel); // CHANGE
+    const view = f.window.TrellisEditingHolds.freezeElement(panel, 'Hold ended'); let release, calls = 0; // CHANGE
+    const action = { id: 'resume', label: 'Resume editing', run: () => { calls++; return new Promise((resolve, reject) => { release = () => reject(new Error('Another editor holds this object')); }); } }; // CHANGE
+    view.setActions([action]); const button = panel.querySelector('button'); button.focus(); view.update(true); view.setActions([action]); assert.equal(panel.querySelector('button'), button); assert.equal(f.window.document.activeElement, button); // CHANGE
+    button.click(); button.click(); assert.equal(calls, 1); release(); await new Promise(resolve => setImmediate(resolve)); // CHANGE
+    assert.match(panel.textContent, /Another editor holds this object/); assert.equal(button.disabled, false); assert.equal(panel.querySelector('textarea').readOnly, true); // CHANGE
+}); // CHANGE
+test('a refused or obsolete resume cannot thaw a frozen editor', async t => { // CHANGE
+    const f = fixture(t, { captureBaseline: () => ({ baseXml: 'saved', targets: [key('garden')] }) }), panel = f.window.document.createElement('section'); panel.innerHTML = '<input value="retained">'; f.window.document.body.append(panel); // CHANGE
+    const editor = f.instance.register({ kind: 'planting', element: panel, targets: [key('garden')], capture: () => ({}), resume() { assert.fail('No new hold was granted'); }, discard() {} }); // CHANGE
+    await editor.acquire(); f.instance.freeze([key('garden')], 'Offline'); const recovery = f.instance.recoveryEditors([key('garden')])[0]; // CHANGE
+    await assert.rejects(recovery.resume({ collaboration: { holds: [] } }), /could not be confirmed/); assert.equal(editor.frozen(), true); assert.equal(panel.querySelector('input').readOnly, true); // CHANGE
+    editor.dispose(); await assert.rejects(recovery.resume({ collaboration: { holds: [] } }), /no longer available/); // CHANGE
+}); // CHANGE
 test('a frozen generation retains its exact capture and blocks handoff, reacquisition and release-on-close', async t => { // CHANGE
     const f = fixture(t), panel = f.window.document.createElement('section'); panel.innerHTML = '<textarea>keep this text</textarea><button>Apply</button><button>Close</button>'; f.window.document.body.append(panel); let freezes = 0, submits = 0, closed = 0; // CHANGE
     panel.querySelectorAll('button')[0].addEventListener('click', () => submits++); panel.querySelectorAll('button')[1].addEventListener('click', () => closed++); // CHANGE
     const editor = f.instance.register({ kind: 'inventory', element: panel, targets: [key('garden')], capture: () => ({ text: panel.querySelector('textarea').value }), freeze: () => freezes++, save: async () => { submits++; return true; }, discard() {} }); // CHANGE
     await editor.acquire(); f.instance.freeze([key('garden')], 'Access changed'); f.instance.freeze([key('garden')], 'duplicate'); f.instance.preservation([key('garden')], true); // CHANGE
-    assert.equal(freezes, 1); assert.equal(editor.active(), false); assert.equal(editor.frozen(), true); assert.equal(panel.querySelector('textarea').readOnly, true); assert.match(panel.textContent, /private recovery draft has been saved/); // CHANGE
+    assert.equal(freezes, 1); assert.equal(editor.active(), false); assert.equal(editor.frozen(), true); assert.equal(panel.querySelector('textarea').readOnly, true); assert.match(panel.textContent, /Private recovery draft saved/); // CHANGE
     panel.querySelectorAll('button')[0].click(); panel.querySelectorAll('button')[1].click(); assert.equal(submits, 0); assert.equal(closed, 1); // CHANGE
     panel.querySelector('textarea').value = 'programmatic replacement'; assert.equal(f.instance.capture([key('garden')])[0].text, 'keep this text'); // CHANGE
     f.instance.update([f.hold()], 'local'); await assert.rejects(editor.acquire(), /frozen/); await assert.rejects(f.instance.handoff([key('garden')]), /frozen/); editor.dispose(true); assert.equal(f.calls.filter(call => call[0] === 'release').length, 0); // CHANGE

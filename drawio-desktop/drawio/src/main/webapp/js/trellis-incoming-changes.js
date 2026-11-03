@@ -4,17 +4,17 @@
     function create(ui, options) {
         const graph = ui.editor.graph, document = root.document;
         const badges = new Map(); // NEW: stationary badges retain their DOM, focus, and hover state.
-        let groups = [], layer = null, toolbar = null, panel = null, review = null, selection = null, pinned = false, hideTimer = null, busy = false, generation = 0, panelMessage = ''; // CHANGE
+        let groups = [], layer = null, toolbar = null, panel = null, review = null, selection = null, pinned = false, hideTimer = null, busy = false, generation = 0, panelMessage = '', continuation = null; // CHANGE
         const pageId = () => ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '';
         const mark = node => graph.__trellisOverlayVisibility?.mark(node);
         const note = (parent, text) => { const element = document.createElement('div'); element.textContent = text; parent.appendChild(element); return element; };
         function button(parent, label, action) {
             const element = document.createElement('button'); element.type = 'button'; element.textContent = label;
             root.Trellis?.ui?.applyButtonStyle?.(element, 'neutral');
-            element.addEventListener('click', event => { event.stopPropagation(); Promise.resolve(action(event)).catch(error => options.status(error.message)); });
+            element.addEventListener('click', event => { event.stopPropagation(); Promise.resolve(action(event)).catch(error => { if (panel) renderReview(error.message); else options.status(error.message); }); }); // CHANGE
             parent.appendChild(element); return element;
         }
-        function close(force = false) { if (busy && !force) return; panel?.remove(); panel = null; review = null; selection = null; pinned = false; panelMessage = ''; generation++; root.clearTimeout(hideTimer); } // CHANGE: dismissal cannot cancel a patch awaiting its durable checkpoint.
+        function close(force = false) { if (busy && !force) return; panel?.remove(); panel = null; review = null; selection = null; pinned = false; panelMessage = ''; continuation = null; generation++; root.clearTimeout(hideTimer); } // CHANGE
         function navigate(key) {
             const [page, id] = JSON.parse(key), targetPage = ui.pages?.find(item => item.getId() === page);
             if (targetPage && page !== pageId()) ui.selectPage(targetPage);
@@ -58,16 +58,18 @@
             if (!visible.length) note(panel, 'No incoming differences.');
             const apply = button(panel, selection ? 'Refresh related changes' : 'Refresh All', refresh);
             apply.disabled = busy || !review || !visible.length;
+            if (continuation) { const next = button(panel, continuation.label || 'Open fresh editor', async () => { const action = continuation; if (!action.isCurrent()) throw new Error('The editor or author changed.'); await action.run(); close(true); }); next.disabled = busy || !review || !!visible.length || !continuation.isCurrent(); } // CHANGE
             button(panel, 'Close', () => close()); // CHANGE
         }
-        async function show(anchor, ids = null, pin = false) {
+        async function show(anchor, ids = null, pin = false, next = null) { // CHANGE
             if (busy) return; // NEW: keep the submitted review stable until acknowledgement or rollback.
             if (panel && pinned && pin && panel.__anchor === anchor) { close(); return; } // NEW
-            close(); selection = ids; pinned = pin;
+            close(); selection = ids; pinned = pin; continuation = next; // CHANGE
             panel = document.createElement('div'); panel.className = 'trellis-incoming-review'; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Incoming changes');
             panel.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
             panel.__anchor = anchor; // NEW
             panel.style.cssText = 'position:fixed;z-index:10020;box-sizing:border-box;width:400px;max-width:calc(100vw - 16px);max-height:65vh;overflow:auto;background:#fff;color:#111827;border:1px solid #b56a00;border-radius:7px;padding:10px;box-shadow:0 6px 18px #0003;font:12px Arial;line-height:1.5;';
+            if (continuation) panel.style.zIndex = '2147483150'; // CHANGE: recovery reviews must sit above the frozen domain dialog.
             const bounds = anchor.getBoundingClientRect(); panel.style.left = Math.max(8, Math.min(bounds.left, root.innerWidth - 408)) + 'px'; panel.style.top = Math.max(8, Math.min(bounds.bottom + 4, root.innerHeight * .3)) + 'px';
             document.body.appendChild(panel); mark(panel); renderReview('Loading review…');
             panel.addEventListener('mouseenter', () => root.clearTimeout(hideTimer)); panel.addEventListener('mouseleave', scheduleHide);
@@ -198,7 +200,7 @@
                 if (capturedGeneration !== generation || ui.getCurrentFile() !== current) { rollback = null; return; } // NEW: a delayed acknowledgement cannot mutate the next document.
                 if (acknowledged.ok === false) throw new Error(acknowledged.reason);
                 rollback = null; options.adopt(acknowledged.xml); setGroups(acknowledged.groups || []); // CHANGE
-                if (result.skipped.length) { review = await options.coordinate({ kind: 'review', groups: selection || undefined }); renderReview(result.skipped.length + ' groups remain blocked by active edits.'); } else close(true); // CHANGE
+                if (result.skipped.length || continuation) { review = await options.coordinate({ kind: 'review', groups: selection || undefined }); renderReview(result.skipped.length ? result.skipped.length + ' groups remain blocked by active edits.' : 'Current changes reviewed. Open a fresh editor to continue.'); } else close(true); // CHANGE
             } catch (error) {
                 if (rollback && capturedGeneration === generation && ui.getCurrentFile() === appliedFile) { const modified = waitingForAck ? appliedFile.isModified() : beforeApplyModified; options.applying(() => graph.__trellisLocalView ? graph.__trellisLocalView.apply(rollback) : rollback()); appliedFile.setModified(modified); options.observe?.(); } // CHANGE: rollback preserves unrelated work entered during acknowledgement.
                 renderReview('Refresh failed; changes remain pending. ' + error.message); // NEW
@@ -224,6 +226,9 @@
         return { setGroups, render, reviewAll(anchor) { // CHANGE: menu/native commands ensure the inbox is open; badge clicks still toggle pinned previews.
             if (panel && pinned && selection === null) { panel.querySelector('button')?.focus(); return Promise.resolve(); }
             return show(anchor || toolbar?.firstElementChild || graph.container, null, true);
+        }, reviewTargets(targets, next, anchor) { // CHANGE
+            const ids = groups.filter(group => targets.includes('*') || group.structural || [...group.targets, ...group.keys].some(key => targets.includes(key))).map(group => group.id); // CHANGE
+            return show(anchor || toolbar?.firstElementChild || graph.container, ids, true, next); // CHANGE
         }, reset() { close(true); groups = []; badges.clear(); layer?.remove(); toolbar?.remove(); layer = toolbar = null; }, getGroups: () => groups, patchFor }; // CHANGE
     }
     root.TrellisIncomingChanges = Object.freeze({ create });

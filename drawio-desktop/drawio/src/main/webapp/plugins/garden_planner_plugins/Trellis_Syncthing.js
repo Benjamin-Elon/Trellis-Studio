@@ -30,6 +30,7 @@ Draw.loadPlugin(function (ui) {
     let incoming = null, viewIdentity = null, pendingHash = null, refreshingTargets = new Set(), formTargets = []; // NEW
     const releasingClaims = new Set(); // NEW: intentional handoffs must not produce hold-loss discard notices.
     let activityRevision = -1; const lossChecks = new Map(), frozenForms = new Map(), retainedLosses = new Map(); // CHANGE: observations and retained drafts belong to one renderer context.
+    const editingResolutions = new Map(), resumingTargets = new Set(); // CHANGE: UI actions retain their originating author, document and loss generation.
     const composingFields = new Set(); // CHANGE: an active IME composition is not an editing pause.
     const gardenCreations = new Map(), creationMembers = new Map(), creationDrafts = new Map(), creationEditors = new Set(); // NEW: presentation state is private to the current author/document, never save authority.
     let creationEdits = new WeakMap(), creationDraftObserver = null; // NEW: native edits retain their creation identity through Undo/Redo without serializing it.
@@ -70,7 +71,7 @@ Draw.loadPlugin(function (ui) {
         const bytes = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
         return Array.from(new Uint8Array(bytes)).map(value => value.toString(16).padStart(2, '0')).join('');
     }
-    function status(message) { if (ui.editor.setStatus) ui.editor.setStatus(String(message)); }
+    function status(message, action) { if (ui.editor.setStatus) ui.editor.setStatus(String(message), action); } // CHANGE
     /** Preserve unrelated notices, callbacks and alerts when refreshing local save progress. */ // NEW
     function setSaveStatus(current, message, submitting = false) { // NEW
         if (file() !== current || !isCollaborative()) return; // NEW
@@ -344,10 +345,12 @@ Draw.loadPlugin(function (ui) {
         conflictDialog = root; // CHANGE
     } // NEW
     async function showPrivateDrafts() { // NEW
-        const current = file(), generation = contextGeneration, result = await bridge.recoveryAction({ shareId: info.shareId, kind: 'restore' }); // NEW
-        if (file() !== current || generation !== contextGeneration) return; // NEW
-        const pending = [...retainedLosses.values()].filter(record => !record.saved && record.input.shareId === info.shareId && record.input.expectedUserId === context().userId).map(record => ({ ...record.input, retained: true, unsavedPrivateCopy: true, at: record.at })); // CHANGE
+        const current = file(), generation = contextGeneration, expectedUserId = context().userId; let result, storageError; // CHANGE
+        try { result = await bridge.recoveryAction({ shareId: info.shareId, kind: 'restore' }); if (!result?.ok) throw new Error(result?.reason || 'Recovery drafts could not be read.'); } catch (error) { result = { drafts: [] }; storageError = error; } // CHANGE
+        if (file() !== current || generation !== contextGeneration || expectedUserId !== context().userId) return; // CHANGE
+        const pending = [...retainedLosses.values()].filter(record => !record.saved && !record.discarded && record.input.shareId === info.shareId && record.input.expectedUserId === context().userId).map(record => ({ ...record.input, retained: true, unsavedPrivateCopy: true, at: record.at })); // CHANGE
         const panel = showDialog('Private recovery drafts', showSharingDialog), drafts = [...(result.drafts || []), ...pending].filter(draft => draft.xml !== draft.baseXml || draft.editorDrafts?.length); // CHANGE
+        if (storageError) note(panel, 'Stored drafts could not be read: ' + storageError.message + '. Entries still in memory are shown below.'); // CHANGE
         if (!drafts.length) note(panel, 'No pending private drafts.'); // NEW
         for (const draft of drafts) { // NEW
             const section = details(panel, 'Draft saved ' + new Date(draft.at).toLocaleString()); // NEW
@@ -687,7 +690,7 @@ Draw.loadPlugin(function (ui) {
     let recoveryQueue = Promise.resolve(), recoveryFailure = null, retryRecovery = null, saveFence = Promise.resolve(); const unsavedActions = [], recoveringTargets = new Map(); // CHANGE
     const coordinationAvailable = () => info?.editingAvailability?.available !== false && lastStatus?.editingAvailability?.available !== false; // NEW: connection loss alone does not disable the local coordinator.
     const isCollaborative = () => !!(info && protocol.supportedGardens.includes(info.protocolVersion) && bridge.collaborationAction); // NEW
-    const holdEditors = window.TrellisEditingHolds?.create(ui, { isCollaborative, status, logicalTarget: logicalObjectKey, claim: targets => coordinate({ kind: 'claim', targets }), release: (targets, options = { automatic: true }) => releaseHolds(targets, options), lose: loseEditorHolds, refresh: bridge.activityAction ? refreshActivity : undefined, targetState: objectFingerprint, validate: targets => { if (targets.some(key => { try { return isPendingCell(graph.getModel().getCell(JSON.parse(key)[1])); } catch (_) { return false; } })) throw new Error('Refresh this object before starting another edit.'); } }); // CHANGE: normalize all registered form targets before their claim/recovery lifecycle begins.
+    const holdEditors = window.TrellisEditingHolds?.create(ui, { isCollaborative, status, captureBaseline: captureEditingBaseline, prepareReopen: prepareEditorReopen, logicalTarget: logicalObjectKey, claim: targets => coordinate({ kind: 'claim', targets }), release: (targets, options = { automatic: true }) => releaseHolds(targets, options), lose: loseEditorHolds, refresh: bridge.activityAction ? refreshActivity : undefined, targetState: objectFingerprint, validate: targets => { if (targets.some(key => { try { return isPendingCell(graph.getModel().getCell(JSON.parse(key)[1])); } catch (_) { return false; } })) throw new Error('Refresh this object before starting another edit.'); } }); // CHANGE: normalize all registered form targets before their claim/recovery lifecycle begins.
     function describeStatus(state = lastStatus) { // NEW
         if (info?.localOnly || state?.localOnly) return 'Local only · Sharing off'; // CHANGE
         if (!state) return 'Not shared'; // NEW
@@ -924,6 +927,138 @@ Draw.loadPlugin(function (ui) {
         const visit = cell => { if (!cell) return; const raw = cell.getAttribute?.(C.ATTR); if (raw) { const pointer = JSON.parse(raw); if (C.externalReference(pointer) && !stagedReferenceDigests.has(pointer.digest)) { const store = C.cachedSnapshot(pointer.digest); if (store) result[pointer.digest] = store; } } for (const child of cell.children || []) visit(child); }; // CHANGE: ordinary save payloads never retransmit definitions already staged in this project.
         if (ui.pages?.length) for (const page of ui.pages) visit(page.root); else visit(graph.getModel?.().getRoot?.()); return result; // NEW
     } // NEW
+    /** Capture the saved view used by the editor, never a later frozen or locally modified graph. */ // CHANGE
+    function captureEditingBaseline(entry, targets) { // CHANGE
+        if (!targets || targets.includes('*')) return null; // CHANGE
+        const dependencies = entry.resumeDependencies?.() || []; // CHANGE
+        return { baseXml: collaborationBaseline || file()?.data, targets: [...targets], dependencies: [...new Set(dependencies)], scope: entry.kind === 'year-planner' ? 'year-planner' : 'object' }; // CHANGE
+    } // CHANGE
+    /** Validate the current page-scoped target before retiring its retained editor. */ // CHANGE
+    function prepareEditorReopen(entry) { // CHANGE
+        const draft = entry.frozenCapture, targets = typeof entry.targets === 'function' ? entry.targets() : entry.targets; // CHANGE
+        const key = draft?.pageId !== undefined && (draft.labelCellId || draft.objectId) ? JSON.stringify([draft.pageId, String(draft.labelCellId || draft.objectId)]) : targets[0]; // CHANGE
+        const cell = resolveEditorCell(key, true); // CHANGE
+        if (!cell) throw new Error('This object was deleted. Your entries remain available for copying.'); // CHANGE
+        if (users()?.canEditCell && !users().canEditCell(cell)) throw new Error('You no longer have editing access to this object.'); // CHANGE
+        return cell; // CHANGE
+    } // CHANGE
+    const resolutionKey = targets => JSON.stringify([contextGeneration, [...targets].sort()]); // CHANGE
+    function resolutionCurrent(resolution) { return !!resolution && !resolution.finished && file() === resolution.file && contextGeneration === resolution.generation && context().userId === resolution.userId && info?.shareId === resolution.shareId; } // CHANGE
+    /** Use registered adapters where possible; legacy surfaces still expose copy, review and discard. */ // CHANGE
+    function resolutionEditors(resolution) { // CHANGE
+        const editors = holdEditors?.recoveryEditors(resolution.targets) || [], elements = new Set(editors.map(editor => editor.element)); // CHANGE
+        for (const [element, item] of frozenForms) if (element.dataset.trellisFrozen && !elements.has(element) && item.draft.targets.some(key => resolution.targets.includes(key) || resolution.targets.includes('*'))) editors.push({ // CHANGE
+            title: 'Retained editor', element, targets: item.draft.targets, draft: item.draft, baseline: item.baseline, claimIds: item.claimIds, resume: item.resume, canResume: !!item.resume && !!item.baseline, canReopen: !!item.reopen, // CHANGE
+            connected: () => element.isConnected, setActions: (actions, detail) => item.view?.setActions(actions, detail), focus: () => item.view?.focus(), reopen: item.reopen, retire() { item.view?.dispose(); element.remove(); frozenForms.delete(element); }, // CHANGE
+        }); // CHANGE
+        return editors; // CHANGE
+    } // CHANGE
+    async function copyEditorEntries(editor) { // CHANGE
+        const text = JSON.stringify(editor.draft, null, 2); // CHANGE
+        try { await window.navigator.clipboard.writeText(text); } catch (_) { const panel = showDialog('Copy retained entries'); copyBlock(panel, 'Retained entries', text).select(); } // CHANGE
+    } // CHANGE
+    function focusResolution(resolution) { // CHANGE
+        if (!resolutionCurrent(resolution)) return; const editor = resolutionEditors(resolution).find(item => item.connected()); // CHANGE
+        if (editor) editor.focus(); else showPrivateDrafts().catch(error => status(error.message)); // CHANGE
+    } // CHANGE
+    function renderResolution(resolution) { // CHANGE
+        if (!resolutionCurrent(resolution)) return; // CHANGE
+        const scope = resolution.scope || resolution.targets, labels = scope.map(objectLabel).join(', '); // CHANGE
+        for (const editor of resolutionEditors(resolution)) { // CHANGE
+            const actions = [ // CHANGE
+                { id: 'resume', label: 'Resume editing', enabled: resolution.complete && resolution.code === 'SESSION_OFFLINE' && editor.canResume, run: () => resumeEditor(resolution, editor) }, // CHANGE
+                { id: 'review', label: 'Review & continue', enabled: resolution.complete, run: () => reviewEditor(resolution, editor) }, // CHANGE
+                { id: 'copy', label: 'Copy entries', run: () => copyEditorEntries(editor) }, // CHANGE
+            ]; // CHANGE
+            if (resolution.error) { // CHANGE
+                actions.push({ id: 'retry', label: 'Retry saving draft', run: () => recoverLostHolds(resolution.targets, resolution.reason) }); // CHANGE
+                actions.push({ id: 'discard', label: 'Discard unfinished changes', destructive: true, enabled: !!resolution.scope, run: () => discardResolution(resolution) }); // CHANGE
+            } // CHANGE
+            if (resolution.blocked?.length) { // CHANGE
+                actions.push({ id: 'blocker', label: 'View blocking edit', run: () => { showObjectPopover(resolution.blocked[0].key, editor.element || graph.container); if (popover) popover.style.zIndex = '2147483150'; } }); // CHANGE
+                actions.push({ id: 'request', label: 'Request release', run: async () => { if (!resolutionCurrent(resolution)) return; const result = await coordinate({ kind: 'request', targets: resolution.blocked.map(hold => hold.key) }); if (!result?.ok) throw new Error(result?.reason || 'Release could not be requested.'); } }); // CHANGE
+            } // CHANGE
+            if (resolution.code === 'ACCESS_CHANGED') actions.push({ id: 'access', label: context().userId ? 'Request Access' : 'Log in', run: () => showBlockedEdit({ code: 'PERMISSION_DENIED', targets: editor.targets, message: resolution.reason }, editor.element) }); // CHANGE
+            editor.setActions(actions, resolution.error ? 'Discard affects these objects and related changes: ' + labels + '.' : !editor.canResume ? 'Review current changes to open a fresh editor.' : 'Resume keeps your entries if this object and its required inputs are unchanged.'); // CHANGE
+        } // CHANGE
+    } // CHANGE
+    /** A clicked action checks both main-process authority and the original renderer context. */ // CHANGE
+    async function resumeEditor(resolution, editor) { // CHANGE
+        if (!resolutionCurrent(resolution) || !editor.connected() || resolution.busy) return; // CHANGE
+        if (!resolution.complete || resolution.code !== 'SESSION_OFFLINE' || !editor.canResume) throw new Error('Review this object before continuing.'); // CHANGE
+        resolution.busy = true; const revision = modelRevision; let result; // CHANGE
+        try { // CHANGE
+            result = await coordinate({ kind: 'resume-holds', ...editor.baseline, claimIds: editor.claimIds }); // CHANGE
+            if (!resolutionCurrent(resolution) || !editor.connected() || revision !== modelRevision) throw new Error('The editor or diagram changed while resuming. Review the current object.'); // CHANGE
+            if (!result?.ok) { resolution.blocked = result?.blocked; renderResolution(resolution); if (result?.code === 'PERMISSION_DENIED') showBlockedEdit({ code: result.code, targets: editor.targets, message: result.reason }); throw new Error(result?.reason || 'Editing access could not be confirmed.'); } // CHANGE
+            editor.targets.forEach(key => resumingTargets.add(key)); // CHANGE
+            await editor.resume(result); for (const [element, item] of frozenForms) if (element === editor.element) { item.view?.dispose(); frozenForms.delete(element); } // CHANGE
+            resolution.finished = !resolutionEditors(resolution).some(item => item.connected()); // CHANGE
+            status('Editing resumed.'); // CHANGE
+        } catch (error) { // CHANGE
+            if (result?.ok) { const claimIds = result.collaboration?.holds.filter(hold => hold.sessionId === localSessionId && editor.targets.includes(hold.key)).map(hold => hold.claimId) || []; if (claimIds.length && resolutionCurrent(resolution)) await coordinate({ kind: 'release', targets: editor.targets, claimIds }); } // CHANGE
+            throw error; // CHANGE
+        } finally { editor.targets.forEach(key => resumingTargets.delete(key)); resolution.busy = false; } // CHANGE
+    } // CHANGE
+    async function reviewEditor(resolution, editor) { // CHANGE
+        if (!resolutionCurrent(resolution) || !editor.connected()) return; // CHANGE
+        await readRemote('get'); if (!resolutionCurrent(resolution) || !editor.connected()) return; // CHANGE
+        const targets = [...editor.targets, ...(editor.baseline?.dependencies || [])]; // CHANGE
+        await incoming.reviewTargets(targets, { label: editor.canReopen ? 'Open fresh editor' : 'Show current object', isCurrent: () => resolutionCurrent(resolution) && editor.connected(), run: async () => { // CHANGE
+            if (!editor.canReopen) { const cell = resolveEditorCell(editor.targets[0]); if (!cell) throw new Error('This object was deleted. Your entries remain available for copying.'); editor.retire(); graph.setSelectionCell?.(cell); graph.scrollCellToVisible?.(cell); status('Open the selected object’s editor to continue. Retained entries are available in Recovery drafts.'); return; } // CHANGE
+            await editor.reopen(); resolution.finished = !resolutionEditors(resolution).some(item => item.connected()); // CHANGE
+        } }, editor.element || graph.container); // CHANGE
+    } // CHANGE
+    /** Page identity is part of an object identity, including when IDs repeat on different pages. */ // CHANGE
+    function resolveEditorCell(key, selectPage = false) { // CHANGE
+        if (!key || key === '*') return null; const [page, id] = JSON.parse(key), currentPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
+        if (page !== currentPage) { const target = ui.pages?.find(item => item.getId?.() === page); if (!target) return null; if (selectPage) ui.selectPage(target); else return null; } // CHANGE
+        return graph.getModel?.().getCell(id) || null; // CHANGE
+    } // CHANGE
+    /** Preview and execution share the existing dependency/action closure; preview never changes the graph. */ // CHANGE
+    async function previewDiscard(resolution) { // CHANGE
+        if (!resolutionCurrent(resolution)) return null; await saveFence; if (!resolutionCurrent(resolution)) return null; // CHANGE
+        const captured = ui.getFileData(), baseline = collaborationBaseline || file().data; // CHANGE
+        const result = await coordinate({ kind: 'discard-holds', targets: resolution.targets, baseXml: baseline, xml: captured, actions: unsavedActions.map(action => action.keys) }); // CHANGE
+        if (!resolutionCurrent(resolution) || !result?.ok || captured !== ui.getFileData()) return null; // CHANGE
+        return { result, captured, baseline, scope: [...new Set([...resolution.targets, ...(result.targets || []), ...(result.discardedKeys || [])])] }; // CHANGE
+    } // CHANGE
+    async function prepareDiscard(resolution) { // CHANGE
+        try { const preview = await previewDiscard(resolution); if (preview) { resolution.scope = preview.scope; resolution.scopeXml = preview.captured; renderResolution(resolution); } } catch (_) { /* Retry and copying remain available if even the accepted state cannot be read. */ } // CHANGE
+    } // CHANGE
+    /** Resolving one loss must not clear a different object's outstanding recovery failure. */ // CHANGE
+    function updateRecoveryFailure() { // CHANGE
+        const pending = [...editingResolutions.values()].find(item => resolutionCurrent(item) && item.error && !item.complete); // CHANGE
+        recoveryFailure = pending ? new Error(pending.error) : null; retryRecovery = pending ? { targets: pending.targets, reason: pending.reason } : null; // CHANGE
+    } // CHANGE
+    async function discardResolution(resolution) { // CHANGE
+        if (!resolutionCurrent(resolution) || resolution.busy) return; resolution.busy = true; // CHANGE
+        try { // CHANGE
+            await recoveryQueue.catch(() => {}); const preview = await previewDiscard(resolution); // CHANGE
+            if (!preview) throw new Error('The diagram changed. Review the affected changes and retry.'); // CHANGE
+            if (preview.captured !== resolution.scopeXml || JSON.stringify(preview.scope) !== JSON.stringify(resolution.scope)) { resolution.scope = preview.scope; resolution.scopeXml = preview.captured; renderResolution(resolution); throw new Error('Affected changes updated. Review the listed objects before discarding.'); } // CHANGE
+            const retained = retainedLosses.get(resolution.key); if (retained) retained.discarded = true; // CHANGE
+            try { reconcileRejected(preview.result, preview.captured, resolution.file, preview.baseline); } catch (error) { if (retained) retained.discarded = false; throw error; } // CHANGE
+            resolution.finished = true; retainedLosses.delete(resolution.key); editingResolutions.delete(resolution.key); // CHANGE
+            holdEditors?.discard(preview.scope); // CHANGE
+            for (const [element, item] of frozenForms) if (item.draft.targets.some(key => preview.scope.includes(key) || preview.scope.includes('*'))) { item.view?.dispose(); element.remove(); frozenForms.delete(element); } // CHANGE
+            updateRecoveryFailure(); status('Unfinished changes discarded.'); // CHANGE
+            void background?.checkpoint(true).catch(error => status('Changes discarded; updating the recovery checkpoint failed: ' + error.message)); // CHANGE
+        } finally { resolution.busy = false; } // CHANGE
+    } // CHANGE
+    /** Apply one verified rollback while preserving unrelated typing and accepted saves. */ // CHANGE
+    function reconcileRejected(result, captured, current, baseline) { // CHANGE
+        const discarded = new Set(result.discardedKeys || []), removed = unsavedActions.filter(action => action.keys.some(key => discarded.has(key) || discarded.has('*'))); // CHANGE
+        const undo = ui.editor.undoManager, priorUndo = new Set(undo?.history || []); // CHANGE
+        if (result.xml !== captured) { // CHANGE
+            const saved = current.data, live = ui.getFileData(); // CHANGE
+            try { applyRemote(result.xml, current, current.stat, captured); } // CHANGE
+            catch (error) { const applying = graph.__trellisSharingApplying; graph.__trellisSharingApplying = true; try { ui.setFileData(live); } finally { graph.__trellisSharingApplying = applying; collaborationBaseline = baseline; current.data = saved; current.setModified(true); } throw error; } // CHANGE
+            collaborationBaseline = baseline; current.data = saved; observedXml = ui.getFileData(); current.setModified(observedXml !== baseline); // CHANGE
+        } // CHANGE
+        if (undo?.history) { const keep = edit => priorUndo.has(edit) && !removed.some(action => action.edit === edit); const before = undo.history.slice(0, undo.indexOfNextAdd).filter(keep).length; undo.history = undo.history.filter(keep); undo.indexOfNextAdd = before; } // CHANGE
+        for (const action of removed) { action.edit.__trellisUsersRejected = true; unsavedActions.splice(unsavedActions.indexOf(action), 1); } // CHANGE
+    } // CHANGE
     /** Serialize recovery with itself; never wait for a save that may already be awaiting this reply. */ // NEW
     function recoverLostHolds(targets, reason, insideSave = false) { // CHANGE
         if (!targets?.length) return Promise.resolve(); const staged = stageLostDraft(targets, reason); // CHANGE: freeze, capture and start private persistence before waiting for any content save.
@@ -939,21 +1074,13 @@ Draw.loadPlugin(function (ui) {
                 const result = await coordinate({ kind: 'recover-holds', baseXml: baseline, xml: captured, targets, actions: unsavedActions.map(action => action.keys), editorDrafts: editors, reason }); // NEW
                 if (!result || file() !== current || generation !== contextGeneration) return; // NEW
                 if (!result.ok || typeof result.xml !== 'string') throw new Error(result.reason || 'The recovery copy or draft rollback could not be completed.'); // NEW
-                const discarded = new Set(result.discardedKeys || []), removed = unsavedActions.filter(action => action.keys.some(key => discarded.has(key) || discarded.has('*'))); // NEW
-                const undo = ui.editor.undoManager, priorUndo = new Set(undo?.history || []); // NEW
-                if (result.xml !== captured) { // NEW
-                    const saved = current.data, live = ui.getFileData(); // CHANGE
-                    try { applyRemote(result.xml, current, current.stat, captured); } // NEW: patch only rejected local differences, retaining newer unrelated typing.
-                    catch (error) { const applying = graph.__trellisSharingApplying; graph.__trellisSharingApplying = true; try { ui.setFileData(live); } finally { graph.__trellisSharingApplying = applying; collaborationBaseline = baseline; current.data = saved; current.setModified(true); } throw error; } // CHANGE
-                    collaborationBaseline = baseline; current.data = saved; observedXml = ui.getFileData(); current.setModified(observedXml !== baseline); // NEW
-                } // NEW
-                if (undo?.history) { const keep = edit => priorUndo.has(edit) && !removed.some(action => action.edit === edit); const before = undo.history.slice(0, undo.indexOfNextAdd).filter(keep).length; undo.history = undo.history.filter(keep); undo.indexOfNextAdd = before; } // CHANGE: neither the original rejected action nor its inverse rollback may re-enter Undo/Redo.
-                for (const action of removed) { action.edit.__trellisUsersRejected = true; unsavedActions.splice(unsavedActions.indexOf(action), 1); } // NEW
-                localRecovery = result; status(reason + ' Affected unsaved actions were reverted. Recovery copy: ' + result.recoveryPath); // NEW
+                reconcileRejected(result, captured, current, baseline); // CHANGE
+                localRecovery = result; status(reason + ' Affected unsaved actions were reverted.', () => focusResolution(editingResolutions.get(lossKey))); // CHANGE
             } // NEW
-            recoveryFailure = null; retryRecovery = null; retainedLosses.delete(lossKey); // CHANGE: frozen editor generations stay mounted and cannot reacquire authority.
+            const resolution = editingResolutions.get(lossKey); if (resolution) { resolution.complete = true; resolution.error = null; renderResolution(resolution); } // CHANGE
+            updateRecoveryFailure(); retainedLosses.delete(lossKey); // CHANGE: frozen editor generations stay mounted and cannot reacquire authority.
         }; // NEW
-        const recovery = (insideSave ? operation() : recoveryQueue.catch(() => {}).then(operation)).catch(error => { if (generation === contextGeneration) { recoveryFailure = error; retryRecovery = { targets, reason }; const retry = () => recoverLostHolds(targets, reason).catch(() => {}); preservationStatus(targets, !!retainedLosses.get(lossKey)?.saved, error.message, retry); status('The draft remains frozen and visible because recovery failed: ' + error.message); } throw error; }).finally(() => { if (generation === contextGeneration) targets.forEach(key => { const count = recoveringTargets.get(key) || 0; if (count <= 1) recoveringTargets.delete(key); else recoveringTargets.set(key, count - 1); }); }); // CHANGE
+        const recovery = (insideSave ? operation() : recoveryQueue.catch(() => {}).then(operation)).catch(error => { if (generation === contextGeneration) { recoveryFailure = error; retryRecovery = { targets, reason }; const retry = () => recoverLostHolds(targets, reason).catch(() => {}); preservationStatus(targets, !!retainedLosses.get(lossKey)?.saved, error.message, retry); const resolution = editingResolutions.get(lossKey); if (resolution) { resolution.error = error.message; resolution.complete = false; renderResolution(resolution); void prepareDiscard(resolution); } status('Recovery failed. Your entries remain available.', () => focusResolution(resolution)); } throw error; }).finally(() => { if (generation === contextGeneration) targets.forEach(key => { const count = recoveringTargets.get(key) || 0; if (count <= 1) recoveringTargets.delete(key); else recoveringTargets.set(key, count - 1); }); }); // CHANGE
         if (!insideSave) recoveryQueue = recovery; return recovery; // CHANGE
     } // NEW
     /** Serialize incoming reads and coalesce file notifications without delaying claims or saves. */ // CHANGE
@@ -1083,7 +1210,7 @@ Draw.loadPlugin(function (ui) {
                 const unchanged = () => tracksModelChanges ? modelRevision === capturedRevision : ui.getFileData() === captured; // CHANGE: native revision checks avoid full-document equality captures.
                 if (!result.ok) { // CHANGE
                     if (result.code === 'CONFLICT') { current.__trellisConflict = result.review; background?.state('conflict'); await background?.checkpoint(true); status('Conflicting changes are preserved. Use Sharing → Review local changes.'); } // NEW
-                    else { background?.state('failed'); status(result.reason || 'Saving failed.'); } // NEW
+                    else { background?.state('failed'); if (result.blocked || result.code === 'PERMISSION_DENIED') showBlockedEdit({ ...result, message: result.reason, targets: result.targets || result.blocked?.map(hold => hold.key) || [...dirtyObjects] }); else status(result.reason || 'Saving failed.'); } // NEW
                     if (!explicitMode && unchanged() && result.xml) applyRemote(result.xml, current); // CHANGE
                     throw new Error((result.reason || 'Saving failed.') + (result.recoveryPath ? ' Submitted work preserved: ' + result.recoveryPath : '')); // CHANGE
                 } // CHANGE
@@ -1386,7 +1513,7 @@ Draw.loadPlugin(function (ui) {
             for (let cursor = cell; cursor; cursor = graph.getModel().getParent(cursor)) if (/(?:^|;)tiler_group=1(?:;|$)/.test(cursor.style || '') || cursor.getAttribute?.('planting_id') || cursor.getAttribute?.('tiler_group') === '1') planting = cursor; // NEW
             labelEditorRegistration?.dispose(); labelEditorRegistration = null; // NEW
             labelEditorRegistration = holdEditors?.register({ // CHANGE: ordinary labels use the same editing lifecycle as planting labels. // NEW
-                kind: 'label', title: 'Object label', element: () => graph.cellEditor?.textarea, targets: [JSON.stringify([page, planting?.id || cell.id])], restore: draft => { if (graph.cellEditor?.textarea) graph.cellEditor.textarea.innerHTML = draft.labelHtml; }, capture: () => ({ pageId: page, objectId: planting?.id || cell.id, labelCellId: cell.id, labelHtml: graph.cellEditor?.textarea?.innerHTML || '' }), // NEW
+                kind: 'label', title: 'Object label', reopen: currentCell => graph.startEditingAtCell(currentCell), element: () => graph.cellEditor?.textarea, targets: [JSON.stringify([page, planting?.id || cell.id])], restore: draft => { if (graph.cellEditor?.textarea) graph.cellEditor.textarea.innerHTML = draft.labelHtml; }, capture: () => ({ pageId: page, objectId: planting?.id || cell.id, labelCellId: cell.id, labelHtml: graph.cellEditor?.textarea?.innerHTML || '' }), // NEW
                 save() { if (graph.cellEditor?.editingCell === cell) { stoppingForSave = true; try { graph.stopEditing(false); } finally { stoppingForSave = false; } } return true; }, // NEW
                 discard() { if (graph.cellEditor?.editingCell === cell) { stoppingForSave = true; try { graph.stopEditing(true); } finally { stoppingForSave = false; } } } // NEW
             }); // NEW
@@ -1415,14 +1542,58 @@ Draw.loadPlugin(function (ui) {
         const current = file(), generation = contextGeneration, expectedUserId = context().userId; // CHANGE
         holdEditors?.freeze(['*'], reason); // CHANGE
         let input; // CHANGE
-        try { input = { shareId: info.shareId, expectedUserId, kind: 'retain', lossId: window.crypto.randomUUID(), reason, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: holdEditors?.capture(['*']) || [], ...(graph.__trellisProjectFormat === 2 ? { references: referenceDependencies() } : {}) }; } catch (error) { status(reason + ' Recovery capture failed: ' + error.message); return; } // CHANGE
+        try { input = { shareId: info.shareId, expectedUserId, kind: 'retain', lossId: window.crypto.randomUUID(), reason, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: holdEditors?.capture(['*']) || [], ...(graph.__trellisProjectFormat === 2 ? { references: referenceDependencies() } : {}) }; } catch (error) { status(reason + ' Recovery capture failed: ' + error.message, () => showSavingRecovery(reason)); return; } // CHANGE
         const preserve = async () => { // CHANGE
             try { await bridge.recoveryAction(input); if (file() === current && generation === contextGeneration && expectedUserId === context().userId) holdEditors?.preservation(['*'], true); } // CHANGE
-            catch (error) { if (file() === current && generation === contextGeneration && expectedUserId === context().userId) { holdEditors?.preservation(['*'], false, error.message, preserve); status(reason + ' Recovery preservation failed: ' + error.message); } } // CHANGE
+            catch (error) { if (file() === current && generation === contextGeneration && expectedUserId === context().userId) { holdEditors?.preservation(['*'], false, error.message, preserve); status(reason + ' Recovery preservation failed: ' + error.message, () => showSavingRecovery(reason)); } } // CHANGE
         }; // CHANGE
-        void preserve(); status(reason); // CHANGE
+        for (const editor of holdEditors?.recoveryEditors(['*']) || []) editor.setActions([{ id: 'saved-version', label: 'Open latest saved version', destructive: true, run: openLatestSavedVersion }, { id: 'copy', label: 'Copy entries', run: () => copyEditorEntries(editor) }], 'Discards all unsaved work in this window.'); // CHANGE
+        void preserve(); status(reason, () => showSavingRecovery(reason)); // CHANGE
     } // CHANGE
-    window.Trellis.sharing = { retainFailedCommit, ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: registerSharingEditor, rejectOperation: (edit, reason) => undoRejected(edit, reason), releaseRemovedCreations, registerObjectForm: config => holdEditors?.registerForm(config), whenEditingReady: async () => { const current = file(), generation = contextGeneration, actor = context().userId; await acquisitionPromise; if (current !== file() || generation !== contextGeneration || actor !== context().userId) throw new Error('The editing context changed before the operation could begin.'); }, transitionEditor: operation => holdEditors ? holdEditors.transition(operation) : Promise.resolve(operation()), activeEditorTargets: () => holdEditors?.activeTargets() || [], getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE: registered editors retain their API and report draft disposal to creation-badge presentation.
+    window.Trellis.sharing = { retainFailedCommit, showBlockedEdit, openLatestSavedVersion, resolveEditorCell, ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: registerSharingEditor, rejectOperation: (edit, reason) => undoRejected(edit, reason), releaseRemovedCreations, registerObjectForm: config => holdEditors?.registerForm(config), whenEditingReady: async () => { const current = file(), generation = contextGeneration, actor = context().userId; await acquisitionPromise; if (current !== file() || generation !== contextGeneration || actor !== context().userId) throw new Error('The editing context changed before the operation could begin.'); }, transitionEditor: operation => holdEditors ? holdEditors.transition(operation) : Promise.resolve(operation()), activeEditorTargets: () => holdEditors?.activeTargets() || [], getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE: registered editors retain their API and report draft disposal to creation-badge presentation.
+    /** Blocked operations retain their fields and expose existing activity/access commands in place. */ // CHANGE
+    function showBlockedEdit(error, element) { // CHANGE
+        const current = file(), generation = contextGeneration, actor = context().userId; // CHANGE
+        const host = element || document.activeElement?.closest?.('[data-trellis-collaborative-editor]') || graph.container; // CHANGE
+        if (!host) return; host.querySelector('[data-trellis-blocked-edit]')?.remove(); // CHANGE
+        const notice = document.createElement('section'); notice.dataset.trellisBlockedEdit = ''; notice.dataset.trellisReviewAllow = ''; notice.setAttribute('role', 'status'); // CHANGE
+        notice.style.cssText = 'padding:8px;margin:6px 0;border:1px solid #a65b00;background:#fff4d6;color:#452700;font:13px/1.4 Arial;'; // CHANGE
+        note(notice, error.message || error.reason || 'Saving is blocked. Your entries remain here.'); const message = note(notice, ''); message.dataset.status = ''; // CHANGE
+        const valid = () => notice.isConnected && file() === current && contextGeneration === generation && context().userId === actor; // CHANGE
+        const run = action => async () => { if (!valid()) throw new Error('The editor or author changed.'); await action(); }; // CHANGE
+        const holds = error.blocked || [], targets = error.targets || holds.map(hold => hold.key); // CHANGE
+        if (holds.length) { // CHANGE
+            button('View blocking edit', run(() => { showObjectPopover(holds[0].key, notice); if (popover) popover.style.zIndex = '2147483150'; }), notice); // CHANGE
+            if (holds.some(hold => !hold.local && hold.sessionId !== localSessionId)) button('Request release', run(async () => { const result = await coordinate({ kind: 'request', targets: holds.filter(hold => !hold.local && hold.sessionId !== localSessionId).map(hold => hold.key) }); if (!result?.ok) throw new Error(result?.reason || 'Release could not be requested.'); message.textContent = 'Release requested. Retry Save when editing is available.'; }), notice); // CHANGE
+        } else if (!actor) button('Log in', run(() => users()?.showAuthDialog?.({ blocking: false })), notice); // CHANGE
+        else if (error.code === 'PERMISSION_DENIED' || error.code === 'TRELLIS_EDIT_REJECTED') button('Request Access', run(() => { const cell = resolveEditorCell(targets[0], true); if (!cell) throw new Error('The object is no longer available.'); users()?.openAccessRequestDialog?.(cell); }), notice); // CHANGE
+        host.prepend(notice); status(error.message || error.reason || 'Saving is blocked.', () => { if (valid()) notice.querySelector('button')?.focus(); }); // CHANGE
+    } // CHANGE
+    /** Replace a quarantined diagram only with verified accepted XML; failed loading retains quarantine. */ // CHANGE
+    async function openLatestSavedVersion() { // CHANGE
+        const current = file(), generation = contextGeneration, actor = context().userId, original = ui.getFileData(); // CHANGE
+        const result = await coordinate({ kind: 'reset-view' }); // CHANGE
+        if (!result?.ok || typeof result.xml !== 'string') throw new Error(result?.reason || 'The latest saved version could not be loaded.'); // CHANGE
+        if (file() !== current || contextGeneration !== generation || context().userId !== actor) throw new Error('The document or author changed before recovery.'); // CHANGE
+        if (!window.LocalFile || !ui.fileLoaded) throw new Error('Saved-version recovery is unavailable. Keep this diagram open and retry.'); // CHANGE
+        // Decode every page before replacing the current file, including compressed pages. // CHANGE
+        const parsed = window.mxUtils?.parseXml(result.xml); // CHANGE
+        if (parsed) { // CHANGE
+            if (parsed.getElementsByTagName('parsererror').length || !['mxGraphModel', 'mxfile'].includes(parsed.documentElement.nodeName)) throw new Error('The saved diagram is invalid.'); // CHANGE
+            const pages = parsed.documentElement.nodeName === 'mxfile' ? [...parsed.getElementsByTagName('diagram')] : [parsed.documentElement]; // CHANGE
+            if (!pages.length) throw new Error('The saved diagram has no pages.'); // CHANGE
+            for (const page of pages) { const model = page.nodeName === 'diagram' ? window.Editor.parseDiagramNode(page, true) : page; if (!model?.getElementsByTagName('root').length) throw new Error('A saved diagram page is invalid.'); if (window.mxCodec && window.mxGraphModel) new window.mxCodec(model.ownerDocument).decode(model, new window.mxGraphModel()); } // CHANGE
+        } // CHANGE
+        const replacement = new window.LocalFile(ui, result.xml, current.getTitle()); replacement.fileObject = current.fileObject; replacement.stat = current.stat; replacement.setModified(false); // CHANGE
+        const replace = async () => { try { await ui.fileLoaded(replacement); } catch (error) { if (file() !== current) { try { await ui.fileLoaded(current); ui.setFileData(original); } catch (_) { /* The original error and capture quarantine remain authoritative. */ } } throw error; } }; // CHANGE
+        if (editContext?.replaceDocument) await editContext.replaceDocument(replace); else await replace(); // CHANGE
+        closeDialog(); status('Latest saved version opened.'); // CHANGE
+    } // CHANGE
+    function showSavingRecovery(reason) { // CHANGE
+        const current = file(), generation = contextGeneration, actor = context().userId, panel = showDialog('Saving is blocked'); // CHANGE
+        note(panel, reason); note(panel, 'Discards all unsaved work in this window.'); // CHANGE
+        button('Open latest saved version', async () => { if (file() !== current || contextGeneration !== generation || context().userId !== actor) throw new Error('The document or author changed.'); await openLatestSavedVersion(); }, panel, 'danger'); // CHANGE
+    } // CHANGE
     /** Authenticate, initialize the remembered base, then claim and save the same account transition. */ // NEW
     window.Trellis.sharing.finishIdentityJoin = async function (options) { // NEW
         if (identityJoinInProgress) throw new Error('This invitation is already being completed.'); // NEW
@@ -1442,8 +1613,9 @@ Draw.loadPlugin(function (ui) {
     /** Generated descendants and derived tasks share source freshness; unrelated ancestors do not freeze content editing. */ // CHANGE
     function isPendingCell(cell) {
         const recoveryPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
-        const frozen = [...(holdEditors?.frozenTargets() || []), ...[...frozenForms].filter(([element]) => element.isConnected).flatMap(([, item]) => item.draft.targets)]; // CHANGE
-        if (frozen.length && cell && affectsTarget(frozen, cell.id, recoveryPage)) return true; // CHANGE: close-time handlers cannot submit into a frozen object's live graph.
+        const frozen = [...(holdEditors?.frozenTargets() || []), ...[...frozenForms].filter(([element]) => element.isConnected && element.dataset.trellisFrozen).flatMap(([, item]) => item.draft.targets)]; // CHANGE
+        const active = [...resumingTargets, ...(holdEditors?.activeTargets() || [])]; // CHANGE
+        if (frozen.length && cell && affectsTarget(frozen, cell.id, recoveryPage) && !affectsTarget(active, cell.id, recoveryPage)) return true; // CHANGE: close-time handlers cannot submit into a frozen object's live graph.
         if (recoveringTargets.has('*')) return true; // CHANGE
         if (recoveringTargets.size) for (let cursor = cell; cursor; cursor = graph.getModel?.().getParent(cursor)) if (recoveringTargets.has(JSON.stringify([recoveryPage, String(cursor.id)]))) return true; // CHANGE: an empty recovery index cannot match any ancestor.
         if (!explicitMode || !isCollaborative() || !cell) return false;
@@ -1492,14 +1664,20 @@ Draw.loadPlugin(function (ui) {
     function freezeLabel(targets, reason) { // CHANGE
         const editor = graph.cellEditor, cell = editor?.editingCell, field = editor?.textarea; // CHANGE
         if (!cell || !field || !affectsTarget(targets, cell.id)) return; // CHANGE
-        const registration = labelEditorRegistration, draft = { kind: 'label', targets, objectId: String(cell.id), html: field.innerHTML, text: field.value ?? field.textContent }, bounds = field.getBoundingClientRect(); // CHANGE
+        const registration = labelEditorRegistration, frozen = holdEditors?.recoveryEditors(targets).find(entry => entry.kind === 'label'), pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '', draft = { kind: 'label', targets, pageId, objectId: String(cell.id), html: field.innerHTML, text: field.value ?? field.textContent }, bounds = field.getBoundingClientRect(); // CHANGE
         stoppingForSave = true; try { graph.stopEditing?.(true); } finally { stoppingForSave = false; } // CHANGE
         labelEditorRegistration = null; // CHANGE: a future label editor must not dispose or revive this frozen generation.
         const panel = document.createElement('section'), close = document.createElement('button'); // CHANGE
         panel.style.cssText = 'position:fixed;z-index:12001;background:white;border:1px solid #888;padding:10px;max-height:80vh;overflow:auto;min-width:260px;left:' + Math.max(8, bounds.left) + 'px;top:' + Math.max(8, Math.min(bounds.top, window.innerHeight - 200)) + 'px'; // CHANGE
         panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Retained label draft'); field.style.cssText = 'position:static;min-height:50px;white-space:pre-wrap;user-select:text;'; // CHANGE
-        close.type = 'button'; close.textContent = 'Close'; close.addEventListener('click', () => { registration?.dispose(); frozenForms.get(panel)?.view?.dispose(); frozenForms.delete(panel); panel.remove(); }); panel.append(field, close); document.body.appendChild(panel); // CHANGE
-        frozenForms.set(panel, { draft, view: window.TrellisEditingHolds?.freezeElement(panel, reason) }); // CHANGE
+        close.type = 'button'; close.textContent = 'Close'; close.addEventListener('click', () => { registration?.dispose(); frozenForms.get(panel)?.view?.dispose(); frozenForms.delete(panel); panel.remove(); }); panel.append(field, close); document.body.appendChild(panel); registration?.dispose(); // CHANGE
+        const openLabel = retained => { // CHANGE
+            const currentCell = resolveEditorCell(JSON.stringify([pageId, String(cell.id)]), true); if (!currentCell) throw new Error('This object was deleted. Your entries remain available for copying.'); // CHANGE
+            if (users()?.canEditCell && !users().canEditCell(currentCell)) throw new Error('Your editing access changed.'); // CHANGE
+            registration?.dispose(); frozenForms.get(panel)?.view?.dispose(); panel.remove(); frozenForms.delete(panel); graph.startEditingAtCell(currentCell); // CHANGE
+            if (retained && graph.cellEditor?.editingCell === currentCell) { graph.cellEditor.textarea.innerHTML = draft.html; labelEditorRegistration?.touch(); } // CHANGE
+        }; // CHANGE
+        frozenForms.set(panel, { draft, baseline: frozen?.baseline, claimIds: frozen?.claimIds, resume: frozen?.baseline ? () => openLabel(true) : null, reopen: () => openLabel(false), view: window.TrellisEditingHolds?.freezeElement(panel, reason) }); // CHANGE
     } // CHANGE
     /** Freeze only affected original surfaces. Their adapters guard programmatic commits as well as UI events. */ // CHANGE
     function rejectDialogs(targets, reason) { // CHANGE
@@ -1515,16 +1693,19 @@ Draw.loadPlugin(function (ui) {
             frozenForms.set(form, { draft, view: window.TrellisEditingHolds?.freezeElement(form, reason) }); // CHANGE
         } // CHANGE
         if (formTargets.some(key => targets.includes(key)) || targets.includes('*')) { editingForm = null; formTargets = []; window.clearTimeout(formActivityTimer); } // CHANGE
-        status(reason + ' The affected editor is frozen for review and copying only.'); // CHANGE
+        status(reason, () => focusResolution(editingResolutions.get(resolutionKey(targets)))); // CHANGE
     } // CHANGE
     function preservationStatus(targets, saved, error, retry) { // CHANGE
         holdEditors?.preservation(targets, saved, error, retry); // CHANGE
-        for (const item of frozenForms.values()) if (item.draft.targets.some(key => targets.includes(key) || key === '*' || targets.includes('*'))) item.view?.update(saved, error, retry); // CHANGE
+        for (const item of frozenForms.values()) if (item.draft.targets.some(key => targets.includes(key) || key === '*' || targets.includes('*'))) item.view?.update(saved, error, retry);
+        const resolution = editingResolutions.get(resolutionKey(targets)); if (resolution) { resolution.saved = saved; if (error) resolution.error = error; renderResolution(resolution); } // CHANGE // CHANGE
     } // CHANGE
     /** Capture once and start private preservation while the originating author and original controls still exist. */ // CHANGE
     function stageLostDraft(targets, reason) { // CHANGE
-        rejectDialogs(targets, reason); // CHANGE
-        const generation = contextGeneration, expectedUserId = context().userId, current = file(), lossKey = JSON.stringify([generation, [...targets].sort()]); // CHANGE
+        const generation = contextGeneration, expectedUserId = context().userId, current = file(), lossKey = resolutionKey(targets); // CHANGE
+        let resolution = editingResolutions.get(lossKey); // CHANGE
+        if (!resolution || resolution.finished) { resolution = { key: lossKey, file: current, generation, userId: expectedUserId, shareId: info.shareId, targets: [...targets], reason, code: collaboration?.losses?.find(loss => targets.includes(loss.key))?.code, complete: false }; editingResolutions.set(lossKey, resolution); } // CHANGE
+        rejectDialogs(targets, reason); renderResolution(resolution); // CHANGE
         let record = retainedLosses.get(lossKey); // CHANGE
         if (!record && bridge.recoveryAction) { // CHANGE
             const editors = [...(holdEditors?.capture(targets) || []), ...[...frozenForms.values()].map(item => item.draft).filter(draft => draft.targets.some(key => targets.includes(key) || targets.includes('*') || key === '*'))]; // CHANGE
@@ -1533,13 +1714,14 @@ Draw.loadPlugin(function (ui) {
         if (bridge.activityAction && !record?.released) { if (record) record.released = true; void coordinate({ kind: 'release', targets }).catch(error => { if (generation === contextGeneration) status('The editor is frozen; releasing its activity report failed: ' + error.message); }); } // CHANGE
         if (!record || record.saved) { if (record?.saved) preservationStatus(targets, true); return { lossKey, preservation: Promise.resolve() }; } // CHANGE
         if (!record.task) { // CHANGE
-            const task = Promise.resolve(bridge.recoveryAction(record.input)).then(result => { if (!result?.ok) throw new Error(result?.reason || 'Private preservation failed.'); record.saved = true; if (generation === contextGeneration) preservationStatus(targets, true); }).catch(error => { if (generation === contextGeneration) preservationStatus(targets, false, error.message, () => recoverLostHolds(targets, reason).catch(() => {})); throw error; }).finally(() => { if (record.task === task) record.task = null; }); // CHANGE
+            const task = Promise.resolve(bridge.recoveryAction(record.input)).then(result => { if (!result?.ok) throw new Error(result?.reason || 'Private preservation failed.'); if (record.discarded) return; record.saved = true; if (generation === contextGeneration) preservationStatus(targets, true); }).catch(error => { if (!record.discarded && generation === contextGeneration) preservationStatus(targets, false, error.message, () => recoverLostHolds(targets, reason).catch(() => {})); throw error; }).finally(() => { if (record.task === task) record.task = null; }); // CHANGE
             record.task = task; // CHANGE
         } // CHANGE
         return { lossKey, preservation: record.task }; // CHANGE
     } // CHANGE
     /** Context teardown hides the previous author's frozen work, without deleting its durable private copy. */ // CHANGE
     function resetFrozenEditors() { // CHANGE
+        editingResolutions.clear(); resumingTargets.clear(); // CHANGE
         resetGardenCreations(); // NEW: groups, native-edit identities and private intent cannot cross author/document boundaries.
         activityRevision = -1; lossChecks.clear(); composingFields.clear(); for (const [key, record] of retainedLosses) if (record.saved) retainedLosses.delete(key); // CHANGE
         for (const [element, item] of frozenForms) { item.view?.dispose(); element.remove(); } frozenForms.clear(); // CHANGE
@@ -1548,7 +1730,7 @@ Draw.loadPlugin(function (ui) {
     async function retryPrivatePreservation() { // CHANGE
         if (!bridge.recoveryAction || !info?.shareId) return; // CHANGE
         const shareId = info.shareId, expectedUserId = context().userId, generation = contextGeneration; // CHANGE
-        for (const [key, record] of retainedLosses) if (!record.saved && record.input.shareId === shareId && record.input.expectedUserId === expectedUserId) { // CHANGE
+        for (const [key, record] of retainedLosses) if (!record.saved && !record.discarded && record.input.shareId === shareId && record.input.expectedUserId === expectedUserId) { // CHANGE
             try { const result = await bridge.recoveryAction(record.input); if (!result?.ok) throw new Error(result?.reason || 'Private preservation failed.'); record.saved = true; retainedLosses.delete(key); } // CHANGE
             catch (error) { if (generation === contextGeneration) status('A previous private draft remains only in memory. Open Sharing → Recovery copies to copy or export it. ' + error.message); } // CHANGE
         } // CHANGE

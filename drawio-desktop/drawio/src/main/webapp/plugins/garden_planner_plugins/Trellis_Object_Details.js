@@ -257,6 +257,7 @@
                 capture: () => ({ pageId: entry.page, objectId: String(cell.id), html: entry.editor.innerHTML, comments: entry.comments.snapshot() }), // CHANGE
                 save: async () => { await entry.editHold.acquire(); if (entry.activeTab !== 'info') return entry.comments.submit(); const applied = flushEntry(entry, true); if (applied) entry.editHold.complete(); return applied; }, // CHANGE
                 restore: draft => { entry.draft.cancel(); entry.editor.innerHTML = entry.draft.reload(); if (draft) entry.comments.restore(draft.comments); requestRefresh(); }, // CHANGE
+                discardDraft() { entry.comments.discard(); entry.draft.reload(); }, resume() { entry.comments.resume(); entry.frozen = false; entry.error = ''; requestRefresh(); }, reopen: cell => open(cell, true), // CHANGE
                 freeze() { entry.frozen = true; entry.draft.cancel(); entry.comments.freeze(); }, discard: () => removeEntry(entry), // CHANGE
             }); // CHANGE
             entry.editor.contentEditable = String(canEdit(entry)); state(entry, 'saved'); positionEntry(entry); bringToFront(entry); return entry; // CHANGE

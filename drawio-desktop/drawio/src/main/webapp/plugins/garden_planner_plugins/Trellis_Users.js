@@ -5291,6 +5291,7 @@ Draw.loadPlugin(function (ui) {
         getDiagramKey, // NEW: public non-test access to the diagram-scoped local preference key.
         restorePortableLogin, linkPortableIdentity, finishIdentityJoin, // CHANGE: guided joins reuse Users validation and authentication proof.
         showAuthDialog,
+        openAccessRequestDialog, // CHANGE: blocked editor notices reuse the existing scoped request dialog.
         rememberLogin,
         forgetRememberedLogin,
         restoreRememberedLogin,

@@ -1743,6 +1743,7 @@ Draw.loadPlugin(function (ui) {
             isDirty: () => JSON.stringify([state.inventory, state.taskTypes, state.capabilities]) !== state.savedSnapshot, // CHANGE
             capture: () => ({ pageId, objectId: String(moduleCell.id), inventory: state.inventory, taskTypes: state.taskTypes, capabilities: state.capabilities }), // CHANGE
             restore: draft => { if (!draft) return; for (const key of ['inventory', 'taskTypes', 'capabilities']) state[key] = JSON.parse(JSON.stringify(draft[key])); state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); render(); }, // CHANGE
+            resume() {}, reopen: cell => openEquipmentDialog(cell, { ...options, snapshot: undefined, editTransitionResolved: true }), // CHANGE
             save: applyEquipment, freeze() { overlay.querySelectorAll('input,select,textarea,button').forEach(control => { control.disabled = true; }); }, discard: () => close({ resolved: true }), // CHANGE
         }); // CHANGE
         overlay.addEventListener('input', () => equipmentHold?.touch()); overlay.addEventListener('change', () => equipmentHold?.touch()); // CHANGE

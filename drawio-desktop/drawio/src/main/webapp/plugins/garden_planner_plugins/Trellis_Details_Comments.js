@@ -196,7 +196,7 @@
         loadDraft(); refresh(); // CHANGE
         const hasDraft = () => !!core.normalizeHtml(editor.innerHTML) || Object.values(saved.drafts).some(value => value && (value.html || value.alertChosen)); // CHANGE
         return { element: container, submit: submitDraft, restore(value) { saved = value ? JSON.parse(JSON.stringify(value)) : { active: 'new', drafts: {} }; loadDraft(); persist(); refresh(); }, refresh, focus: () => editor.focus(), hasDraft, needsUnloadWarning: () => hasDraft() && (!!storageError || composing), // CHANGE
-            snapshot() { capture(); return JSON.parse(JSON.stringify(saved)); }, freeze() { frozen = true; capture(); persist(); editor.contentEditable = 'false'; }, // CHANGE
+            snapshot() { capture(); return JSON.parse(JSON.stringify(saved)); }, resume() { if (pending) throw new Error('Wait for the previous comment operation to finish before resuming.'); frozen = false; refresh(); }, freeze() { frozen = true; capture(); persist(); editor.contentEditable = 'false'; }, // CHANGE
             discard() { discarded = true; saved = { active: 'new', drafts: {} }; editor.innerHTML = ''; privateDrafts.delete(storageKey); if (options.identity.persistent) root.localStorage.removeItem(storageKey); }, // NEW: explicit hold rejection discards unapplied entries rather than retaining them on close.
             persist() { capture(); persist(); }, // CHANGE
             destroy() { if (!discarded) { capture(); persist(); } destroyed = true; if (retentionTimer !== null) root.clearTimeout(retentionTimer); if (options.ui.getActiveRichTextTarget() === target) toolbar.deactivate(); target.dispose(); } }; // CHANGE

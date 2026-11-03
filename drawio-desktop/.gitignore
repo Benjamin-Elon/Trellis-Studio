@@ -5,6 +5,8 @@ node_modules
 /.classpath
 /.settings
 package-lock.json
+# NEW: isolate and pin the optional narration generator without changing application dependencies.
+!/tools/narration/package-lock.json
 .DS_Store
 trellis_seed_runs/
 test-results/

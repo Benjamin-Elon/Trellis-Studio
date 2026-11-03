@@ -196,9 +196,13 @@ node after the graph editor cancels submission. Frozen spacing overlays leave th
 model-driven rebuild registry while staying mounted for review.
 
 Frozen editors relinquish their advisory activity targets so subsequent heartbeats
-cannot reclaim them. They never resume automatically. Close the frozen editor and
-open a fresh editor against current data to re-enter retained work. Context changes
-hide the previous author's frozen UI.
+cannot reclaim them. **Resume editing** is an explicit action after heartbeat expiry:
+the accepted-state owner compares the editor's saved inputs and dependencies,
+rechecks access and competing holds, and grants a new claim. Unrelated diagram
+changes do not block resume. The expired claim stays terminal; retained entries
+continue without an automatic Save. Editors without a reliable baseline use
+**Review & continue**, followed by **Open fresh editor**. Context changes hide the
+previous author's frozen UI. <!-- CHANGE -->
 
 ## Private retention and failure handling
 
@@ -264,3 +268,24 @@ Scheduler preflight checks the planting, linked tasks, affected main/linked boar
 and parent geometry explicitly. Pending local persistence alone is not an unfinished
 editor conflict. Genuine conflicts identify the object and session rather than
 suggesting another user must exist. <!-- CHANGE -->
+
+## Actions on editing and recovery notices
+
+The frozen editor and its top status link share Resume editing, Review & continue,
+and Copy entries. Preservation must succeed and rejected graph actions must finish
+reconciling before resuming. A year plan checks its garden and planting inputs;
+planting children, generated tasks, source links and declared editor dependencies
+use the existing logical-object rules. Unknown baselines require review. <!-- CHANGE -->
+
+A preservation failure also offers Retry saving draft and Discard unfinished changes.
+Discard has no confirmation dialog: the notice first lists the affected objects
+and related action groups. Its explicit discard operation uses the existing rollback
+closure without writing a recovery copy. Accepted saves, unrelated edits and existing
+recovery files remain intact. Stored-draft read failure does not hide copies still
+in memory. Existing export options remain in the recovery viewer. <!-- CHANGE -->
+
+Blocked saves expose existing blocker, release-request and scoped access-request
+commands without submitting the retained edit. If local rollback itself fails,
+Open latest saved version discards all unsaved work in the window and loads the
+latest accepted shared state available locally through the normal file lifecycle.
+A failed replacement keeps the original capture quarantine. <!-- CHANGE -->

@@ -14,9 +14,9 @@ import { reviewDraft, resolveDraft } from './trellis-draft-conflicts.js'; // NEW
 import { prepareSeedTransaction } from './trellis-seed-effects.js'; // NEW
 import { createReferenceSnapshots } from './trellis-reference-snapshots.js'; // NEW
 import { analyzeDocument } from './trellis-analysis-worker.js'; // NEW
-import { documentContentHash } from './trellis-collaboration-protocol.js'; // NEW
+import { documentContentHash, changedEditingInputs } from './trellis-collaboration-protocol.js'; // CHANGE
 let nextPolicyRevision = 0; // CHANGE: local IPC policy ordering is independent of activity observations and signed protocol records.
-export function createCollaborationStore({ canvas, deviceId, keys, profile, now = Date.now, writeAtomic, writeImmutable, prepareXml = async xml => xml, beforeMaterialize = async () => {}, beforeCommit = () => [], validateActor = () => {}, onTiming = () => {}, onVerified = () => {} }) { // CHANGE
+export function createCollaborationStore({ canvas, deviceId, keys, profile, now = Date.now, writeAtomic, writeImmutable, prepareXml = async xml => xml, beforeMaterialize = async () => {}, beforeCommit = () => [], validateActor = () => {}, acquireEditing, onTiming = () => {}, onVerified = () => {} }) { // CHANGE
     let nextOperationId = 0, activeOperationId = 0; // NEW
     const timing = sample => { try { onTiming({ operationId: activeOperationId, ...sample }); } catch (_) {} }; // NEW: observers cannot fail a durable operation.
     const sessions = new Map(); // CHANGE
@@ -64,7 +64,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         latest = verified; referenceView = hydrated; onVerified(latest); return latest; // CHANGE
     } // CHANGE
     async function preserve(xml, reason, editorDrafts = [], proposal) { // CHANGE
-        if (!Array.isArray(editorDrafts) || editorDrafts.some(editor => !editor || !['planting', 'year-planner', 'inventory'].includes(editor.kind) || !Array.isArray(editor.targets))) throw new Error('Invalid editor recovery data.'); // NEW
+        if (!Array.isArray(editorDrafts) || editorDrafts.some(editor => !editor || !['planting', 'year-planner', 'inventory', 'details', 'label', 'object-form'].includes(editor.kind) || !Array.isArray(editor.targets))) throw new Error('Invalid editor recovery data.'); // CHANGE
         const filename = 'local-' + makeId() + '.drawio', recoveryPath = path.join(profile, 'recovery', canvas.shareId, filename); // NEW
         await writeAtomic(recoveryPath, xml); // CHANGE
         const editorDataPath = editorDrafts.length ? recoveryPath + '.editors.json' : undefined; // NEW
@@ -153,9 +153,18 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
                 for (const hold of state.holds) if (hold.deviceId === deviceId && !active.has(hold.sessionId)) abandoned.set(hold.sessionId, hold); // NEW
                 for (const hold of abandoned.values()) { await current.append(hold, 'release', {}); state = await read(); } // NEW
             } // NEW
-            if (input.kind === 'recover-holds') { // NEW: private recovery remains possible after editing authority is revoked.
+            if (input.kind === 'resume-holds') { // CHANGE: compare against accepted content and acquire inside the same local content queue.
+                const changed = changedEditingInputs(input.baseXml, state.xml, input.targets, input.dependencies, input.scope); // CHANGE
+                if (changed.length) return { ok: false, code: 'EDITING_INPUTS_CHANGED', targets: changed, reason: 'This object or its required inputs changed. Review the current changes before continuing.', collaboration: publicState(state, actor.sessionId) }; // CHANGE
+                if (input.targets.some(key => authorityFor(state.xml, key, userId, authorityContext) < 1)) return { ok: false, code: 'PERMISSION_DENIED', reason: 'Your editing access changed. Request access before continuing.', collaboration: publicState(state, actor.sessionId) }; // CHANGE
+                if (!acquireEditing) throw new Error('Editing access cannot be confirmed. Review the object before continuing.'); // CHANGE
+                const result = await acquireEditing(actor, input); actor.assertActive(); // CHANGE
+                return { ...result, collaboration: { ...publicState(state, actor.sessionId), ...result.collaboration } }; // CHANGE
+            } // CHANGE
+            if (input.kind === 'recover-holds' || input.kind === 'discard-holds') { // CHANGE: explicit discard reuses rollback without requiring a recovery write.
                 inspectDiagram(input.xml); inspectDiagram(input.baseXml); // NEW
                 const recovered = revertDraftChanges(input.baseXml, input.xml, input.targets || [], input.actions || []); // NEW
+                if (input.kind === 'discard-holds') return { ok: true, ...recovered, collaboration: publicState(state, actor.sessionId) }; // CHANGE
                 const recoveryPath = await preserve(input.xml, input.reason || 'Editing hold ended; affected unsaved actions were reverted.', input.editorDrafts || []); // NEW
                 return { ok: true, ...recovered, recoveryPath, editorDataPath: recoveryPaths.at(-1).editorDataPath, collaboration: publicState(state, actor.sessionId) }; // NEW
             } // NEW

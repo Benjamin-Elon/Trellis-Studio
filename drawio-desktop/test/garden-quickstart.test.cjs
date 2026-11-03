@@ -15,7 +15,7 @@ function emitter() { // NEW
 function fixture(options = {}) { // NEW
     const dom = new JSDOM('<!doctype html><html><head></head><body><div id="graph"></div></body></html>', { url: 'https://trellis.test', runScripts: 'outside-only' }); homes.add(dom);
     const w = dom.window, timers = new Map(); let timerId = 0;
-    w.setTimeout = fn => { timers.set(++timerId, fn); return timerId; }; w.clearTimeout = id => timers.delete(id);
+    w.setTimeout = (fn, delay) => { timers.set(++timerId, { fn, delay }); return timerId; }; w.clearTimeout = id => timers.delete(id); // CHANGE: narration watchdogs do not run as routine render work.
     for (const [key, value] of Object.entries(options.storage || {})) w.localStorage.setItem(key, value);
     const cell = (id, attrs = {}, parent = null) => {
         const value = w.document.createElement('object'); for (const [key, val] of Object.entries(attrs)) value.setAttribute(key, val);
@@ -38,9 +38,21 @@ function fixture(options = {}) { // NEW
     w.mxClient = { IS_POINTER: options.pointer !== false, IS_TOUCH: !!options.touch }; // NEW: exercise native gesture registration rather than a drag-specific mock.
     w.eval(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/mxgraph/src/util/mxEvent.js'), 'utf8')); // NEW
     w.Editor = { moveImage: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==' }; // NEW
+    for (const name of ['trellis-narration-catalog.js', 'trellis-narration.js']) w.eval(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/js', name), 'utf8')); // NEW
     w.eval(source);
     const api = graph.__trellisQuickstart;
-    async function flush() { for (let n = 0; n < 20; n++) { await Promise.resolve(); if (!timers.size) return; const work = [...timers.values()]; timers.clear(); work.forEach(fn => fn()); } throw new Error('Quickstart render did not settle'); }
+    async function flush() { // CHANGE
+        for (let n = 0; n < 20; n++) { // CHANGE
+            await Promise.resolve(); const work = [...timers].filter(([, timer]) => timer.delay < 1000); // CHANGE
+            if (!work.length) { // CHANGE
+                const prompt = w.document.querySelector('.trellis-quickstart-card p[aria-live="polite"]'); // NEW
+                if (prompt) assert.ok(w.TrellisNarrationCatalog.entries().includes(prompt.textContent), 'Missing narration variant: ' + prompt.textContent); // NEW
+                return; // CHANGE
+            } // CHANGE
+            for (const [id, timer] of work) { timers.delete(id); timer.fn(); } // CHANGE
+        } // CHANGE
+        throw new Error('Quickstart render did not settle'); // CHANGE
+    } // CHANGE
     const press = text => { const button = [...w.document.querySelectorAll('.trellis-quickstart-card button')].find(node => node.textContent === text); assert.ok(button, 'Missing guide button: ' + text); button.click(); };
     const choose = (label, value) => { const input = w.document.querySelector('.trellis-quickstart-card select[aria-label="' + label + '"]'); assert.ok(input, label); input.value = value; input.dispatchEvent(new w.Event('change')); };
     const target = (name, tag = 'button', host = w.document.body) => { const node = w.document.createElement(tag); node.setAttribute('data-trellis-quickstart', name); host.appendChild(node); return node; };
@@ -287,9 +299,9 @@ test('automatic canvas avoidance does not replace the preferred position and cle
 
 test('layout explicitly requests the intended garden selection and never changes it silently', async () => { // NEW
     const f = fixture(); await start(f); await stage(f, 'layout');
-    assert.match(f.text(), /Select Apple garden to show its layout controls/); assert.equal(f.graph.getSelectionCell(), null); assert.equal(f.highlighted(), f.garden);
+    assert.match(f.text(), /Select your garden to show its layout controls/); assert.match(f.text(), /Apple garden/); assert.equal(f.graph.getSelectionCell(), null); assert.equal(f.highlighted(), f.garden); // CHANGE: fixed narration retains the contextual name in the card.
     const other = f.cell('other', { garden_module: '1', garden_name: 'Other garden' }, f.parent); f.select(other); await f.flush();
-    assert.match(f.text(), /Select Apple garden/); assert.equal(f.graph.getSelectionCell(), other);
+    assert.match(f.text(), /Select your garden/); assert.match(f.text(), /Apple garden/); assert.equal(f.graph.getSelectionCell(), other); // CHANGE
     const add = f.target('add-bed'); f.select(f.garden); await f.flush();
     assert.ok(add.classList.contains('trellis-quickstart-target')); assert.match(f.text(), /Choose Add Garden Bed/);
 });
@@ -298,7 +310,7 @@ test('layout recovers from no garden, missing settings, hidden controls, active 
     const empty = fixture({ empty: true }); await start(empty); await stage(empty, 'layout'); assert.match(empty.text(), /Create a garden first/); assert.match(empty.text(), /Open Garden Projects/);
     const f = fixture(); await start(f); f.select(f.garden); f.garden.value.removeAttribute('city_id'); await stage(f, 'layout'); assert.match(f.text(), /Finish Garden Settings first/);
     f.garden.value.setAttribute('city_id', '1'); f.select(f.garden); const add = f.target('add-bed'); add.hidden = true; await f.flush(); assert.match(f.text(), /control is hidden/);
-    let mode = { mode: 'irrigation' }; f.w.Trellis.interactionModes = { getActive: () => mode, closeActive: () => { mode = null; } }; f.api.refresh(); await f.flush(); assert.match(f.text(), /Close irrigation mode/);
+    let mode = { mode: 'irrigation' }; f.w.Trellis.interactionModes = { getActive: () => mode, closeActive: () => { mode = null; } }; f.api.refresh(); await f.flush(); assert.match(f.text(), /Close the active mode/); // CHANGE
     f.press('Close active mode'); await f.flush(); add.hidden = false; await f.flush(); assert.ok(add.classList.contains('trellis-quickstart-target'));
     f.enabled(false); f.api.refresh(); await f.flush(); assert.match(f.text(), /read only/); assert.match(f.text(), /Use invitee guide/);
 });
@@ -474,7 +486,7 @@ test('read aloud deduplicates renders, follows context, replays and cancels on c
     f.press('Read again'); await f.flush(); assert.equal(spoken.length, 2); f.press('Next'); await f.flush(); assert.equal(spoken.length, 3); // NEW
     f.press('Collapse'); await f.flush(); assert.ok(cancelled >= 3); const before = spoken.length; f.api.refresh(); await f.flush(); assert.equal(spoken.length, before); // NEW
     f.press('Expand'); await f.flush(); assert.equal(spoken.length, before + 1); // NEW
-    const oldSpeech = spoken.at(-1); f.api.close(); oldSpeech.onerror(); await f.flush(); assert.equal(f.w.document.querySelector('.trellis-quickstart-card'), null); // NEW
+    const oldError = spoken.at(-1).onerror; f.api.close(); oldError(); await f.flush(); assert.equal(f.w.document.querySelector('.trellis-quickstart-card'), null); // CHANGE: invoke a captured native callback after resource cleanup.
     f.api.show(); await f.flush(); assert.equal(f.state().preferences.readAloud, true); const afterShow = spoken.length; f.user({ id: 'bob', portableIdentityId: 'bob' }); await f.flush(); f.api.show(); await f.flush(); assert.equal(spoken.length, afterShow); assert.equal(f.w.document.querySelector('[data-quickstart-focus="read-aloud"]').checked, false); // NEW
 }); // NEW
 

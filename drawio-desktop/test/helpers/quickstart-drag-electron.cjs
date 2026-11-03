@@ -3,6 +3,7 @@ const assert = require('node:assert/strict'); // NEW
 const fs = require('node:fs'); // NEW
 const os = require('node:os'); // NEW
 const path = require('node:path'); // NEW
+const { pathToFileURL } = require('node:url'); // NEW
 const { app, BrowserWindow } = require('electron'); // NEW
 const webapp = path.resolve(__dirname, '../../drawio/src/main/webapp'); // NEW
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-quickstart-drag-')); // NEW
@@ -31,6 +32,8 @@ app.whenReady().then(async () => { // NEW
             window.snapshot=()=>{const card=document.querySelector('.trellis-quickstart-card'),box=card.getBoundingClientRect(),handle=card.querySelector('[data-trellis-quickstart-drag-handle]').getBoundingClientRect();return {x:box.left,y:box.top,right:box.right,bottom:box.bottom,width:innerWidth,height:innerHeight,grip:{x:Math.round(handle.left+handle.width/2),y:Math.round(handle.top+handle.height/2)},xml:mxUtils.getXml(new mxCodec().encode(graph.model)),selection:graph.getSelectionCells().map(cell=>cell.id),saved:graph.__trellisQuickstart.getState().preferences.position}};
             void 0;
         `); // NEW
+        await run('window.TrellisNarrationAssetBase=' + JSON.stringify(pathToFileURL(path.join(webapp, 'audio/narration/')).href)); // NEW
+        for (const name of ['js/trellis-narration-catalog.js', 'audio/narration/manifest.js', 'js/trellis-narration.js']) await run(fs.readFileSync(path.join(webapp, name), 'utf8')); // NEW
         await run(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Garden_Quickstart.js'), 'utf8')); // NEW
         await run('window.__surfacePluginLoader=Draw.loadPlugin;Draw.loadPlugin=()=>{};' + fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8') + ';Draw.loadPlugin=window.__surfacePluginLoader;delete window.__surfacePluginLoader;void 0;'); // NEW: exercise shared surfaces during native interaction checks.
         await run('graph.__trellisQuickstart.show()'); await settle(); // NEW
@@ -120,19 +123,19 @@ app.whenReady().then(async () => { // NEW
         assert.ok(narrow.x >= 8 && narrow.right <= narrow.width - 8 && narrow.y >= 8 && narrow.bottom <= narrow.height - 8, JSON.stringify(narrow)); // NEW
         assert.equal(narrow.xml, before.xml); assert.deepEqual(narrow.selection, before.selection); assert.deepEqual(await run('errors'), []); // NEW
         const output = path.resolve(__dirname, '../../.test-artifacts'); fs.mkdirSync(output, { recursive: true }); // NEW
-        console.log('Quickstart native stage: system speech'); // NEW
+        console.log('Quickstart native stage: bundled narration'); // CHANGE
         await run(` // NEW
-            window.nativeSpeechResult={supported:!!(window.speechSynthesis&&window.SpeechSynthesisUtterance),status:'unavailable',voices:[]};
-            if(nativeSpeechResult.supported){
-                nativeSpeechResult.voices=speechSynthesis.getVoices().map(voice=>({name:voice.name,local:voice.localService}));
-                window.originalSpeak=speechSynthesis.speak.bind(speechSynthesis);
-                speechSynthesis.speak=speech=>{nativeSpeechResult.status='pending';const ended=speech.onend,failed=speech.onerror;speech.onend=event=>{nativeSpeechResult.status='ended';ended?.(event)};speech.onerror=event=>{nativeSpeechResult.status=event.error||'error';failed?.(event)};originalSpeak(speech)};
-            }
+            window.nativeSpeechResult={status:'pending',source:'clip'}; // CHANGE
+            window.originalAudio=window.Audio; // NEW
+            window.Audio=function(src){const audio=new originalAudio(src);nativeSpeechResult.src=src;audio.addEventListener('ended',()=>nativeSpeechResult.status='ended');audio.addEventListener('error',()=>nativeSpeechResult.status='error');return audio;}; // NEW
+            window.originalSpeak=speechSynthesis.speak.bind(speechSynthesis); // CHANGE
+            speechSynthesis.speak=speech=>{nativeSpeechResult.source='system';nativeSpeechResult.status='fallback';originalSpeak(speech)}; // CHANGE
             document.querySelector('[data-quickstart-focus=read-aloud]').click();void 0;
         `); await settle(); // NEW
-        const speech = await run("new Promise(resolve=>{const deadline=Date.now()+8000;const poll=()=>{if(nativeSpeechResult.status!=='pending'||Date.now()>=deadline){nativeSpeechResult.voices=window.speechSynthesis?.getVoices().map(voice=>({name:voice.name,local:voice.localService}))||[];resolve(nativeSpeechResult)}else setTimeout(poll,100)};poll()})"); // NEW
-        await run("document.querySelector('[data-quickstart-focus=read-aloud]').click();if(window.originalSpeak)speechSynthesis.speak=originalSpeak;void 0"); await settle(); // NEW
-        fs.writeFileSync(path.join(output, 'quickstart-speech-electron.json'), JSON.stringify(speech, null, 2)); console.log('System speech result: ' + JSON.stringify(speech)); // NEW
+        const speech = await run("new Promise(resolve=>{const deadline=Date.now()+15000;const poll=()=>{if(nativeSpeechResult.status!=='pending'||Date.now()>=deadline)resolve(nativeSpeechResult);else setTimeout(poll,100)};poll()})"); // CHANGE
+        await run("document.querySelector('[data-quickstart-focus=read-aloud]').click();speechSynthesis.speak=originalSpeak;window.Audio=originalAudio;void 0"); await settle(); // CHANGE
+        fs.writeFileSync(path.join(output, 'quickstart-speech-electron.json'), JSON.stringify(speech, null, 2)); console.log('Bundled narration result: ' + JSON.stringify(speech)); // CHANGE
+        assert.equal(speech.source, 'clip'); assert.equal(speech.status, 'ended'); // NEW: system availability cannot mask broken bundled playback.
         console.log('Quickstart native stage: screenshot'); // CHANGE
         fs.writeFileSync(path.join(output, 'quickstart-drag-electron.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); // NEW
         console.log('Native Quickstart drag checks passed'); // NEW

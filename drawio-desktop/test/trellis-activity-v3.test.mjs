@@ -8,9 +8,53 @@ import crypto from 'node:crypto'; // NEW
 import { createActivityService, LEASE_MS, REQUEST_MS } from '../src/main/trellis-activity-service.js'; // CHANGE
 import { createDraftStore } from '../src/main/trellis-draft-store.js'; // NEW
 import { createCollaborationStore } from '../src/main/trellis-collaboration-store.js'; // NEW
+import { changedEditingInputs, objects } from '../src/main/trellis-collaboration-protocol.js'; // CHANGE
 import { signRecord, digest, canonical } from '../src/main/trellis-share-protocol.js'; // CHANGE
 
 const target = '["page","a"]'; // NEW
+test('editing resume compares relevant saved objects, dependencies, structure and generated children', () => { // CHANGE
+    const base = initial.replace('id="a" label=', 'id="a" tiler_group="1" label=').replace('</root>', '<object id="b" label="B"><mxCell vertex="1" parent="1"/></object><mxCell id="circle" vertex="1" parent="a"/></root>'); // CHANGE
+    assert.deepEqual(changedEditingInputs(base, base.replace('label="B"', 'label="Unrelated"'), [target]), []); // CHANGE
+    assert.deepEqual(changedEditingInputs(base, base.replace('label="A"', 'label="Peer edit"'), [target]), [target]); // CHANGE
+    assert.ok(changedEditingInputs(base, base.replace('label="B"', 'label="Required"'), [target], ['["page","b"]']).includes('["page","b"]')); // CHANGE
+    assert.ok(changedEditingInputs(base, base.replace('<mxCell id="circle" vertex="1" parent="a"/>', ''), [target]).includes('["page","circle"]')); // CHANGE
+    assert.ok(changedEditingInputs(base, base.replace('</root>', '<mxCell id="new-circle" vertex="1" parent="a"/></root>'), [target]).includes('["page","new-circle"]')); // CHANGE
+    assert.deepEqual(changedEditingInputs(base, base.replace('<diagram id="page">', '<diagram id="page" name="Changed">'), [target]), ['*']); // CHANGE
+    assert.throws(() => changedEditingInputs(base, base, ['["page","missing"]']), /baseline is unavailable/); // CHANGE
+}); // CHANGE
+test('year-plan resume notices changed planting totals but ignores unrelated annotations', () => { // CHANGE
+    const garden = initial.replace('id="a" label=', 'id="a" garden_module="1" label=').replace('</root>', '<object id="crop" planting_id="1" label="Crop"><mxCell vertex="1" parent="a"/></object><object id="barn" label="Barn"><mxCell vertex="1" parent="a"/></object></root>'); // CHANGE
+    assert.deepEqual(changedEditingInputs(garden, garden.replace('label="Barn"', 'label="Other barn"'), [target], [], 'year-planner'), []); // CHANGE
+    assert.ok(changedEditingInputs(garden, garden.replace('label="Crop"', 'label="More crop"'), [target], [], 'year-planner').includes('["page","crop"]')); // CHANGE
+    assert.ok(changedEditingInputs(garden, garden.replace('</root>', '<object id="crop2" planting_id="2"><mxCell vertex="1" parent="a"/></object></root>'), [target], [], 'year-planner').includes('["page","crop2"]')); // CHANGE
+}); // CHANGE
+test('guarded resume re-reads accepted data before acquiring and returns a new terminal-safe activity claim', async t => { // CHANGE
+    const f = await fixture(t); let journal, acquisitions = 0; // CHANGE
+    const activity = f.activity('device', { sessionFor: (caller, user) => journal.sessionFor(caller, user) }); // CHANGE
+    journal = createCollaborationStore({ canvas: f.canvas, deviceId: 'device', keys: f.keys, profile: f.root, writeImmutable: async (file, record) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(record), { flag: 'wx' }); }, writeAtomic: f.writeAtomic, now: f.now, acquireEditing: async (actor, input) => { acquisitions++; await activity.action(actor.callerId, actor.userId, { kind: 'release', targets: input.targets, claimIds: input.claimIds }); return activity.action(actor.callerId, actor.userId, { kind: 'claim', targets: input.targets }); } }); // CHANGE
+    await journal.initialize(initial); const original = await activity.action(1, 'alice', { kind: 'claim', targets: [target] }), old = original.collaboration.holds[0].claimId; // CHANGE
+    f.time(LEASE_MS); const expired = await activity.action(1, 'alice', { kind: 'publish' }); assert.equal(expired.collaboration.losses[0].code, 'SESSION_OFFLINE'); assert.equal(expired.collaboration.losses[0].reason, 'Editing hold released after 30 seconds offline.'); // CHANGE
+    const resumed = await journal.action(1, 'alice', { kind: 'resume-holds', baseXml: initial, targets: [target], dependencies: [], claimIds: [old] }); // CHANGE
+    assert.equal(resumed.ok, true); assert.equal(acquisitions, 1); assert.notEqual(resumed.collaboration.holds[0].claimId, old); // CHANGE
+    await activity.action(1, 'alice', { kind: 'release', targets: [target], claimIds: [old] }); assert.equal(activity.snapshot().holds[0].claimId, resumed.collaboration.holds[0].claimId); // CHANGE
+    await journal.action(2, 'alice', { kind: 'save', baseXml: initial, xml: initial.replace('label="A"', 'label="Peer changed"') }); // CHANGE
+    const refused = await journal.action(1, 'alice', { kind: 'resume-holds', baseXml: initial, targets: [target] }); assert.equal(refused.code, 'EDITING_INPUTS_CHANGED'); assert.equal(acquisitions, 1); // CHANGE
+}); // CHANGE
+test('explicit discard preserves unrelated actions without attempting private recovery writes', async t => { // CHANGE
+    const f = await fixture(t); let failRecovery = false, recoveryWrites = 0; // CHANGE
+    const journal = createCollaborationStore({ canvas: f.canvas, deviceId: 'device', keys: f.keys, profile: f.root, writeImmutable: async (file, record) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(record), { flag: 'wx' }); }, writeAtomic: async (file, value) => { if (file.includes(path.sep + 'recovery' + path.sep)) { recoveryWrites++; if (failRecovery) throw new Error('Disk full'); } await f.writeAtomic(file, value); } }); // CHANGE
+    const base = initial.replace('</root>', '<object id="b" label="B"><mxCell vertex="1" parent="1"/></object></root>'); // CHANGE
+    await journal.initialize(base); await journal.action(1, 'alice', { kind: 'open-view' }); failRecovery = true; const before = recoveryWrites, draft = base.replace('label="A"', 'label="Abandon"').replace('label="B"', 'label="Keep"'); // CHANGE
+    const discarded = await journal.action(1, 'alice', { kind: 'discard-holds', baseXml: base, xml: draft, targets: [target], actions: [[target], ['["page","b"]']] }); // CHANGE
+    assert.equal(discarded.ok, true); assert.equal(objects(discarded.xml).get(target).label, 'A'); assert.equal(objects(discarded.xml).get('["page","b"]').label, 'Keep'); assert.equal(recoveryWrites, before); // CHANGE
+    const grouped = await journal.action(1, 'alice', { kind: 'discard-holds', baseXml: base, xml: draft, targets: [target], actions: [[target, '["page","b"]']] }); assert.equal(objects(grouped.xml).get('["page","b"]').label, 'B'); // CHANGE
+}); // CHANGE
+test('recovery copies accept all recoverable editor kinds', async t => { // CHANGE
+    const f = await fixture(t), journal = createCollaborationStore({ canvas: f.canvas, deviceId: 'device', keys: f.keys, profile: f.root, writeImmutable: async (file, record) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(record), { flag: 'wx' }); }, writeAtomic: f.writeAtomic }); await journal.initialize(initial); // CHANGE
+    const kinds = ['planting', 'year-planner', 'inventory', 'details', 'label', 'object-form']; // CHANGE
+    const recovered = await journal.action(1, 'alice', { kind: 'recover-holds', baseXml: initial, xml: initial, targets: [target], editorDrafts: kinds.map(kind => ({ kind, targets: [target], entries: 'retained' })) }); // CHANGE
+    assert.equal(recovered.ok, true); assert.deepEqual(JSON.parse(await fs.readFile(recovered.editorDataPath, 'utf8')).editors.map(editor => editor.kind), kinds); // CHANGE
+}); // CHANGE
 test('closing or forgetting a pending session retires notices across restart without deleting private drafts', async t => { // CHANGE
     for (const operation of ['close', 'forget']) await t.test(operation, async t => { // CHANGE
         const f = await fixture(t), activity = f.activity(), drafts = createDraftStore({ profile: f.root, canvas: f.canvas, writeAtomic: f.writeAtomic }); // CHANGE

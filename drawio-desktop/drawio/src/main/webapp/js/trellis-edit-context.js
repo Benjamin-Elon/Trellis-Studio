@@ -130,7 +130,7 @@
             const holds = blocked(cells, options.manualSources || [], options.includeAncestors !== false, options.exactCells?.() || []); // CHANGE
             if (holds.length) { // CHANGE
                 options.onBlocked?.(holds); // CHANGE
-                const error = new Error('Changes were blocked by ' + describeHolds(holds) + '. Your entries remain in this editor. Resolve the edit, then try again.'); error.code = 'TRELLIS_EDIT_BLOCKED'; throw error; // CHANGE
+                const error = new Error('Changes were blocked by ' + describeHolds(holds) + '. Your entries remain in this editor.'); error.code = 'TRELLIS_EDIT_BLOCKED'; error.blocked = holds; error.targets = holds.map(hold => hold.key); graph.__trellisSharing?.showBlockedEdit?.(error, options.editor?.element?.()); throw error; // CHANGE
             } // CHANGE
             options.assertCurrent?.(); // CHANGE
             if (options.isCurrent && !options.isCurrent()) { const error = new Error('This editor is no longer current.'); error.code = 'TRELLIS_EDIT_STALE'; throw error; } // CHANGE
@@ -150,6 +150,7 @@
                 return value; // CHANGE
             } catch (error) { // CHANGE
                 owner.failed = true; // CHANGE
+                if (error.code === 'TRELLIS_EDIT_REJECTED') graph.__trellisSharing?.showBlockedEdit?.({ ...error, message: error.message, targets: cells.map(cell => JSON.stringify([page(), String(cell.id)])) }, options.editor?.element?.()); // CHANGE
                 try { restoreCommit(owner, error); } catch (rollbackError) { // CHANGE
                     captureFailure = new Error('Editor rollback failed. Saving is blocked until the diagram is reopened or recovered: ' + rollbackError.message); captureFailure.cause = rollbackError; // CHANGE
                     try { (options.recoveryEditor || options.editor)?.freeze?.(captureFailure.message); graph.__trellisSharing?.retainFailedCommit?.(captureFailure.message); } catch (preservationError) { root.console?.error('Failed to preserve the frozen editor', preservationError); } // CHANGE: preservation failure cannot release quarantine or replace the original operation error.
@@ -182,6 +183,7 @@
                     options.editor?.complete?.(); // CHANGE
                     return { status: effects?.changed ? 'applied' : 'unchanged', operationId: effects?.operationId || options.id, targets: effects?.targets || [], value }; // CHANGE
                 } catch (error) { // CHANGE
+                    if (error.blocked || error.code === 'TRELLIS_EDIT_REJECTED') graph.__trellisSharing?.showBlockedEdit?.({ ...error, message: error.message, targets: error.targets || (options.cells || []).map?.(cell => JSON.stringify([page(), String(cell.id)])) }, options.editor?.element?.()); // CHANGE
                     const status = error.code === 'TRELLIS_EDIT_BLOCKED' ? 'blocked' : error.code === 'TRELLIS_EDIT_STALE' ? 'stale' : 'rejected'; // CHANGE
                     return { status, operationId: options.id, reason: error.message, error }; // CHANGE
                 } // CHANGE
@@ -292,7 +294,7 @@
             const cells = options.cells().filter(Boolean), holds = blocked(cells, options.manualSources || [], options.includeAncestors !== false, options.exactCells?.() || []); // CHANGE
             if (holds.length) {
                 options.onBlocked?.(holds); // CHANGE: synchronous callers may throw the actual blocker before any mutation or queued Retry; default deferral is unchanged.
-                if (committing) { const error = new Error('Changes were blocked by ' + describeHolds(holds) + '. Your entries remain in this editor. Resolve the edit, then try again.'); error.code = 'TRELLIS_EDIT_BLOCKED'; throw error; } // CHANGE: nested domain commands must never silently defer part of a commit.
+                if (committing) { const error = new Error('Changes were blocked by ' + describeHolds(holds) + '. Your entries remain in this editor.'); error.code = 'TRELLIS_EDIT_BLOCKED'; error.blocked = holds; error.targets = holds.map(hold => hold.key); throw error; } // CHANGE: nested domain commands must never silently defer part of a commit.
                 const id = options.id || kind + ':' + cells.map(cell => cell.id).join(',') || String(++sequence);
                 const labels = [...new Set(holds.map(holdObjectName))]; // CHANGE
                 const previous = deferred.get(id); deferred.set(id, { title: options.title || 'Automatic update', labels, retry: options.retry, document: documentIdentity(), page: page(), userId: user()?.id || '', cells }); if (!previous || JSON.stringify(previous.labels) !== JSON.stringify(labels)) renderDeferred(); // CHANGE: repeated blocked updates neither mutate content nor rebuild the same notice.
@@ -304,7 +306,9 @@
             return result; // NEW
         }
         const describeHolds = holds => holds.map(hold => (hold.local ? 'unfinished local editor' : (hold.name || hold.userId || 'another session')) + ' on ' + holdObjectName(hold)).join(', '); // CHANGE
-        const api = { scope, run, apply, commit, saveDefaults, whenSettled, assertCapturable, blocked, describeHolds, logicalCell, changeCells, kindOf, isContentChange, deferred, recreated, current: () => active, committing: () => !!committing }; // CHANGE
+        /** A failed document replacement must not clear the original capture quarantine. */ // CHANGE
+        async function replaceDocument(operation) { const failure = captureFailure; try { await operation(); captureFailure = null; } catch (error) { captureFailure = failure; throw error; } } // CHANGE
+        const api = { scope, run, apply, commit, saveDefaults, whenSettled, assertCapturable, replaceDocument, blocked, describeHolds, logicalCell, changeCells, kindOf, isContentChange, deferred, recreated, current: () => active, committing: () => !!committing }; // CHANGE
         graph.__trellisEditContext = api;
         ui.editor.addListener?.('fileLoaded', () => { captureFailure = null; defaultNoticeHost?.remove(); defaultNoticeHost = null; defaultWrites.clear(); deferred.clear(); manualSources.clear(); renderDeferred(); }); // CHANGE
         ui.editor.addListener?.('pageSelected', () => { pruneDeferred(); pruneDefaultNotices(); }); root.addEventListener?.('trellisUsersSessionChanged', () => { pruneDeferred(); pruneDefaultNotices(); }); // CHANGE

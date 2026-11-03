@@ -262,9 +262,24 @@ export function createSyncthingService(options) {
         const session = authorizeCanvas(actor.callerId, canvas); if (session.userId !== actor.userId) throw new Error('The document author changed during preparation.'); // NEW
     } // NEW
     function collaborationStore(canvas) { // NEW
-        if (!collaborationStores.has(canvas.shareId)) collaborationStores.set(canvas.shareId, createCollaborationStore({ canvas, deviceId: deviceId || canvas.localDeviceId, keys, profile, now, writeAtomic, writeImmutable, validateActor: actor => validateCollaborationActor(canvas, actor), onTiming: options.onCollaborationTiming, replayWorker: options.replayWorker, beforeCommit: (actor, targets) => activityService(canvas).snapshot(actor.sessionId).holds.filter(hold => (hold.sessionId !== actor.sessionId || hold.deviceId !== (deviceId || canvas.localDeviceId)) && targets.some(key => key === '*' || hold.key === '*' || key === hold.key)), onVerified: state => { if (verifiedPolicies.get(canvas.shareId)?.xml !== state.xml) { const parsed = inspectDiagram(state.xml), pageIds = new Map(parsed.document.pages.map(page => [page.doc, page.container?.getAttribute('id') || ''])); verifiedRosters.set(canvas.shareId, parsed.store); verifiedPolicies.set(canvas.shareId, { xml: state.xml, snapshot: permissionSnapshot(parsed), ranks: new Map(), storedUsers: new Set((parsed.store.users || []).map(user => user.id)), bootstrapKeys: new Set(parsed.cells.filter(cell => cell.node.hasAttribute('trellis_users_json')).map(cell => JSON.stringify([pageIds.get(cell.node.ownerDocument), cell.id]))) }); } }, beforeMaterialize: xml => projectionNaming.reconcile(canvas, xml), prepareXml: async xml => { const parsed = inspectDiagram(xml); await relocateAssets(parsed, canvas.folderPath, canvas.folderPath, options.privatePaths || [profile]); return parsed.document.serialize(); } })); // CHANGE
+        if (!collaborationStores.has(canvas.shareId)) collaborationStores.set(canvas.shareId, createCollaborationStore({ canvas, deviceId: deviceId || canvas.localDeviceId, keys, profile, now, writeAtomic, writeImmutable, acquireEditing: (actor, input) => resumeEditingClaim(canvas, actor, input), validateActor: actor => validateCollaborationActor(canvas, actor), onTiming: options.onCollaborationTiming, replayWorker: options.replayWorker, beforeCommit: (actor, targets) => activityService(canvas).snapshot(actor.sessionId).holds.filter(hold => (hold.sessionId !== actor.sessionId || hold.deviceId !== (deviceId || canvas.localDeviceId)) && targets.some(key => key === '*' || hold.key === '*' || key === hold.key)), onVerified: state => { if (verifiedPolicies.get(canvas.shareId)?.xml !== state.xml) { const parsed = inspectDiagram(state.xml), pageIds = new Map(parsed.document.pages.map(page => [page.doc, page.container?.getAttribute('id') || ''])); verifiedRosters.set(canvas.shareId, parsed.store); verifiedPolicies.set(canvas.shareId, { xml: state.xml, snapshot: permissionSnapshot(parsed), ranks: new Map(), storedUsers: new Set((parsed.store.users || []).map(user => user.id)), bootstrapKeys: new Set(parsed.cells.filter(cell => cell.node.hasAttribute('trellis_users_json')).map(cell => JSON.stringify([pageIds.get(cell.node.ownerDocument), cell.id]))) }); } }, beforeMaterialize: xml => projectionNaming.reconcile(canvas, xml), prepareXml: async xml => { const parsed = inspectDiagram(xml); await relocateAssets(parsed, canvas.folderPath, canvas.folderPath, options.privatePaths || [profile]); return parsed.document.serialize(); } })); // CHANGE
         return collaborationStores.get(canvas.shareId); // NEW
     } // NEW
+    /** A new claim follows an accepted-baseline check; release names only the expired generation. */ // CHANGE
+    async function resumeEditingClaim(canvas, actor, input) { // CHANGE
+        actor.assertActive(); // CHANGE
+        const activity = activityService(canvas), before = activity.snapshot(actor.sessionId, actor.userId); // CHANGE
+        if (before.holds.some(hold => hold.sessionId === actor.sessionId && input.targets.includes(hold.key))) return { ok: false, code: 'EDITING_BUSY', reason: 'An active editor already owns this object. Finish that edit before continuing.', collaboration: before }; // CHANGE
+        if (input.claimIds?.length) await activity.action(actor.callerId, actor.userId, { kind: 'release', targets: input.targets, claimIds: input.claimIds }); // CHANGE
+        actor.assertActive(); // CHANGE
+        const result = await activity.action(actor.callerId, actor.userId, { kind: 'claim', targets: input.targets }); // CHANGE
+        try { actor.assertActive(); } catch (error) { // CHANGE
+            const claimIds = result.collaboration?.holds.filter(hold => hold.sessionId === actor.sessionId && input.targets.includes(hold.key)).map(hold => hold.claimId) || []; // CHANGE
+            if (claimIds.length) await activity.action(actor.callerId, actor.userId, { kind: 'release', targets: input.targets, claimIds }).catch(() => {}); // CHANGE
+            throw error; // CHANGE
+        } // CHANGE
+        return result; // CHANGE
+    } // CHANGE
     const preparations = new Map(), readiness = new Map(); let preparationGeneration = 0; // CHANGE
     const isProjectReady = shareId => collaborationStores.get(shareId)?.readiness() === 'ready'; // NEW
     /** Verify only the selected project; shared requests retain one serialized reconstruction. */ // NEW
@@ -331,7 +346,7 @@ export function createSyncthingService(options) {
             return activityAction(callerId, { ...input, targets }); // NEW
         } // NEW
         const actorSession = collaborationStore(canvas).sessionFor(callerId, session.userId); // NEW
-        const { claimIds, ...contentInput } = input; // NEW: activity lease IDs are not durable claims; the content store acquires and validates its own signed commit claims.
+        const { claimIds, ...contentInput } = input; if (input.kind === 'resume-holds') contentInput.claimIds = claimIds; // CHANGE // NEW: activity lease IDs are not durable claims; the content store acquires and validates its own signed commit claims.
         const result = await collaborationStore(canvas).action(callerId, session.userId, contentInput); // CHANGE
         if (result.collaboration) result.collaboration = { ...result.collaboration, ...activityService(canvas).snapshot(actorSession, session.userId) }; // CHANGE
         if (result.collaboration) statuses.set(canvas.shareId, { ...(statuses.get(canvas.shareId) || {}), collaboration: result.collaboration }); // NEW

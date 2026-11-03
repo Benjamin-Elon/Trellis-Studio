@@ -41,7 +41,9 @@
     "release-mac": "electron-builder --mac --config electron-builder-linux-mac.json --publish always",
     "release-mac-x64": "electron-builder --mac --config electron-builder-mac-x64.json --publish always",
     "release-mac-arm64": "electron-builder --mac --config electron-builder-mac-arm64.json --publish always",
-    "release-snap": "electron-builder --config electron-builder-snap.json --publish never"
+    "release-snap": "electron-builder --config electron-builder-snap.json --publish never",
+    "assets:narration": "node scripts/generate-narration.mjs",
+    "assets:narration:check": "node scripts/generate-narration.mjs --check"
   },
   "repository": {
     "type": "git",

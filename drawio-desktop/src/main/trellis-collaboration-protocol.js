@@ -109,6 +109,35 @@ export function targetsForChange(before, after, key, includeCreated = false) { /
 export function objectContentHash(xml) { return digest(canonical(normalized(parseXml(xml).documentElement))); } // NEW
 /** Stable transport base identity excludes serializer spelling and local viewport settings. */ // NEW
 export function documentContentHash(xml) { return digest(canonical([envelope(xml), [...objects(xml)].map(([key, value]) => [key, value.hash]).sort((a, b) => a[0].localeCompare(b[0]))])); } // NEW
+/** Compare the saved inputs of one editor; unrelated objects never invalidate a resume. */ // CHANGE
+export function changedEditingInputs(baseXml, acceptedXml, targets, dependencies = [], scope = 'object') { // CHANGE
+    if (!Array.isArray(targets) || !targets.length || !Array.isArray(dependencies) || targets.includes('*')) throw new Error('This editor requires review before continuing.'); // CHANGE
+    const before = objects(baseXml), after = objects(acceptedXml), keys = new Set([...targets, ...dependencies]); // CHANGE
+    if ([...keys].some(key => !before.has(key))) throw new Error('The saved editor baseline is unavailable. Review the object before continuing.'); // CHANGE
+    // A year plan consumes planting totals; unrelated annotations and another garden are not inputs. // CHANGE
+    if (scope === 'year-planner') for (const index of [before, after]) for (const [key, item] of index) { // CHANGE
+        if (!item.node.hasAttribute('planting_id') && item.node.getAttribute('tiler_group') !== '1' && !/(?:^|;)tiler_group=1(?:;|$)/.test(item.model.getAttribute('style'))) continue; // CHANGE
+        let parent = item; const visited = new Set(); // CHANGE
+        while (parent && !visited.has(parent.key)) { if (targets.includes(parent.key)) { keys.add(key); break; } visited.add(parent.key); parent = index.get(objectKey(parent.pageId, parent.parent)); } // CHANGE
+    } // CHANGE
+    for (const key of keys) { // CHANGE
+        for (const index of [before, after]) { // CHANGE
+            let cell = index.get(key); const visited = new Set(); // CHANGE
+            while (cell && !visited.has(cell.key)) { // CHANGE
+                visited.add(cell.key); keys.add(cell.key); // CHANGE
+                for (const source of targetsForObject(index, cell.key)) keys.add(source); // CHANGE
+                const parent = index.get(objectKey(cell.pageId, cell.parent)); // CHANGE
+                cell = parent?.model.getAttribute('vertex') === '1' ? parent : null; // CHANGE
+            } // CHANGE
+        } // CHANGE
+    } // CHANGE
+    // Generated tasks and derived plantings read their source's state in either direction. // CHANGE
+    for (const index of [before, after]) for (const [key, item] of index) if ((item.node.hasAttribute('derived_source_group_id') || item.node.getAttribute('kanban_card') === '1') && targetsForObject(index, key).some(source => keys.has(source))) keys.add(key); // CHANGE
+    // Generated children belong to their logical planting; added or removed children matter too. // CHANGE
+    for (const index of [before, after]) for (const [key] of index) if (keys.has(logicalKey(index, key))) keys.add(key); // CHANGE
+    if (envelope(baseXml) !== envelope(acceptedXml)) return ['*']; // CHANGE
+    return [...keys].filter(key => !before.has(key) || !after.has(key) || before.get(key).hash !== after.get(key).hash); // CHANGE
+} // CHANGE
 export function diffObjects(beforeXml, afterXml) { // NEW
     const before = objects(beforeXml), after = objects(afterXml); // NEW
     if (envelope(beforeXml) !== envelope(afterXml)) return { changes: [{ key: '*', before: digest(beforeXml), xml: afterXml }], targets: ['*', ...new Set([...before.keys(), ...after.keys()].map(k => logicalKey(after.has(k) ? after : before, k)))] }; // NEW

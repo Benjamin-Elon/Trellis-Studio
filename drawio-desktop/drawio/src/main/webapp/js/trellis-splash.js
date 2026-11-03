@@ -685,6 +685,7 @@
 				var result = baseClose.apply(this, arguments);
 				if (result !== false) {
 					if (typeof this.trellisSplashCleanup == 'function') this.trellisSplashCleanup();
+                    if (typeof splashDialog.stopNarration == 'function') splashDialog.stopNarration(); // NEW: successful close cancels narration.
 					setSplashChromeActive(editorUi, false);
 				}
 				return result;

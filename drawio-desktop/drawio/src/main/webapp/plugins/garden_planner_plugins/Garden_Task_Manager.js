@@ -5663,7 +5663,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (evt.key === 'Escape') ui.hideDialog();
         });
 
-        cardEditor = taskDialogs.showTaskManagerDialog(div, 420, datesEditableAtOpen ? 310 : 230, true, true, { title: 'Task card', cells: [card], save: applyCardEdit }); // CHANGE
+        cardEditor = taskDialogs.showTaskManagerDialog(div, 420, datesEditableAtOpen ? 310 : 230, true, true, { title: 'Task card', reopen: cell => showEditCardDialogImpl(cell, true), cells: [card], save: applyCardEdit }); // CHANGE
         noteInput.focus();
     }
 
@@ -5836,7 +5836,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     function showTaskManagerDialogImpl(node, width, height, modal, closable, editorSpec) {
         node.classList.add('trellis-surfaces'); node.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
         const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
-        const editor = editorSpec && graph.__trellisSharing?.registerObjectForm?.({ ...editorSpec, element: node, targets: editorSpec.cells.map(cell => JSON.stringify([pageId, String(cell.id)])), discard: () => ui.hideDialog() }); // CHANGE
+        const editor = editorSpec && graph.__trellisSharing?.registerObjectForm?.({ ...editorSpec, resume() {}, element: node, targets: editorSpec.cells.map(cell => JSON.stringify([pageId, String(cell.id)])), discard: () => ui.hideDialog() }); // CHANGE
         ui.showDialog(node, width, height, modal, closable, () => editor?.dispose(true));
         elevateTaskManagerDialogImpl(); return editor; // CHANGE
     }
@@ -5954,7 +5954,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         buttons.appendChild(cancel);
         buttons.appendChild(save);
         div.appendChild(buttons);
-        hoursEditor = taskDialogs.showTaskManagerDialog(div, 660, 600, true, true, { title: 'Board work hours', cells: [board], save: applyWeekHours }); // CHANGE
+        hoursEditor = taskDialogs.showTaskManagerDialog(div, 660, 600, true, true, { title: 'Board work hours', reopen: cell => showEditHoursDialogImpl(cell, true), cells: [board], save: applyWeekHours }); // CHANGE
     }
 
     function showEditDayHoursDialogImpl(board, laneKey, transitionResolved = false) {
@@ -6021,7 +6021,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         buttons.appendChild(cancel);
         buttons.appendChild(save);
         div.appendChild(buttons);
-        hoursEditor = taskDialogs.showTaskManagerDialog(div, 360, 210, true, true, { title: 'Day work hours', cells: [board], save: applyDayHours }); // CHANGE
+        hoursEditor = taskDialogs.showTaskManagerDialog(div, 360, 210, true, true, { title: 'Day work hours', reopen: cell => showEditDayHoursDialogImpl(cell, laneKey, true), cells: [board], save: applyDayHours }); // CHANGE
     }
 
     function saveBoardWeekWorkHours(board, weekStart, weeks, nextDefaults, nextWeek) {
@@ -7818,7 +7818,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (evt.key === 'Enter') saveButton.click();
             if (evt.key === 'Escape') ui.hideDialog();
         });
-        bulkEditor = taskDialogs.showTaskManagerDialog(div, 460, dateEditable.length ? 260 : 230, true, true, { title: 'Selected tasks', cells: selected, save: applyBulkEdit }); // CHANGE
+        bulkEditor = taskDialogs.showTaskManagerDialog(div, 460, dateEditable.length ? 260 : 230, true, true, { title: 'Selected tasks', reopen: () => showBulkEditCardsDialogImpl(selected.map(cell => model.getCell(cell.id)).filter(Boolean), true), cells: selected, save: applyBulkEdit }); // CHANGE
         noteInput.focus();
     }
 
@@ -8420,6 +8420,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         /** Keep an open checkbox draft and keyboard focus during unrelated graph/view refreshes. */ // NEW
         function renderPlanningControls(card) { // CHANGE
+            if (planningHold?.frozen?.()) return; // CHANGE: model updates must not replace a retained planning draft.
             if (!card || !graph.__trellisEquipment) { if (!planningHold?.dirty?.()) { planningHold?.dispose(true); planningHold = null; } planning.style.display = planningHold?.dirty?.() ? 'flex' : 'none'; planningSignature = ''; planningCard = null; return; } // CHANGE
             const equipment = graph.__trellisEquipment; // CHANGE
             let result; // CHANGE
@@ -8532,6 +8533,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 capture: () => ({ pageId, objectId: String(card.id), equipmentIds: [...draft] }), // CHANGE
                 restore: baseline => { draft.clear(); for (const id of baseline?.equipmentIds || []) draft.add(id); planning.querySelectorAll('input[type="checkbox"]').forEach(field => { field.checked = draft.has(field.value); }); updateEstimate(); }, // CHANGE
                 save: () => { if (taskPlanningSeriesInfo(card).recurring) { chooseScope({ equipmentIds: [...draft] }, tools); message.textContent = 'Choose This occurrence or Series before leaving this edit.'; return false; } return save({ equipmentIds: [...draft] }, 'occurrence'); }, // CHANGE
+                resume() {}, reopen: cell => { planningHold = null; planningSignature = ''; renderPlanningControls(cell); graph.setSelectionCell(cell); }, // CHANGE
                 freeze() { planning.querySelectorAll('input,select,button').forEach(field => { field.disabled = true; }); }, discard() { planning.style.display = 'none'; }, // CHANGE
             }); // CHANGE
             planning.onchange = () => planningHold?.touch(); // CHANGE

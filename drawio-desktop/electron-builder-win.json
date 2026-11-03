@@ -5,6 +5,7 @@
   "asar": true,
   "files": [
     "**/*",
+    "!tools/narration{,/**}",
     "!**/WEB-INF{,/**}",
     "!vendor{,/**}",
     "!android-companion{,/**}",

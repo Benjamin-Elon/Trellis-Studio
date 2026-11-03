@@ -1,0 +1,9 @@
+{
+  "name": "trellis-narration-generator",
+  "private": true,
+  "type": "module",
+  "description": "Development-only local narration generation; never included in Trellis installers.",
+  "dependencies": {
+    "kokoro-js": "1.2.1"
+  }
+}

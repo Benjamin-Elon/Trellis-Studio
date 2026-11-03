@@ -13727,7 +13727,8 @@ function createScheduler(ui, referenceScope = null) { // NEW
             tabsContainer.dataset.trellisCollaborativeEditor = 'planting'; // NEW
             collaborationEditor = window.Trellis?.sharing?.registerEditor?.({ // NEW
                 kind: 'planting', title: 'Planting schedule', targets: () => [JSON.stringify([pageId, String(cell.id)])], // NEW
-                element: tabsContainer, freeze() { allocationDialogClosed = true; allocationFitVersion++; taskRecipePickerRequestId++; taskPreviewVersion++; climateTipVersion++; }, // CHANGE: invalidate pending computations without closing or discarding the editor.
+                resume() { allocationDialogClosed = false; }, reopen: currentCell => openScheduleDialogForTarget(ui, currentCell, { editTransitionResolved: true }), // CHANGE
+                element: tabsContainer, freeze() { allocationDialogClosed = true; allocationFitVersion++; taskRecipePickerRequestId++; taskPreviewVersion++; climateTipVersion++; scheduleRelationshipVersion++; companionLayoutEditorLoadToken++; schedulerCropPickerRefreshVersion++; }, // CHANGE: invalidate pending computations without closing or discarding the editor.
                 capture() { // NEW
                     syncStateFromControls(); // NEW
                     const controls = schedulerDraftControls().filter(field => !['password', 'file'].includes(field.type)).map((field, index) => ({ index, key: field.dataset.trellisScheduleControl || (field.dataset.trellisScheduleControl = String(++schedulerControlSequence)), id: field.id, name: field.name, type: field.type, value: field.value, checked: field.checked })); // CHANGE
@@ -13741,7 +13742,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
                     draft.controls.forEach(saved => { const field = controls.get(saved.key); if (field) { field.value = saved.value; field.checked = saved.checked; } }); // CHANGE
                     renderTasksList(); await refreshTasksTabUI();
                 }, // CHANGE // NEW
-                discard() { allocationDialogClosed = true; collaborationEditor?.dispose(); } // NEW
+                discard() { allocationDialogClosed = true; collaborationEditor?.dispose(); if (ui.dialog?.container?.contains(tabsContainer)) ui.hideDialog(); else tabsContainer.closest('.geDialog')?.remove(); } // CHANGE
             }); // NEW
             const touch = event => { if (!allocationDialogClosed && event.target.matches('input,textarea,select,[contenteditable="true"]')) collaborationEditor?.touch(); }; // NEW
             tabsContainer.addEventListener('input', touch); tabsContainer.addEventListener('change', touch); // NEW
@@ -15694,7 +15695,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
                 if (!applySchedulerTaskReplacement) throw new Error('Cannot save schedule tasks: Task manager command is unavailable.'); // CHANGE
                 const companionDefaults = await prepareScheduleCompanionDefaults(graph, cell, inputs, options, result); assertCurrent(); // CHANGE: preflight uses the proposed bed occupancy rather than the previous schedule.
                 const dependencies = () => [cell, ...(window.USL.tasks?.automationCellsForSource?.(cell.id) || []), ...(companionDefaults?.cells || []), ...extraAttributePatches.map(spec => spec.cell)]; // CHANGE
-                const onBlocked = holds => { const error = new Error('Schedule and task updates deferred: ' + context.describeHolds(holds) + '. Your schedule entries remain in this editor. Resolve the edit, then click Save again.'); error.code = 'TRELLIS_EDIT_BLOCKED'; throw error; }; // CHANGE
+                const onBlocked = holds => { const error = new Error('Schedule and task updates deferred: ' + context.describeHolds(holds) + '. Your schedule entries remain in this editor. Resolve the edit, then click Save again.'); error.code = 'TRELLIS_EDIT_BLOCKED'; error.blocked = holds; error.targets = holds.map(hold => hold.key); throw error; }; // CHANGE
                 return { cells: dependencies, manualSources: [cell], includeAncestors: false, exactCells: () => [model.getParent(cell)], onBlocked, assertCurrent: () => companionDefaults?.assertCurrent(), // CHANGE
                     metadata: { category: 'Garden scheduling', action: 'saveSchedule', origin: 'Garden_Scheduler_Dialog', title: 'Save schedule and generated tasks', affectedCellIds: [cell.id], tags: ['Tasks'] }, // CHANGE
                     apply: () => { // CHANGE

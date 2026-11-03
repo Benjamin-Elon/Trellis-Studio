@@ -4,6 +4,7 @@
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE: floating guidance follows the Trellis control-layer contract.
     const STORAGE = 'trellis.quickstart.v1:'; // NEW
     const TARGET = 'data-trellis-quickstart'; // NEW
+    const narration = root.TrellisNarrationCatalog; // NEW: displayed and spoken instructions share one catalog.
     const PLAN_GROUPS = ['year-crops', 'growing', 'harvest', 'demand-setup', 'demand-values', 'review', 'save']; // NEW: stable device-local walkthrough positions.
     const CREATOR = [
         ['settings', 'Garden and settings'], ['layout', 'Create your layout'],
@@ -335,21 +336,20 @@
             body.dataset.trellisSurface = 'entry'; // NEW: shared surface hierarchy.
             clampCard();
         }
-        /** Cancel only speech started by this guide, and invalidate late error callbacks. */ // NEW
+        /** Cancel this guide's shared playback and invalidate late completion/error callbacks. */ // CHANGE
         function stopSpeech() { // NEW
-            const speaking = utterance; utterance = null; speechKey = ''; // NEW
-            if (speaking) { try { root.speechSynthesis?.cancel(); } catch (_) { /* Text guidance remains available. */ } } // NEW
+            utterance = null; speechKey = ''; root.TrellisNarration.stop(card); // CHANGE
         } // NEW
         /** The key represents a guidance context, not individual field values or DOM refreshes. */ // NEW
         function narrate(text, key) { // NEW
             if (!preferences.readAloud || preferences.collapsed || !active || key === speechKey) return; // NEW
             stopSpeech(); speechKey = key; // NEW
             try { // NEW
-                if (!root.speechSynthesis || !root.SpeechSynthesisUtterance) throw new Error('Speech unavailable'); // NEW
-                const speech = new root.SpeechSynthesisUtterance(text); utterance = speech; // NEW
-                speech.onend = () => { if (utterance === speech) utterance = null; }; // NEW
-                speech.onerror = () => { if (utterance !== speech) return; utterance = null; speechWarning = 'Read aloud is unavailable on this device. You can continue with the written instructions.'; schedule(); }; // NEW
-                root.speechSynthesis.speak(speech); // NEW
+                const request = {}; utterance = request; // CHANGE: retain a request token through clip-to-system fallback.
+                root.TrellisNarration.play({ owner: card, text, // CHANGE
+                    onEnd: () => { if (utterance === request) utterance = null; }, // CHANGE
+                    onError: () => { if (utterance !== request) return; utterance = null; speechWarning = 'Read aloud is unavailable on this device. You can continue with the written instructions.'; schedule(); } // CHANGE
+                }); // CHANGE
             } catch (_) { utterance = null; speechWarning = 'Read aloud is unavailable on this device. You can continue with the written instructions.'; } // NEW
         } // NEW
         function selectStage(key) { finishDrag(true); clearHighlight(); stopSpeech(); guidanceGeneration++; progress().stage = key; lastPromptKey = ''; persist(); schedule(); } // CHANGE
@@ -385,34 +385,34 @@
         /** Return an explicit prerequisite rather than waiting for an absent contextual toolbar. */ // NEW
         function prerequisite(key) {
             const garden = currentGarden(), list = gardens();
-            if (!garden) return { text: list.length ? 'Choose the garden you want to use in the Garden selector above.' : 'Create a garden first. Use the highlighted Create Garden control, or open Garden Projects to create a project.', node: target('create-garden'), action: () => openProjects('create-project'), label: 'Open Garden Projects' };
-            if (selected() !== garden && ['settings', 'layout', 'irrigation'].includes(key)) return { text: 'Select ' + (attr(garden, 'garden_name') || attr(garden, 'label') || 'your garden') + ' to show its layout controls.', cell: garden, action: () => { graph.__trellisModules?.clusters?.revealCell(garden); graph.scrollCellToVisible?.(garden); }, label: 'Show garden' };
-            if (key !== 'settings' && !settingsReady(garden)) return { text: 'Finish Garden Settings first, then return to this step.', node: target('settings'), action: () => selectStage('settings'), label: 'Guide Garden Settings' };
-            if (graph.isCellCollapsed?.(garden) || garden.isCollapsed?.()) return { text: 'Expand this garden module to reveal its layout and controls, then select it again.', cell: garden, action: () => graph.foldCells?.(false, false, [garden]), label: 'Expand garden' }; // NEW
+            if (!garden) return { text: list.length ? narration.text("chooseTheGardenYouWantToUse") : narration.text("createAGardenFirstUseTheHighlighted"), node: target('create-garden'), action: () => openProjects('create-project'), label: 'Open Garden Projects' }; // CHANGE: shared narration catalog.
+            if (selected() !== garden && ['settings', 'layout', 'irrigation'].includes(key)) return { text: narration.text("selectYourGardenToShowItsLayout"), cell: garden, action: () => { graph.__trellisModules?.clusters?.revealCell(garden); graph.scrollCellToVisible?.(garden); }, label: 'Show garden' }; // CHANGE: shared narration catalog.
+            if (key !== 'settings' && !settingsReady(garden)) return { text: narration.text("finishGardenSettingsFirstThenReturnTo"), node: target('settings'), action: () => selectStage('settings'), label: 'Guide Garden Settings' }; // CHANGE: shared narration catalog.
+            if (graph.isCellCollapsed?.(garden) || garden.isCollapsed?.()) return { text: narration.text("expandThisGardenModuleToRevealIts"), cell: garden, action: () => graph.foldCells?.(false, false, [garden]), label: 'Expand garden' }; // CHANGE: shared narration catalog.
             const mode = root.Trellis?.interactionModes?.getActive?.();
-            if (mode && (key === 'layout' || key === 'settings')) return { text: 'Close ' + mode.mode + ' mode to show the garden layout controls.', node: target('mode-close'), action: () => root.Trellis.interactionModes.closeActive('quickstart'), label: 'Close active mode' };
-            if (graph.isEnabled && !graph.isEnabled()) return { text: 'This diagram is read only. Ask its owner for editing access, or switch to the invitee orientation.', action: () => { preferences.journey = 'invitee'; bindGarden(); persist(); }, label: 'Use invitee guide' };
-            if (users()?.canEditCell && !users().canEditCell(garden)) return { text: 'You do not have permission to edit this garden. Use the invitee guide or ask the owner for access.', action: () => { preferences.journey = 'invitee'; bindGarden(); persist(); }, label: 'Use invitee guide' };
+            if (mode && (key === 'layout' || key === 'settings')) return { text: narration.text("closeTheActiveModeToShowThe"), node: target('mode-close'), action: () => root.Trellis.interactionModes.closeActive('quickstart'), label: 'Close active mode' }; // CHANGE: shared narration catalog.
+            if (graph.isEnabled && !graph.isEnabled()) return { text: narration.text("thisDiagramIsReadOnlyAskIts"), action: () => { preferences.journey = 'invitee'; bindGarden(); persist(); }, label: 'Use invitee guide' }; // CHANGE: shared narration catalog.
+            if (users()?.canEditCell && !users().canEditCell(garden)) return { text: narration.text("youDoNotHavePermissionToEdit"), action: () => { preferences.journey = 'invitee'; bindGarden(); persist(); }, label: 'Use invitee guide' }; // CHANGE: shared narration catalog.
             return null;
         }
         const fields = { // NEW: these sequences describe existing controls, without writing their values.
             settings: [
-                ['settings-source', 'Choose local defaults or a garden template, if this is a new garden.'],
-                ['settings-name', 'Name this garden.'], ['settings-city', 'Choose its city so scheduling uses the right climate.'],
-                ['settings-units', 'Choose the units you use.'], ['settings-width', 'Enter the garden width.'], ['settings-length', 'Enter its length.'],
-                ['settings-bed-width', 'Choose the default bed width.'], ['settings-bed-length', 'Choose the default bed length.'], ['settings-save', 'Save Garden Settings. Any validation issues must be resolved before this step completes.']
+                ['settings-source', narration.text("settings-source")], // CHANGE: shared narration catalog.
+                ['settings-name', narration.text('settings-name')], ['settings-city', narration.text("settings-city")], // CHANGE: shared narration catalog.
+                ['settings-units', narration.text("settings-units")], ['settings-width', narration.text('settings-width')], ['settings-length', narration.text('settings-length')], // CHANGE: shared narration catalog.
+                ['settings-bed-width', narration.text("settings-bed-width")], ['settings-bed-length', narration.text("settings-bed-length")], ['settings-save', narration.text("settings-save")] // CHANGE: shared narration catalog.
             ],
-            plan: [
-                ['plan-year', 'Confirm the planning year. Keep it aligned with the year in this guide.'], ['plan-add-crops', 'Add one crop using Add/Remove crops. Choose an available crop, then Apply changes.'],
-                ['plan-variety', 'Choose a variety, or keep the base plant.'], ['plan-method', 'Choose its planting method.'], ['plan-harvest-source', 'Choose a harvest window source. With manual dates, enter a feasible start and end.'],
-                ['plan-harvest-start', 'Set the harvest start if using manual dates.'], ['plan-harvest-end', 'Set the harvest end if using manual dates.'],
-                ['plan-demand', 'Open the demand section for your chosen self-use or sales route.'], ['plan-demand-add', 'Add one demand line for the crop.'],
-                ['plan-demand-crop', 'Choose your crop for this demand line.'], ['plan-demand-qty', 'Enter a small positive quantity.'], ['plan-demand-unit', 'Choose the quantity unit.'],
-                ['plan-demand-frequency', 'Choose how often you need this quantity.'], ['plan-demand-from', 'Choose the first demand date.'], ['plan-demand-to', 'Choose the last demand date.'],
-                ['plan-review', 'Review Plan Check. Resolve blocking issues so this plan can produce an allocation.'], ['plan-save', 'Save the plan. A saved draft does not complete this step.']
-            ],
-            allocation: [['allocation-week', 'Choose an actionable sow/start week.'], ['allocation-crop', 'Choose the crop to allocate.'], ['allocation-bed', 'Select a bed in the garden, or use Find best bed.'], ['allocation-defaults', 'Resolve any missing required defaults using these links.'], ['allocation-preview', 'Inspect the proposed planting and any warnings.'], ['allocation-create', 'Choose Create planting when the existing validation enables it.']],
-            irrigation: [['irrigation-source', 'Create or select one water source.'], ['irrigation-bed', 'Select a garden bed and configure its irrigation assembly.'], ['irrigation-connect', 'Select compatible source and bed ports to connect them using the existing connection controls.'], ['irrigation-analysis', 'Open analysis to inspect the connection. This example does not validate the entire garden irrigation design.']]
+            plan: [ // CHANGE: preserve only legacy field IDs for position migration.
+                ['plan-year'], ['plan-add-crops'], // CHANGE: preserve only legacy field IDs for position migration.
+                ['plan-variety'], ['plan-method'], ['plan-harvest-source'], // CHANGE: preserve only legacy field IDs for position migration.
+                ['plan-harvest-start'], ['plan-harvest-end'], // CHANGE: preserve only legacy field IDs for position migration.
+                ['plan-demand'], ['plan-demand-add'], // CHANGE: preserve only legacy field IDs for position migration.
+                ['plan-demand-crop'], ['plan-demand-qty'], ['plan-demand-unit'], // CHANGE: preserve only legacy field IDs for position migration.
+                ['plan-demand-frequency'], ['plan-demand-from'], ['plan-demand-to'], // CHANGE: preserve only legacy field IDs for position migration.
+                ['plan-review'], ['plan-save'] // CHANGE: preserve only legacy field IDs for position migration.
+            ], // CHANGE: preserve only legacy field IDs for position migration.
+            allocation: [['allocation-week', narration.text("allocation-week")], ['allocation-crop', narration.text("allocation-crop")], ['allocation-bed', narration.text("allocation-bed")], ['allocation-defaults', narration.text("allocation-defaults")], ['allocation-preview', narration.text("allocation-preview")], ['allocation-create', narration.text("allocation-create")]], // CHANGE: shared narration catalog.
+            irrigation: [['irrigation-source', narration.text("irrigation-source")], ['irrigation-bed', narration.text("irrigation-bed")], ['irrigation-connect', narration.text("irrigation-connect")], ['irrigation-analysis', narration.text("irrigation-analysis")]] // CHANGE: shared narration catalog.
         };
         /** Prefer workflow-owned semantic targets, then the Year Planner's existing field identities. */ // NEW
         function fieldTarget(name, container) {
@@ -458,11 +458,11 @@
             const area = target('plan-demand-' + route, container); // NEW
             const routeArea = container.querySelector('[' + TARGET + '="plan-demand-' + route + '"]'); // NEW
             let nodes = [], text = '', fallback = null; // NEW
-            if (group === 'year-crops') { text = 'Confirm the planning year, then use Add/Remove crops to choose what to grow and Apply changes. Keep the year aligned with this guide.'; nodes = [target('plan-year', container), target('plan-add-crops', container)]; } // NEW
-            if (group === 'growing') { text = 'For the selected crop, choose a variety or keep the base plant, then choose the planting method. You can keep suitable existing values.'; nodes = cropFields(['varietyId', 'method']); fallback = target('plan-basics', container) || target('plan-add-crops', container); } // NEW
-            if (group === 'harvest') { text = 'Choose the selected crop’s harvest window source. For Manual dates, enter a feasible harvest start and end; other sources provide their own dates.'; nodes = cropFields(['harvestWindowSource', 'harvestStart', 'harvestEnd']); fallback = target('plan-basics', container) || target('plan-add-crops', container); } // NEW
+            if (group === 'year-crops') { text = narration.text("confirmThePlanningYearThenUseAdd"); nodes = [target('plan-year', container), target('plan-add-crops', container)]; } // CHANGE: shared narration catalog.
+            if (group === 'growing') { text = narration.text("forTheSelectedCropChooseAVariety"); nodes = cropFields(['varietyId', 'method']); fallback = target('plan-basics', container) || target('plan-add-crops', container); } // CHANGE: shared narration catalog.
+            if (group === 'harvest') { text = narration.text("chooseTheSelectedCropSHarvestWindow"); nodes = cropFields(['harvestWindowSource', 'harvestStart', 'harvestEnd']); fallback = target('plan-basics', container) || target('plan-add-crops', container); } // CHANGE: shared narration catalog.
             if (group === 'demand-setup') { // NEW
-                text = route === 'sales' ? 'Open Sales demand. Add a sales channel if needed, name it and choose its type, then use Manage packages and Apply changes to add demand for your crop.' : 'Open Self Sufficiency, then use Manage packages and Apply changes to add demand for your crop. Enable self-use if it is disabled.'; // NEW
+                text = route === 'sales' ? narration.text("openSalesDemandAddASalesChannel") : narration.text("openSelfSufficiencyThenUseManagePackages"); // CHANGE: shared narration catalog.
                 nodes = [target('plan-demand-add-' + route, routeArea || container)]; // NEW
                 if (route === 'sales') { // NEW
                     const channelFields = [...(routeArea || container).querySelectorAll('[data-year-plan-field]')].filter(node => ['label', 'type'].includes(node.dataset.yearPlanField)); // NEW
@@ -474,17 +474,17 @@
                 fallback = routeArea?.querySelector('.yp-strip-header') || area; // NEW
             } // NEW
             if (group === 'demand-values') { // NEW
-                text = 'For the selected crop’s demand line, choose the crop, a positive quantity, unit, frequency, and first and last demand dates. Existing values may be kept if they suit your plan.'; // NEW
+                text = narration.text("forTheSelectedCropSDemandLine"); // CHANGE: shared narration catalog.
                 nodes = line ? controls.filter(node => node.dataset[lineKey] === String(line.id) && ['cropId', 'qty', 'unit', 'frequency', 'from', 'to'].includes(node.dataset.yearPlanField)) : []; // NEW
-                if (!line) text += ' Add a matching demand line in Demand setup first.'; // NEW
+                if (!line) text += narration.text("addAMatchingDemandLineInDemand"); // CHANGE: shared narration catalog.
                 fallback = routeArea?.querySelector('.yp-strip-header') || area; // NEW
             } // NEW
-            if (group === 'review') { text = 'Review Plan Check. Read the warnings and resolve blocking issues before saving. Calculated results help you assess the plan; they are not editable inputs.'; nodes = [target('plan-review', container)]; fallback = container.querySelector('[data-year-plan-strip="plan-check"] .yp-strip-header'); } // NEW
-            if (group === 'save') { text = 'Save the plan when Plan Check allows it. A committed plan with positive demand completes this milestone. Saving a draft keeps your work but does not complete it.'; nodes = [target('plan-save', container)]; } // NEW
+            if (group === 'review') { text = narration.text("reviewPlanCheckReadTheWarningsAnd"); nodes = [target('plan-review', container)]; fallback = container.querySelector('[data-year-plan-strip="plan-check"] .yp-strip-header'); } // CHANGE: shared narration catalog.
+            if (group === 'save') { text = narration.text("saveThePlanWhenPlanCheckAllows"); nodes = [target('plan-save', container)]; } // CHANGE: shared narration catalog.
             nodes = nodes.filter(node => node && visible(node) && !node.disabled); // NEW
             if (!nodes.length && !fallback && ['growing', 'harvest', 'year-crops'].includes(group)) fallback = container.querySelector('[data-year-plan-strip="crop-plan"] .yp-strip-header'); // NEW
             if (!nodes.length && fallback && visible(fallback)) nodes = [fallback]; // NEW
-            if (!nodes.length) text += ' Use Show fields to reveal this group, or finish the displayed prerequisites.'; // NEW
+            if (!nodes.length) text += narration.text("useShowFieldsToRevealThisGroup"); // CHANGE: shared narration catalog.
             return { text, nodes, node: nodes[0], index: PLAN_GROUPS.indexOf(group), total: 7, sequence: true, grouped: true, speechContext: [group, cropId, route, line?.id || ''].join(':'), action: container.__trellisQuickstartView ? () => { container.__trellisQuickstartView.showFields(group, route, line?.id); lastPromptKey = ''; schedule(); } : null, label: 'Show fields' }; // NEW
         } // NEW
         function fieldInstruction(key, container) { // NEW
@@ -500,31 +500,31 @@
                 if (step[0] === 'irrigation-source') cell = cells.find(item => attr(item, 'irrigation_assembly_type') === 'source' || attr(item, 'irrigation_endpoint_type') === 'source');
                 if (step[0] === 'irrigation-connect') node = [...document.querySelectorAll('.trellis-irrigation-inline-connection-action,.trellis-irrigation-port-badge')].find(visible);
             }
-            const suffix = !node && !cell ? ' The control is not visible yet. Complete the previous action or expand the relevant section, then use Retry.' : node?.disabled ? ' This control is disabled. Resolve the workflow’s displayed prerequisites, then retry; the guide will not bypass them.' : '';
+            const suffix = !node && !cell ? narration.text("theControlIsNotVisibleYetComplete") : node?.disabled ? narration.text("thisControlIsDisabledResolveTheWorkflow") : ''; // CHANGE: shared narration catalog.
             return { text: step[1] + suffix, node, cell, index, total: steps.length, sequence: true }; // CHANGE: planner groups resolve their own prerequisites above.
         }
         function instruction() { // NEW
             const key = stage()[0], container = currentSurface(), kind = container?.dataset.quickstartSurface;
-            if (container && (container.dataset.quickstartGarden && container.dataset.quickstartGarden !== progress().gardenId || container.dataset.quickstartYear && container.dataset.quickstartYear !== String(progress().year))) return { text: 'This workflow is for another garden or year. Close it to continue here, or explicitly use its context.', action: () => switchBinding(container.dataset.quickstartGarden || progress().gardenId, container.dataset.quickstartYear || progress().year), label: 'Use this workflow’s garden and year' }; // NEW
-            if (container && fields[kind] && kind !== key) return { text: 'You opened ' + kind + '. Finish or close it before continuing this step, or switch to its guidance.', action: () => selectStage(kind), label: 'Guide this workflow' }; // NEW
+            if (container && (container.dataset.quickstartGarden && container.dataset.quickstartGarden !== progress().gardenId || container.dataset.quickstartYear && container.dataset.quickstartYear !== String(progress().year))) return { text: narration.text("thisWorkflowIsForAnotherGardenOr"), action: () => switchBinding(container.dataset.quickstartGarden || progress().gardenId, container.dataset.quickstartYear || progress().year), label: 'Use this workflow’s garden and year' }; // CHANGE: shared narration catalog.
+            if (container && fields[kind] && kind !== key) return { text: narration.text("finishOrCloseTheOpenWorkflowBefore"), action: () => selectStage(kind), label: 'Guide this workflow' }; // CHANGE: shared narration catalog.
             if (container && (kind === key || key === 'plan' && ['crop-picker', 'package-picker'].includes(kind))) {
-                if (kind === 'package-picker') return { text: 'Choose one available crop package using its Add control, then Apply changes to return to the demand fields.', node: target('plan-package-apply', container) }; // NEW
-                if (kind === 'crop-picker') return { text: 'Select the crop you want to grow, then Apply changes to return to the year plan.', node: target('plan-crop-apply', container) };
+                if (kind === 'package-picker') return { text: narration.text("chooseOneAvailableCropPackageUsingIts"), node: target('plan-package-apply', container) }; // CHANGE: shared narration catalog.
+                if (kind === 'crop-picker') return { text: narration.text("selectTheCropYouWantToGrow"), node: target('plan-crop-apply', container) }; // CHANGE: shared narration catalog.
                 return fieldInstruction(key, container);
             }
-            if (container && kind === 'projects' && container.dataset.quickstartIntent === 'create-project') return { text: 'Create a private garden project using the highlighted control. Give it a name and submit; the existing project workflow will open its starter garden.', node: target('create-project', container) }; // NEW
-            if (container && kind === 'projects' && preferences.journey === 'invitee') return { text: 'Open the invited project from Shared garden projects, or finish the access request if approval is pending. Then return to its diagram for orientation.' }; // NEW
-            if (container && kind === 'projects') return { community: true, text: 'Choose Add garden in an existing community or Create Garden Community. Select this project in the form and submit. Approval may remain pending.', node: target('community-sharing', container) };
+            if (container && kind === 'projects' && container.dataset.quickstartIntent === 'create-project') return { text: narration.text("createAPrivateGardenProjectUsingThe"), node: target('create-project', container) }; // CHANGE: shared narration catalog.
+            if (container && kind === 'projects' && preferences.journey === 'invitee') return { text: narration.text("openTheInvitedProjectFromSharedGarden") }; // CHANGE: shared narration catalog.
+            if (container && kind === 'projects') return { community: true, text: narration.text("chooseAddGardenInAnExistingCommunity"), node: target('community-sharing', container) }; // CHANGE: shared narration catalog.
             if (preferences.journey === 'invitee') {
-                const texts = { access: 'Join Shared Canvas using your invitation, finish its approval/access steps, and open the project. If it is already open with access, this step is complete.', orientation: currentGarden() ? 'Select your garden module to reveal its layout controls and locate its beds.' : 'A garden module has not been created yet. The owner can add one later; choose Next to continue.', 'view-plan': savedPlan(currentGarden()) ? 'Use Plan Year or the garden dashboard to inspect the existing year plan. You do not need to edit it.' : 'A year plan has not been created yet. Its owner can add one later. Choose Next to continue.', 'view-plantings': completions().allocation ? 'Locate the allocated plantings inside the garden beds. You do not need to edit them.' : 'No allocated plantings are present for this year yet. Choose Next to finish the orientation.' };
+                const texts = { access: narration.text("joinSharedCanvasUsingYourInvitationFinish"), orientation: currentGarden() ? narration.text("selectYourGardenModuleToRevealIts") : narration.text('missingGarden'), 'view-plan': savedPlan(currentGarden()) ? narration.text("usePlanYearOrTheGardenDashboard") : narration.text('missingYearPlan'), 'view-plantings': completions().allocation ? narration.text("locateTheAllocatedPlantingsInsideTheGarden") : narration.text("noAllocatedPlantingsArePresentForThis") }; // CHANGE: shared narration catalog.
                 return { text: texts[key], cell: key === 'orientation' ? currentGarden() : null, node: key === 'view-plan' ? target('plan') : null, action: key === 'access' ? () => invoke('trellisJoinSharedCanvas') : null, label: 'Join Shared Canvas', orientation: key !== 'access' };
             }
-            if (ui.dialog && !container) return { text: 'Finish or close the open dialog, then choose Retry to reveal this step’s controls.' }; // NEW
+            if (ui.dialog && !container) return { text: narration.text("finishOrCloseTheOpenDialogThen") }; // CHANGE: shared narration catalog.
             const pre = prerequisite(key); if (pre) return pre;
-            const entries = { settings: ['settings', 'Open Garden Settings to configure this garden.'], layout: ['add-bed', 'Choose Add Garden Bed. The bed uses your saved default dimensions; position it inside the garden.'], irrigation: ['irrigation', 'Open Irrigation to connect one bed. You may skip irrigation for now.'], plan: ['plan', 'Open Plan Year to create a small ' + (progress().demand === 'sales' ? 'sales' : 'self-use') + ' plan.'], allocation: ['allocation', 'Open Allocate after saving the year plan, then create one planting.'], people: ['share', 'Choose Share to invite a user, or Canvas Sync to add another computer. Finish preparing an invitation; approval can happen later.'], community: ['projects', 'Open Garden Projects, then choose an existing community or create one with this project.'] };
+            const entries = { settings: ['settings', narration.text("openGardenSettingsToConfigureThisGarden")], layout: ['add-bed', narration.text("chooseAddGardenBedTheBedUses")], irrigation: ['irrigation', narration.text("openIrrigationToConnectOneBedYou")], plan: ['plan', (progress().demand === 'sales' ? narration.text("openPlanYearToCreateASmall") : narration.text("openPlanYearToCreateASmall2"))], allocation: ['allocation', narration.text("openAllocateAfterSavingTheYearPlan")], people: ['share', narration.text("chooseShareToInviteAUserOr")], community: ['projects', narration.text("openGardenProjectsThenChooseAnExisting")] }; // CHANGE: shared narration catalog.
             const entry = entries[key], node = target(entry[0]);
-            if (key === 'allocation' && !completions().plan) return { text: 'Save a year plan with positive demand before allocating. Finish the planning step first.', action: () => selectStage('plan'), label: 'Guide year planning', node: target('plan') };
-            return { text: entry[1] + (!node && key !== 'community' ? ' If the control is hidden, select the garden module again. Close another open dialog or mode, then retry.' : node?.disabled ? ' This control is disabled. Check its tooltip and finish the displayed prerequisites.' : ''), node, action: key === 'community' ? () => openProjects('community-sharing') : key === 'people' ? () => invoke('trellisCanvasSync') : null, label: key === 'community' ? 'Open Garden Projects' : 'Add another device' };
+            if (key === 'allocation' && !completions().plan) return { text: narration.text("saveAYearPlanWithPositiveDemand"), action: () => selectStage('plan'), label: 'Guide year planning', node: target('plan') }; // CHANGE: shared narration catalog.
+            return { text: entry[1] + (!node && key !== 'community' ? narration.text("ifTheControlIsHiddenSelectThe") : node?.disabled ? narration.text("thisControlIsDisabledCheckItsTooltip") : ''), node, action: key === 'community' ? () => openProjects('community-sharing') : key === 'people' ? () => invoke('trellisCanvasSync') : null, label: key === 'community' ? 'Open Garden Projects' : 'Add another device' }; // CHANGE: shared narration catalog.
         }
         /** Idempotent rendering is important: mutation observers must not create a render loop. */ // NEW
         function render() {
@@ -561,7 +561,7 @@
                 }
             } // NEW
             if (stage()[0] === 'plan') choose('Planning for', [['self', 'Self-use'], ['sales', 'Sales']], p.demand || 'self', value => { p.demand = value; p.positions.planGroup = 'year-crops'; guidanceGeneration++; stopSpeech(); clearHighlight(); }); // CHANGE
-            const detail = instruction() || { text: 'Reopen the current workflow, then choose Retry to continue.' };
+            const detail = instruction() || { text: narration.text("reopenTheCurrentWorkflowThenChooseRetry") }; // CHANGE: shared narration catalog.
             prompt = element('p', detail.text, body); prompt.setAttribute('role', 'status'); prompt.setAttribute('aria-live', 'polite');
             if (notice || storageWarning) element('p', [notice, storageWarning].filter(Boolean).join(' '), body).setAttribute('role', 'status');
             highlight(detail.nodes || detail.node, detail.cell); // CHANGE

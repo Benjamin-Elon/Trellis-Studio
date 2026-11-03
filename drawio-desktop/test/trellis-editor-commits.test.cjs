@@ -41,6 +41,13 @@ test('failed rollback blocks later captures and freezes its recoverable editor',
     assert.throws(() => h.context.apply({ cells: [h.cell], editor: { freeze() { frozen = true; } }, finalize() { throw new Error('finalize'); } }, () => h.write(h.cell, 'draft')), /finalize/); // CHANGE
     assert.equal(frozen, true); await assert.rejects(h.context.whenSettled(), /Saving is blocked/); assert.throws(h.context.assertCapturable, /Saving is blocked/); h.graph.refresh = refresh; // CHANGE
 }); // CHANGE
+test('document replacement clears quarantine only after successful normal loading', async t => { // CHANGE
+    const h = fixture(t), refresh = h.graph.refresh; h.graph.refresh = () => { throw new Error('broken rendering'); }; // CHANGE
+    assert.throws(() => h.context.apply({ cells: [h.cell], finalize() { throw new Error('failed apply'); } }, () => h.write(h.cell, 'provisional')), /failed apply/); h.graph.refresh = refresh; // CHANGE
+    await assert.rejects(h.context.replaceDocument(async () => { h.ui.editor.fireEvent(new h.window.mxEventObject('fileLoaded')); throw new Error('loading failed'); }), /loading failed/); // CHANGE
+    await assert.rejects(h.context.whenSettled(), /Saving is blocked/); // CHANGE
+    await h.context.replaceDocument(async () => { h.ui.editor.fireEvent(new h.window.mxEventObject('fileLoaded')); }); await h.context.whenSettled(); assert.doesNotThrow(h.context.assertCapturable); // CHANGE
+}); // CHANGE
 test('default retries repeat only failed writes and never the canvas application', async t => { // CHANGE
     const h = fixture(t); let first = 0, second = 0, fail = true; h.context.apply({ cells: [h.cell] }, () => h.write(h.cell, 'applied')); // CHANGE
     const result = await h.context.saveDefaults({ id: 'defaults', tasks: [{ name: 'one', save: async () => { first++; } }, { name: 'two', save: async () => { second++; if (fail) throw new Error('storage unavailable'); } }] }); // CHANGE

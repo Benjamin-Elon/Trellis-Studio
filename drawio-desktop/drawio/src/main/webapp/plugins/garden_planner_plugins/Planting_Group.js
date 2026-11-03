@@ -2690,7 +2690,7 @@ Draw.loadPlugin(function (ui) {
         div.appendChild(btnRow);
 
         const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
-        settingsHold = window.Trellis?.sharing?.registerObjectForm?.({ title: 'Garden settings', element: div, targets: [JSON.stringify([pageId, String(moduleCell.id)])], save: commitGardenSettings, discard: () => ui.hideDialog() }); // CHANGE
+        settingsHold = window.Trellis?.sharing?.registerObjectForm?.({ resume() {}, reopen: cell => showGardenSettingsDialog(ui, graph, cell, onClose, true), title: 'Garden settings', element: div, targets: [JSON.stringify([pageId, String(moduleCell.id)])], save: commitGardenSettings, discard: () => ui.hideDialog() }); // CHANGE
         ui.showDialog(div, 460, 640, true, true, notifyClose); // CHANGE: allow space for the two circle-budget fields.
         elevateTrellisDialog();
         div.dataset.quickstartSurface = 'settings'; div.dataset.quickstartGarden = String(moduleCell.id); // NEW
@@ -5330,7 +5330,7 @@ Draw.loadPlugin(function (ui) {
 
         if (groupCell) { // NEW
             const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; div.dataset.collaborationObjectId = String(groupCell.id); div.dataset.trellisCollaborativeEditor = 'planting'; // NEW
-            editingHold = window.Trellis?.sharing?.registerEditor?.({ kind: 'planting', title: 'Planting spacing', restore: draft => { if (draft) { inputX.value = draft.spacingX; inputY.value = draft.spacingY; } }, element: div, targets: [JSON.stringify([pageId, String(groupCell.id)])], capture: () => ({ pageId, objectId: String(groupCell.id), spacingX: inputX.value, spacingY: inputY.value }), save: submitSpacing, discard: () => { inputX.disabled = true; inputY.disabled = true; okBtn.disabled = true; } }); // CHANGE
+            editingHold = window.Trellis?.sharing?.registerEditor?.({ kind: 'planting', title: 'Planting spacing', resume() {}, reopen: cell => runSetGroupSpacingOn(graph, cell), restore: draft => { if (draft) { inputX.value = draft.spacingX; inputY.value = draft.spacingY; } }, element: div, targets: [JSON.stringify([pageId, String(groupCell.id)])], capture: () => ({ pageId, objectId: String(groupCell.id), spacingX: inputX.value, spacingY: inputY.value }), save: submitSpacing, discard: () => { inputX.disabled = true; inputY.disabled = true; okBtn.disabled = true; } }); // CHANGE
             div.addEventListener('input', () => editingHold?.touch()); // NEW
         } // NEW
         ui.showDialog(div, 360, 170, true, true, () => editingHold?.dispose(true)); // CHANGE
@@ -10729,6 +10729,7 @@ Draw.loadPlugin(function (ui) {
                 entry.spacingEditorState = { targets: () => rowStates.filter(state => state.row.enabled !== false && spacingRowChanged(state)).map(state => JSON.stringify([pageId, String(state.row.cellId)])), capture: () => ({ pageId, objectId: entry.sourceId, rows: spacingDraftFromRowStates(rowStates), saveDefaults: saveDefaults.checked }), save: applySpacing }; // NEW: refresh controls without replacing the held editing generation.
                 if (!entry.spacingHold) entry.spacingHold = window.Trellis?.sharing?.registerEditor?.({ // CHANGE
                     kind: 'planting', title: 'Planting spacing', isDirty: () => entry.spacingEditorState.targets().length > 0, restore: () => { clearStoredSpacingDrafts(entry); clearSpacingPreview(); refresh(); }, targets: () => entry.spacingEditorState.targets(), capture: () => entry.spacingEditorState.capture(), save: () => entry.spacingEditorState.save(), // CHANGE
+                    resume() { entry.spacingFrozen = false; if (entry.panel) registry.set(entry.sourceId, entry); }, reopen: cell => showScheduleOnly(cell), // CHANGE
                     element: () => entry.panel || wrap, freeze() { entry.spacingFrozen = true; entry.spacingRenderToken = (entry.spacingRenderToken || 0) + 1; if (registry.get(entry.sourceId) === entry) registry.delete(entry.sourceId); clearSpacingPreview(); }, // CHANGE: detach frozen overlays from model-driven rebuilds while keeping their original controls mounted.
                     discard() { clearStoredSpacingDrafts(entry); clearSpacingPreview(); if (entry.panel) removeEntry(entry, false); else { entry.spacingHold?.dispose(); entry.spacingHold = null; wrap.remove(); } } // CHANGE
                 }); // NEW

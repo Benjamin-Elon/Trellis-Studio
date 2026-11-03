@@ -4405,7 +4405,8 @@ Draw.loadPlugin(function (ui) {
             const plannerPage = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // NEW
             const plannerHold = window.Trellis?.sharing?.registerEditor?.({ // NEW
                 kind: 'year-planner', title: 'Year plan', isDirty: () => !!state.baselineSnapshot && YearPlanDashboard.isDirty(state, plan), targets: [JSON.stringify([plannerPage, cellStableId(moduleCell)])], // NEW
-                element: () => card, freeze() { session.holdLost = true; if (refreshTimer) clearTimeout(refreshTimer); pendingRefreshOptions = null; }, // CHANGE: retain the original editor while existing save guards reject all submissions.
+                resume() { session.holdLost = false; state.extraDiagnostics = []; renderFooter(); }, reopen: cell => openPlanModal(cell, currentYear, { editTransitionResolved: true }), // CHANGE
+                element: () => card, freeze() { session.holdLost = true; if (refreshTimer) clearTimeout(refreshTimer); pendingRefreshOptions = null; addCropOptionsLoadVersion++; nutritionLoadVersion++; session.expiredHarvestRequestVersion = harvestRequestVersion++; }, // CHANGE: expire outstanding suggestions before another editing generation can resume.
                 capture: () => ({ pageId: plannerPage, objectId: cellStableId(moduleCell), year: currentYear, plan: PlanSchema.serializeForPersistence(plan), fields: [...card.querySelectorAll('[data-year-plan-field]')].map(field => ({ field: field.dataset.yearPlanField, value: field.value, checked: field.checked })) }), // CHANGE
                 save: navigation => withPlannerHold(() => commitCurrent(navigation?.explicit === true && navigation.closeAfter === true, navigation?.explicit === true ? navigation.requireCommit === true : navigation?.closeAfter === false, navigation?.quickstartCapture)), // CHANGE: explicit saves retain their original guidance context across hold acquisition.
                 restore: draft => { // CHANGE
@@ -10259,6 +10260,7 @@ Draw.loadPlugin(function (ui) {
             }
 
             SessionController.addWindowListener(session, "usl:harvestWindowsSuggested", event => {
+                if (session.holdLost) return; // CHANGE: retained editors cannot accept suggestions from their expired session.
                 const detail = event && event.detail;
                 if (!detail || String(detail.moduleCellId || "") !== String(moduleCell.getId ? moduleCell.getId() : moduleCell.id) || Number(detail.year) !== currentYear) return;
                 const beforeDateRanges = captureDateRangeSnapshot();
@@ -10266,6 +10268,7 @@ Draw.loadPlugin(function (ui) {
                 for (const result of (detail.results || [])) {
                     const crop = byId.get(String(result.cropId));
                     if (!crop) continue;
+                    if (session.expiredHarvestRequestVersion != null && (result.requestVersion == null || result.requestVersion <= session.expiredHarvestRequestVersion)) continue; // CHANGE: late replies cannot enter a resumed plan.
                     if (result.requestVersion != null && result.requestVersion !== crop.__harvestRequestVersion || result.growthStageKey != null && PlanSchema.normalizeGrowthStageKey(result.growthStageKey) !== crop.growthStageKey) continue; // CHANGE
                     if (PlanMath.hasYmd(result.harvestStart) && PlanMath.hasYmd(result.harvestEnd) && result.harvestStart <= result.harvestEnd) {
                         crop.estimatedHarvestStart = result.harvestStart;

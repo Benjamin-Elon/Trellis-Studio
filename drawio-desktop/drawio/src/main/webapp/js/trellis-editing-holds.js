@@ -8,12 +8,15 @@
         if (element.__trellisFrozenView) return element.__trellisFrozenView; // CHANGE
         element.dataset.trellisFrozen = 'true'; // CHANGE
         const alert = element.ownerDocument.createElement('div'); alert.setAttribute('role', 'alert'); alert.dataset.trellisFrozenAlert = ''; alert.style.cssText = 'flex-shrink:0;padding:10px;margin:6px 0;border:2px solid #a65b00;background:#fff4d6;color:#452700;white-space:normal;font:13px/1.4 system-ui'; // CHANGE
-        const message = element.ownerDocument.createElement('span'); alert.appendChild(message); // CHANGE
+        const message = element.ownerDocument.createElement('span'), detail = element.ownerDocument.createElement('div'), actions = element.ownerDocument.createElement('div'), failure = element.ownerDocument.createElement('div'); // CHANGE
+        actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:8px'; failure.setAttribute('role', 'status'); alert.append(message, detail, actions, failure); // CHANGE
+        const original = new Map(), controls = new Map(); let busy = false, disposed = false; // CHANGE
         if (element.matches('input,textarea,[contenteditable]')) element.parentElement.insertBefore(alert, element); else element.prepend(alert); // CHANGE
         const allowed = control => control?.closest?.('[data-trellis-review-allow]') || control?.closest?.('button,[role="button"]')?.textContent.trim().match(/^(?:close|cancel|copy(?: all)?|export(?: draft)?|retry preservation)$/i); // CHANGE
         function protect() { // CHANGE
             for (const field of [element, ...element.querySelectorAll('input,textarea,select,button,[contenteditable],[role="button"]')]) { // CHANGE
                 if (alert.contains(field) || allowed(field)) continue; // CHANGE
+                if (!original.has(field)) original.set(field, { readOnly: field.readOnly, disabled: field.disabled, editable: field.getAttribute('contenteditable') }); // CHANGE
                 if (field.matches('input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]),textarea')) { if (!field.readOnly) field.readOnly = true; } // CHANGE
                 else if (field.matches('button,input,select') && !field.disabled) field.disabled = true; // CHANGE
                 if (field.hasAttribute('contenteditable') && field.getAttribute('contenteditable') !== 'false') { field.contentEditable = 'false'; field.setAttribute('contenteditable', 'false'); } // CHANGE
@@ -31,11 +34,36 @@
         protect(); const observer = root.MutationObserver ? new root.MutationObserver(protect) : null; observer?.observe(element, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled', 'readonly', 'contenteditable'] }); // CHANGE
         const view = { element, reason, // CHANGE
             update(saved = false, error, retry) { // CHANGE
-                message.textContent = reason + ' This editor is frozen for review and copying only. ' + (saved ? 'A private recovery draft has been saved.' + (error ? ' Reconciliation failed: ' + error : '') : error ? 'The private draft could not be saved: ' + error : 'Preserving a private recovery draft…'); // CHANGE
-                alert.querySelector('button')?.remove(); // CHANGE
-                if (retry) { const button = element.ownerDocument.createElement('button'); button.type = 'button'; button.textContent = 'Retry preservation'; button.dataset.trellisReviewAllow = ''; button.addEventListener('click', () => retry()); alert.appendChild(button); } // CHANGE
+                message.textContent = reason + ' Read-only; you can copy your entries. ' + (saved ? 'Private recovery draft saved.' + (error ? ' Reconciliation failed: ' + error : '') : error ? 'Private recovery draft could not be saved: ' + error : 'Saving private recovery draft…'); // CHANGE
+                if (retry) view.setActions([{ id: 'retry', label: 'Retry saving draft', run: retry }], undefined, true); // CHANGE
             }, // CHANGE
-            dispose() { observer?.disconnect(); for (const type of events) element.removeEventListener(type, block, true); alert.remove(); }, // CHANGE
+            /** Keyed controls preserve keyboard focus while preservation and activity updates arrive. */ // CHANGE
+            setActions(next, description, merge = false) { // CHANGE
+                if (disposed) return; if (description !== undefined) detail.textContent = description; // CHANGE
+                const seen = new Set(); // CHANGE
+                for (const action of next) { // CHANGE
+                    seen.add(action.id); let control = controls.get(action.id); // CHANGE
+                    if (!control) { // CHANGE
+                        control = element.ownerDocument.createElement('button'); control.type = 'button'; control.className = 'geBtn'; control.dataset.trellisRecoveryAction = action.id; control.dataset.trellisReviewAllow = ''; // CHANGE
+                        control.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); control.click(); } }); // CHANGE
+                        control.addEventListener('click', async event => { // CHANGE
+                            event.preventDefault(); event.stopPropagation(); if (busy || disposed || control.disabled) return; // CHANGE
+                            busy = true; failure.textContent = ''; for (const item of controls.values()) item.disabled = true; // CHANGE
+                            try { await control.__action.run(); } catch (error) { if (!disposed) failure.textContent = error.message || String(error); } // CHANGE
+                            finally { busy = false; if (!disposed) for (const item of controls.values()) item.disabled = item.__action.enabled === false; } // CHANGE
+                        }); actions.appendChild(control); controls.set(action.id, control); // CHANGE
+                    } // CHANGE
+                    control.__action = action; control.textContent = action.label; control.disabled = busy || action.enabled === false; control.style.color = action.destructive ? '#b91c1c' : ''; // CHANGE
+                } // CHANGE
+                if (!merge) for (const [id, control] of controls) if (!seen.has(id)) { const focused = control === element.ownerDocument.activeElement; control.remove(); controls.delete(id); if (focused) actions.querySelector('button')?.focus(); } // CHANGE
+            }, // CHANGE
+            focus() { alert.scrollIntoView?.({ block: 'nearest' }); actions.querySelector('button:not(:disabled)')?.focus(); }, // CHANGE
+            /** Restore original control policy, rather than enabling controls the domain had disabled. */ // CHANGE
+            thaw() { // CHANGE
+                view.dispose(); delete element.dataset.trellisFrozen; // CHANGE
+                for (const [field, state] of original) { if (state.readOnly !== undefined) field.readOnly = state.readOnly; if (state.disabled !== undefined) field.disabled = state.disabled; if (state.editable === null) field.removeAttribute('contenteditable'); else field.setAttribute('contenteditable', state.editable); } // CHANGE
+            }, // CHANGE
+            dispose() { disposed = true; observer?.disconnect(); for (const type of events) element.removeEventListener(type, block, true); alert.remove(); delete element.__trellisFrozenView; }, // CHANGE
         }; // CHANGE
         element.__trellisFrozenView = view; view.update(); return view; // CHANGE
     } // CHANGE
@@ -56,6 +84,7 @@
                 if (refreshTarget || !entry.targetState) { // CHANGE
                     const targets = typeof entry.targets === 'function' ? entry.targets() : entry.targets; // CHANGE
                     entry.targetState = new Map((targets || []).map(key => [key, options.targetState?.(key)])); // CHANGE
+                    entry.resumeBaseline = options.captureBaseline?.(entry, targets); // CHANGE
                 } // CHANGE
                 entry.changed = false; // CHANGE
             } catch (_) { entry.baseline = null; } // CHANGE: lazy editors explicitly checkpoint after mounting their controls.
@@ -125,9 +154,10 @@
                 if (!active()) throw new Error('The editor changed before editing could begin.'); // CHANGE
                 if (!entry.editing && options.targetState && [...(entry.targetState || [])].some(([key, state]) => targetsOf(entry).includes(key) && state !== options.targetState(key))) throw new Error('This object changed while the editor was clean. Reopen it before editing.'); // CHANGE
                 if (!entry.editing) { entry.editing = true; entry.epoch++; } // CHANGE
+                const editingEpoch = entry.epoch; // CHANGE
                 if (!options.isCollaborative()) return true; // CHANGE
                 if (options.validate) await options.validate(targetsOf(entry)); // CHANGE: a clean panel cannot resume against stale incoming objects.
-                if (!active()) throw new Error('The editor changed before editing access arrived.'); // CHANGE
+                if (!active() || entry.epoch !== editingEpoch) throw new Error('The editor changed before editing access arrived.'); // CHANGE
                 if (entry.held) { // CHANGE
                     let live = holds.filter(hold => hold.sessionId === sessionId && targetsOf(entry).includes(hold.key)); // CHANGE
                     const missing = () => entry.heldTargets.some(key => !live.some(hold => hold.key === key && hold.claimId === entry.heldClaims.get(key) && (!Number.isFinite(hold.expiresAt) || hold.expiresAt > Date.now()))); // CHANGE
@@ -138,8 +168,13 @@
                 if (!entry.pending) entry.pending = (async () => { // CHANGE
                     const requested = targetsOf(entry), result = await options.claim(requested); // CHANGE
                     if (!result?.ok) { if (active()) await options.lose(requested, result?.reason || 'Editing access was refused.'); throw new Error(result?.reason || 'Editing access was refused.'); } // CHANGE
+                    if (!active() || entry.epoch !== editingEpoch) { // CHANGE
+                        const claims = new Map((result.collaboration?.holds || holds).filter(hold => hold.sessionId === sessionId && requested.includes(hold.key)).map(hold => [hold.key, hold.claimId])); // CHANGE
+                        void options.release(requested, { automatic: true, claims, shouldRelease: key => !activeTargets().includes(key) }).catch(error => options.status(error.message)); // CHANGE
+                        throw new Error('The editor changed before editing access arrived.'); // CHANGE
+                    } // CHANGE
                     entry.held = true; entry.heldTargets = requested; entry.heldClaims = new Map(holds.filter(hold => hold.sessionId === sessionId && requested.includes(hold.key)).map(hold => [hold.key, hold.claimId])); // CHANGE
-                    if (!active()) { void finish(entry, false); throw new Error('The editor changed before editing access arrived.'); } return true; // CHANGE
+                    if (!active() || entry.epoch !== editingEpoch) { void finish(entry, false); throw new Error('The editor changed before editing access arrived.'); } return true; // CHANGE
                 })().finally(() => { entry.pending = null; }); // CHANGE
                 return entry.pending; // CHANGE
             } // CHANGE
@@ -163,7 +198,7 @@
                 }, // CHANGE
                 outcome: () => entry.outcome, // CHANGE: a local commit outcome is never a durable-save acknowledgement.
                 freeze: reason => freeze(targetsOf(entry), reason), // CHANGE: failed compensation uses the existing recoverable frozen surface.
-                acquire, active, frozen: () => entry.frozen, dirty: () => dirty(entry), checkpoint: () => checkpoint(entry), complete: () => finish(entry), // CHANGE
+                acquire, active, element: () => elementOf(entry), frozen: () => entry.frozen, dirty: () => dirty(entry), checkpoint: () => checkpoint(entry), complete: () => finish(entry), // CHANGE
                 transition: operation => transition(entry, operation, true), // CHANGE
                 touch() { entry.changed = true; acquire().catch(error => options.status(error.message)); }, // CHANGE
                 dispose(release = false) { if (!registered()) return; entries.delete(entry); entry.frozenView?.dispose(); if (release && !entry.frozen && !entry.handingOff) void finish(entry, false); }, // CHANGE
@@ -209,13 +244,33 @@
             for (const entry of matching(targets)) { // CHANGE
                 if (entry.frozen) continue; // CHANGE
                 entry.frozenCapture = JSON.parse(JSON.stringify({ kind: entry.kind, targets: targetsOf(entry), ...entry.capture() })); entry.frozen = true; // CHANGE
-                entry.freeze?.(reason); const element = typeof entry.element === 'function' ? entry.element() : entry.element; entry.frozenView = freezeElement(element, reason); // CHANGE
+                const element = elementOf(entry); entry.frozenView = freezeElement(element, reason); entry.freeze?.(reason); entry.epoch++; // CHANGE
             } // CHANGE
         } // CHANGE
         function preservation(targets, saved, error, retry) { for (const entry of matching(targets)) entry.frozenView?.update(saved, error, retry); } // CHANGE
         function discard(targets) { // NEW
-            for (const entry of matching(targets)) { entries.delete(entry); entry.discard(); } // NEW
+            for (const entry of matching(targets)) { entries.delete(entry); entry.frozenView?.dispose(); entry.discardDraft?.(); entry.discard(); } // CHANGE
         } // NEW
+        /** The controller owns preservation and authority; adapters own domain lifecycle and reopening. */ // CHANGE
+        function recoveryEditors(targets) { // CHANGE
+            return matching(targets).filter(entry => entry.frozen).map(entry => ({ // CHANGE
+                title: entry.title || entry.kind, kind: entry.kind, element: entry.frozenView?.element, targets: targetsOf(entry), baseline: entry.resumeBaseline && { ...entry.resumeBaseline, targets: targetsOf(entry) }, draft: entry.frozenCapture, claimIds: [...entry.heldClaims.values()], // CHANGE
+                canResume: !!entry.resume && !!entry.resumeBaseline, canReopen: !!entry.reopen, connected: () => entries.has(entry) && entry.frozen && entry.frozenView?.element.isConnected, // CHANGE
+                setActions: (actions, detail) => entry.frozenView?.setActions(actions, detail), focus: () => entry.frozenView?.focus(), // CHANGE
+                retire() { if (entries.has(entry) && entry.frozen) { entry.handle.dispose(); entry.discard(); } }, // CHANGE
+                async resume(result) { // CHANGE
+                    if (!entries.has(entry) || !entry.frozen || entry.generation !== generation) throw new Error('This editor is no longer available.'); // CHANGE
+                    if (entry.pending || entry.committing) throw new Error('Wait for the previous editor operation to finish before resuming.'); // CHANGE
+                    const live = result.collaboration.holds.filter(hold => hold.sessionId === sessionId && targetsOf(entry).includes(hold.key)); // CHANGE
+                    if (targetsOf(entry).some(key => !live.some(hold => hold.key === key))) throw new Error('Editing access could not be confirmed.'); // CHANGE
+                    await entry.resume(entry.frozenCapture); // CHANGE
+                    if (!entries.has(entry) || entry.generation !== generation) throw new Error('The editor changed while resuming.'); // CHANGE
+                    entry.epoch++; entry.pending = null; entry.held = true; entry.heldTargets = live.map(hold => hold.key); entry.heldClaims = new Map(live.map(hold => [hold.key, hold.claimId])); entry.editing = true; entry.changed = true; entry.frozen = false; // CHANGE
+                    entry.frozenView?.thaw(); entry.frozenView = null; entry.frozenCapture = null; // CHANGE
+                }, // CHANGE
+                reopen: async () => { if (!entries.has(entry) || !entry.frozen) throw new Error('This editor is no longer available.'); const cell = options.prepareReopen?.(entry); entry.handle.dispose(); entry.discard(); await entry.reopen(cell); }, // CHANGE
+            })); // CHANGE
+        } // CHANGE
         async function handoff(targets) { // NEW
             const capturedGeneration = generation, editors = matching(targets); // NEW
             const claims = new Map(holds.filter(hold => hold.sessionId === sessionId && targets.includes(hold.key)).map(hold => [hold.key, hold.claimId])); // CHANGE
@@ -309,7 +364,7 @@
         root.addEventListener('resize', resize); // NEW
         function reset() { generation++; closeDecision?.(); transitionTask = null; resolving = null; for (const entry of entries) if (entry.frozen) { entry.frozenView?.dispose(); entry.discard(); entry.frozenView?.element.remove(); } entries.clear(); holds = []; sessionId = null; expiring.clear(); removePopup(); } // CHANGE
         root.addEventListener('beforeunload', () => { reset(); root.clearInterval(timer); root.removeEventListener('resize', resize); }); // NEW
-        return { register, registerForm, capture, freeze, preservation, discard, handoff, frozenTargets: () => [...new Set([...entries].filter(entry => entry.frozen).flatMap(targetsOf))], pinnedTargets: activeTargets, transition: operation => transition(null, operation), activeTargets, update(next, session) { holds = next || []; sessionId = session; render(); }, reset }; // CHANGE
+        return { register, registerForm, capture, freeze, preservation, discard, handoff, recoveryEditors, frozenTargets: () => [...new Set([...entries].filter(entry => entry.frozen).flatMap(targetsOf))], pinnedTargets: activeTargets, transition: operation => transition(null, operation), activeTargets, update(next, session) { holds = next || []; sessionId = session; render(); }, reset }; // CHANGE
     } // NEW
     root.TrellisEditingHolds = { create, freezeElement }; // CHANGE
 })(typeof window !== 'undefined' ? window : globalThis); // NEW

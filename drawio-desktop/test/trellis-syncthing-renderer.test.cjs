@@ -84,6 +84,75 @@ function harness(t, options = {}) {
 /** Exercise the independent IPC lane, rather than only the older content-action fixture. */ // CHANGE
 const observation = (revision, holds = [], extra = {}) => ({ observationRevision: revision, actorUserId: 'alice', sessionId: 'local', holds, presence: [], reservations: [], ...extra }); // CHANGE
 const activeHold = () => ({ key: '["","a"]', sessionId: 'local', claimId: 'claim-a', expiresAt: null }); // CHANGE: ordinary ownership has no presence-based deadline.
+/** Drive a real registered editor through confirmed heartbeat expiry and its action controls. */ // CHANGE
+async function releasedEditorHarness(t, options = {}) { // CHANGE
+    let revision = 0, holds = [activeHold()], losses = []; // CHANGE
+    const snapshot = () => observation(++revision, holds, { losses }); // CHANGE
+    const model = { addListener() {}, getRoot: () => null, getCell: () => null, getParent: () => null }; // CHANGE
+    const h = harness(t, { explicitRefresh: true, editingHolds: true, model, activity: async () => ({ ok: true, collaboration: snapshot() }), recovery: async input => { if (options.failPreservation && input.kind === 'retain' || options.failRead && input.kind === 'restore') throw new Error('Disk full'); return { ok: true, drafts: [] }; } }); await settle(); // CHANGE
+    const form = h.window.document.createElement('section'); form.innerHTML = '<input value="unfinished entry"><button>Save</button>'; h.window.document.body.append(form); let resumed = 0, saved = 0, reopened = 0; // CHANGE
+    const editor = h.sharing.registerEditor({ kind: options.kind || 'year-planner', title: 'Year plan', targets: [activeHold().key], element: form, capture: () => ({ pageId: '', objectId: 'a', plan: { text: form.querySelector('input').value } }), resume() { resumed++; }, reopen() { reopened++; }, save() { saved++; return true; }, discard() { form.remove(); } }); // CHANGE
+    await editor.acquire(); // CHANGE
+    h.bridge.collaborationAction = async input => { // CHANGE
+        h.calls.push({ collaboration: input }); // CHANGE
+        if (input.kind === 'resume-holds') { // CHANGE
+            if (options.resume) return options.resume(input, snapshot); // CHANGE
+            holds = [{ ...activeHold(), claimId: 'replacement-claim' }]; losses = []; return { ok: true, collaboration: snapshot() }; // CHANGE
+        } // CHANGE
+        if (input.kind === 'discard-holds') return { ok: true, xml: options.discardXml || h.ui.getFileData(), discardedKeys: options.discardedKeys || [activeHold().key], collaboration: snapshot() }; // CHANGE
+        if (input.kind === 'recover-holds') return { ok: true, xml: h.ui.getFileData(), discardedKeys: [], recoveryPath: 'private.drawio', collaboration: snapshot() }; // CHANGE
+        if (input.kind === 'changes') return { ok: true, groups: [], collaboration: snapshot() }; // CHANGE
+        if (input.kind === 'review') return { ok: true, groups: [], details: [], token: 'reviewed', collaboration: snapshot() }; // CHANGE
+        return { ok: true, xml: h.ui.getFileData(), collaboration: snapshot() }; // CHANGE
+    }; // CHANGE
+    holds = []; losses = [{ key: activeHold().key, claimId: 'claim-a', code: options.lossCode || 'SESSION_OFFLINE', reason: 'Editing hold released after 30 seconds offline.' }]; h.fireActivity(snapshot()); await settle(); // CHANGE
+    return { ...h, form, editor, model, control: id => form.querySelector('[data-trellis-recovery-action="' + id + '"]'), resumed: () => resumed, saved: () => saved, reopened: () => reopened, snapshot }; // CHANGE
+} // CHANGE
+test('released Year Planner resumes unchanged entries with a new hold and an actionable status link', async t => { // CHANGE
+    const h = await releasedEditorHarness(t); assert.equal(h.editor.frozen(), true); assert.equal(h.control('resume').disabled, false); // CHANGE
+    const status = h.calls.filter(call => call.callback).at(-1); assert.ok(status); status.callback(); assert.equal(h.window.document.activeElement, h.control('resume')); // CHANGE
+    h.control('resume').click(); h.control('resume').click(); await settle(); // CHANGE
+    assert.equal(h.resumed(), 1); assert.equal(h.saved(), 0); assert.equal(h.editor.frozen(), false); assert.equal(h.form.querySelector('input').value, 'unfinished entry'); assert.equal(h.form.querySelector('input').readOnly, false); // CHANGE
+    const request = h.calls.find(call => call.collaboration?.kind === 'resume-holds').collaboration; assert.equal(request.baseXml, '<mxGraphModel><root/></mxGraphModel>'); assert.deepEqual(Array.from(request.claimIds), ['claim-a']); // CHANGE
+    assert.equal(h.calls.filter(call => call.collaboration?.kind === 'resume-holds').length, 1); // CHANGE
+}); // CHANGE
+test('changed inputs or another hold refuse resume without losing entries and retain review actions', async t => { // CHANGE
+    for (const code of ['EDITING_INPUTS_CHANGED', 'EDITING_BUSY']) await t.test(code, async t => { // CHANGE
+        const h = await releasedEditorHarness(t, { resume: async (_input, snapshot) => ({ ok: false, code, reason: 'Review the current object before continuing.', blocked: code === 'EDITING_BUSY' ? [{ key: activeHold().key, sessionId: 'peer' }] : [], collaboration: snapshot() }) }); // CHANGE
+        h.control('resume').click(); await settle(); assert.equal(h.editor.frozen(), true); assert.equal(h.form.querySelector('input').value, 'unfinished entry'); assert.equal(h.form.querySelector('input').readOnly, true); assert.match(h.form.textContent, /Review the current object/); assert.ok(h.control('review')); // CHANGE
+        if (code === 'EDITING_BUSY') assert.ok(h.control('blocker')); // CHANGE
+    }); // CHANGE
+}); // CHANGE
+test('handoff and access losses do not offer a resume shortcut', async t => { // CHANGE
+    for (const lossCode of ['HANDOFF_EXPIRED', 'ACCESS_CHANGED', 'CONCURRENT_EDITOR']) await t.test(lossCode, async t => { const h = await releasedEditorHarness(t, { lossCode }); assert.equal(h.control('resume').disabled, true); assert.equal(h.control('review').disabled, false); }); // CHANGE
+}); // CHANGE
+test('review without incoming changes offers a fresh editor rather than silently applying the retained draft', async t => { // CHANGE
+    const h = await releasedEditorHarness(t); h.model.getCell = () => ({ id: 'a' }); // CHANGE
+    h.control('review').click(); await settle(); const next = [...h.window.document.querySelectorAll('button')].find(button => button.textContent === 'Open fresh editor'); assert.ok(next); assert.equal(next.disabled, false); // CHANGE
+    next.click(); await settle(); assert.equal(h.reopened(), 1); assert.equal(h.saved(), 0); assert.equal(h.form.isConnected, false); // CHANGE
+}); // CHANGE
+test('failed preservation can discard only listed work with no new preservation attempt or confirmation', async t => { // CHANGE
+    const h = await releasedEditorHarness(t, { failPreservation: true }); assert.equal(h.control('resume').disabled, true); assert.equal(h.control('discard').disabled, false); assert.match(h.form.textContent, /Discard affects these objects and related changes/); // CHANGE
+    const writes = h.calls.filter(call => call.privateRecovery?.kind === 'retain').length; h.control('discard').click(); await settle(); // CHANGE
+    assert.equal(h.form.isConnected, false); assert.equal(h.calls.filter(call => call.privateRecovery?.kind === 'retain').length, writes); assert.equal(h.calls.some(call => call.collaboration?.kind === 'recover-holds'), false); assert.equal(h.calls.some(call => call.confirmation), false); // CHANGE
+}); // CHANGE
+test('stored draft read failures cannot hide in-memory retained entries', async t => { // CHANGE
+    const h = await releasedEditorHarness(t, { failPreservation: true, failRead: true }); await h.sharing.showSharingDialog(); const drafts = [...h.window.document.querySelectorAll('button')].find(button => button.textContent === 'Private recovery drafts'); drafts.click(); await settle(); // CHANGE
+    const panel = h.window.document.querySelector('[aria-label="Private recovery drafts"]'); assert.ok(panel); assert.match(panel.textContent, /Stored drafts could not be read/); assert.match(panel.querySelector('textarea').value, /unfinished entry/); // CHANGE
+}); // CHANGE
+test('a delayed resume reply cannot enable an editor after its author changes', async t => { // CHANGE
+    let reply; const h = await releasedEditorHarness(t, { resume: (_input, snapshot) => new Promise(resolve => { reply = () => resolve({ ok: true, collaboration: snapshot() }); }) }); // CHANGE
+    h.control('resume').click(); await settle(); h.users.getCurrentUser = () => ({ id: 'bob' }); reply(); await settle(); assert.equal(h.resumed(), 0); assert.equal(h.editor.frozen(), true); // CHANGE
+}); // CHANGE
+test('latest-saved recovery uses normal file loading and preserves the saving block after a failed load', async t => { // CHANGE
+    const h = harness(t, { explicitRefresh: true, model: { addListener() {}, getRoot: () => null, getCell: () => null } }); await settle(); const saved = h.ui.getFileData(), current = h.current; let loaded = null, failed = true; // CHANGE
+    h.window.LocalFile = class { constructor(_ui, xml, title) { this.data = xml; this.title = title; } setModified(value) { this.modified = value; } }; // CHANGE
+    h.ui.fileLoaded = async replacement => { if (failed) throw new Error('Renderer still unavailable'); loaded = replacement; }; // CHANGE
+    h.sharing.retainFailedCommit('Editor rollback failed. Saving is blocked.'); // CHANGE
+    const context = h.graph.__trellisEditContext; await assert.rejects(h.sharing.openLatestSavedVersion(), /Renderer still unavailable/); assert.equal(h.ui.getCurrentFile(), current); assert.equal(h.ui.getFileData(), saved); // CHANGE
+    failed = false; await h.sharing.openLatestSavedVersion(); assert.ok(loaded); assert.equal(loaded.fileObject, current.fileObject); assert.equal(loaded.data, saved); assert.equal(loaded.modified, false); // CHANGE
+    assert.ok(context); // CHANGE
+}); // CHANGE
 
 test('automation hold activity is boolean for absent, connected and disconnected legacy forms', async t => { // CHANGE
     let revision = 10; const trustedInputListeners = [], h = harness(t, { trustedInputListeners, activity: async () => ({ ok: true, collaboration: observation(++revision, [activeHold()]) }) }); await settle(); // CHANGE
@@ -384,14 +453,14 @@ test('failed confirmation leaves the graph and editors unchanged and reports unc
     assert.equal(h.ui.getFileData(), 'unchanged local draft'); assert.equal(h.calls.some(call => call.collaboration?.kind === 'recover-holds'), false); assert.ok(h.calls.some(call => call.status?.includes('Editing status unconfirmed'))); // CHANGE
 }); // CHANGE
 test('confirmed offline loss retains and freezes original fields before graph rollback; repeated reports do not discard them', async t => { // CHANGE
-    const loss = { key: activeHold().key, claimId: activeHold().claimId, code: 'SESSION_OFFLINE', reason: 'Your editing hold was released after thirty seconds without a fresh session heartbeat. Review the current object and reopen its editor to continue.' }; // CHANGE
+    const loss = { key: activeHold().key, claimId: activeHold().claimId, code: 'SESSION_OFFLINE', reason: 'Editing hold released after 30 seconds offline.' }; // CHANGE
     const h = harness(t, { explicitRefresh: true, editingHolds: true, activity: async () => ({ ok: true, collaboration: observation(30, [], { losses: [loss] }) }), recovery: async () => ({ ok: true }) }); await settle(); // CHANGE
     const form = h.window.document.createElement('section'); form.dataset.collaborationObjectId = 'a'; form.innerHTML = '<input name="notes" value="unfinished entry"><input type="password" value="never retain">'; h.window.document.body.append(form); // CHANGE
     h.setXml('rejected graph draft'); h.current.modified = true; h.bridge.collaborationAction = async input => { h.calls.push({ collaboration: input }); return { ok: true, xml: 'accepted graph', discardedKeys: ['["","a"]'], recoveryPath: 'private.drawio', collaboration: observation(31) }; }; // CHANGE
     h.fireActivity(observation(20, [activeHold()])); h.fireActivity(observation(21)); await settle(); // CHANGE
     const retained = h.calls.find(call => call.privateRecovery?.kind === 'retain').privateRecovery; assert.equal(retained.editorDrafts[0].fields.length, 1); assert.equal(retained.editorDrafts[0].fields[0].value, 'unfinished entry'); // CHANGE
-    assert.match(retained.reason, /reopen its editor/); assert.match(form.textContent, /thirty seconds/); // CHANGE
-    assert.equal(h.ui.getFileData(), 'accepted graph'); assert.equal(form.querySelector('input').value, 'unfinished entry'); assert.equal(form.querySelector('input').readOnly, true); assert.match(form.textContent, /private recovery draft has been saved/); // CHANGE
+    assert.equal(retained.reason, 'Editing hold released after 30 seconds offline.'); assert.match(form.textContent, /30 seconds offline/); // CHANGE
+    assert.equal(h.ui.getFileData(), 'accepted graph'); assert.equal(form.querySelector('input').value, 'unfinished entry'); assert.equal(form.querySelector('input').readOnly, true); assert.match(form.textContent, /Private recovery draft saved/); // CHANGE
     h.fireActivity(observation(32)); await settle(); assert.equal(h.calls.filter(call => call.privateRecovery?.kind === 'retain').length, 1); assert.ok(form.isConnected); // CHANGE
 }); // CHANGE
 test('offline loss retention failure defers rollback and retry uses the same immutable loss identity', async t => { // CHANGE
@@ -399,7 +468,7 @@ test('offline loss retention failure defers rollback and retry uses the same imm
     let failing = true; const h = harness(t, { explicitRefresh: true, editingHolds: true, activity: async () => ({ ok: true, collaboration: observation(30, [], { losses }) }), recovery: async () => { if (failing) throw new Error('Disk full'); return { ok: true }; } }); await settle(); // CHANGE
     const form = h.window.document.createElement('section'); form.dataset.collaborationObjectId = 'a'; form.innerHTML = '<textarea>keep this</textarea>'; h.window.document.body.append(form); h.setXml('local graph'); h.current.modified = true; // CHANGE
     h.fireActivity(observation(20, [activeHold()])); h.fireActivity(observation(21)); await settle(); assert.equal(h.ui.getFileData(), 'local graph'); assert.equal(h.calls.some(call => call.collaboration?.kind === 'recover-holds'), false); assert.match(form.textContent, /Disk full/); // CHANGE
-    failing = false; form.querySelector('button').click(); await settle(); const attempts = h.calls.filter(call => call.privateRecovery?.kind === 'retain'); assert.equal(attempts.length, 2); assert.equal(attempts[0].privateRecovery.lossId, attempts[1].privateRecovery.lossId); // CHANGE
+    failing = false; form.querySelector('[data-trellis-recovery-action=retry]').click(); await settle(); const attempts = h.calls.filter(call => call.privateRecovery?.kind === 'retain'); assert.equal(attempts.length, 2); assert.equal(attempts[0].privateRecovery.lossId, attempts[1].privateRecovery.lossId); // CHANGE
 }); // CHANGE
 test('activity for a previous author and out-of-order action replies cannot replace current ownership', async t => { // CHANGE
     const h = harness(t, { explicitRefresh: true, activity: async () => ({ ok: true, collaboration: observation(30) }) }); await settle(); h.fireActivity(observation(20, [activeHold()])); // CHANGE
@@ -412,7 +481,7 @@ test('native label loss keeps the original text node available for review and cl
     h.fireActivity(observation(20, [activeHold()])); h.fireActivity(observation(21)); await settle(); // CHANGE
     const panel = h.window.document.querySelector('[aria-label="Retained label draft"]'); assert.ok(panel); assert.equal(panel.querySelector('[contenteditable]'), field); assert.equal(field.textContent, 'Unsubmitted label'); assert.equal(field.contentEditable, 'false'); // CHANGE
     const retained = h.calls.find(call => call.privateRecovery?.kind === 'retain').privateRecovery; assert.equal(retained.editorDrafts[0].kind, 'label'); assert.equal(retained.editorDrafts[0].text, 'Unsubmitted label'); // CHANGE
-    panel.querySelector('button').click(); assert.equal(panel.isConnected, false); assert.equal(h.sharing.isPendingCell(cell), false); // CHANGE
+    [...panel.querySelectorAll('button')].find(button => button.textContent === 'Close').click(); assert.equal(panel.isConnected, false); assert.equal(h.sharing.isPendingCell(cell), false); // CHANGE
 }); // CHANGE
 test('an older claim refusal cannot replace a newer confirmed activity hold', async t => { // CHANGE
     let finish; const h = harness(t, { explicitRefresh: true, editingHolds: true, activity: input => input.kind === 'claim' ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ ok: true, collaboration: observation(50, [activeHold()]) }) }); await settle(); // CHANGE
@@ -530,7 +599,7 @@ test('lost parent holds freeze their nested native dialog without changing an un
     h.state.collaboration = { holds: [{ key: '["","a"]', claimId: 'held-a', sessionId: 'local' }], presence: [], reservations: [] }; h.fireStatus();
     h.state.collaboration = { holds: [], presence: [], reservations: [] }; h.fireStatus();
     await settle(); assert.equal(affected.container.isConnected, true); assert.equal(unrelated.container.isConnected, true); assert.equal(h.ui.dialog, unrelated); // CHANGE
-    assert.equal(h.ui.dialogs.length, 2); assert.equal(affected.container.querySelector('input').readOnly, true); assert.equal(unrelated.container.querySelector('input').readOnly, false); assert.match(affected.container.textContent, /frozen for review/); // CHANGE
+    assert.equal(h.ui.dialogs.length, 2); assert.equal(affected.container.querySelector('input').readOnly, true); assert.equal(unrelated.container.querySelector('input').readOnly, false); assert.match(affected.container.textContent, /Read-only; you can copy your entries/); // CHANGE
 });
 
 test('same-user permission revalidation leaves unsaved content and its view untouched', async t => { // NEW

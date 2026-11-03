@@ -58,7 +58,7 @@ Focused tests:
 node --test test/garden-quickstart.test.cjs test/quickstart-drag-electron.test.cjs test/trellis-garden-home.test.cjs test/trellis-startup-defaults.test.cjs
 ```
 
-Also run `node --test test/year-planner.test.cjs test/year-planner-dom.test.cjs test/year-planner-holds.test.cjs` for native action notifications, view-only field revealing, and existing commit/draft behavior. The native Quickstart check records actual system speech availability and completion/error status in `.test-artifacts/quickstart-speech-electron.json`; controlled DOM speech tests cover replay, cancellation, refresh deduplication, and failure recovery independently of installed voices. <!-- NEW -->
+Also run `node --test test/year-planner.test.cjs test/year-planner-dom.test.cjs test/year-planner-holds.test.cjs` for native action notifications, view-only field revealing, and existing commit/draft behavior. The native Quickstart check requires completed bundled-clip playback and records its status in `.test-artifacts/quickstart-speech-electron.json`; controlled DOM tests cover replay, cancellation, refresh deduplication, and speech fallback independently of installed voices. See [offline narration](narration.md) for exact-text clip reuse, local generation, and focused validation. <!-- CHANGE -->
 
 The focused Electron check uses native mouse and keyboard input with the real graph and Quickstart plugin, verifying movement, refresh stability, cancellation, dialog-relative movement, nested-picker ownership, Escape priority, persistent header access, position restoration, narrow windows, and unchanged graph contents and selection. It writes `.test-artifacts/quickstart-drag-electron.png`. <!-- NEW -->
 

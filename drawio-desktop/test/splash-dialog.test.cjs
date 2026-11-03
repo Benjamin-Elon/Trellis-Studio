@@ -17,6 +17,29 @@ const electronPath = path.join(projectRoot, "src/main/electron.js");
 const wizardStorageKey = "trellis.licenseWizard.v2";
 const avatarStorageKey = "trellis.splash.avatar.v1";
 
+/** Both source and shipped code gate on the current completed reading, including speech fallback. */ // NEW
+for (const bundled of [false, true]) test('oath completion rejects stale clip callbacks and accepts completed fallback in ' + (bundled ? 'bundle' : 'source'), () => { // NEW
+    const media = [], spoken = []; // NEW
+    const f = loadSplashDialog({ bundled, narrationSetup(w) { // NEW
+        w.TrellisNarrationRecordings = { clips: [{ text: w.TrellisNarrationCatalog.text('oath'), file: 'clip-0001.mp3' }] }; // NEW
+        w.Audio = class { constructor() { media.push(this); } play() {} pause() {} removeAttribute() {} load() {} }; // NEW
+        w.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } }; // NEW
+        w.speechSynthesis = { speak: speech => spoken.push(speech), cancel() {} }; // NEW
+    } }); // NEW
+    f.dom.window.document.body.appendChild(f.dialog.container); // NEW
+    const affirm = openOath(f.dialog), play = findButton(f.dialog.container, 'Play Oath Aloud'); // NEW
+    play.click(); const staleEnd = media[0].onended; play.click(); staleEnd(); // NEW
+    affirm.click(); assert.match(f.dialog.container.textContent, /The oath has to be heard/); // NEW
+    media[1].onerror(); assert.equal(spoken.length, 1); assert.equal(spoken[0].text, f.dom.window.TrellisNarrationCatalog.text('oath')); // NEW
+    affirm.click(); assert.match(f.dialog.container.textContent, /The oath has to be heard/); // NEW
+    spoken[0].onend(); // NEW
+    const inputs = f.dialog.container.querySelectorAll('input'); // NEW
+    for (const [index, value] of [[0, 'Narration User'], [1, 'narration@example.test'], [3, 'Narration User']]) setInputValue(f.dom, inputs[index], value); // NEW
+    inputs[4].checked = true; inputs[4].dispatchEvent(new f.dom.window.Event('change')); affirm.click(); // NEW
+    assert.equal(f.dialog.isTrellisLicenseWizardComplete(), true); // NEW
+    f.dom.window.close(); // NEW
+}); // NEW
+
 function loadSplashDialog(options = {}) {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://app.test/" });
     const timers = [];
@@ -122,6 +145,10 @@ function loadSplashDialog(options = {}) {
         }
     };
 
+    for (const name of ['trellis-narration-catalog.js', 'trellis-narration.js']) { // NEW
+        if (name === 'trellis-narration.js') options.narrationSetup?.(dom.window); // NEW
+        vm.runInNewContext(fs.readFileSync(path.join(projectRoot, 'drawio/src/main/webapp/js', name), 'utf8'), context); // NEW
+    } // NEW
     const sourcePath = options.bundled ? bundledPath : dialogsPath, source = fs.readFileSync(sourcePath, 'utf8'); // CHANGE
     const dialogCode = options.bundled ? 'var SplashDialog = ' + source.match(/SplashDialog\s*=\s*(function\(editorUi\)[\s\S]*?this\.container = div;\s*\})/)[1] + ';' : source; // CHANGE: execute the shipped splash constructor without unrelated bundle startup.
     vm.runInNewContext(dialogCode, context, { filename: sourcePath }); // CHANGE

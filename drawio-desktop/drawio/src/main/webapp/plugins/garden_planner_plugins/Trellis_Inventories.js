@@ -128,6 +128,7 @@
         const pageId = options.ui?.currentPage?.getId?.() || options.ui?.currentPage?.node?.getAttribute('id') || ''; // NEW
         const hold = options.garden && options.ui ? root.Trellis?.sharing?.registerEditor?.({ // NEW
             kind: 'inventory', inventoryType: 'seeds', targets: [JSON.stringify([pageId, options.garden.id])], // NEW
+            resume() { view.dirty(() => baseline !== JSON.stringify(items)); }, reopen: cell => openSeeds({ ...options, garden: cell, editTransitionResolved: true }), // CHANGE
             element: view.body.closest('[role="dialog"]'), freeze() { view.dirty(() => false); }, // CHANGE
             capture: () => ({ pageId, objectId: options.garden.id, inventoryType: 'seeds', items: JSON.parse(JSON.stringify(items)), fields: [...view.body.querySelectorAll('input,select')].map(node => ({ type: node.type, value: node.value })) }), // NEW
             restore: draft => { if (draft) { items.splice(0, items.length, ...JSON.parse(JSON.stringify(draft.items))); baseline = JSON.stringify(items); render(); } }, // CHANGE

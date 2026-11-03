@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm'); // CHANGE
 const {
     createYearPlannerHarness,
     makePlanCrop
@@ -12,6 +13,19 @@ function savePlan(harness, year, configure) {
     harness.api.PlanRepository.savePlanForYear(harness.moduleCell, year, plan);
     return plan;
 }
+test('the real Year Planner resumes its frozen draft without reopening or committing it', async t => { // CHANGE
+    const h = createYearPlannerHarness(); t.after(() => h.dom.window.close()); savePlan(h, 2026); // CHANGE
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/js/trellis-editing-holds.js'), 'utf8'), { window: h.window }); // CHANGE
+    let holds, claim = 0; const target = JSON.stringify(['', h.moduleCell.id]); // CHANGE
+    holds = h.window.TrellisEditingHolds.create({ editor: { graph: h.graph } }, { isCollaborative: () => true, status() {}, captureBaseline: () => ({ baseXml: 'saved opening plan', targets: [target] }), claim: async () => { holds.update([{ key: target, sessionId: 'local', claimId: 'claim-' + ++claim, expiresAt: null }], 'local'); return { ok: true }; }, release: async () => {} }); // CHANGE
+    h.window.Trellis = { ...(h.window.Trellis || {}), sharing: { registerEditor: config => holds.register(config), getInfo: () => ({ managed: true }) } }; // CHANGE
+    const session = await h.openModal(2026), panel = h.document.querySelector('[data-quickstart-surface="plan"]'), saved = h.moduleCell.getAttribute('year_plan_json'); // CHANGE
+    session.plan.crops[0].kgPerPlant = 7.25; const before = JSON.stringify(session.plan); // CHANGE
+    holds.freeze([target], 'Editing hold released after 30 seconds offline.'); assert.equal(session.holdLost, true); assert.ok(panel.querySelector('[data-trellis-frozen-alert]')); // CHANGE
+    const recovery = holds.recoveryEditors([target])[0]; assert.equal(recovery.canResume, true); // CHANGE
+    const replacement = { key: target, sessionId: 'local', claimId: 'replacement', expiresAt: null }; holds.update([replacement], 'local'); await recovery.resume({ collaboration: { holds: [replacement] } }); // CHANGE
+    assert.equal(session.holdLost, false); assert.equal(JSON.stringify(session.plan), before); assert.equal(h.moduleCell.getAttribute('year_plan_json'), saved); assert.equal(h.api.SessionController.isActive(session), true); assert.equal(panel.hasAttribute('data-trellis-frozen'), false); // CHANGE
+}); // CHANGE
 
 function addDemand(plan, overrides = {}) {
     const line = {
