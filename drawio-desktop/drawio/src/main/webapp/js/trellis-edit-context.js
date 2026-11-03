@@ -28,6 +28,166 @@
         if (graph.__trellisEditContext) return graph.__trellisEditContext;
         let active = null, notice = null, sequence = 0;
         const deferred = new Map();
+        let committing = null, captureFailure = null; // CHANGE: one owner protects native edits through rendering and compensation.
+        const submissions = new Map(); // CHANGE: repeated submissions share preparation rather than applying twice.
+        const defaultWrites = new Map(); let defaultNoticeHost = null; // CHANGE: retain only failed captured defaults; visible retries share one stack.
+        /** Defaults are independent, guarded storage commands; successful tasks are never repeated on retry. */ // CHANGE
+        function saveDefaults(options) { // CHANGE
+            const check = commitGuard(options), key = options.id || 'defaults:' + (++sequence); // CHANGE
+            const predecessor = defaultWrites.get(key)?.pending; // CHANGE: a newer write waits for an already-started older write, so completion order cannot regress defaults.
+            defaultWrites.get(key)?.notice?.remove(); // CHANGE
+            const record = { remaining: (options.tasks || []).slice(), completed: [], pending: null, check }; defaultWrites.set(key, record); // CHANGE
+            function notify(result) { // CHANGE
+                if (!options.notify || defaultWrites.get(key) !== record || !root.document) return; // CHANGE
+                record.notice?.remove(); record.notice = null; // CHANGE
+                try { check(); } catch (_) { return; } // CHANGE: another document or author must never see an obsolete private failure notice.
+                if (result.status === 'saved') return; // CHANGE
+                const notice = root.document.createElement('section'); notice.dataset.trellisDefaultRetry = key; notice.setAttribute('role', 'status'); // CHANGE
+                notice.style.cssText = 'max-width:420px;padding:12px;background:#fff4d6;color:#452700;border:1px solid #a65b00;font:13px Arial;white-space:normal'; // CHANGE
+                const text = root.document.createElement('span'); text.textContent = (options.title || 'Changes applied') + '. Reusable defaults failed: ' + result.failures.map(item => item.name + ': ' + item.reason).join('; ') + '. '; notice.append(text); // CHANGE
+                const retry = root.document.createElement('button'); retry.textContent = 'Retry defaults'; retry.onclick = async () => { retry.disabled = true; await attempt(); }; notice.append(retry); // CHANGE
+                if (!defaultNoticeHost?.isConnected) { defaultNoticeHost = root.document.createElement('div'); defaultNoticeHost.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483100;display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto'; root.document.body.append(defaultNoticeHost); } // CHANGE
+                for (const type of ['pointerdown', 'mousedown', 'click', 'keydown']) notice.addEventListener(type, event => event.stopPropagation()); // CHANGE
+                defaultNoticeHost.append(notice); record.notice = notice; // CHANGE
+            } // CHANGE
+            function attempt() { // CHANGE
+                if (record.pending) return record.pending; // CHANGE
+                record.pending = Promise.resolve().then(async () => { // CHANGE
+                    if (predecessor) await predecessor.catch(() => {}); // CHANGE
+                    const failures = []; // CHANGE
+                    const guard = () => { check(); if (defaultWrites.get(key) !== record) throw new Error('These defaults were superseded. Review the current choices before saving again.'); }; // CHANGE
+                    for (const task of record.remaining) { // CHANGE
+                        try { guard(); await task.save(guard); record.completed.push(task.name); } catch (error) { failures.push({ task, reason: error.message }); } // CHANGE
+                    } // CHANGE
+                    record.remaining = failures.map(item => item.task); // CHANGE
+                    const result = { status: failures.length ? 'failed' : 'saved', completed: record.completed.slice(), failures: failures.map(item => ({ name: item.task.name, reason: item.reason })), retry: attempt }; // CHANGE
+                    notify(result); try { check(); if (defaultWrites.get(key) === record) options.onOutcome?.(result); } catch (_) { /* A closed view or status observer cannot undo a completed storage operation. */ } // CHANGE
+                    if (!failures.length && defaultWrites.get(key) === record) defaultWrites.delete(key); return result; // CHANGE
+                }).finally(() => { record.pending = null; }); // CHANGE
+                return record.pending; // CHANGE
+            } // CHANGE
+            return attempt(); // CHANGE
+        } // CHANGE
+        function pruneDefaultNotices() { // CHANGE: private failures cannot remain visible after their author or document changes.
+            for (const [key, record] of defaultWrites) try { record.check(); } catch (_) { record.notice?.remove(); defaultWrites.delete(key); } // CHANGE
+        } // CHANGE
+        /** Capture identity and actual source versions before asynchronous preparation. */ // CHANGE
+        function commitGuard(options) { // CHANGE
+            const document = documentIdentity(), rootCell = model.getRoot(), actor = user()?.id || '', targetPage = page(); // CHANGE
+            const cells = (typeof options.cells === 'function' ? options.cells() : options.cells || []).filter(Boolean); // CHANGE
+            const version = cell => JSON.stringify([valueContent(cell.value), cell.geometry, cell.style, (cell.children || []).map(child => child.id)]); // CHANGE: attribute changes mutate XML in place; object identity alone is insufficient.
+            const versions = cells.map(cell => [cell, version(cell), model.getParent(cell)]); // CHANGE
+            return () => { // CHANGE
+                if (document !== documentIdentity() || rootCell !== model.getRoot() || actor !== (user()?.id || '') || targetPage !== page() || options.isCurrent && !options.isCurrent() || versions.some(([cell, value, parent]) => model.getCell(cell.id) !== cell || version(cell) !== value || model.getParent(cell) !== parent)) { // CHANGE
+                    const error = new Error('The editor, source object, document or user changed. Review the current draft and try again.'); error.code = 'TRELLIS_EDIT_STALE'; throw error; // CHANGE
+                } // CHANGE
+            }; // CHANGE
+        } // CHANGE
+        /** Saving and private graph checkpoints must never capture a provisional or failed operation. */ // CHANGE
+        async function whenSettled() { // CHANGE
+            while (committing) await committing.settled; // CHANGE
+            if (captureFailure) throw captureFailure; // CHANGE
+        } // CHANGE
+        function assertCapturable() { // CHANGE
+            if (captureFailure) throw captureFailure; // CHANGE
+            if (committing) throw new Error('Finish applying or restoring the current editor before capturing the diagram.'); // CHANGE
+        } // CHANGE
+        /** Enforce synchronous graph application; I/O belongs to preparation or a separate storage command. */ // CHANGE
+        function synchronous(operation, value) { // CHANGE
+            if (operation?.constructor?.name === 'AsyncFunction') throw new Error('Graph commit callbacks must be synchronous. Prepare asynchronous data before applying.'); // CHANGE
+            const result = operation?.(value); // CHANGE
+            if (result && typeof result.then === 'function') { result.catch(() => {}); throw new Error('Graph commit callbacks must be synchronous. Prepare asynchronous data before applying.'); } // CHANGE
+            return result; // CHANGE
+        } // CHANGE
+        /** Reverse the exact native edits, preserving earlier Undo and Redo entries. */ // CHANGE
+        function restoreCommit(operation, error) { // CHANGE
+            const outstanding = () => [...operation.edits].filter(([edit, start]) => !edit.undone && edit.changes.length > start); // CHANGE
+            for (let attempt = 0; attempt < 4; attempt++) { // CHANGE: selection/render listeners may append native edits during compensation.
+                for (const [edit, start] of outstanding().reverse()) { // CHANGE
+                    if (operation.open && edit === model.currentEdit) { // CHANGE
+                        const changes = edit.changes.splice(start); // CHANGE
+                        for (let index = changes.length - 1; index >= 0; index--) changes[index].execute(); // CHANGE
+                    } else if (graph.__trellisSharing?.rejectOperation) graph.__trellisSharing.rejectOperation(edit, error.message); // CHANGE
+                    else { edit.__trellisUsersRejected = true; edit.__trellisUsersRejectedReason = error.message; edit.undo(); } // CHANGE
+                } // CHANGE
+                const selected = operation.selection.filter(cell => model.getCell(cell.id) === cell), current = graph.getSelectionCells?.() || []; // CHANGE: deleted preexisting selections are available only after their inverse edits execute.
+                if (selected.length !== current.length || selected.some((cell, index) => current[index] !== cell)) graph.setSelectionCells?.(selected); // CHANGE
+                graph.refresh?.(); // CHANGE
+                if (!outstanding().length) { // CHANGE
+                    const undo = ui.editor.undoManager; // CHANGE
+                    if (operation.undo && Array.isArray(undo?.history)) { undo.history.splice(0, undo.history.length, ...operation.undo); undo.indexOfNextAdd = operation.undoIndex; } // CHANGE
+                    return; // CHANGE
+                } // CHANGE
+            } // CHANGE
+            throw new Error('Graph listeners kept changing content during rollback.'); // CHANGE
+        } // CHANGE
+        /** Own one native graph action, including nested domain commands and required rendering. */ // CHANGE
+        function apply(options, operation) { // CHANGE
+            const history = root.Trellis?.history; // CHANGE
+            if (options.metadata && history?.run && !history.isRestoring?.()) return history.run(options.metadata, () => apply({ ...options, metadata: null }, operation)); // CHANGE: native events retain domain history metadata through finalization and rollback.
+            if (captureFailure) throw captureFailure; // CHANGE
+            const cells = (typeof options.cells === 'function' ? options.cells() : options.cells || []).filter(Boolean); // CHANGE
+            const holds = blocked(cells, options.manualSources || [], options.includeAncestors !== false, options.exactCells?.() || []); // CHANGE
+            if (holds.length) { // CHANGE
+                options.onBlocked?.(holds); // CHANGE
+                const error = new Error('Changes were blocked by ' + describeHolds(holds) + '. Your entries remain in this editor. Resolve the edit, then try again.'); error.code = 'TRELLIS_EDIT_BLOCKED'; throw error; // CHANGE
+            } // CHANGE
+            options.assertCurrent?.(); // CHANGE
+            if (options.isCurrent && !options.isCurrent()) { const error = new Error('This editor is no longer current.'); error.code = 'TRELLIS_EDIT_STALE'; throw error; } // CHANGE
+            if (committing) { const value = scope(options.kind || 'manual', () => synchronous(operation)); synchronous(options.finalize, value); return value; } // CHANGE: nested commands join their synchronous owner.
+            if (model.updateLevel) throw new Error('Start the editor commit outside an existing native transaction.'); // CHANGE
+            const undo = ui.editor.undoManager, owner = { id: options.id || 'editor-commit:' + (++sequence), edits: new Map(), children: new Map(), document: documentIdentity(), actor: user()?.id || '', selection: graph.getSelectionCells?.().slice() || [], undo: undo?.history?.slice(), undoIndex: undo?.indexOfNextAdd, open: false }; // CHANGE
+            owner.settled = new Promise(resolve => { owner.release = resolve; }); committing = owner; // CHANGE
+            try { // CHANGE
+                model.beginUpdate(); owner.open = true; owner.edits.set(model.currentEdit, model.currentEdit.changes.length); // CHANGE
+                const value = scope(options.kind || 'manual', () => { (options.manualSources || cells).forEach(rememberManualSource); return synchronous(operation); }); // CHANGE
+                owner.open = false; model.endUpdate(); // CHANGE: native permission validation runs before final rendering succeeds.
+                for (const edit of owner.edits.keys()) if (edit.__trellisUsersRejected) { const error = new Error(edit.__trellisUsersRejectedReason || 'Changes were rejected by user permissions.'); error.code = 'TRELLIS_EDIT_REJECTED'; throw error; } // CHANGE
+                synchronous(options.finalize, value); // CHANGE
+                for (const edit of owner.edits.keys()) if (edit.__trellisUsersRejected) { const error = new Error(edit.__trellisUsersRejectedReason || 'Changes were rejected.'); error.code = 'TRELLIS_EDIT_REJECTED'; throw error; } // CHANGE
+                const changes = [...owner.edits].flatMap(([edit, start]) => edit.changes.slice(start)).filter(isContentChange); // CHANGE
+                options.onApplied?.({ operationId: owner.id, changed: !!changes.length, targets: [...new Set(changes.flatMap(change => changeCells(change)).map(cell => JSON.stringify([page(), String(cell.id)])))] }); // CHANGE: successful outcomes identify actual effects, including newly created objects.
+                return value; // CHANGE
+            } catch (error) { // CHANGE
+                owner.failed = true; // CHANGE
+                try { restoreCommit(owner, error); } catch (rollbackError) { // CHANGE
+                    captureFailure = new Error('Editor rollback failed. Saving is blocked until the diagram is reopened or recovered: ' + rollbackError.message); captureFailure.cause = rollbackError; // CHANGE
+                    try { (options.recoveryEditor || options.editor)?.freeze?.(captureFailure.message); graph.__trellisSharing?.retainFailedCommit?.(captureFailure.message); } catch (preservationError) { root.console?.error('Failed to preserve the frozen editor', preservationError); } // CHANGE: preservation failure cannot release quarantine or replace the original operation error.
+                    error.rollbackError = rollbackError; // CHANGE
+                } // CHANGE
+                throw error; // CHANGE
+            } finally { // CHANGE
+                try { if (owner.open) { owner.open = false; model.endUpdate(); } } finally { // CHANGE
+                    committing = null; owner.release(); // CHANGE
+                    if (owner.failed && !captureFailure && graph.__trellisSharing?.releaseRemovedCreations) { // CHANGE
+                        const removed = new Set(); const visit = cell => { if (cell.id && !model.getCell(cell.id)) removed.add(String(cell.id)); (cell.children || []).forEach(visit); }; // CHANGE
+                        for (const [cell, existed] of owner.children) if (!existed) visit(cell); // CHANGE
+                        if (removed.size) Promise.resolve().then(() => { if (owner.document === documentIdentity() && owner.actor === (user()?.id || '')) return graph.__trellisSharing.releaseRemovedCreations([...removed]); }).catch(error => root.console?.error('Failed to release removed creation holds', error)); // CHANGE
+                    } // CHANGE
+                } // CHANGE
+            } // CHANGE
+        } // CHANGE
+        /** Prepare a draft once, then return an explicit local outcome, independent of persistence. */ // CHANGE
+        function commit(options) { // CHANGE
+            const key = options.editor || options.id; // CHANGE
+            if (key && submissions.has(key)) return submissions.get(key); // CHANGE
+            const guard = commitGuard(options), captured = options.capture ? JSON.stringify(options.capture()) : undefined, draft = captured === undefined ? undefined : JSON.parse(captured); // CHANGE
+            const check = () => { guard(); if (options.capture && JSON.stringify(options.capture()) !== captured) { const error = new Error('Newer entries remain in this editor. Review them before applying.'); error.code = 'TRELLIS_EDIT_STALE'; throw error; } }; // CHANGE: preparation cannot bless newer typing as the baseline of an older draft.
+            const task = Promise.resolve().then(async () => { // CHANGE
+                let prepared; // CHANGE
+                try { // CHANGE
+                    await options.editor?.acquire?.(); check(); // CHANGE
+                    prepared = await options.prepare({ draft, assertCurrent: check }); check(); // CHANGE
+                    let effects; const value = apply({ ...options, ...prepared, assertCurrent: () => { check(); prepared.assertCurrent?.(); }, onApplied: result => { effects = result; } }, prepared.apply); // CHANGE
+                    options.editor?.complete?.(); // CHANGE
+                    return { status: effects?.changed ? 'applied' : 'unchanged', operationId: effects?.operationId || options.id, targets: effects?.targets || [], value }; // CHANGE
+                } catch (error) { // CHANGE
+                    const status = error.code === 'TRELLIS_EDIT_BLOCKED' ? 'blocked' : error.code === 'TRELLIS_EDIT_STALE' ? 'stale' : 'rejected'; // CHANGE
+                    return { status, operationId: options.id, reason: error.message, error }; // CHANGE
+                } // CHANGE
+            }).finally(() => { if (key && submissions.get(key) === task) submissions.delete(key); }); // CHANGE
+            if (key) submissions.set(key, task); return task; // CHANGE
+        } // CHANGE
         function pruneDeferred() { let changed = false; for (const [id, item] of deferred) if (item.document !== documentIdentity() || item.page !== page() || item.userId !== (user()?.id || '') || item.cells?.some(cell => model.getCell(cell.id) !== cell)) { deferred.delete(id); changed = true; } if (changed) renderDeferred(); } // CHANGE: queued automation cannot target a removed object or another actor/page generation.
         const recreated = new WeakSet(); // NEW: stable logical replacements preserve unknown creation facts as well as known ones.
         const manualSources = new Set(); let sourceCleanup = false; // NEW: only this synchronous manual action may maintain its own held source.
@@ -64,6 +224,8 @@
         }
         const execute = model.execute;
         if (execute) model.execute = function (change) { // NEW: tag before native execute dispatches a synchronous model event.
+            if (committing && !committing.edits.has(model.currentEdit)) committing.edits.set(model.currentEdit, model.currentEdit.changes.length); // CHANGE: include synchronous finalization and listener-generated native edits.
+            if (committing && change.constructor?.name === 'mxChildChange' && change.child && !committing.children.has(change.child)) committing.children.set(change.child, !!model.getCell(change.child.id)); // CHANGE: remember initial membership before removal or reparenting can obscure creation identity.
             if (root.__TRELLIS_USERS_DEBUG__ === true && !change.__trellisOriginStack) Object.defineProperty(change, '__trellisOriginStack', { value: new Error('Model mutation origin').stack?.slice(0, 6000), configurable: true }); // CHANGE: opt-in call sites never serialize into diagram XML.
             const kind = graph.__ccMapInternalChange || graph.__trellisLocalViewChanging ? 'derived-presentation' : graph.__trellisFieldMetadataChange ? 'attribution' : active?.kind;
             if (!change.__trellisUsersActorStamp) Object.defineProperty(change, '__trellisOperation', { value: { kind: kind || 'manual', actorUserId: active?.actorUserId || user()?.id || '' }, configurable: true, writable: true }); // CHANGE: provenance must not enter native change serialization.
@@ -130,6 +292,7 @@
             const cells = options.cells().filter(Boolean), holds = blocked(cells, options.manualSources || [], options.includeAncestors !== false, options.exactCells?.() || []); // CHANGE
             if (holds.length) {
                 options.onBlocked?.(holds); // CHANGE: synchronous callers may throw the actual blocker before any mutation or queued Retry; default deferral is unchanged.
+                if (committing) { const error = new Error('Changes were blocked by ' + describeHolds(holds) + '. Your entries remain in this editor. Resolve the edit, then try again.'); error.code = 'TRELLIS_EDIT_BLOCKED'; throw error; } // CHANGE: nested domain commands must never silently defer part of a commit.
                 const id = options.id || kind + ':' + cells.map(cell => cell.id).join(',') || String(++sequence);
                 const labels = [...new Set(holds.map(holdObjectName))]; // CHANGE
                 const previous = deferred.get(id); deferred.set(id, { title: options.title || 'Automatic update', labels, retry: options.retry, document: documentIdentity(), page: page(), userId: user()?.id || '', cells }); if (!previous || JSON.stringify(previous.labels) !== JSON.stringify(labels)) renderDeferred(); // CHANGE: repeated blocked updates neither mutate content nor rebuild the same notice.
@@ -141,10 +304,10 @@
             return result; // NEW
         }
         const describeHolds = holds => holds.map(hold => (hold.local ? 'unfinished local editor' : (hold.name || hold.userId || 'another session')) + ' on ' + holdObjectName(hold)).join(', '); // CHANGE
-        const api = { scope, run, blocked, describeHolds, logicalCell, changeCells, kindOf, isContentChange, deferred, recreated, current: () => active }; // CHANGE
+        const api = { scope, run, apply, commit, saveDefaults, whenSettled, assertCapturable, blocked, describeHolds, logicalCell, changeCells, kindOf, isContentChange, deferred, recreated, current: () => active, committing: () => !!committing }; // CHANGE
         graph.__trellisEditContext = api;
-        ui.editor.addListener?.('fileLoaded', () => { deferred.clear(); manualSources.clear(); renderDeferred(); }); // CHANGE
-        ui.editor.addListener?.('pageSelected', pruneDeferred); root.addEventListener?.('trellisUsersSessionChanged', pruneDeferred); // CHANGE
+        ui.editor.addListener?.('fileLoaded', () => { captureFailure = null; defaultNoticeHost?.remove(); defaultNoticeHost = null; defaultWrites.clear(); deferred.clear(); manualSources.clear(); renderDeferred(); }); // CHANGE
+        ui.editor.addListener?.('pageSelected', () => { pruneDeferred(); pruneDefaultNotices(); }); root.addEventListener?.('trellisUsersSessionChanged', () => { pruneDeferred(); pruneDefaultNotices(); }); // CHANGE
         return api;
     }
     root.TrellisEditContext = { install, kindOf, isContentChange }; // NEW

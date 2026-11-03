@@ -1982,6 +1982,7 @@ Draw.loadPlugin(function (ui) {
 
         const title = document.createElement("div");
         title.textContent = "City Manager";
+        div.classList.add('trellis-surfaces'); div.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
         title.style.fontWeight = "600";
         title.style.marginBottom = "8px";
         div.appendChild(title);
@@ -2061,6 +2062,7 @@ Draw.loadPlugin(function (ui) {
         monthTitle.style.margin = "12px 0 6px";
         div.appendChild(monthTitle);
         const monthGrid = document.createElement("div");
+        monthGrid.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
         monthGrid.style.display = "grid";
         monthGrid.style.gridTemplateColumns = "70px 1fr 1fr";
         monthGrid.style.gap = "4px 8px";
@@ -2248,6 +2250,7 @@ Draw.loadPlugin(function (ui) {
         title.style.fontWeight = "600";
         title.style.marginBottom = "10px";
         title.textContent = "Garden Settings";
+        div.classList.add('trellis-surfaces'); div.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
         div.appendChild(title);
 
         const err = document.createElement("div");
@@ -2643,7 +2646,8 @@ Draw.loadPlugin(function (ui) {
             if (!gardenDimensionsFit(chosenGardenWidthUnits, chosenGardenHeightUnits)) { showError(requiredGardenFitMessage(chosenUnits)); gardenWidthInput.focus(); return false; } // CHANGE
             try { preparedReferences?.finalize(chosenCityId); } catch (error) { showError(error.message); return false; } // NEW: bind the first snapshot to the reviewed city before writing the garden.
 
-            const settingsEdit = model.currentEdit; model.beginUpdate(); // CHANGE
+            const apply = () => { // CHANGE: garden initialization, geometry and settings have one rollback boundary.
+            model.beginUpdate(); // CHANGE
             try {
                 preparedReferences?.apply(); // NEW: one creation/settings transaction, with fresh factory ownership and linked modules.
                 const geo = model.getGeometry(moduleCell); // CHANGE
@@ -2673,8 +2677,10 @@ Draw.loadPlugin(function (ui) {
             } finally {
                 model.endUpdate();
             }
-            if (settingsEdit?.__trellisUsersRejected) { showError(settingsEdit.__trellisUsersRejectedReason || 'Garden settings were rejected.'); return false; } // CHANGE
-            graph.refresh(moduleCell); settingsHold?.complete?.(); // CHANGE
+            }; // CHANGE
+            const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+            try { if (context?.apply) context.apply({ cells: [moduleCell], manualSources: [moduleCell], includeAncestors: false, editor: settingsHold, finalize: () => graph.refresh(moduleCell) }, apply); else { apply(); graph.refresh(moduleCell); } } catch (error) { showError(error.message); return false; } // CHANGE
+            settingsHold?.complete?.(); // CHANGE
             if (saveOptions.closeAfter !== false) ui.hideDialog(); return true; // CHANGE
         } // CHANGE
         const okBtn = tilerButton("OK", () => { if (settingsHold) void settingsHold.commit(); else void commitGardenSettings(); }, "add", { title: "Save these settings to the selected garden module." }); // CHANGE // CHANGE: explicit action tooltip.
@@ -3482,14 +3488,88 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
-    function normalizeRotationDeg(deg) {
-        const n = ((Number(deg) || 0) % 360 + 360) % 360; // NEW
-        return Math.min(n, 360 - n); // NEW
-    } // NEW
+    const PATH_SNAP_EPS = 1e-7; // CHANGE: model-space tolerance; never depends on viewport zoom.
 
     function isAxisAlignedPathSnapBed(cell) {
-        return isGardenBed(cell) && normalizeRotationDeg(getTilerRotationDeg(cell)) <= ROTATION_EPS_DEG; // NEW
+        return !!pathSnapFootprint(cell)?.axisAligned; // CHANGE: beds and rectangular structures share outline-based eligibility.
     } // NEW
+
+    /** Read a rectangle in garden-local coordinates, retaining actual corners rather than its bounding box. */ // CHANGE
+    function pathSnapFootprint(cell, rect = getModelRect(cell)) { // CHANGE
+        if (!cell || !rect || ![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite) || rect.w <= PATH_SNAP_EPS || rect.h <= PATH_SNAP_EPS) return null; // CHANGE
+        let points; // CHANGE
+        if (isGardenBed(cell)) { // CHANGE
+            points = plantingFootprintPolygon({ x: rect.x, y: rect.y, width: rect.w, height: rect.h, rotation: getTilerRotationDeg(cell) }); // CHANGE
+        } else if (cell.getAttribute?.('garden_structure') === '1' && graph.__trellisStructures) { // CHANGE
+            try { points = graph.__trellisStructures.footprint(cell, new mxGeometry(rect.x, rect.y, rect.w, rect.h)).map(([x, y]) => ({ x, y })); } catch (_) { return null; } // CHANGE
+        } else return null; // CHANGE
+        if (!points.every(p => Number.isFinite(p.x) && Number.isFinite(p.y))) return null; // CHANGE
+        points = points.slice(); // CHANGE
+        // Footprint editing may leave harmless intermediate points along a straight side. // CHANGE
+        for (let i = points.length - 1; i >= 0 && points.length > 4; i--) { // CHANGE
+            const a = points[(i + points.length - 1) % points.length], b = points[i], c = points[(i + 1) % points.length]; // CHANGE
+            const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y; // CHANGE
+            if (Math.abs(ux * vy - uy * vx) <= PATH_SNAP_EPS * Math.hypot(ux, uy) * Math.hypot(vx, vy) && ux * vx + uy * vy > 0) points.splice(i, 1); // CHANGE
+        } // CHANGE
+        if (points.length !== 4) return null; // CHANGE
+        const edges = points.map((p, i) => ({ x: points[(i + 1) % 4].x - p.x, y: points[(i + 1) % 4].y - p.y })); // CHANGE
+        if (edges.some((e, i) => Math.hypot(e.x, e.y) <= PATH_SNAP_EPS || Math.abs(e.x * edges[(i + 1) % 4].x + e.y * edges[(i + 1) % 4].y) > PATH_SNAP_EPS * Math.hypot(e.x, e.y) * Math.hypot(edges[(i + 1) % 4].x, edges[(i + 1) % 4].y))) return null; // CHANGE
+        const xs = points.map(p => p.x), ys = points.map(p => p.y); // CHANGE
+        const bounds = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }; // CHANGE
+        const axisAligned = edges.every(e => Math.min(Math.abs(e.x), Math.abs(e.y)) <= PATH_SNAP_EPS * Math.hypot(e.x, e.y)); // CHANGE
+        return { points, bounds, axisAligned }; // CHANGE
+    } // CHANGE
+
+    /** Separating axes reject containment, crossings, and touching before finding closest boundary points. */ // CHANGE
+    function rectangleClearance(active, other) { // CHANGE
+        let separated = false; // CHANGE
+        for (const polygon of [active, other]) for (let i = 0; i < polygon.length; i++) { // CHANGE
+            const a = polygon[i], b = polygon[(i + 1) % polygon.length], length = Math.hypot(b.x - a.x, b.y - a.y); // CHANGE
+            const nx = (b.y - a.y) / length, ny = (a.x - b.x) / length; // CHANGE
+            const ap = active.map(p => p.x * nx + p.y * ny), bp = other.map(p => p.x * nx + p.y * ny); // CHANGE
+            if (Math.max(Math.min(...ap) - Math.max(...bp), Math.min(...bp) - Math.max(...ap)) > PATH_SNAP_EPS) separated = true; // CHANGE
+        } // CHANGE
+        if (!separated) return null; // CHANGE
+        let best = null; // CHANGE
+        for (const reverse of [false, true]) { // CHANGE
+            const vertices = reverse ? other : active, segments = reverse ? active : other; // CHANGE
+            for (const p of vertices) for (let i = 0; i < segments.length; i++) { // CHANGE
+                const a = segments[i], b = segments[(i + 1) % segments.length], vx = b.x - a.x, vy = b.y - a.y; // CHANGE
+                const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / (vx * vx + vy * vy))); // CHANGE
+                const q = { x: a.x + t * vx, y: a.y + t * vy }, gap = Math.hypot(p.x - q.x, p.y - q.y); // CHANGE
+                if (!best || gap < best.gap - PATH_SNAP_EPS) best = { gap, from: reverse ? q : p, to: reverse ? p : q }; // CHANGE
+            } // CHANGE
+        } // CHANGE
+        return best; // CHANGE
+    } // CHANGE
+
+    function pathSnapInsideGarden(moduleCell, points) { // CHANGE
+        const geometry = graph.getModel().getGeometry(moduleCell); // CHANGE
+        return !!geometry && points.every(p => p.x >= -PATH_SNAP_EPS && p.y >= -PATH_SNAP_EPS && p.x <= geometry.width + PATH_SNAP_EPS && p.y <= geometry.height + PATH_SNAP_EPS); // CHANGE
+    } // CHANGE
+
+    /** A correction is accepted only if all advertised widths remain exact after the complete translation. */ // CHANGE
+    function pathSnapOption(moduleCell, active, selected, dx, dy) { // CHANGE
+        const points = active.points.map(p => ({ x: p.x + dx, y: p.y + dy })); // CHANGE
+        if (!selected.length || !pathSnapInsideGarden(moduleCell, points)) return null; // CHANGE
+        for (const candidate of selected) { // CHANGE
+            const other = pathSnapFootprint(candidate.bed), clearance = other && rectangleClearance(points, other.points); // CHANGE
+            if (!clearance || Math.abs(clearance.gap - candidate.preset.target) > PATH_SNAP_EPS * Math.max(1, candidate.preset.target)) return null; // CHANGE
+        } // CHANGE
+        return { dx, dy, selected, correction: Math.hypot(dx, dy), width: Math.min(...selected.map(c => c.preset.target)), id: selected.map(c => String(c.bed.id)).sort().join(':') }; // CHANGE
+    } // CHANGE
+
+    /** Oblique candidates translate along the closest-point normal; rectangle rotation remains untouched. */ // CHANGE
+    function angledPathSnapCandidate(moduleCell, active, otherCell, other, presets) { // CHANGE
+        const clearance = rectangleClearance(active.points, other.points); // CHANGE
+        if (!clearance) return null; // CHANGE
+        const preset = bestPathPresetForGap(clearance.gap, presets); // CHANGE
+        if (!preset) return null; // CHANGE
+        const amount = (clearance.gap - preset.target) / clearance.gap; // CHANGE
+        const dx = (clearance.to.x - clearance.from.x) * amount, dy = (clearance.to.y - clearance.from.y) * amount; // CHANGE
+        const candidate = { bed: otherCell, gap: clearance.gap, segment: clearance, preset, snap: { dx, dy } }; // CHANGE
+        return pathSnapOption(moduleCell, active, [candidate], dx, dy) ? candidate : null; // CHANGE
+    } // CHANGE
 
     function rectRight(rect) {
         return rect ? (Number(rect.x) || 0) + (Number(rect.w) || 0) : 0; // NEW
@@ -3521,8 +3601,8 @@ Draw.loadPlugin(function (ui) {
             const target = Number(preset.widthUnits) || 0; // NEW
             if (target <= 0) continue; // NEW
             const diff = Math.abs((Number(gapUnits) || 0) - target); // NEW
-            if (diff > pathSnapToleranceUnits(target)) continue; // NEW
-            if (!best || diff < best.diff || (diff === best.diff && target < best.target)) { // NEW
+            if (diff > pathSnapToleranceUnits(target) + PATH_SNAP_EPS) continue; // CHANGE: exact threshold values survive unit conversion.
+            if (!best || diff < best.diff - PATH_SNAP_EPS || (Math.abs(diff - best.diff) <= PATH_SNAP_EPS && target < best.target)) { // CHANGE: floating-point noise must not reverse preset ties.
                 best = Object.assign({}, preset, { target, diff }); // NEW
             } // NEW
         } // NEW
@@ -3560,10 +3640,10 @@ Draw.loadPlugin(function (ui) {
     function directBedNeighborsByDirection(moduleCell, bedCell, activeRect) {
         const out = { above: null, below: null, left: null, right: null }; // NEW
         if (!moduleCell || !bedCell || !activeRect) return out; // NEW
-        const beds = (graph.getChildVertices(moduleCell) || []).filter(isAxisAlignedPathSnapBed); // NEW
+        const beds = (graph.getChildVertices(moduleCell) || []).filter(isAxisAlignedPathSnapBed).sort((a, b) => String(a.id).localeCompare(String(b.id))); // CHANGE: stable neighbours include structures.
         for (const other of beds) { // NEW
             if (!other || other === bedCell || other.id === bedCell.id) continue; // NEW
-            const rect = getModelRect(other); // NEW
+            const rect = pathSnapFootprint(other)?.bounds; // CHANGE: right-angle rotation can exchange width and height.
             if (!rect || rect.w <= 0 || rect.h <= 0) continue; // NEW
             const aboveGap = activeRect.y - rectBottom(rect); // NEW
             if (aboveGap > 0 && rectsOverlapOnX(activeRect, rect) && (!out.above || aboveGap < out.above.gap)) out.above = { direction: "above", bed: other, rect, gap: aboveGap }; // NEW
@@ -3606,8 +3686,8 @@ Draw.loadPlugin(function (ui) {
         const matches = candidates.filter(function (candidate) { return candidate && candidate.snap && candidate.snap.axis === axis; }); // NEW
         matches.sort(function (a, b) { // NEW
             const diff = a.preset.diff - b.preset.diff; // NEW
-            if (diff) return diff; // NEW
-            return a.gap - b.gap; // NEW
+            if (Math.abs(diff) > PATH_SNAP_EPS) return diff; // CHANGE
+            return a.preset.target - b.preset.target || String(a.bed.id).localeCompare(String(b.bed.id)); // CHANGE: equal corrections prefer smaller widths, then stable IDs.
         }); // NEW
         return matches[0] || null; // NEW
     } // NEW
@@ -3615,16 +3695,36 @@ Draw.loadPlugin(function (ui) {
     function evaluateBedPathSnap(moduleCell, bedCell, activeRect) {
         const units = getXmlAttr(moduleCell, "unit_system", "") || "metric"; // NEW
         const presets = getEnabledPathWidthPresets(moduleCell); // NEW
-        const directions = directBedNeighborsByDirection(moduleCell, bedCell, activeRect); // NEW
+        const active = pathSnapFootprint(bedCell, activeRect); // CHANGE
+        if (!active || graph.getModel().getParent(bedCell) !== moduleCell) return null; // CHANGE: all distances use one garden-local frame.
+        const directions = active.axisAligned ? directBedNeighborsByDirection(moduleCell, bedCell, active.bounds) : {}; // CHANGE
         const candidates = ["above", "below", "left", "right"].map(function (direction) { // NEW
-            return buildPathSnapCandidate(moduleCell, activeRect, directions[direction], presets); // NEW
+            return buildPathSnapCandidate(moduleCell, active.bounds, directions[direction], presets); // CHANGE
         }).filter(Boolean); // NEW
         const xSnap = chooseAxisPathSnap(candidates, "x"); // NEW
         const ySnap = chooseAxisPathSnap(candidates, "y"); // NEW
-        const dx = xSnap && xSnap.snap ? xSnap.snap.dx : 0; // NEW
-        const dy = ySnap && ySnap.snap ? ySnap.snap.dy : 0; // NEW
+        const axisSelected = [xSnap, ySnap].filter(Boolean); // CHANGE
+        const axisOption = pathSnapOption(moduleCell, active, axisSelected, xSnap?.snap.dx || 0, ySnap?.snap.dy || 0); // CHANGE
+        const options = axisOption ? [axisOption] : axisSelected.map(c => pathSnapOption(moduleCell, active, [c], c.snap.dx, c.snap.dy)).filter(Boolean); // CHANGE
+        for (const otherCell of graph.getChildVertices(moduleCell) || []) { // CHANGE
+            if (otherCell === bedCell) continue; // CHANGE
+            const other = pathSnapFootprint(otherCell); // CHANGE
+            if (!other || (active.axisAligned && other.axisAligned)) continue; // CHANGE
+            const candidate = angledPathSnapCandidate(moduleCell, active, otherCell, other, presets); // CHANGE
+            if (candidate) { candidates.push(candidate); options.push(pathSnapOption(moduleCell, active, [candidate], candidate.snap.dx, candidate.snap.dy)); } // CHANGE
+        } // CHANGE
+        options.sort((a, b) => Math.abs(a.correction - b.correction) > PATH_SNAP_EPS ? a.correction - b.correction : a.width - b.width || a.id.localeCompare(b.id)); // CHANGE
+        const chosen = options[0]; // CHANGE
+        const dx = Math.abs(chosen?.dx || 0) <= PATH_SNAP_EPS ? 0 : chosen.dx, dy = Math.abs(chosen?.dy || 0) <= PATH_SNAP_EPS ? 0 : chosen.dy; // CHANGE: exact clearances must not create numerical no-op edits.
         candidates.forEach(function (candidate) { // NEW
-            candidate.activeSnap = candidate === xSnap || candidate === ySnap; // NEW
+            candidate.activeSnap = !!chosen?.selected.includes(candidate); // CHANGE
+            if (candidate.activeSnap) { // CHANGE: guides measure the final preview, not the unsnapped pointer position.
+                const finalPoints = active.points.map(p => ({ x: p.x + dx, y: p.y + dy })); // CHANGE
+                const clearance = rectangleClearance(finalPoints, pathSnapFootprint(candidate.bed).points); // CHANGE
+                candidate.gap = clearance.gap; // CHANGE
+                if (candidate.segment) candidate.segment = clearance; // CHANGE
+                else candidate.band = gapBandRectForDirection(movedRect(active.bounds, dx, dy), candidate.rect, candidate.direction, candidate.gap); // CHANGE
+            } // CHANGE
         }); // NEW
         return { moduleCell, bedCell, activeRect, units, candidates, xSnap, ySnap, dx, dy }; // NEW
     } // NEW
@@ -3638,7 +3738,7 @@ Draw.loadPlugin(function (ui) {
     function canConsiderBedPathSnapForCells(cells, evt, clone, target) {
         if (clone || target || (evt && mxEvent.isAltDown && mxEvent.isAltDown(evt))) return false; // CHANGE
         const snapCells = (cells || []).filter(Boolean); // CHANGE
-        return snapCells.length === 1 && isAxisAlignedPathSnapBed(snapCells[0]) && !!findGardenModuleAncestor(graph, snapCells[0]); // CHANGE
+        return snapCells.length === 1 && !!pathSnapFootprint(snapCells[0]) && !!findGardenModuleAncestor(graph, snapCells[0]); // CHANGE
     } // NEW
 
     function resolveBedPathSnapMoveContext(cells, evt, clone, target) {
@@ -3647,12 +3747,12 @@ Draw.loadPlugin(function (ui) {
         const workspaceHandleDrag = graph.__trellisWorkspaceHandleDragActive === true; // CHANGE
         if (target && !workspaceHandleDrag) return null; // CHANGE
         const bedCell = moveCells[0]; // CHANGE
-        const moduleCell = isAxisAlignedPathSnapBed(bedCell) ? findGardenModuleAncestor(graph, bedCell) : null; // CHANGE
+        const moduleCell = pathSnapFootprint(bedCell) ? findGardenModuleAncestor(graph, bedCell) : null; // CHANGE
         if (moveCells.length === 1 && moduleCell) {
             return { bedCell, moveCells: [bedCell], moduleCell, source: "single-bed" }; // CHANGE
         } // CHANGE
         if (!workspaceHandleDrag || moveCells.length < 2) return null; // CHANGE
-        if (!moduleCell) return null; // CHANGE
+        if (!moduleCell || !isGardenBed(bedCell)) return null; // CHANGE: only existing bed workspace handles carry extra cells.
         return { bedCell, moveCells: moveCells.slice(), moduleCell, source: "workspace-handle" }; // CHANGE
     } // CHANGE
 
@@ -3677,7 +3777,8 @@ Draw.loadPlugin(function (ui) {
     function applyBedPathSnapEvaluationNoTxn(model, context, opts) {
         const bedCell = context && context.bedCell; // CHANGE
         const moduleCell = context && context.moduleCell; // CHANGE
-        if (!model || !bedCell || !moduleCell || !isAxisAlignedPathSnapBed(bedCell)) return null; // CHANGE
+        if (!model || !bedCell || !moduleCell || !pathSnapFootprint(bedCell)) return null; // CHANGE
+        if (!graph.isEnabled() || graph.isCellLocked(bedCell) || window.Trellis?.users?.canEditCell?.(bedCell) === false) return null; // CHANGE
         if (opts && opts.event && mxEvent.isAltDown && mxEvent.isAltDown(opts.event)) return null; // CHANGE
         const rect = getModelRect(bedCell); // CHANGE
         if (!rect) return null; // CHANGE
@@ -3690,9 +3791,23 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     function applyBedPathSnapNoTxn(model, bedCell, opts) {
-        const moduleCell = bedCell && isAxisAlignedPathSnapBed(bedCell) ? findGardenModuleAncestor(graph, bedCell) : null; // CHANGE
+        if (isBedPathSnapAltBypassActive()) return null; // CHANGE: creation uses the same pointer bypass as drag and resize.
+        const moduleCell = bedCell && pathSnapFootprint(bedCell) ? findGardenModuleAncestor(graph, bedCell) : null; // CHANGE
         return applyBedPathSnapEvaluationNoTxn(model, { bedCell, moduleCell, moveCells: (opts && opts.moveCells) || [bedCell] }, opts); // CHANGE
     } // NEW
+
+    /** Native resize bounds are transient; translate their preview without changing dimensions or the model. */ // CHANGE
+    function previewPathSnapResize(handler) { // CHANGE
+        const cell = handler.state?.cell, bounds = handler.unscaledBounds; // CHANGE
+        if (!bounds || handler.index == null || handler.index < 0 || handler.index > 7 || isBedPathSnapAltBypassActive() || !canConsiderBedPathSnapForCells(graph.getSelectionCells(), null, false, null)) return; // CHANGE
+        const evaluation = evaluateBedPathSnap(findGardenModuleAncestor(graph, cell), cell, { x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height }); // CHANGE
+        if (!evaluation || (!evaluation.dx && !evaluation.dy)) return; // CHANGE
+        bounds.x += evaluation.dx; bounds.y += evaluation.dy; // CHANGE
+        handler.bounds.x += evaluation.dx * graph.view.scale; handler.bounds.y += evaluation.dy * graph.view.scale; // CHANGE
+        if (handler.livePreviewActive) handler.updateLivePreview(); // CHANGE
+        if (handler.preview) handler.drawPreview(); // CHANGE
+        else handler.updateParentHighlight(); // CHANGE
+    } // CHANGE
 
     function installBedPathSnapOverlay() {
         if (graph.__plantTilerBedPathSnapOverlayInstalled) return; // NEW
@@ -3734,7 +3849,7 @@ Draw.loadPlugin(function (ui) {
 
         function selectedPathSnapBed() {
             const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
-            return cells.length === 1 && isAxisAlignedPathSnapBed(cells[0]) ? cells[0] : null; // NEW
+            return cells.length === 1 && pathSnapFootprint(cells[0]) ? cells[0] : null; // CHANGE
         } // NEW
 
         function activeResizeRectForBed(bed) {
@@ -3772,12 +3887,31 @@ Draw.loadPlugin(function (ui) {
         } // NEW
 
         function viewRectForModuleLocalRect(moduleCell, rect) {
-            const geo = moduleCell && moduleCell.getGeometry ? moduleCell.getGeometry() : null; // NEW
-            if (!geo || !rect) return null; // NEW
-            const p1 = viewPointForGraphPoint({ x: (Number(geo.x) || 0) + rect.x, y: (Number(geo.y) || 0) + rect.y }); // NEW
-            const p2 = viewPointForGraphPoint({ x: (Number(geo.x) || 0) + rectRight(rect), y: (Number(geo.y) || 0) + rectBottom(rect) }); // NEW
+            if (!rect) return null; // CHANGE
+            const p1 = viewPointForModulePoint(moduleCell, { x: rect.x, y: rect.y }); // CHANGE
+            const p2 = viewPointForModulePoint(moduleCell, { x: rectRight(rect), y: rectBottom(rect) }); // CHANGE
+            if (!p1 || !p2) return null; // CHANGE
             return { x: p1.x, y: p1.y, w: Math.max(1, p2.x - p1.x), h: Math.max(1, p2.y - p1.y) }; // NEW
         } // NEW
+
+        /** Native garden states include nested parents, drill-down origins, zoom, translation, and pan. */ // CHANGE
+        function viewPointForModulePoint(moduleCell, point) { // CHANGE
+            const state = graph.view.getState(moduleCell), scale = graph.view.scale || 1; // CHANGE
+            if (state) return { x: state.x + point.x * scale + (graph.panDx || 0), y: state.y + point.y * scale + (graph.panDy || 0) }; // CHANGE
+            const geo = moduleCell?.getGeometry(); // CHANGE
+            return geo ? viewPointForGraphPoint({ x: geo.x + point.x, y: geo.y + point.y }) : null; // CHANGE
+        } // CHANGE
+
+        function appendClearanceSegment(root, moduleCell, candidate, units) { // CHANGE
+            if (!candidate.activeSnap || !candidate.segment) return; // CHANGE
+            const from = viewPointForModulePoint(moduleCell, candidate.segment.from), to = viewPointForModulePoint(moduleCell, candidate.segment.to); // CHANGE
+            if (!from || !to) return; // CHANGE
+            const line = document.createElement('div'); // CHANGE
+            line.className = 'trellis-path-snap-segment'; // CHANGE
+            line.style.cssText = `position:absolute;left:${from.x}px;top:${from.y}px;width:${Math.hypot(to.x - from.x, to.y - from.y)}px;height:0;border-top:2px solid #2563eb;transform-origin:0 0;transform:rotate(${Math.atan2(to.y - from.y, to.x - from.x)}rad);`; // CHANGE
+            root.appendChild(line); // CHANGE
+            appendBadge(root, moduleCell, Object.assign({}, candidate, { band: { x: (candidate.segment.from.x + candidate.segment.to.x) / 2, y: (candidate.segment.from.y + candidate.segment.to.y) / 2, w: 0, h: 0 } }), units); // CHANGE
+        } // CHANGE
 
         function appendBand(root, moduleCell, candidate) {
             if (!candidate || !candidate.activeSnap || !candidate.band) return; // NEW
@@ -3806,17 +3940,20 @@ Draw.loadPlugin(function (ui) {
             if (isBedPathSnapAltBypassActive()) { hideOverlay(); return; } // NEW
             const bed = selectedPathSnapBed(); // NEW
             if (!bed || !isGestureActiveForBed(bed)) { hideOverlay(); return; } // NEW
+            const move = graph.graphHandler; // CHANGE
+            if (activeMoveRectForBed(bed) && (move.cloning || (move.target && !graph.__trellisWorkspaceHandleDragActive))) { hideOverlay(); return; } // CHANGE: excluded moves never advertise a snap.
             const moduleCell = findGardenModuleAncestor(graph, bed); // NEW
             const rect = activePreviewRectForBed(bed); // NEW
-            if (!moduleCell || !rect || !rectInsideModuleBounds(moduleCell, rect)) { hideOverlay(); return; } // NEW
+            if (!moduleCell || !rect) { hideOverlay(); return; } // CHANGE: containment is checked against actual final corners by the evaluator.
             const evaluation = evaluateBedPathSnap(moduleCell, bed, rect); // NEW
-            if (!evaluation.candidates.length) { hideOverlay(); return; } // NEW
+            if (!evaluation || !evaluation.candidates.length) { hideOverlay(); return; } // CHANGE
             const root = ensureOverlay(); // NEW
             if (!root) return; // NEW
             root.innerHTML = ""; // NEW
             root.style.display = "block"; // NEW
             evaluation.candidates.forEach(function (candidate) { appendBand(root, moduleCell, candidate); }); // NEW
             evaluation.candidates.forEach(function (candidate) { appendBadge(root, moduleCell, candidate, evaluation.units); }); // NEW
+            evaluation.candidates.forEach(function (candidate) { appendClearanceSegment(root, moduleCell, candidate, evaluation.units); }); // CHANGE
         } // NEW
 
         function scheduleOverlayRefresh() {
@@ -3837,6 +3974,10 @@ Draw.loadPlugin(function (ui) {
         graph.getView().addListener(mxEvent.SCALE_AND_TRANSLATE, scheduleOverlayRefresh); // NEW
         graph.getView().addListener(mxEvent.REPAINT, scheduleOverlayRefresh); // NEW
         mxEvent.addListener(window, "resize", scheduleOverlayRefresh); // NEW
+        for (const name of ['keydown', 'keyup']) mxEvent.addListener(window, name, event => { // CHANGE
+            if (event.key === 'Alt' || event.key === 'AltGraph') { lastBedPathSnapPointerEvent = event; scheduleOverlayRefresh(); } // CHANGE: releasing Alt without moving the pointer must also release the bypass.
+        }); // CHANGE
+        mxEvent.addListener(window, 'blur', () => { lastBedPathSnapPointerEvent = null; hideOverlay(); }); // CHANGE: a lost key-up cannot leave future creation or resizing bypassed.
     } // NEW
 
     installBedPathSnapOverlay(); // NEW
@@ -5161,7 +5302,12 @@ Draw.loadPlugin(function (ui) {
                 log("[spacing] invalid " + JSON.stringify({ x, y }));
                 return false; // CHANGE
             }
-            const apply = () => { if (editingHold && !editingHold.active()) return false; ui.hideDialog(); onOk(x, y); return true; }; // NEW
+            const apply = () => { // CHANGE: failed spacing or rendering retains the original editor and its draft.
+                if (editingHold && !editingHold.active()) return false; // CHANGE
+                const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+                if (context?.apply && groupCell) context.apply({ cells: [groupCell], manualSources: [groupCell], includeAncestors: false, editor: editingHold, finalize: () => graph.refresh(groupCell) }, () => onOk(x, y)); else onOk(x, y); // CHANGE
+                editingHold?.complete?.(); ui.hideDialog(); return true; // CHANGE
+            }; // CHANGE
             return editingHold && window.Trellis?.sharing?.getInfo?.()?.managed ? editingHold.acquire().then(apply) : apply(); // NEW
         } // NEW
         const okBtn = tilerButton("OK", () => { Promise.resolve(submitSpacing()).catch(error => log(error.message)); }, "neutral", { title: "Apply this horizontal and vertical spacing to the planting." }); // CHANGE
@@ -6449,15 +6595,16 @@ Draw.loadPlugin(function (ui) {
         const activeGraphArg = input.graph || graph;
         const proposal = input.proposal || input;
         if (proposal.ok === false) throw new Error("Cannot create a planting that does not physically fit."); // CHANGE
-        const moduleCell = input.moduleCell || proposal.moduleCell || findGardenModuleAncestor(activeGraphArg, proposal.bedCell);
+        const bedCell = input.bedCell || proposal.bedCell; // CHANGE: callers may supply the live bed separately from a serializable geometry proposal.
+        const moduleCell = input.moduleCell || proposal.moduleCell || findGardenModuleAncestor(activeGraphArg, bedCell); // CHANGE
         if (!activeGraphArg || !moduleCell || !isGardenModule(moduleCell)) throw new Error("Planting creation requires a garden module.");
         const context = activeGraphArg.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
         if (context && context.current()?.kind !== 'generated-content') return context.run('generated-content', { // NEW
-          id: 'planting-create:' + (proposal.bedCell?.id || moduleCell.id), // NEW
+          id: 'planting-create:' + (bedCell?.id || moduleCell.id), // CHANGE
           title: 'Create planting', // NEW
-          cells: () => [proposal.bedCell || moduleCell], // NEW
+          cells: () => [bedCell || moduleCell], // CHANGE: a bed-targeted planting must not acquire every sibling planting in the garden.
           onBlocked: opts.onBlocked, // CHANGE: scheduler saves report blockers inline; other callers keep their deferred return and Retry.
-          retry: () => window.USL.scheduler.openBedScheduleDialog(ui, activeGraphArg.getModel().getCell(proposal.bedCell?.id || moduleCell.id)), // NEW
+          retry: () => window.USL.scheduler.openBedScheduleDialog(ui, activeGraphArg.getModel().getCell(bedCell?.id || moduleCell.id)), // CHANGE
           deferredValue: null // NEW
         }, () => createPlantingFromProposal(input, opts)); // NEW: retry opens a fresh proposal against current bed geometry instead of replaying a reviewed rectangle.
         const geometry = proposal.geometry || {};
@@ -7456,18 +7603,16 @@ Draw.loadPlugin(function (ui) {
         /** Preview adapter is installed per graph; global prototypes dispatch to the owning service. */
         function previewMove(handler) { // CHANGE
             const beds = (handler.cells || []).filter(isGardenBed); // CHANGE
-            if (!beds.length || handler.cloning || handler.suspended) { clearHandlerPreview(handler); return false; } // CHANGE
+            const structure = (handler.cells || []).length === 1 && handler.cells[0]?.getAttribute?.('garden_structure') === '1' && pathSnapFootprint(handler.cells[0]); // CHANGE
+            if ((!beds.length && !structure) || handler.cloning || handler.suspended) { clearHandlerPreview(handler); return false; } // CHANGE
             if (!handler.__trellisBedPreview) handler.__trellisBedPreview = createPreview(beds, (handler.cells || []).filter(cell => !isGardenBed(cell))); // CHANGE
-            const scale = graph.view.scale; // CHANGE
-            handler.__trellisBedPreview.update(snapshot => { // CHANGE
-                let dx = handler.roundLength((handler.currentDx || 0) / scale), dy = handler.roundLength((handler.currentDy || 0) / scale); // CHANGE
-                const bed = snapshot.unit.bed, module = isAxisAlignedPathSnapBed(bed) && findGardenModuleAncestor(graph, bed); // CHANGE
-                if (module && beds.length === 1 && (handler.cells || []).length === 1 && !isBedPathSnapAltBypassActive() && (!handler.target || graph.__trellisWorkspaceHandleDragActive)) { // CHANGE
-                    const rect = movedRect(getModelRect(bed), dx, dy), snap = evaluateBedPathSnap(module, bed, rect); // CHANGE
-                    if (snap) { dx += snap.dx || 0; dy += snap.dy || 0; } // CHANGE
-                } // CHANGE
-                return { dx, dy }; // CHANGE
-            }); // CHANGE
+            let dx = handler.roundLength((handler.currentDx || 0) / graph.view.scale), dy = handler.roundLength((handler.currentDy || 0) / graph.view.scale); // CHANGE
+            const context = resolveBedPathSnapMoveContext(handler.cells, lastBedPathSnapPointerEvent || {}, false, handler.target); // CHANGE
+            if (context && !isBedPathSnapAltBypassActive()) { // CHANGE
+                const snap = evaluateBedPathSnap(context.moduleCell, context.bedCell, movedRect(getModelRect(context.bedCell), dx, dy)); // CHANGE
+                if (snap) { dx += snap.dx; dy += snap.dy; } // CHANGE
+            } // CHANGE
+            handler.__trellisBedPreview.update(() => ({ dx, dy })); // CHANGE: structures and carried bed members use the same evaluated translation.
             return true; // CHANGE
         } // CHANGE
 
@@ -7507,6 +7652,13 @@ Draw.loadPlugin(function (ui) {
             mxVertexHandler.prototype.rotateVertex = function () { // CHANGE
                 const result = rotate.apply(this, arguments), service = this.graph && this.graph.__trellisBedTransforms; // CHANGE
                 if (service) service.previewRotation(this); // CHANGE
+                return result; // CHANGE
+            }; // CHANGE
+            const resizeVertex = mxVertexHandler.prototype.resizeVertex; // CHANGE
+            mxVertexHandler.prototype.resizeVertex = function () { // CHANGE
+                const result = resizeVertex.apply(this, arguments); // CHANGE
+                const service = this.graph?.__trellisPlantingGroup?.pathSnap; // CHANGE
+                if (service) service.previewResize(this); // CHANGE
                 return result; // CHANGE
             }; // CHANGE
             mxVertexHandler.prototype.reset = function () { // CHANGE
@@ -7684,12 +7836,14 @@ Draw.loadPlugin(function (ui) {
         graph.moveCells = function (cells, dx, dy, clone, target, evt, mapping) { // NEW
             const snapContext = resolveBedPathSnapMoveContext(cells, evt, clone, target); // CHANGE
             if (!snapContext) return oldMoveCells.call(this, cells, dx, dy, clone, target, evt, mapping); // CHANGE
+            dx = Number(dx) || 0; dy = Number(dy) || 0; // CHANGE: preserve native omitted-delta defaults before evaluating a proposal.
+            const evaluation = evaluateBedPathSnap(snapContext.moduleCell, snapContext.bedCell, movedRect(getModelRect(snapContext.bedCell), dx, dy)); // CHANGE
+            if (evaluation) { dx += evaluation.dx; dy += evaluation.dy; } // CHANGE: native containment and bed membership receive only the final position.
             const model = graph.getModel(); // NEW
             let res; // NEW
             model.beginUpdate(); // NEW
             try { // NEW
                 res = oldMoveCells.call(this, cells, dx, dy, clone, target, evt, mapping); // NEW
-                applyBedPathSnapEvaluationNoTxn(model, snapContext, { source: "bed-moved", event: evt }); // CHANGE
             } finally { // NEW
                 model.endUpdate(); // NEW
             } // NEW
@@ -8267,6 +8421,7 @@ Draw.loadPlugin(function (ui) {
             const hasTiler = groups.size > 0;
             const bedSnapshots = collectBedResizeSnapshots(cells);
             const hasResizedBeds = bedSnapshots.size > 0;
+            const hasPathSnap = canConsiderBedPathSnapForCells(cells, null, false, null); // CHANGE
 
             const snapshots = new Map(); // groupId -> { prev, spacingXpx, spacingYpx, iconDiamPx, bandPx, rotated, layoutSnapshot }
             for (const g of groups.values()) {
@@ -8279,9 +8434,16 @@ Draw.loadPlugin(function (ui) {
             }
 
             // During drag: do ONLY the geometry resize (lightweight)
-            if (duringResize || (!hasTiler && !hasResizedBeds)) {
+            if (duringResize || (!hasTiler && !hasResizedBeds && !hasPathSnap)) { // CHANGE: structure-only resizes also join the shared transaction.
                 return oldResizeCells.call(this, cells, bounds, hasTiler ? false : recurse);
             }
+
+            if (hasPathSnap && !isBedPathSnapAltBypassActive() && bounds?.[0]) { // CHANGE
+                const b = bounds[0], evaluation = evaluateBedPathSnap(findGardenModuleAncestor(graph, cells[0]), cells[0], { x: b.x, y: b.y, w: b.width, h: b.height }); // CHANGE
+                if (evaluation && (evaluation.dx || evaluation.dy)) { // CHANGE
+                    bounds = bounds.slice(); bounds[0] = new mxRectangle(b.x + evaluation.dx, b.y + evaluation.dy, b.width, b.height); // CHANGE
+                } // CHANGE
+            } // CHANGE
 
             // Mouse-up: make geometry resize + all follow-up edits ONE undoable change
             let res;
@@ -8370,11 +8532,6 @@ Draw.loadPlugin(function (ui) {
 
                     groupsNeedingRefresh.push(g);
                 }
-
-                if (!isBedPathSnapAltBypassActive() && canConsiderBedPathSnapForCells(cells, null, false, null)) { // NEW
-                    const snapEval = applyBedPathSnapNoTxn(model, cells[0], { source: "bed-resized" }); // NEW
-                    if (snapEval && snapEval.applied) groupsNeedingRefresh.push(cells[0]); // NEW
-                } // NEW
 
                 if (hasResizedBeds) {
                     const bedFitResult = refitGroupsForResizedBeds(bedSnapshots, { source: "bed-resized", inTransaction: true, txnId: bedResizeTxnId });
@@ -10067,8 +10224,8 @@ Draw.loadPlugin(function (ui) {
         function spacingNumberInput(value, enabled) { // CHANGE: migrated planting overlay.
             const input = document.createElement('input'); // CHANGE: migrated planting overlay.
             input.type = 'number'; // CHANGE: migrated planting overlay.
-            input.step = '1'; // CHANGE: native spacing-tab steppers move in whole-centimeter intervals while typed decimals remain valid.
-            input.value = value == null ? '' : String(Number(value)); // CHANGE: retain computed tangency precision instead of rounding generated layouts.
+            input.step = '1'; // CHANGE: whole-centimetre steppers; offsets still retain exact typed decimals.
+            input.value = value == null ? '' : String(Number(value)); // CHANGE: callers normalize active spacing while offset controls retain exact values.
             input.disabled = !enabled; // CHANGE: migrated planting overlay.
             input.style.width = '100%'; // CHANGE: fit all spacing fields inside the fixed overlay width.
             input.style.minWidth = '0'; // CHANGE: migrated planting overlay.
@@ -10078,6 +10235,16 @@ Draw.loadPlugin(function (ui) {
             input.style.textAlign = 'right'; // CHANGE: compact numeric columns stay readable.
             return input; // CHANGE: migrated planting overlay.
         } // CHANGE: migrated planting overlay.
+
+        const spacingIntegerValues = new WeakMap(); // CHANGE: last valid spacing belongs to each axis independently.
+
+        /** Correct spacing at edit boundaries, restoring the last valid value for unreadable input. */ // CHANGE:
+        function setSpacingIntegerValue(input, value) { // CHANGE:
+            const previous = input.value; // CHANGE:
+            const corrected = getLayoutTools().normalizeSpacingCm(value, spacingIntegerValues.get(input)); // CHANGE:
+            input.value = String(corrected); spacingIntegerValues.set(input, corrected); // CHANGE:
+            return input.value !== previous; // CHANGE:
+        } // CHANGE:
 
         const spacingOffsetValues = new WeakMap(); // CHANGE: exact offsets belong to controls, independently of their rounded display.
 
@@ -10155,6 +10322,7 @@ Draw.loadPlugin(function (ui) {
                         layoutMetadata: { rect: state.row.rect, modelRect: state.row.modelRect, rotationDeg: state.row.rotationDeg, vegDiameterCm: state.row.vegDiameterCm, clipBounds: state.row.clipBounds, resetDisabled: state.row.resetDisabled, generatedPattern: state.row.generatedPattern, strictFootprint: state.row.strictFootprint, layoutAlignment: state.row.layoutAlignment, layoutBaseOffsetXCm: state.row.layoutBaseOffsetXCm, layoutBaseOffsetYCm: state.row.layoutBaseOffsetYCm }, // CHANGE
                         spacingXCm: state.spacingX.value, // CHANGE: migrated planting overlay.
                         spacingYCm: state.spacingY.value, // CHANGE: migrated planting overlay.
+                        lastSpacingXCm: spacingIntegerValues.get(state.spacingX), lastSpacingYCm: spacingIntegerValues.get(state.spacingY), // CHANGE: remounting a raw draft must retain each axis's restore value.
                         allowedOverhangPct: state.overhang.value, overhangEdited: state.overhangEdited, // CHANGE
                         offsetXCm: readSpacingOffsetValue(state.offsetX), // CHANGE: view refreshes retain exact offset drafts.
                         offsetYCm: readSpacingOffsetValue(state.offsetY) // CHANGE
@@ -10184,8 +10352,8 @@ Draw.loadPlugin(function (ui) {
 
         function revertSpacingRowState(state) { // CHANGE: migrated planting overlay.
             const row = state.row.plantDefaultLayout || state.row; // CHANGE: row reset restores plant defaults when the scheduler exposes them.
-            state.spacingX.value = row.spacingXCm == null ? '' : String(Math.round(Number(row.spacingXCm) * 10) / 10); // CHANGE: migrated planting overlay.
-            state.spacingY.value = row.spacingYCm == null ? '' : String(Math.round(Number(row.spacingYCm) * 10) / 10); // CHANGE: migrated planting overlay.
+            setSpacingIntegerValue(state.spacingX, row.spacingXCm); // CHANGE: restored defaults obey the same integer rule as edits.
+            setSpacingIntegerValue(state.spacingY, row.spacingYCm); // CHANGE:
             setSpacingOffsetValue(state.offsetX, row.offsetXCm); // CHANGE: reset restores the exact layout and its rounded display together.
             setSpacingOffsetValue(state.offsetY, row.offsetYCm); // CHANGE
             state.overhang.value = String(savedCropOverhangDefaults.get(String(state.row.plantId)) ?? resolveAllowedOverhangPct(row.allowedOverhangPct)); state.overhangEdited = true; // CHANGE: restore the current committed crop default, even in an already-open editor.
@@ -10211,6 +10379,7 @@ Draw.loadPlugin(function (ui) {
             const wrap = document.createElement('div'); // CHANGE: migrated planting overlay.
             if (!options.live) wrap.dataset.trellisCollaborativeEditor = 'planting'; // NEW
             wrap.className = 'manual-link-spacing-editor'; // CHANGE: migrated planting overlay.
+            wrap.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
             wrap.style.display = 'flex'; // CHANGE: migrated planting overlay.
             wrap.style.flexDirection = 'column'; // CHANGE: migrated planting overlay.
             wrap.style.gap = '6px'; // CHANGE: migrated planting overlay.
@@ -10288,6 +10457,16 @@ Draw.loadPlugin(function (ui) {
 
                 const spacingX = spacingNumberInput(displayRow.spacingXCm, enabled); // CHANGE: migrated planting overlay.
                 const spacingY = spacingNumberInput(displayRow.spacingYCm, enabled); // CHANGE: migrated planting overlay.
+                if (enabled) { // CHANGE: inactive context keeps its saved spacing unchanged.
+                    [spacingX, spacingY].forEach((input, index) => { // CHANGE:
+                        input.min = '1'; // CHANGE:
+                        const previous = index ? storedDraft?.lastSpacingYCm ?? row.spacingYCm : storedDraft?.lastSpacingXCm ?? row.spacingXCm; // CHANGE:
+                        spacingIntegerValues.set(input, tools.normalizeSpacingCm(previous)); // CHANGE:
+                        const value = index ? displayRow.spacingYCm : displayRow.spacingXCm; // CHANGE:
+                        if (storedDraft) input.value = value == null ? '' : String(value); // CHANGE: preserve raw drafts, including blanks, instead of coercing them to zero on remount.
+                        else setSpacingIntegerValue(input, value); // CHANGE: fresh saved/default values normalize immediately.
+                    }); // CHANGE:
+                } // CHANGE:
                 const offsetX = spacingNumberInput(displayRow.offsetXCm, enabled); // CHANGE: migrated planting overlay.
                 const offsetY = spacingNumberInput(displayRow.offsetYCm, enabled); // CHANGE: migrated planting overlay.
                 const overhang = spacingNumberInput(displayRow.allowedOverhangPct == null ? 30 : displayRow.allowedOverhangPct, enabled); // CHANGE
@@ -10413,15 +10592,27 @@ Draw.loadPlugin(function (ui) {
                 options.onChange?.(draft, preview, !apply.disabled, { saveDefaults: saveDefaults.checked }); // CHANGE
             } // CHANGE: migrated planting overlay.
 
+            /** Commit only spacing text; corrected drafts must be previewed before they can be saved. */ // CHANGE:
+            function commitSpacing() { // CHANGE:
+                let changed = false; // CHANGE:
+                rowStates.filter(state => state.row.enabled !== false).forEach(state => { // CHANGE:
+                    [state.spacingX, state.spacingY].forEach(input => { if (setSpacingIntegerValue(input, input.value)) changed = true; }); // CHANGE:
+                }); // CHANGE:
+                if (changed) { refreshPatternSource(); refreshDraftState(); refreshPatterns(); } // CHANGE:
+                return changed; // CHANGE:
+            } // CHANGE:
+
             rowStates.forEach(state => { // CHANGE: migrated planting overlay.
                 [state.spacingX, state.spacingY, state.offsetX, state.offsetY, state.overhang].filter(Boolean).forEach(control => { // CHANGE
                     const edit = event => { // CHANGE
+                        if ((control === state.spacingX || control === state.spacingY) && control.value.trim() !== '' && Number.isInteger(Number(control.value)) && Number(control.value) > 0) spacingIntegerValues.set(control, Number(control.value)); // CHANGE: valid live edits become the restore value without interrupting typing.
                         if (control === state.overhang) synchronizeCropOverhang(state); // CHANGE
                         if (control === state.offsetX || control === state.offsetY) readSpacingOffsetValue(control, event.type === 'input'); // CHANGE: typing zero over a rounded zero is an edit; unchanged change events retain precision.
                         refreshPatternSource(); refreshDraftState(); refreshPatterns(); // CHANGE
                     }; // CHANGE
                     control.addEventListener('input', edit); control.addEventListener('change', edit); // CHANGE
                 }); // CHANGE: migrated planting overlay.
+                [state.spacingX, state.spacingY].forEach(control => control.addEventListener('blur', commitSpacing)); // CHANGE:
                 [state.offsetX, state.offsetY].forEach(control => control.addEventListener('blur', () => { // CHANGE
                     const exact = readSpacingOffsetValue(control); // CHANGE
                     if (exact.trim() !== '' && Number.isFinite(Number(exact))) setSpacingOffsetValue(control, exact); // CHANGE: format valid offsets only; incomplete browser input remains visible and invalid.
@@ -10467,7 +10658,7 @@ Draw.loadPlugin(function (ui) {
             function refreshPatterns() { // CHANGE
                 entry.pairTargetId = targetSelect.value; // CHANGE
                 patternButtons.forEach((button, index) => { // CHANGE
-                    try { if (pairRows().length !== 2) throw new Error('Choose a companion planting.'); tools.generateCompanionPairLayout(graph, pairRows(), index ? 'staggered' : 'aligned'); button.disabled = false; button.title = 'Preview ' + button.textContent.toLowerCase() + ' touching rows.'; } // CHANGE
+                    try { if (pairRows().length !== 2) throw new Error('Choose a companion planting.'); tools.generateCompanionPairLayout(graph, pairRows(), index ? 'staggered' : 'aligned'); button.disabled = false; button.title = 'Preview ' + button.textContent.toLowerCase() + ' rows with whole-centimetre spacing; rounding may change circle contact.'; } // CHANGE:
                     catch (error) { button.disabled = true; button.title = error.message; } // CHANGE
                 }); // CHANGE
             } // CHANGE
@@ -10478,8 +10669,8 @@ Draw.loadPlugin(function (ui) {
                     const generated = tools.generateCompanionPairLayout(graph, pairRows(), index ? 'staggered' : 'aligned'); // CHANGE
                     generated.forEach(row => { const state = rowStates.find(item => item.row.cellId === row.cellId); // CHANGE
                         state.row = Object.assign({}, state.row, { rect: row.rect, modelRect: row.modelRect, rotationDeg: row.rotationDeg, vegDiameterCm: row.vegDiameterCm, clipBounds: row.clipBounds, resetDisabled: true, generatedPattern: row.generatedPattern, strictFootprint: false }); // CHANGE
-                        state.spacingX.value = String(row.spacingXCm); state.spacingY.value = String(row.spacingYCm); // CHANGE
-                        setSpacingOffsetValue(state.offsetX, row.offsetXCm); setSpacingOffsetValue(state.offsetY, row.offsetYCm); // CHANGE: generated tangency offsets retain full precision.
+                        setSpacingIntegerValue(state.spacingX, row.spacingXCm); setSpacingIntegerValue(state.spacingY, row.spacingYCm); // CHANGE:
+                        setSpacingOffsetValue(state.offsetX, row.offsetXCm); setSpacingOffsetValue(state.offsetY, row.offsetYCm); // CHANGE: generated pattern offsets retain full precision.
                     }); // CHANGE
                     patternSource.textContent = button.textContent; refreshDraftState(); refreshPatterns(); // CHANGE
                 } catch (error) { status.textContent = error.message; } // CHANGE
@@ -10487,17 +10678,25 @@ Draw.loadPlugin(function (ui) {
             refreshPatterns(); // CHANGE
             apply.textContent = options.applyLabel || 'Apply'; // CHANGE
             async function applySpacing() { // CHANGE: native Apply and handoff share validation and the graph command.
+                commitSpacing(); // CHANGE: editor handoffs can submit without a browser blur event.
                 if (apply.disabled || options.live) return !rowStates.some(spacingRowChanged); // CHANGE
                 try { // CHANGE: migrated planting overlay.
                     if (entry.spacingHold) await entry.spacingHold.acquire(); // NEW
                     if (entry.spacingHold && (!wrap.isConnected || !entry.spacingHold.active())) return false; // CHANGE
+                    commitSpacing(); if (apply.disabled) return false; // CHANGE: edits made during hold acquisition must also have a valid corrected preview.
+                    const submitted = JSON.stringify([...wrap.querySelectorAll('input,select')].map(field => [field.value, field.checked])); // CHANGE
                     const allRows = spacingDraftFromRowStates(rowStates); // CHANGE
                     const changedRows = allRows.filter(row => row.enabled !== false && (options.proposed || spacingRowChanged(rowStates.find(state => state.row.cellId === row.cellId)))); // CHANGE
                     if (options.onApply) await options.onApply(allRows, { saveDefaults: saveDefaults.checked }); // CHANGE
                     else { // CHANGE
                         await tools.applySpacingDraft(graph, changedRows, { saveDefaults: false }); // CHANGE
-                        if (saveDefaults.checked) await tools.saveSpacingDefaultsForRows(pairRows().length === 2 ? pairRows() : changedRows, graph, model); // CHANGE
+                        if (saveDefaults.checked) { // CHANGE: default failures have their own retry and never repeat layout application.
+                            const rows = (pairRows().length === 2 ? pairRows() : changedRows).map(row => ({ ...row })); // CHANGE
+                            const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+                            if (context?.saveDefaults) void context.saveDefaults({ id: 'spacing-defaults:' + rows.map(row => row.cellId).sort().join(','), title: 'Spacing applied', notify: true, tasks: [{ name: 'spacing defaults', save: async guard => { guard(); await tools.saveSpacingDefaultsForRows(rows, graph, model); } }] }); else await tools.saveSpacingDefaultsForRows(rows, graph, model); // CHANGE
+                        } // CHANGE
                     } // CHANGE
+                    if (submitted !== JSON.stringify([...wrap.querySelectorAll('input,select')].map(field => [field.value, field.checked]))) { status.textContent = 'Earlier spacing applied. Newer edits remain in this editor.'; return true; } // CHANGE
                     clearStoredSpacingDrafts(entry); // CHANGE: migrated planting overlay.
                     clearSpacingPreview(); // CHANGE: migrated planting overlay.
                     entry.spacingHold?.complete?.(); // CHANGE: release completed row ownership after queued persistence.
@@ -10517,7 +10716,7 @@ Draw.loadPlugin(function (ui) {
                     rowStates.forEach(state => { // CHANGE
                         const layout = tools.setDefaultRowForSpacingRow(context.setDefault, state.row); // CHANGE
                         if (!layout || state.row.enabled === false) return; // CHANGE
-                        state.spacingX.value = String(layout.spacingXCm); state.spacingY.value = String(layout.spacingYCm); // CHANGE
+                        setSpacingIntegerValue(state.spacingX, layout.spacingXCm); setSpacingIntegerValue(state.spacingY, layout.spacingYCm); // CHANGE:
                         setSpacingOffsetValue(state.offsetX, layout.offsetXCm); setSpacingOffsetValue(state.offsetY, layout.offsetYCm); // CHANGE: saved defaults are exact even when their displays round to zero.
                     }); // CHANGE
                     patternSource.textContent = 'Saved layout'; refreshDraftState(); // CHANGE
@@ -10535,7 +10734,7 @@ Draw.loadPlugin(function (ui) {
                 }); // NEW
             } // NEW
             refreshDraftState(); // CHANGE: preserve and redraw valid spacing drafts across view refreshes.
-            return { setStatus: message => { status.textContent = message || ''; } }; // CHANGE: live fitting updates feedback without replacing inputs or focus.
+            return { commitSpacing, setStatus: message => { status.textContent = message || ''; } }; // CHANGE: Allocate also commits spacing before its Create guard.
         } // CHANGE: migrated planting overlay.
 
         function renderSpacingView(entry, body) { // CHANGE: migrated planting overlay.
@@ -10623,9 +10822,11 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE: migrated planting overlay.
 
         function createLaneHeader(entry, group, collapsed) { // CHANGE: migrated planting overlay.
+        // Lane headers retain their colored status stripe; only their neutral surface changes. // NEW: shared surface hierarchy.
             const header = document.createElement('div'); // CHANGE: migrated planting overlay.
             header.style.display = 'grid'; // CHANGE: migrated planting overlay.
             header.style.gridTemplateColumns = '21px 6px 1fr auto'; // CHANGE: migrated planting overlay.
+            header.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
             header.style.alignItems = 'center'; // CHANGE: migrated planting overlay.
             header.style.columnGap = '6px'; // CHANGE: migrated planting overlay.
             header.style.margin = '8px 0 3px'; // CHANGE: migrated planting overlay.
@@ -11280,6 +11481,7 @@ Draw.loadPlugin(function (ui) {
                 if (!entry.panel) { // CHANGE: migrated planting overlay.
                     entry.panel = document.createElement('div'); // CHANGE: migrated planting overlay.
                     entry.panel.className = 'manual-link-task-schedule-overlay manual-link-task-schedule-only'; // CHANGE: migrated planting overlay.
+                    entry.panel.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
                     applyPanelStyle(entry.panel); // CHANGE: migrated planting overlay.
                     panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
                     graph.__trellisOverlayVisibility?.mark(entry.panel); // NEW: informational overlays must not obstruct manipulation.
@@ -11316,6 +11518,7 @@ Draw.loadPlugin(function (ui) {
             if (!entry.panel) { // CHANGE: migrated planting overlay.
                 entry.panel = document.createElement('div'); // CHANGE: migrated planting overlay.
                 entry.panel.className = 'manual-link-task-schedule-overlay'; // CHANGE: migrated planting overlay.
+                entry.panel.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
                 applyPanelStyle(entry.panel); // CHANGE: migrated planting overlay.
                 panelHost.appendChild(entry.panel); // CHANGE: migrated planting overlay.
                 graph.__trellisOverlayVisibility?.mark(entry.panel); // NEW: informational overlays must not obstruct manipulation.
@@ -11620,9 +11823,10 @@ Draw.loadPlugin(function (ui) {
         }; // CHANGE
     } // CHANGE
 
-    /** Own transient estimates, paint hooks and badges without changing model cells or global prototypes. */ // NEW
+    /** Own transient estimates, personal outline preferences, paint hooks and badges without changing model cells. */ // CHANGE
     function createPlantGrowthController() { // NEW
         const entries = new Map(), outlines = new Map(), listeners = [], painted = new WeakMap(); // CHANGE: unchanged rendered glyphs retain their native paint and text caches.
+        const sessionOutlines = new WeakMap(); // NEW: unidentified diagrams cannot share preferences merely because their cell IDs match.
         const labels = { planned: 'Planned', seed: 'Seed', growing: 'Growing', harvest: 'Harvest window', complete: 'Complete', establishing: 'Establishing', established: 'Established', unavailable: 'Progress unavailable' }; // NEW
         const colors = { seed: '#fb923c', growing: '#fde047', harvest: '#86efac', establishing: '#fde047', established: '#86efac' }; // NEW
         let scheduled = false, disposed = false, revision = 0, rolloverTimer = null, circlePreview = null; // CHANGE
@@ -11635,6 +11839,36 @@ Draw.loadPlugin(function (ui) {
         function gardenFor(cell) { // NEW
             for (let current = cell; current; current = model.getParent(current)) if (getXmlAttr(current, 'garden_module', '') === '1') return current; // NEW
             return null; // NEW
+        } // NEW
+        /** Resolve a local preference without creating diagram metadata or changing the saved drawing. */ // NEW
+        function harvestPreferenceIdentity(garden) { // NEW
+            const users = window.Trellis?.users, user = users?.getCurrentUser?.(), actor = user?.id ? 'user:' + user.id : 'anonymous'; // NEW
+            const diagram = users?.getDiagramKey?.({ create: false }); // NEW
+            let root = garden; while (root && model.getParent(root)) root = model.getParent(root); // NEW
+            const page = (ui.pages || []).find(candidate => candidate.root === root) || (root === model.getRoot() ? ui.currentPage : null); // NEW
+            const pageId = page?.getId?.() || page?.id || page?.node?.getAttribute('id') || 'default-page'; // NEW
+            return { actor, key: diagram && garden?.id ? 'trellis.harvestSize.v1:' + JSON.stringify([actor, String(diagram), String(pageId), String(garden.id)]) : '' }; // NEW
+        } // NEW
+        function getShowHarvestSize(garden) { // NEW
+            if (!garden) return false; // NEW
+            const { actor, key } = harvestPreferenceIdentity(garden); // NEW
+            if (!key) return sessionOutlines.get(garden)?.get(actor) === true; // NEW
+            if (!outlines.has(key)) { // NEW
+                let enabled = false; try { enabled = JSON.parse(window.localStorage.getItem(key) || 'false') === true; } catch (_) { /* Optional or corrupt local storage uses the default. */ } // NEW
+                outlines.set(key, enabled); // NEW
+            } // NEW
+            return outlines.get(key) === true; // NEW
+        } // NEW
+        function setShowHarvestSize(garden, enabled) { // NEW
+            if (!garden) return; // NEW
+            const { actor, key } = harvestPreferenceIdentity(garden), value = !!enabled; // NEW
+            if (key) { // NEW
+                outlines.set(key, value); try { window.localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* Keep this session usable if persistence fails. */ } // NEW
+            } else { // NEW
+                if (!sessionOutlines.has(garden)) sessionOutlines.set(garden, new Map()); // NEW
+                sessionOutlines.get(garden).set(actor, value); // NEW
+            } // NEW
+            schedule(); // NEW
         } // NEW
         function estimate(cell) { // NEW
             const core = window.USL?.scheduler?.sharedCore, entry = entries.get(cell?.id); // NEW
@@ -11652,7 +11886,7 @@ Draw.loadPlugin(function (ui) {
         function showOutline(cell) { // NEW
             const frozen = circlePreview?.appearance(cell); if (frozen) return frozen.outline; // CHANGE
             const group = groupFor(cell), garden = group && gardenFor(group); // NEW
-            return !!group && outlines.get(garden) === true; // CHANGE: the garden checkbox is authoritative, including selected plantings.
+            return !!group && getShowHarvestSize(garden); // CHANGE: restore every garden's own preference even before it becomes active.
         } // NEW
         function diameterRatio(state) { // NEW
             const frozen = circlePreview?.appearance(state.cell); if (frozen) return frozen.ratio; // CHANGE
@@ -11771,8 +12005,14 @@ Draw.loadPlugin(function (ui) {
         [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE, mxEvent.UP, mxEvent.DOWN].forEach(name => listen(graph.view, name, schedule)); // NEW
         [mxEvent.REFRESH, mxEvent.PAN].forEach(name => listen(graph, name, schedule)); // NEW
         listen(graph, 'trellisClustersChanged', schedule); // NEW: remove badges when their rendering neighborhood leaves the canvas.
-        const events = ['resize', 'trellisPlantGrowthReady', 'usl:varietyEditorSaved', 'usl:growthStagesSaved', 'trellis:database-restored', 'trellisHistoryAfterRestore']; // NEW
+        listen(ui.editor, 'fileLoaded', schedule); // NEW: re-evaluate persisted identities when another diagram opens.
+        const events = ['resize', 'trellisPlantGrowthReady', 'trellisUsersSessionChanged', 'trellisUsersStoreChanged', 'usl:varietyEditorSaved', 'usl:growthStagesSaved', 'trellis:database-restored', 'trellisHistoryAfterRestore']; // CHANGE: repaint all gardens when personal identity changes.
         if (window.addEventListener) events.forEach(name => { window.addEventListener(name, invalidate); listeners.push(() => window.removeEventListener(name, invalidate)); }); // NEW
+        function reloadHarvestPreferences(event) { // NEW
+            if (event.key != null && !event.key.startsWith('trellis.harvestSize.v1:')) return; // NEW
+            if (event.key == null) outlines.clear(); else outlines.delete(event.key); schedule(); // NEW
+        } // NEW
+        if (window.addEventListener) { window.addEventListener('storage', reloadHarvestPreferences); listeners.push(() => window.removeEventListener('storage', reloadHarvestPreferences)); } // NEW
         if (graph.container) { graph.container.addEventListener('scroll', schedule); listeners.push(() => graph.container.removeEventListener('scroll', schedule)); } // NEW
         function armRollover() { // NEW
             if (!window.setTimeout) return; // NEW: lightweight non-browser graph hosts do not own browser timers.
@@ -11792,7 +12032,7 @@ Draw.loadPlugin(function (ui) {
         graph.destroy = function () { dispose(); return originalDestroy?.apply(this, arguments); }; // NEW
         circlePreview = createPlantCirclePreviewController(state => { const signature = painted.get(state); return { ratio: signature ? signature[1] : diameterRatio(state), outline: signature ? signature[2] : showOutline(state.cell) }; }, schedule); // CHANGE
         armRollover(); schedule(); // NEW
-        return { refresh, scheduleRefresh: schedule, invalidate, dispose, estimate, updateDetail, getShowHarvestSize: garden => outlines.get(garden) === true, setShowHarvestSize(garden, enabled) { outlines.set(garden, !!enabled); schedule(); } }; // CHANGE: preview cleanup uses the existing coalesced growth scheduler.
+        return { refresh, scheduleRefresh: schedule, invalidate, dispose, estimate, updateDetail, getShowHarvestSize, setShowHarvestSize }; // CHANGE: preserve the growth API while persisting outlines outside diagram data.
     } // NEW
 
     /** One controller owns selection, draft invalidation and presentation refreshes. */ // CHANGE
@@ -11889,7 +12129,16 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     graph.__trellisPlantingGroup = { preview: plantingPreview, overlay: createPlantingOverlayLifecycle(), spacingEditor: graph.__trellisPlantingSpacingEditor }; // CHANGE
-    graph.__trellisPlantingGroup.growth = createPlantGrowthController(); // NEW: share the existing owner while keeping all growth state transient.
+    graph.__trellisPlantingGroup.pathSnap = { // CHANGE: graph-local integration surface; applying joins the caller's transaction.
+        evaluate(cell, geometry) { // CHANGE
+            const rect = geometry ? { x: geometry.x, y: geometry.y, w: geometry.width, h: geometry.height } : getModelRect(cell); // CHANGE
+            return evaluateBedPathSnap(findGardenModuleAncestor(graph, cell), cell, rect); // CHANGE
+        }, // CHANGE
+        applyNoTxn: cell => applyBedPathSnapNoTxn(graph.getModel(), cell), // CHANGE
+        previewResize: previewPathSnapResize // CHANGE
+    }; // CHANGE
+    graph.__trellisPlantingGroup.growth = createPlantGrowthController(); // CHANGE: estimates stay transient; outline visibility is a personal local preference.
+    if (window.dispatchEvent && window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisPlantGrowthReady')); // NEW: dashboard controls may have loaded before this controller.
     graph.__trellisPlantingGroup.circleLimits = { read: readPlantCircleLimits, admission: plantCircleAdmission, canConfigure: canConfigurePlantCircleLimits, getDerivedChange: change => derivedCircleChanges.get(change) }; // NEW: permissions inspect exact changes from this controller.
     installPlantCircleBudgetLifecycle(); // NEW
     plantingPresentation = window.TrellisLocalView?.install(ui)?.registerPresentation('planting-folds', { restore: restorePlantingPresentation, prepareChange: preparePlantingPresentationChange }); // NEW

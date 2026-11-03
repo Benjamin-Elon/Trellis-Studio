@@ -4,7 +4,13 @@ Home also offers **Join a Garden Project**, opening the identity-backed invitati
 
 The completed desktop splash offers **Create or Open a Garden Project**, **Join a Garden Project**, and **Explore and Support Trellis**, alongside Change license and contact controls. The combined action opens Garden Projects with its normal list focus and existing creation controls; support opens the existing Patreon destination. Separate Create/Open actions remain the fallback when the desktop library bridge is unavailable. Completed licensing removes the close control and prevents Escape or backdrop dismissal; incomplete licensing retains its existing exit flow. It displays the identity session's username, independent of the name recorded on the license. <!-- CHANGE -->
 
-Returning Home automatically saves a modified document and closes all its pages in the current window before showing the splash. Untitled documents use the native save-location dialog; untouched blanks close without saving. Canceling or failing a save leaves the editor and recovery draft available. Busy saves, renames, and project retirement must finish before retrying Home. Other windows stay open; opening Garden Projects alone continues to preserve the editor. <!-- NEW -->
+Trellis opens one garden editor window per application profile. Launching Trellis again, activating it, or choosing Open Trellis OS from the tray restores and focuses that window. Native file opens and tray garden selections switch gardens in the existing editor; reopening the current garden preserves its model and unsaved work. Background syncing continues for all configured gardens independently of the open editor. <!-- CHANGE -->
+
+File → New / Ctrl+N opens Garden Projects with garden creation controls focused, reusing an already mounted library. Opening the library alone preserves the editor. Replacing a modified garden uses the existing Discard Changes / Cancel prompt; there is no automatic save when switching. Failed reads and canceled prompts preserve the current garden and recovery draft. Edits made while opening or verifying another garden invalidate earlier discard approval. <!-- NEW -->
+
+Opening requests received during startup, unfinished dialogs, saving, renaming, retirement, or another switch are rejected with a non-modal busy notice. Finish the current operation and open the garden again; requests are not queued. Only the opening request that creates the editor waits for its startup readiness. <!-- NEW -->
+
+Returning Home automatically saves a modified document and closes all its pages before showing the splash. Untitled documents use the native save-location dialog; untouched blanks close without saving. Canceling or failing a save leaves the editor and recovery draft available. Busy saves, renames, and project retirement must finish before retrying Home. <!-- CHANGE -->
 
 ## Projects and identity controls
 

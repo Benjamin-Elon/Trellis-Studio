@@ -95,6 +95,7 @@
             if (active) return; // CHANGE: a failed flush vetoes replacing the current dialog.
             const root = document.createElement('div');
             root.className = 'trellis-task-guide';
+            root.classList.add('trellis-surfaces'); root.dataset.trellisSurface = 'canvas'; root.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
             root.style.cssText = 'box-sizing:border-box;padding:16px;font:13px Arial,sans-serif;display:flex;flex-direction:column;gap:10px;max-height:80vh;overflow:hidden;overflow-wrap:anywhere;'; // CHANGE: long names wrap and the footer remains accessible.
             const heading = document.createElement('h2'); heading.textContent = 'Guide — ' + (attr(card, 'title') || 'Task'); heading.style.margin = '0'; root.appendChild(heading);
             const crop = document.createElement('div'); crop.textContent = [attr(card, 'plant_name'), attr(card, 'variety_name'), attr(card, 'scheduler_method_id') || attr(card, 'method')].filter(Boolean).join(' · '); root.appendChild(crop);
@@ -102,11 +103,13 @@
             const textarea = document.createElement('textarea'); textarea.rows = 10; textarea.setAttribute('aria-label', 'Task instructions'); textarea.style.cssText = 'box-sizing:border-box;width:100%;min-height:160px;resize:vertical;font:13px/1.5 Arial,sans-serif;'; label.appendChild(textarea);
             const status = document.createElement('div'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); root.appendChild(status);
             const provenanceNode = document.createElement('div'); root.appendChild(provenanceNode);
+            provenanceNode.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
             const contextNotice = document.createElement('div'); contextNotice.setAttribute('role', 'status'); root.appendChild(contextNotice);
             const references = document.createElement('div'); root.appendChild(references);
             const recipeNotice = document.createElement('div'); recipeNotice.setAttribute('role', 'status'); root.appendChild(recipeNotice); // CHANGE: disabled recipe actions have a visible explanation.
             const actions = document.createElement('div'); actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;'; root.appendChild(actions);
             const recipePanel = document.createElement('div'); recipePanel.style.display = 'none'; root.appendChild(recipePanel);
+            recipePanel.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
             let context = null, inherited = attr(card, 'task_instructions'), disposed = false, discardUnsaved = false, requestId = 0, editingStarted = false, writing = false;
             if (inherited == null) inherited = attr(card, 'notes') || '';
             let provenance = {};

@@ -17,9 +17,11 @@
             privateDrafts.set(storageKey, saved); // CHANGE
         } // CHANGE
         const container = document.createElement('div'); container.className = 'trellis-details-comments'; // CHANGE
+        container.classList.add('trellis-surfaces'); container.dataset.trellisSurface = 'canvas'; // NEW: comments share their host panel's light surface hierarchy.
         container.style.cssText = 'flex:1;min-height:0;overflow:auto;padding:6px;box-sizing:border-box;'; // CHANGE
         const list = document.createElement('div'), composer = document.createElement('div'), heading = document.createElement('div'); // CHANGE
         composer.style.cssText = 'border-top:1px solid #e2e8f0;margin-top:6px;padding-top:6px;'; // CHANGE
+        composer.dataset.trellisSurface = 'inset'; composer.style.borderTop = ''; // NEW: private drafts sit inside the comments canvas.
         const editor = document.createElement('div'); editor.className = 'trellis-object-details-editor trellis-comment-editor'; editor.tabIndex = 0; // CHANGE
         const alertLabel = document.createElement('label'), alertToggle = document.createElement('input'); alertToggle.type = 'checkbox'; alertToggle.dataset.commentAlert = 'true'; alertLabel.append(alertToggle, document.createTextNode('Mark as alert')); // CHANGE
         alertLabel.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:11px;margin-top:4px;'; // CHANGE
@@ -140,6 +142,7 @@
         } // CHANGE
         function renderComment(item, currentActor) { // CHANGE
             const article = document.createElement('article'); article.dataset.commentId = item.id; article.style.cssText = 'padding:6px 0;border-bottom:1px solid #e2e8f0;'; // CHANGE
+            article.dataset.trellisSurface = 'entry'; // NEW: posted comments remain compact, without extra elevation.
             const meta = document.createElement('div'); meta.style.cssText = 'font-size:10px;color:#64748b;'; // CHANGE
             meta.textContent = item.authorName + ' · ' + new Date(item.createdAt).toLocaleString() + (item.updatedAt !== item.createdAt ? ' · edited' : ''); // CHANGE
             if (item.isAlert) { const flag = document.createElement('strong'); flag.textContent = ' · Alert'; flag.style.color = '#b91c1c'; meta.appendChild(flag); } // CHANGE
@@ -162,6 +165,7 @@
         } // CHANGE
         function renderSection(label, records, open, currentActor) { // CHANGE
             const section = document.createElement('details'), summary = document.createElement('summary'); section.open = open; section.dataset.commentSection = label.toLowerCase(); // CHANGE
+            section.dataset.trellisSurface = 'section'; summary.dataset.trellisSurface = 'header'; // NEW: resolved and unresolved groups keep native disclosure behavior.
             summary.textContent = label + ' (' + records.length + ')'; summary.style.cursor = 'pointer'; section.appendChild(summary); // CHANGE
             section.addEventListener('toggle', () => { if (section.isConnected) { if (label === 'Resolved') resolvedExpanded = section.open; else unresolvedExpanded = section.open; } }); // CHANGE
             for (const item of records) section.appendChild(renderComment(item, currentActor)); // CHANGE

@@ -397,7 +397,8 @@ function allocationSchedulerFixture({ varietyTemplate = null, plantTemplate = nu
     const moduleCell = { id: 'module', getAttribute: () => null };
     const bed = { id: 'bed', parent: moduleCell, getAttribute: key => key === 'garden_bed' ? '1' : null, getGeometry: () => ({ x: 0, y: 0, width: 200, height: 100 }) };
     let graphWrites = 0, dialog, onClose;
-    const model = { getParent: cell => cell?.parent || null, getRoot: () => ({ children: [] }), getCell: id => neighbors.find(cell => cell.id === id) || null, // CHANGE
+    const rootCell = { children: [] }; // CHANGE: native graph identity is stable across read-only preparation.
+    const model = { getParent: cell => cell?.parent || null, getRoot: () => rootCell, getCell: id => neighbors.find(cell => cell.id === id) || null, // CHANGE
         getChildCount: cell => cell?.children?.length || 0, getChildAt: (cell, index) => cell.children[index], beginUpdate() { graphWrites++; }, endUpdate() {}, execute() { graphWrites++; } };
     const graph = { getModel: () => model, getSelectionCell: () => bed, __trellisBedSuccessionNavigator: { getSelectedClusterOccupancy: () => ({ items: [] }) } };
     const ui = { editor: { graph }, showDialog(node, width, height, modal, closable, close) { dialog = node; onClose = close; api.__testWindow.document.body.appendChild(node); }, hideDialog() { dialog?.remove(); onClose?.(); } };
@@ -989,7 +990,7 @@ test('scheduler requires inherited city instead of silently falling back to firs
 
 test('derived save creates sibling after validation and rolls it back on save failure', () => {
     assert.match(schedulerSource, /const scheduleResult = computeScheduleResult\(inputs\);[\s\S]*if \(derivedContext\.operation === 'create'\) \{[\s\S]*createdDerivedCell = createSibling\(graph, relationshipSourceCell/);
-    assert.match(schedulerSource, /let targetCell = cell;[\s\S]*targetCell = createdDerivedCell;/);
+    assert.match(schedulerSource, /bedTargetCreation = \{ createTargetCell: \(\) => \{ createdDerivedCell = createSibling/); // CHANGE: deferred creation belongs to the common transaction.
     assert.match(schedulerSource, /const targetLayoutPatch = Object\.assign\(\{\}, derivedRelationshipPatch, layoutGraphApplication\.targetPatch \|\| \{\}\);/);
     assert.match(schedulerSource, /await applyScheduleToGraph\(ui, targetCell, inputs,[\s\S]*targetAttributePatch: targetLayoutPatch[\s\S]*preserveTargetGeometry: !!derivedContext/);
     assert.match(schedulerSource, /catch \(saveError\) \{[\s\S]*if \(createdDerivedCell\) removeDerivedSiblingIfPresent\(ui\?\.editor\?\.graph, createdDerivedCell\);[\s\S]*throw saveError/);
@@ -1463,12 +1464,12 @@ test('scheduler dialog removes Layout tab while exposing diagram spacing tools',
     assert.doesNotMatch(schedulerSource, /tabsHeader\.appendChild\(layoutTabBtn\)/);
     assert.match(schedulerSource, /const layoutTools = \{[\s\S]*buildSpacingLayoutRows[\s\S]*validateSpacingDraft[\s\S]*buildSpacingPreviewModel[\s\S]*applySpacingDraft/); // CHANGE: diagram overlay uses a narrow scheduler layout service.
     assert.match(schedulerSource, /layoutOffsetForDerivedCreation\(\)/);
-    assert.match(schedulerSource, /writeCellAttribute\(targetCell, 'companion_relation_id', '',/); // CHANGE: legacy relation metadata is cleared instead of refreshed.
+    assert.match(schedulerSource, /targetLayoutPatch\.companion_relation_id = ''/); // CHANGE: cleanup is a canvas effect, independent of default success.
     assert.match(schedulerSource, /targetGeometryRect: layoutGraphApplication\.targetRect/);
     assert.match(schedulerSource, /extraAttributePatches: \(layoutGraphApplication\.extraAttributePatches/);
     assert.match(schedulerSource, /CompanionSetLayoutDefaultModel\.save/);
     assert.match(schedulerSource, /applySetDefault/);
-    assert.match(schedulerSource, /applyScheduleCompanionSetDefaults/);
+    assert.match(schedulerSource, /prepareScheduleCompanionDefaults/); // CHANGE: definitions are loaded before synchronous layout finalization.
     assert.doesNotMatch(schedulerSource, /mxUtils\.button\('Apply layout'/);
     assert.doesNotMatch(schedulerSource, /Save changed defaults/);
     assert.doesNotMatch(schedulerSource, /geometryRect: rowRect/);

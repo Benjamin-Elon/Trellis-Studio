@@ -13,6 +13,7 @@ app.setPath('appData', path.join(profile, 'app-data')); app.setPath('documents',
 app.setPath('userData', path.join(profile, 'user-data')); app.setPath('sessionData', path.join(profile, 'session-' + process.pid)); // NEW
 app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu'); // NEW
 const windows = [], initializedWindows = new Set(), readinessCleanups = new Set(); let quitStarted = false, quitTimer; // CHANGE
+app.on('second-instance', () => { setImmediate(() => process.stdout.write('LIFECYCLE_REUSED: ' + windows.filter(win => !win.isDestroyed()).length + '\n')); }); // NEW: acknowledge the owner processing a relaunch without depending on a delay.
 dialog.showErrorBox = (title, message) => { console.error('LIFECYCLE_ERROR:', title, message); }; // NEW
 dialog.showMessageBoxSync = (_window, options) => options.title === 'Confirm' ? 1 : 0; // NEW: only isolated sample documents are discarded.
 process.on('uncaughtException', error => { console.error('LIFECYCLE_UNCAUGHT:', error.stack); app.exit(1); }); // NEW
@@ -33,6 +34,7 @@ function watchWindowReadiness(win) { // CHANGE
         if (win.isDestroyed() || !loaded || !appReady) return; // CHANGE
         initializedWindows.add(contentsId); cleanup(); process.stdout.write('LIFECYCLE_READY: ' + contentsId + '\n'); // CHANGE: machine-readable IDs must not acquire FORCE_COLOR numeric formatting.
         if (mode === 'draft-recovery') { verifyDraftRecovery(win).then(quit).catch(error => { console.error('LIFECYCLE_ERROR:', error.stack); quit(); }); } // NEW: exercise recovery with real files and the production renderer.
+        else if (mode === 'single-window') { verifySingleWindow(win).then(quit).catch(error => { console.error('LIFECYCLE_ERROR:', error.stack); quit(); }); } // NEW
         else if (mode !== 'hold' && !quitTimer) quitTimer = setTimeout(quit, mode === 'timeout' ? 30 : 0); // CHANGE: schedule Close/Quit only after the production close handshake is installed.
     }; // CHANGE
     const receive = event => { if (!win.isDestroyed() && event.sender.id === contentsId && event.senderFrame === contents.mainFrame) { appReady = true; finish(); } }; // CHANGE
@@ -57,6 +59,35 @@ async function verifyDraftRecovery(win) { // NEW
     if (!result.visible || result.data !== retained || fs.readFileSync(draftPath, 'utf8') !== retained) throw new Error('Retained draft recovery prompt was not preserved.'); // NEW
     await win.webContents.executeJavaScript('new Promise(resolve => Draw.loadPlugin(ui => { ui.hideDialog(); resolve(); }))'); // NEW
     console.log('LIFECYCLE_DRAFT_RECOVERY: offered'); // NEW
+} // NEW
+/** Native opening, legacy New IPC, and actual renderer decisions all reuse the production editor. */ // NEW
+async function verifySingleWindow(win) { // NEW
+    const assert = require('node:assert/strict'), first = path.join(profile, 'documents', 'First.drawio'), next = path.join(profile, 'documents', 'Next.drawio'); // NEW
+    for (const [filename, id] of [[first, 'first'], [next, 'next']]) fs.writeFileSync(filename, '<mxfile><diagram id="' + id + '"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>'); // NEW
+    const run = code => win.webContents.executeJavaScript(code); // NEW
+    async function until(code) { // NEW
+        const deadline = Date.now() + 10000; while (Date.now() < deadline) { if (await run(code)) return; await new Promise(resolve => setTimeout(resolve, 25)); } throw new Error('Single-window check timed out: ' + code + '\n' + await run('JSON.stringify({ dialog: singleUi.dialog?.container?.textContent?.slice(0,1200), spinner: singleUi.spinner?.active, errors: singleErrors, prompts: window.singlePromptDetails, action: singleUi.actions.get("new").funct.toString().slice(0,600), busy: document.querySelector(".trellis-editor-open-notice")?.textContent })')); // NEW
+    } // NEW
+    await run('new Promise(resolve => Draw.loadPlugin(ui => { window.singleUi = ui; window.singlePrompts = 0; window.singleErrors = []; ui.handleError = error => singleErrors.push(error.message); resolve(); }))'); // NEW
+    await until('!singleUi.__trellisCheckingDrafts && !!singleUi.dialog?.container?.querySelector(".trellis-splash-root")'); await run('singleUi.hideDialog()'); // NEW: draft discovery owns startup until its real Home transition has finished.
+    assert.equal(await run('TrellisGardenHome.openPath(singleUi, ' + JSON.stringify(first) + ')'), true); // NEW
+    app.emit('second-instance', {}, [], profile, { args: [] }); app.emit('activate'); // NEW
+    assert.equal(windows.length, 1); assert.equal(await run('singleUi.getCurrentFile().fileObject.path'), first); // NEW
+    await run('singleUi.getCurrentFile().isAutosave = () => false; singleUi.getCurrentFile().setModified(true); window.singlePromptDetails = []; singleUi.confirm = (text, cancel) => { singlePrompts++; singlePromptDetails.push({ text, stack: new Error().stack }); cancel(); }; singleUi.actions.get("new").funct()'); // NEW: keep the deliberately dirty sample stable while testing discard decisions.
+    await until('!!singleUi.__trellisGardenHome.projectsRoot?.isConnected'); assert.deepEqual(await run('singlePromptDetails'), []); assert.equal(windows.length, 1); // NEW
+    await run('singleUi.hideDialog(); electron.sendMessage("newfile", { width: 1600 })'); await until('!!singleUi.__trellisGardenHome.projectsRoot?.isConnected'); // NEW
+    assert.equal(windows.length, 1); await run('singleUi.hideDialog()'); // NEW
+    app.emit('open-file', { preventDefault() {} }, first); // NEW
+    app.emit('open-file', { preventDefault() {} }, next); await until('singlePrompts === 1 && !singleUi.__trellisGardenOpening'); // NEW
+    assert.equal(await run('singleUi.getCurrentFile().fileObject.path'), first); // NEW
+    await run('void (singleUi.confirm = (_text, _cancel, discard) => { singlePrompts++; discard(); })'); // NEW: native script evaluation must not try to clone a function result.
+    app.emit('open-file', { preventDefault() {} }, next); await until('singleUi.getCurrentFile().fileObject.path === ' + JSON.stringify(next) + ' && !singleUi.__trellisGardenOpening'); // NEW
+    assert.equal(await run('singlePrompts'), 2); assert.equal(windows.length, 1); // NEW
+    await run('singleUi.getCurrentFile().savingFile = true'); app.emit('open-file', { preventDefault() {} }, first); await until('!!document.querySelector(".trellis-editor-open-notice")'); // NEW
+    await run('singleUi.getCurrentFile().savingFile = false'); assert.equal(await run('singleUi.getCurrentFile().fileObject.path'), next); // NEW
+    app.emit('open-file', { preventDefault() {} }, path.join(profile, 'documents', 'Missing.drawio')); await until('singleErrors.length === 1'); // NEW
+    assert.equal(await run('singleUi.getCurrentFile().fileObject.path'), next); assert.equal(windows.length, 1); // NEW
+    await run('singleUi.getCurrentFile().setModified(false)'); console.log('LIFECYCLE_SINGLE_WINDOW: passed'); // NEW
 } // NEW
 app.on('browser-window-created', (_event, win) => { // CHANGE
     windows.push(win); win.hide(); win.webContents.setBackgroundThrottling(false); // CHANGE: hidden test windows must finish startup without background scheduling delays.

@@ -5846,9 +5846,11 @@ Draw.loadPlugin(function (ui) {
         if (!visibleCompletedRows.length) return null; // CHANGE
         const section = document.createElement("div"); // CHANGE
         section.className = "trellis-irrigation-bom-completed-section"; // CHANGE
+        section.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
         if (visibleCompletedRows.length) {
             const completedTitle = document.createElement("h3");
             completedTitle.textContent = "Completed Parts";
+            completedTitle.dataset.trellisSurface = 'header'; // NEW: main section heading.
             completedTitle.style.cssText = "font-size:13px;margin:12px 0 6px;color:#1f2937;";
             section.appendChild(completedTitle); // CHANGE
             section.appendChild(renderCompletedBomTable(moduleCell, visibleCompletedRows)); // CHANGE
@@ -6308,6 +6310,7 @@ Draw.loadPlugin(function (ui) {
         const size = catalogManagerDialogSize(state); // NEW
         if (container) { // NEW
             container.className = "trellis-irrigation-catalog-manager" + (state && state.compactView ? " compact" : ""); // NEW
+            container.classList.add('trellis-surfaces'); container.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
             container.style.cssText = "width:" + size.contentWidth + "px;max-width:96vw;max-height:88vh;overflow:auto;font:12px Arial,sans-serif;padding:12px;box-sizing:border-box;"; // CHANGE
             if (state && state.compactView) container.style.setProperty("--trellis-irrigation-catalog-list-max-height", CATALOG_MANAGER_COMPACT_LIST_MAX_HEIGHT + "px"); // NEW
         } // NEW
@@ -6434,6 +6437,7 @@ Draw.loadPlugin(function (ui) {
 
         const tableWrap = document.createElement("div");
         tableWrap.className = "trellis-irrigation-catalog-table-wrap"; // NEW
+        tableWrap.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
         const table = document.createElement("table");
         table.className = "trellis-irrigation-catalog-table"; // CHANGE
         table.innerHTML = state.compactView ? "<thead><tr><th>Name</th><th>Stock</th><th>Price</th></tr></thead>" : "<thead><tr><th>Name</th><th>Broad</th><th>Category</th><th>Size</th><th>Connections</th><th>Stock</th><th>Price</th><th>Status</th></tr></thead>"; // CHANGE
@@ -6864,6 +6868,7 @@ Draw.loadPlugin(function (ui) {
     function buildCatalogPartForm(part, moduleCell, onCategoryChange) {
         const node = document.createElement("div");
         node.className = "trellis-irrigation-catalog-form";
+        node.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
         node.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px;";
         const fields = {};
         fields.moduleCell = moduleCell;
@@ -8017,7 +8022,9 @@ Draw.loadPlugin(function (ui) {
         if (!inlineAction && hudEligible) {
             const hud = document.createElement("div");
             hud.className = "trellis-irrigation-mode-hud";
-            hud.style.cssText = "position:absolute;z-index:1005;width:max-content;max-width:min(460px,calc(100vw - 32px));min-width:0;box-sizing:border-box;overflow:hidden;background:#fff;border:1px solid #777;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,.22);padding:8px;font:12px Arial,sans-serif;color:#222;display:flex;flex-direction:column;gap:6px;pointer-events:auto;";
+            hud.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
+            hud.style.cssText = "position:absolute;z-index:1005;width:max-content;max-width:min(460px,calc(100vw - 32px));min-width:0;box-sizing:border-box;overflow:hidden;background:var(--trellis-surface-canvas,#fff);border:1px solid #777;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,.22);padding:8px;font:12px Arial,sans-serif;color:#222;display:flex;flex-direction:column;gap:6px;pointer-events:auto;"; // CHANGE: shared roles own surface colors and borders.
+            hud.dataset.trellisSurface = 'canvas'; // NEW: expose the neutral background between section surfaces.
             shieldHudEvents(hud);
             if (analysisView) renderAnalysisHud(session, hud, analysisView); // NEW
             else if (connectionContext) renderConnectionHud(session, hud, connectionContext);
@@ -11397,9 +11404,11 @@ Draw.loadPlugin(function (ui) {
     function hudSection(titleText) {
         const section = document.createElement("div");
         section.className = "trellis-irrigation-hud-section";
-        section.style.cssText = "display:grid;gap:6px;border-top:1px solid #ddd;padding-top:6px;margin-top:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
+        section.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
+        section.style.cssText = "display:grid;gap:6px;padding-top:6px;margin-top:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE: shared roles own surface colors and borders.
         const title = document.createElement("div");
         title.className = "trellis-irrigation-hud-section-title";
+        title.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
         title.style.cssText = "font-weight:700;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;";
         title.textContent = titleText;
         section.appendChild(title);
@@ -13109,6 +13118,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function showDialog(node, w, h) {
+        node.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         if (ui.showDialog) {
             ui.showDialog(node, w, h, true, true);
             elevateTrellisDialog();

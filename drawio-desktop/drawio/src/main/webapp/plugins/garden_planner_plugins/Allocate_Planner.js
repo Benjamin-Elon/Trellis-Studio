@@ -1039,8 +1039,8 @@ Draw.loadPlugin(function (ui) {
         const context = await resolveAllocationContext(state, crop, bed);
         if (!context || !context.ok) return cachedBedResult(state, cacheKey, Object.assign({ bed, crop }, context || {}), bed, crop);
         const layout = allocationSpacingOverrides(state, crop); // CHANGE
-        const invalidLayout = Object.entries(layout).some(([key, value]) => value === '' || value == null || !Number.isFinite(Number(value)) || key.startsWith('spacing') && Number(value) <= 0); // CHANGE
-        if (invalidLayout) return cachedBedResult(state, cacheKey, { ok: false, status: 'unavailable', reason: 'Enter positive spacing and finite offsets.', allocationContext: context, plantResolution: context.plantResolution, lifecycle: context.lifecycle }, bed, crop); // CHANGE: navigation cannot silently replace invalid input with defaults.
+        const invalidLayout = Object.entries(layout).some(([key, value]) => value === '' || value == null || !Number.isFinite(Number(value)) || key.startsWith('spacing') && (!Number.isInteger(Number(value)) || Number(value) <= 0)); // CHANGE: navigation must not accept a decimal draft before blur correction.
+        if (invalidLayout) return cachedBedResult(state, cacheKey, { ok: false, status: 'unavailable', reason: 'Enter positive integer spacing and finite offsets.', allocationContext: context, plantResolution: context.plantResolution, lifecycle: context.lifecycle }, bed, crop); // CHANGE: navigation cannot silently replace invalid input with defaults.
         const need = recommendFullPlantCount(state, crop, context);
         if (!need.ok) return cachedBedResult(state, cacheKey, { ok: false, status: need.status, reason: need.reason, bed, crop, lifecycle: context.lifecycle, plantResolution: context.plantResolution, recommendation: need.recommendation }, bed, crop);
         const result = computeFittedBedResult(state, crop, bed, context, need.fullPlantCount, crop.fitAxisOverride); // CHANGE
@@ -1586,8 +1586,9 @@ Draw.loadPlugin(function (ui) {
 
         function createHud(state) {
             const panel = document.createElement("div");
-            panel.className = "trellis-allocate-hud";
-            panel.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:" + HUD_Z + ";width:340px;max-width:calc(100vw - 36px);max-height:calc(100vh - 36px);overflow-y:auto;box-sizing:border-box;background:#fff;border:1px solid #c7c7cc;border-radius:6px;box-shadow:0 8px 28px rgba(0,0,0,.18);font:12px Arial,sans-serif;color:#111827;padding:10px;display:flex;flex-direction:column;gap:8px;"; // CHANGE: additional readiness guidance cannot put Create outside a short viewport.
+            panel.className = "trellis-allocate-hud trellis-surfaces"; // CHANGE: shared canvas and inset styling.
+            panel.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:" + HUD_Z + ";width:340px;max-width:calc(100vw - 36px);max-height:calc(100vh - 36px);overflow-y:auto;box-sizing:border-box;background:var(--trellis-surface-canvas,#fff);border:1px solid #c7c7cc;border-radius:6px;box-shadow:0 8px 28px rgba(0,0,0,.18);font:12px Arial,sans-serif;color:#111827;padding:10px;display:flex;flex-direction:column;gap:8px;"; // CHANGE: additional readiness guidance cannot put Create outside a short viewport.
+            panel.dataset.trellisSurface = 'canvas'; // NEW: expose the neutral background between section surfaces.
             panel.innerHTML = "";
             (document.body || graph.container).appendChild(panel);
             return panel;
@@ -1690,6 +1691,7 @@ Draw.loadPlugin(function (ui) {
             panel.innerHTML = "";
             const header = document.createElement("div");
             header.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;";
+            header.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
             const title = document.createElement("div");
             title.style.cssText = "font-weight:700;white-space:pre-line;";
             const closeBtn = createButton("Close", "close"); // CHANGE: dismiss Allocate with the shared red outline.
@@ -1750,6 +1752,7 @@ Draw.loadPlugin(function (ui) {
 
             const draftBox = document.createElement("div");
             draftBox.style.cssText = "border:1px solid #e5e7eb;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:5px;background:#f9fafb;";
+            draftBox.dataset.trellisSurface = 'inset'; draftBox.style.background = ''; draftBox.style.borderColor = ''; // NEW: shared surface hierarchy.
             panel.appendChild(draftBox);
 
             const defaultsBox = document.createElement('div'); // CHANGE
@@ -2154,7 +2157,7 @@ Draw.loadPlugin(function (ui) {
             state.draftVersion++; state.overlayVersion++; state.spacingSaveDefaults = !!options.saveDefaults; // CHANGE
             state.spacingOverrides = { spacingXCm: proposed.spacingXCm, spacingYCm: proposed.spacingYCm, offsetXCm: proposed.offsetXCm, offsetYCm: proposed.offsetYCm, allowedOverhangPct: proposed.allowedOverhangPct, overhangEdited: proposed.overhangEdited }; // CHANGE
             if (state.companionTargetId) state.companionRows = rows; // CHANGE
-            state.spacingValid = valid; state.spacingPending = valid; state.noticeMessage = valid ? 'Updating spacing preview...' : preview?.warning || 'Enter positive spacing and finite offsets.'; // CHANGE
+            state.spacingValid = valid; state.spacingPending = valid; state.noticeMessage = valid ? 'Updating spacing preview...' : preview?.warning || 'Enter positive integer spacing and finite offsets.'; // CHANGE:
             clearGhost(state); renderHud(state); renderTimelinePreview(state); // CHANGE
             if (!valid) return; // CHANGE
             const isCurrent = () => !state.closed && state.spacingRevision === token && state.spacingBody === body && state.refreshJobId === refresh; // CHANGE
@@ -2381,6 +2384,7 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE
 
         async function beginCreate(state) {
+            state.spacingEditorHandle?.commitSpacing?.(); // CHANGE: non-pointer submissions must correct spacing and await a fresh preview too.
             if (!state.draft || state.reviewing || state.spacingPending || state.spacingValid === false) return; // CHANGE
             const draft = state.draft, reviewRevision = state.historyRevision; // CHANGE: normal post-commit refresh still releases this review; history cancellation does not.
             state.reviewing = true; // CHANGE
@@ -2631,6 +2635,7 @@ Draw.loadPlugin(function (ui) {
                     group = tiler.createPlantingFromProposal({
                         graph,
                         moduleCell: state.moduleCell,
+                        bedCell: draft.bed, // CHANGE: retain the selected bed when the geometry proposal contains no live cell references.
                         proposal: draft.geometry,
                         attributes: attrs,
                         insideUpdate: true
@@ -2657,22 +2662,20 @@ Draw.loadPlugin(function (ui) {
             };
             const previousCropId = String(draft.crop && draft.crop.cropId || draft.crop && draft.crop.id || state.selectedCropId || "");
             try { // CHANGE
-                if (history && typeof history.run === "function" && !(history.isRestoring && history.isRestoring())) {
-                    history.run({ category: "Garden scheduling", action: "allocateCreate", origin: "Allocate_Planner", title: "Create allocated planting", affectedCellIds: [cellId(state.moduleCell)], tags: ["Allocate", "Tasks"] }, operation);
-                } else { operation(); }
-                await window.USL.scheduler.layoutTools?.saveOverhangDefaultsForRows?.(draft.companionLayout?.rows || draft.spacingDefaultRows || [], graph); // CHANGE: only successful creations save explicit percentage edits.
-                if (draft.companionLayout?.saveDefaults) { // CHANGE
-                    try { await window.USL.scheduler.layoutTools.saveSpacingDefaultsForRows(draft.companionLayout.rows, graph, model); } // CHANGE
-                    catch (error) { state.noticeMessage = 'Companion created, but its reusable layout could not be saved: ' + error.message; } // CHANGE
+                const metadata = { category: "Garden scheduling", action: "allocateCreate", origin: "Allocate_Planner", title: "Create allocated planting", affectedCellIds: [cellId(state.moduleCell)], tags: ["Allocate", "Tasks"] }; // CHANGE
+                if (editContext?.apply) editContext.apply({ metadata, cells: [draft.bed, ...(tasks.automationCellsForSource?.(cellId(draft.bed)) || []), ...(draft.companionLayout?.rows || []).map(row => row.cell).filter(Boolean)], manualSources: [draft.bed], includeAncestors: false, finalize: () => graph.refresh(createdGroup) }, operation); else if (history?.run) history.run(metadata, operation); else operation(); // CHANGE
+                const defaultTasks = [{ name: 'crop overhang defaults', save: async guard => { guard(); await window.USL.scheduler.layoutTools?.saveOverhangDefaultsForRows?.(draft.companionLayout?.rows || draft.spacingDefaultRows || [], graph); } }]; // CHANGE
+                if (draft.companionLayout?.saveDefaults || !draft.companionLayout && draft.spacingSaveDefaults) { // CHANGE
+                    const rows = (draft.companionLayout?.rows || draft.spacingDefaultRows || []).map(row => ({ ...row })); // CHANGE
+                    defaultTasks.push({ name: 'spacing defaults', save: async guard => { guard(); await window.USL.scheduler.layoutTools.saveSpacingDefaultsForRows(rows, graph, model); } }); // CHANGE
                 } // CHANGE
-                if (!draft.companionLayout && draft.spacingSaveDefaults) { // CHANGE: ordinary spacing defaults are written only after successful creation.
-                    try { await window.USL.scheduler.layoutTools.saveSpacingDefaultsForRows(draft.spacingDefaultRows, graph, model); } // CHANGE
-                    catch (error) { state.noticeMessage = 'Planting created, but its spacing default could not be saved: ' + error.message; } // CHANGE
+                if (draft.commitAllocationDefaults) { // CHANGE
+                    let retry; defaultTasks.push({ name: 'scheduler defaults', save: async guard => { guard(); try { if (retry) { const result = await retry(); if (result.status === 'failed') throw Object.assign(new Error(result.failures.map(item => item.reason).join('; ')), { retryDefaults: result.retry }); } else await draft.commitAllocationDefaults(createdGroup); } catch (error) { retry = error.retryDefaults; throw error; } } }); // CHANGE
                 } // CHANGE
-                if (draft.commitAllocationDefaults) { // CHANGE: deferred defaults run only after successful planting/task creation.
-                    try { await draft.commitAllocationDefaults(createdGroup); } // CHANGE: spacing defaults capture the successfully created planting and its active set.
-                    catch (error) { state.noticeMessage = "Planting created, but reusable defaults could not be saved: " + (error.message || error); }
-                }
+                if (editContext?.saveDefaults) { // CHANGE
+                    const result = await editContext.saveDefaults({ id: 'allocation-defaults:' + createdGroup.id, title: 'Planting created', notify: true, tasks: defaultTasks }); // CHANGE
+                    if (result.status === 'failed') state.noticeMessage = 'Planting created. Reusable defaults failed; use Retry defaults to save them without creating another planting.'; // CHANGE
+                } else { for (const task of defaultTasks) try { await task.save(() => {}); } catch (error) { state.noticeMessage = 'Planting created, but reusable defaults could not be saved: ' + error.message; } } // CHANGE
             } finally { state.committing = false; } // CHANGE
             cancelSowWeekScheduleJob(state, "cancelled");
             state.draft = null;

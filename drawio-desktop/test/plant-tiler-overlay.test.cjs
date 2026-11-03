@@ -193,32 +193,32 @@ test('Garden Settings exposes fixed path width presets with explicit enablement'
 
 test('Garden bed path snapping evaluates direct neighbors and closest path presets', () => { // NEW
     const source = readPlantTilerSource(); // NEW
-    const snapSource = sourceSlice(source, 'function normalizeRotationDeg', 'function bedAtGraphPoint'); // NEW
+    const snapSource = sourceSlice(source, 'function isAxisAlignedPathSnapBed', 'function bedAtGraphPoint'); // CHANGE
 
     assert.match(source, /const PATH_WIDTH_TOLERANCE_RATIO = 0\.25;/); // NEW
     assert.match(source, /const PATH_WIDTH_TOLERANCE_CAP_CM = 30;/); // NEW
-    assert.match(snapSource, /function isAxisAlignedPathSnapBed\(cell\)[\s\S]*normalizeRotationDeg\(getTilerRotationDeg\(cell\)\) <= ROTATION_EPS_DEG/); // NEW
+    assert.match(snapSource, /function isAxisAlignedPathSnapBed\(cell\)[\s\S]*pathSnapFootprint\(cell\)\?\.axisAligned/); // CHANGE
     assert.match(snapSource, /function directBedNeighborsByDirection\(moduleCell, bedCell, activeRect\)[\s\S]*aboveGap > 0 && rectsOverlapOnX\(activeRect, rect\)[\s\S]*belowGap > 0 && rectsOverlapOnX\(activeRect, rect\)[\s\S]*leftGap > 0 && rectsOverlapOnY\(activeRect, rect\)[\s\S]*rightGap > 0 && rectsOverlapOnY\(activeRect, rect\)/); // NEW
     assert.match(snapSource, /function bestPathPresetForGap\(gapUnits, presets\)[\s\S]*diff > pathSnapToleranceUnits\(target\)[\s\S]*diff < best\.diff/); // NEW
     assert.match(snapSource, /function pathSnapToleranceUnits\(widthUnits\)[\s\S]*PATH_WIDTH_TOLERANCE_RATIO[\s\S]*PATH_WIDTH_TOLERANCE_CAP_CM/); // NEW
     assert.match(snapSource, /function buildPathSnapCandidate\(moduleCell, activeRect, neighbor, presets\)[\s\S]*if \(!rectInsideModuleBounds\(moduleCell, finalRect\)\) return candidate;/); // NEW
     assert.match(snapSource, /const xSnap = chooseAxisPathSnap\(candidates, "x"\);[\s\S]*const ySnap = chooseAxisPathSnap\(candidates, "y"\);/); // NEW
-    assert.match(snapSource, /candidate\.activeSnap = candidate === xSnap \|\| candidate === ySnap;/); // NEW
+    assert.match(snapSource, /candidate\.activeSnap = !!chosen\?\.selected\.includes\(candidate\);/); // CHANGE
 }); // NEW
 
 test('Garden bed path snapping hooks creation, move, resize, Alt bypass, and overlay badges', () => { // NEW
     const source = readPlantTilerSource(); // NEW
-    const snapSource = sourceSlice(source, 'function normalizeRotationDeg', 'function bedAtGraphPoint'); // NEW
+    const snapSource = sourceSlice(source, 'function isAxisAlignedPathSnapBed', 'function bedAtGraphPoint'); // CHANGE
     const resizeSource = sourceSlice(source, 'const resizeAndRetile = function (cells, bounds, recurse)', '// ---- Public API export'); // CHANGE: resize orchestration delegates to the complete placement pipeline.
 
     assert.match(source, /applyBedPathSnapNoTxn\(model, bed, \{ source: "bed-created" \}\);/); // NEW
-    assert.match(source, /function installBedPathSnapMoveWrapper\(\)[\s\S]*const oldMoveCells = graph\.moveCells;[\s\S]*const snapContext = resolveBedPathSnapMoveContext\(cells, evt, clone, target\);[\s\S]*if \(!snapContext\) return oldMoveCells\.call\(this, cells, dx, dy, clone, target, evt, mapping\);[\s\S]*applyBedPathSnapEvaluationNoTxn\(model, snapContext, \{ source: "bed-moved", event: evt \}\);/); // CHANGE
-    assert.match(resizeSource, /!isBedPathSnapAltBypassActive\(\) && canConsiderBedPathSnapForCells\(cells, null, false, null\)[\s\S]*applyBedPathSnapNoTxn\(model, cells\[0\], \{ source: "bed-resized" \}\)/); // NEW
-    assert.match(snapSource, /function canConsiderBedPathSnapForCells\(cells, evt, clone, target\)[\s\S]*snapCells\.length === 1 && isAxisAlignedPathSnapBed\(snapCells\[0\]\)/); // CHANGE
-    assert.match(snapSource, /function resolveBedPathSnapMoveContext\(cells, evt, clone, target\)[\s\S]*if \(clone \|\| !evt \|\| \(mxEvent\.isAltDown && mxEvent\.isAltDown\(evt\)\)\) return null;[\s\S]*const workspaceHandleDrag = graph\.__trellisWorkspaceHandleDragActive === true;[\s\S]*if \(target && !workspaceHandleDrag\) return null;[\s\S]*const moduleCell = isAxisAlignedPathSnapBed\(bedCell\) \? findGardenModuleAncestor\(graph, bedCell\) : null;[\s\S]*moduleCell, source: "single-bed"[\s\S]*if \(!workspaceHandleDrag \|\| moveCells\.length < 2\) return null;[\s\S]*moduleCell, source: "workspace-handle"/); // CHANGE
+    assert.match(source, /function installBedPathSnapMoveWrapper\(\)[\s\S]*resolveBedPathSnapMoveContext\(cells, evt, clone, target\)[\s\S]*evaluateBedPathSnap\(snapContext\.moduleCell, snapContext\.bedCell, movedRect\(getModelRect\(snapContext\.bedCell\), dx, dy\)\)/); // CHANGE
+    assert.match(resizeSource, /hasPathSnap && !isBedPathSnapAltBypassActive\(\) && bounds\?\.\[0\][\s\S]*evaluateBedPathSnap\(findGardenModuleAncestor\(graph, cells\[0\]\)/); // CHANGE
+    assert.match(snapSource, /function canConsiderBedPathSnapForCells\(cells, evt, clone, target\)[\s\S]*snapCells\.length === 1 && !!pathSnapFootprint\(snapCells\[0\]\)/); // CHANGE
+    assert.match(snapSource, /function resolveBedPathSnapMoveContext\(cells, evt, clone, target\)[\s\S]*if \(clone \|\| !evt \|\| \(mxEvent\.isAltDown && mxEvent\.isAltDown\(evt\)\)\) return null;[\s\S]*const workspaceHandleDrag = graph\.__trellisWorkspaceHandleDragActive === true;[\s\S]*if \(target && !workspaceHandleDrag\) return null;[\s\S]*const moduleCell = pathSnapFootprint\(bedCell\) \? findGardenModuleAncestor\(graph, bedCell\) : null;[\s\S]*moduleCell, source: "single-bed"[\s\S]*if \(!workspaceHandleDrag \|\| moveCells\.length < 2\) return null;[\s\S]*moduleCell, source: "workspace-handle"/); // CHANGE
     assert.match(snapSource, /function applyBedPathSnapDeltaNoTxn\(model, cells, dx, dy\)[\s\S]*for \(const cell of \(cells \|\| \[\]\)\)[\s\S]*model\.setGeometry\(cell, next\);[\s\S]*changed\.push\(cell\);/); // CHANGE
     assert.match(snapSource, /function applyBedPathSnapEvaluationNoTxn\(model, context, opts\)[\s\S]*const moduleCell = context && context\.moduleCell;[\s\S]*evaluateBedPathSnap\(moduleCell, bedCell, rect\)[\s\S]*applyBedPathSnapDeltaNoTxn\(model, \(context && context\.moveCells\) \|\| \[bedCell\], evaluation\.dx, evaluation\.dy\)/); // CHANGE
-    assert.match(snapSource, /function applyBedPathSnapNoTxn\(model, bedCell, opts\)[\s\S]*const moduleCell = bedCell && isAxisAlignedPathSnapBed\(bedCell\) \? findGardenModuleAncestor\(graph, bedCell\) : null;[\s\S]*return applyBedPathSnapEvaluationNoTxn\(model, \{ bedCell, moduleCell, moveCells: \(opts && opts\.moveCells\) \|\| \[bedCell\] \}, opts\);/); // CHANGE
+    assert.match(snapSource, /function applyBedPathSnapNoTxn\(model, bedCell, opts\)[\s\S]*const moduleCell = bedCell && pathSnapFootprint\(bedCell\) \? findGardenModuleAncestor\(graph, bedCell\) : null;[\s\S]*return applyBedPathSnapEvaluationNoTxn\(model, \{ bedCell, moduleCell, moveCells: \(opts && opts\.moveCells\) \|\| \[bedCell\] \}, opts\);/); // CHANGE
     assert.match(snapSource, /function installBedPathSnapOverlay\(\)[\s\S]*PATH_SNAP_OVERLAY_CLASS[\s\S]*PATH_SNAP_BAND_CLASS[\s\S]*PATH_SNAP_BADGE_CLASS/); // NEW
     assert.match(snapSource, /candidate\.activeSnap \? "rgba\(239,246,255,0\.98\)" : "rgba\(255,255,255,0\.96\)"/); // NEW
     assert.match(snapSource, /badge\.textContent = formatPathDistanceLabelFromUnits\(candidate\.gap, units\) \+ snapLabel;/); // NEW
@@ -231,11 +231,11 @@ test('Garden bed path snap move policy distinguishes pointer drags, handle drags
     const resolverSource = sourceFunction(source, 'resolveBedPathSnapMoveContext'); // CHANGE
     const deltaSource = sourceFunction(source, 'applyBedPathSnapDeltaNoTxn'); // CHANGE
     const evaluationSource = sourceFunction(source, 'applyBedPathSnapEvaluationNoTxn'); // CHANGE
-    const graph = { __trellisWorkspaceHandleDragActive: false }; // CHANGE
+    const graph = { __trellisWorkspaceHandleDragActive: false, isEnabled: () => true, isCellLocked: () => false }; // CHANGE
     const mxEvent = { isAltDown: evt => !!(evt && evt.altKey) }; // CHANGE
-    const isAxisAlignedPathSnapBed = cell => !!(cell && cell.axisBed); // CHANGE
+    const pathSnapFootprint = cell => !!(cell && cell.axisBed); // CHANGE
     const findGardenModuleAncestor = (_graph, cell) => cell && cell.module || null; // CHANGE
-    const resolveBedPathSnapMoveContext = new Function('graph', 'mxEvent', 'isAxisAlignedPathSnapBed', 'findGardenModuleAncestor', `${resolverSource}; return resolveBedPathSnapMoveContext;`)(graph, mxEvent, isAxisAlignedPathSnapBed, findGardenModuleAncestor); // CHANGE
+    const resolveBedPathSnapMoveContext = new Function('graph', 'mxEvent', 'pathSnapFootprint', 'findGardenModuleAncestor', 'isGardenBed', `${resolverSource}; return resolveBedPathSnapMoveContext;`)(graph, mxEvent, pathSnapFootprint, findGardenModuleAncestor, pathSnapFootprint); // CHANGE
     const applyBedPathSnapDeltaNoTxn = new Function('mxGeometry', `${deltaSource}; return applyBedPathSnapDeltaNoTxn;`)(function mxGeometry(x, y, width, height) { Object.assign(this, { x, y, width, height }); }); // CHANGE
     const evaluationCalls = []; // CHANGE
     const getModelRect = cell => cell && cell.geometry || null; // CHANGE
@@ -243,7 +243,7 @@ test('Garden bed path snap move policy distinguishes pointer drags, handle drags
         evaluationCalls.push({ moduleId: moduleCell && moduleCell.id, bedId: bedCell && bedCell.id, x: rect && rect.x }); // CHANGE
         return moduleCell && moduleCell.id === 'module' ? { dx: 3, dy: -4 } : null; // CHANGE
     }; // CHANGE
-    const applyBedPathSnapEvaluationNoTxn = new Function('mxEvent', 'isAxisAlignedPathSnapBed', 'getModelRect', 'evaluateBedPathSnap', 'applyBedPathSnapDeltaNoTxn', `${evaluationSource}; return applyBedPathSnapEvaluationNoTxn;`)(mxEvent, isAxisAlignedPathSnapBed, getModelRect, evaluateBedPathSnap, applyBedPathSnapDeltaNoTxn); // CHANGE
+    const applyBedPathSnapEvaluationNoTxn = new Function('graph', 'window', 'mxEvent', 'pathSnapFootprint', 'getModelRect', 'evaluateBedPathSnap', 'applyBedPathSnapDeltaNoTxn', `${evaluationSource}; return applyBedPathSnapEvaluationNoTxn;`)(graph, {}, mxEvent, pathSnapFootprint, getModelRect, evaluateBedPathSnap, applyBedPathSnapDeltaNoTxn); // CHANGE
     const module = { id: 'module' }; // CHANGE
     const bed = { id: 'bed', axisBed: true, module, geometry: { x: 10, y: 20, width: 100, height: 40, clone() { return Object.assign({}, this); } } }; // CHANGE
     const group = { id: 'group', geometry: { x: 14, y: 24, width: 20, height: 20, clone() { return Object.assign({}, this); } } }; // CHANGE

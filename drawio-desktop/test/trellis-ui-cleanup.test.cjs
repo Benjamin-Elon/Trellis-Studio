@@ -145,7 +145,7 @@ function makeSubmenuEntry(label, childLabels = []) {
     };
 }
 
-function createHarness() {
+function createHarness(withCanvasControls = false) { // CHANGE
     const dom = new JSDOM("<!doctype html><html><body></body></html>");
     const document = dom.window.document;
     const calls = [];
@@ -162,6 +162,10 @@ function createHarness() {
         if (label === "Zoom") node.className = "geZoomInput";
         mainToolbar.appendChild(node);
     });
+    if (withCanvasControls) { // NEW
+        const controls = document.createElement('span'); controls.dataset.trellisCanvasViewControls = '1'; controls.textContent = 'Canvas view options'; // NEW
+        mainToolbar.querySelector('.geZoomInput').after(controls); // NEW
+    } // NEW
 
     const toolbarEnd = document.createElement("div");
     toolbarEnd.className = "geToolbarEnd";
@@ -283,6 +287,12 @@ test("startup collapses header row, sidebars, and prunes toolbar controls", () =
     assert.ok(mainToolbar.children[1].classList.contains("geZoomInput"));
     assert.deepEqual(Array.from(toolbarEnd.children).map(node => node.textContent), ["Format", "Compact"]);
 });
+
+test('startup cleanup preserves the canvas controls beside zoom', () => { // NEW
+    const { mainToolbar } = createHarness(true); // NEW
+    assert.deepEqual(Array.from(mainToolbar.children).map(node => node.textContent), ['View', 'Zoom', 'Canvas view options']); // NEW
+    assert.equal(mainToolbar.querySelector('.geZoomInput').nextSibling.dataset.trellisCanvasViewControls, '1'); // NEW
+}); // NEW
 
 test("shared Trellis button helper applies semantic variants and preserves button state", () => {
     const { document } = createHarness();

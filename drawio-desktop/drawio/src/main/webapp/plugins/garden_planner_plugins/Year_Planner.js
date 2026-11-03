@@ -4407,7 +4407,7 @@ Draw.loadPlugin(function (ui) {
                 kind: 'year-planner', title: 'Year plan', isDirty: () => !!state.baselineSnapshot && YearPlanDashboard.isDirty(state, plan), targets: [JSON.stringify([plannerPage, cellStableId(moduleCell)])], // NEW
                 element: () => card, freeze() { session.holdLost = true; if (refreshTimer) clearTimeout(refreshTimer); pendingRefreshOptions = null; }, // CHANGE: retain the original editor while existing save guards reject all submissions.
                 capture: () => ({ pageId: plannerPage, objectId: cellStableId(moduleCell), year: currentYear, plan: PlanSchema.serializeForPersistence(plan), fields: [...card.querySelectorAll('[data-year-plan-field]')].map(field => ({ field: field.dataset.yearPlanField, value: field.value, checked: field.checked })) }), // CHANGE
-                save: navigation => saveCurrent(false, navigation?.closeAfter === false), // CHANGE: navigation validates; explicit handoff retains existing draft semantics.
+                save: navigation => withPlannerHold(() => commitCurrent(navigation?.explicit === true && navigation.closeAfter === true, navigation?.explicit === true ? navigation.requireCommit === true : navigation?.closeAfter === false, navigation?.quickstartCapture)), // CHANGE: explicit saves retain their original guidance context across hold acquisition.
                 restore: draft => { // CHANGE
                     if (!draft) return; const restored = PlanSchema.normalizeForRuntime(JSON.parse(JSON.stringify(draft.plan)), currentYear); Object.keys(plan).forEach(key => delete plan[key]); Object.assign(plan, restored);
                     YearPlanDashboard.markBaseline(state, plan, null); refreshDerived(); renderSelectedEditor(); renderFooter();
@@ -4452,8 +4452,29 @@ Draw.loadPlugin(function (ui) {
             wrap.style.cssText = "position:fixed;inset:0;z-index:" + TRELLIS_DIALOG_Z + ";background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;";
             const card = document.createElement("div");
             card.dataset.trellisCollaborativeEditor = 'year-planner'; // CHANGE
-            card.className = "yp-modal-card";
+            card.className = "yp-modal-card trellis-surfaces"; // CHANGE: this light dialog owns its surface palette.
             card.dataset.quickstartSurface = 'plan'; card.dataset.quickstartGarden = String(moduleCell.id); card.dataset.quickstartYear = String(currentYear); // NEW
+            card.dataset.quickstartSession = Env.uid('quickstart-plan'); // NEW: distinguish replacement planners for the same garden/year.
+            /** View-only Quickstart access: reveal existing controls without changing the selected crop or any plan values. */ // NEW
+            card.__trellisQuickstartView = { // NEW
+                getDemandLines: route => route === 'sales' ? plan.demands || [] : plan.selfSufficiency?.lines || [], // NEW
+                showFields(group, route, lineId) { // NEW
+                    if (!SessionController.isActive(session)) return; // NEW
+                    if (['year-crops', 'growing', 'harvest'].includes(group)) { // NEW
+                        state.cropPlanExpanded = true; // NEW
+                        if (group !== 'year-crops') { state.activeTab = 'basics'; renderSelectedEditor(); } // NEW
+                        renderCropPlan(true); // NEW
+                    } else if (['demand-setup', 'demand-values'].includes(group)) { // NEW
+                        if (route === 'sales') { // NEW
+                            state.demandExpanded = true; // NEW
+                            const line = (plan.demands || []).find(item => String(item.id) === String(lineId)); // NEW
+                            const channelId = line?.channelId || plan.demandChannels?.[0]?.id; // NEW
+                            state.collapsedDemandChannelIds.delete(String(channelId || '')); state.collapsedDemandLineIds.delete(String(lineId || '')); renderDemandStrip(true); // NEW
+                        } else { state.selfSufficiencyExpanded = true; state.collapsedSelfSufficiencyLineIds.delete(String(lineId || '')); renderSelfSufficiencyStrip(true); } // NEW
+                    } else if (group === 'review') { state.planCheckExpanded = true; renderPlanCheck(); } // NEW
+                    saveCollapsePreferences(); // NEW
+                } // NEW
+            }; // NEW
             card.style.cssText = "position:relative;width:1180px;max-width:97vw;height:92vh;background:#fff;border:1px solid #777;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden;font:12px Arial,sans-serif;"; // CHANGE: card-local overlay positioning needs a containing block.
             const style = document.createElement("style");
             style.textContent = `
@@ -4683,6 +4704,7 @@ Draw.loadPlugin(function (ui) {
             headerControls.className = "yp-row";
             const summaryBox = document.createElement("div");
             summaryBox.className = "yp-plan-hero";
+            summaryBox.dataset.trellisSurface = "section"; // NEW: shared surface hierarchy.
             const heroMain = document.createElement("div");
             const attentionBox = document.createElement("div");
             attentionBox.className = "yp-attention-strip";
@@ -4690,6 +4712,7 @@ Draw.loadPlugin(function (ui) {
             summaryBox.appendChild(attentionBox);
             const body = document.createElement("div");
             body.className = "yp-scroll-body";
+            body.dataset.trellisSurface = "canvas"; // NEW
             body.style.cssText = "padding:12px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;flex:1 1 0;min-height:0;display:block;";
             body.tabIndex = 0;
             const addRow = document.createElement("div");
@@ -4698,10 +4721,12 @@ Draw.loadPlugin(function (ui) {
             const dashboardGrid = document.createElement("div");
             dashboardGrid.className = "yp-dashboard-grid";
             const sidebar = document.createElement("div");
-            sidebar.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;overflow:hidden;";
+            sidebar.style.cssText = "overflow:hidden;"; // CHANGE: shared roles own surface colors and borders.
+            sidebar.dataset.trellisSurface = "inset"; // NEW
             const sidebarHead = document.createElement("div");
             sidebarHead.style.cssText = "padding:10px;font-weight:700;border-bottom:1px solid #eee;";
             sidebarHead.textContent = "Crops";
+            sidebarHead.dataset.trellisSurface = "header"; // NEW
             const cropSearchWrap = document.createElement("div"); // CHANGE
             cropSearchWrap.className = "yp-crop-search-wrap"; // CHANGE
             const cropSearchInput = document.createElement("input"); // CHANGE
@@ -4718,7 +4743,8 @@ Draw.loadPlugin(function (ui) {
             const mainColumn = document.createElement("div");
             mainColumn.style.cssText = "display:flex;flex-direction:column;gap:12px;min-width:0;";
             const editorBox = document.createElement("div");
-            editorBox.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;min-height:280px;";
+            editorBox.style.cssText = "min-height:280px;"; // CHANGE: shared roles own surface colors and borders.
+            editorBox.dataset.trellisSurface = "inset"; // NEW
             const csaBox = document.createElement("div");
             const demandBox = document.createElement("div");
             const selfSufficiencyBox = document.createElement("div");
@@ -4773,7 +4799,7 @@ Draw.loadPlugin(function (ui) {
             chartTooltip.className = "yp-plan-chart-tooltip";
             chartTooltip.style.cssText = "display:none;position:absolute;z-index:2;pointer-events:none;min-width:170px;padding:7px 8px;border:1px solid #777;border-radius:5px;background:rgba(255,255,255,.97);box-shadow:0 3px 12px rgba(0,0,0,.18);line-height:1.45;";
             const totalsBox = document.createElement("div");
-            totalsBox.setAttribute('data-trellis-quickstart', 'plan-review'); // NEW
+            planCheckBox.setAttribute('data-trellis-quickstart', 'plan-review'); // CHANGE: review guidance targets the actual Plan Check section.
             selfSufficiencyBox.setAttribute('data-trellis-quickstart', 'plan-demand-self'); demandBox.setAttribute('data-trellis-quickstart', 'plan-demand-sales'); // NEW
             const diagnosticsBox = document.createElement("div");
             diagnosticsBox.style.marginTop = "10px";
@@ -5007,6 +5033,7 @@ Draw.loadPlugin(function (ui) {
                 dialog.setAttribute("aria-modal", "true");
                 const head = document.createElement("div");
                 head.className = "yp-picker-head";
+                head.dataset.trellisSurface = "header"; // NEW: shared picker heading.
                 const title = document.createElement("div");
                 title.className = "yp-picker-title";
                 title.textContent = settings.title || "Select items";
@@ -5242,10 +5269,12 @@ Draw.loadPlugin(function (ui) {
                 let shell = box.__yearPlanStrip;
                 if (!shell) {
                     box.className = "yp-strip-box";
+                    box.dataset.trellisSurface = "section"; // NEW
                     const header = document.createElement("div");
                     header.tabIndex = 0;
                     header.setAttribute("role", "button");
                     header.className = "yp-strip-header";
+                    header.dataset.trellisSurface = "header"; // NEW
                     const title = document.createElement("span");
                     title.className = "yp-strip-title";
                     const controls = document.createElement("span"); // CHANGE
@@ -5256,6 +5285,7 @@ Draw.loadPlugin(function (ui) {
                     toggle.className = "yp-strip-toggle";
                     const details = document.createElement("div");
                     details.className = "yp-strip-details";
+                    details.dataset.trellisSurface = "canvas"; // NEW: expose nesting without increasing indentation.
                     details.id = settings.detailsId || Env.uid("yp-strip-details");
                     header.setAttribute("aria-controls", details.id);
                     header.appendChild(title);
@@ -6558,6 +6588,7 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
 
             function openPackageTransferPicker(config) {
+                const quickstartCapture = graph.__trellisQuickstart?.capture(); // NEW: picker cancellation never emits a success.
                 const settings = config || {};
                 const kind = String(settings.kind || "");
                 const destinationId = String(settings.destinationId || "");
@@ -6579,6 +6610,7 @@ Draw.loadPlugin(function (ui) {
                 dialog.setAttribute("aria-modal", "true");
                 const head = document.createElement("div");
                 head.className = "yp-picker-head";
+                head.dataset.trellisSurface = "header"; // NEW: shared picker heading.
                 const title = document.createElement("div");
                 title.className = "yp-picker-title";
                 title.textContent = settings.title || "Manage packages";
@@ -6596,8 +6628,10 @@ Draw.loadPlugin(function (ui) {
                 panes.className = "yp-package-transfer-panes";
                 const availablePane = document.createElement("section");
                 availablePane.className = "yp-package-transfer-pane";
+                availablePane.dataset.trellisSurface = "inset"; // NEW: shared surface hierarchy.
                 const includedPane = document.createElement("section");
                 includedPane.className = "yp-package-transfer-pane";
+                includedPane.dataset.trellisSurface = "inset"; // NEW: shared surface hierarchy.
                 bodyEl.appendChild(search);
                 bodyEl.appendChild(summary);
                 bodyEl.appendChild(panes);
@@ -6705,6 +6739,7 @@ Draw.loadPlugin(function (ui) {
                     host.innerHTML = "";
                     const headEl = document.createElement("div");
                     headEl.className = "yp-package-transfer-pane-head";
+                    headEl.dataset.trellisSurface = "header"; // NEW: shared picker heading.
                     const titleEl = document.createElement("div");
                     titleEl.textContent = `${label} ${countText}`;
                     const all = mkBtn(actionLabel, side === "available" ? "add" : "danger");
@@ -6864,6 +6899,7 @@ Draw.loadPlugin(function (ui) {
                     const removed = Array.from(removedRowIds).map(id => originalByRowId.get(id)).filter(Boolean).map(entry => entry.row);
                     closePicker(true);
                     applyPackageTransferChanges(kind, destinationId, added, removed, settings);
+                    if (added.length && ['self', 'demand'].includes(kind) && quickstartCapture?.demandRoute === (kind === 'self' ? 'self' : 'sales')) graph.__trellisQuickstart?.recordPlanAction?.('demand-added', quickstartCapture); // NEW
                 });
                 cancel.addEventListener("click", () => closePicker(false));
                 close.addEventListener("click", () => closePicker(false));
@@ -7247,6 +7283,7 @@ Draw.loadPlugin(function (ui) {
                 Object.keys(plan).forEach(key => delete plan[key]);
                 Object.assign(plan, PlanSchema.normalizeForRuntime(nextPlan, nextYear));
                 currentYear = Number(nextYear);
+                card.dataset.quickstartYear = String(currentYear); // NEW: guidance must detect a changed planner year.
                 loadedExistingForCurrentYear = !!loadedExisting;
                 loadedDraftForCurrentYear = !!loadedDraft; // CHANGE
                 plan.year = currentYear;
@@ -8406,6 +8443,7 @@ Draw.loadPlugin(function (ui) {
                 const lineId = String(line.id || "");
                 const shell = document.createElement("section");
                 shell.className = "yp-demand-line-shell";
+                shell.dataset.trellisSurface = "entry"; // NEW
                 shell.dataset.demandLineId = lineId;
                 const collapsed = state.collapsedDemandLineIds.has(lineId);
                 const header = document.createElement("div");
@@ -8505,9 +8543,11 @@ Draw.loadPlugin(function (ui) {
                 const enabled = channel.enabled !== false; // CHANGE
                 const box = document.createElement("section");
                 box.className = "yp-demand-channel";
+                box.dataset.trellisSurface = "inset"; // NEW
                 box.dataset.demandChannelId = channelId;
                 const header = document.createElement("div");
                 header.className = "yp-demand-channel-header";
+                header.dataset.trellisSurface = "header"; // NEW
                 appendChannelLevel(header, "sales:" + channel.id); // NEW
                 const label = mkInput("text", channel.label || "");
                 label.setAttribute("aria-label", "Channel name");
@@ -8723,6 +8763,7 @@ Draw.loadPlugin(function (ui) {
                 const lineId = String(line.id || "");
                 const shell = document.createElement("section"); // NEW
                 shell.className = "yp-demand-line-shell yp-self-line-shell"; // NEW
+                shell.dataset.trellisSurface = "entry"; // NEW
                 shell.dataset.selfLineId = lineId; // NEW
                 shell.dataset.yearPlanSelfLineIndex = String(lineIndex); // NEW
                 const collapsed = state.collapsedSelfSufficiencyLineIds.has(lineId); // NEW
@@ -8952,6 +8993,7 @@ Draw.loadPlugin(function (ui) {
                     for (const [packageIndex, pkg] of crop.packages.entries()) {
                         const row = document.createElement("div");
                         row.className = "yp-package-row";
+                        row.dataset.trellisSurface = "entry"; // NEW: shared surface hierarchy.
                         row.dataset.packageIndex = String(packageIndex);
                         row.dataset.cropId = String(crop.id || "");
                         const unit = mkInput("text", pkg.unit || "");
@@ -8987,6 +9029,7 @@ Draw.loadPlugin(function (ui) {
             }
 
             function renderSelectedEditor() {
+                card.dataset.quickstartCrop = String(state.selectedCropId || ''); // NEW: semantic selection survives editor rerenders.
                 editorBox.innerHTML = "";
                 editorRefs = {};
                 const crop = selectedCrop();
@@ -8999,6 +9042,7 @@ Draw.loadPlugin(function (ui) {
                 }
                 const head = document.createElement("div");
                 head.style.cssText = "padding:10px 12px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;gap:10px;align-items:center;";
+                head.dataset.trellisSurface = "header"; // NEW: shared surface hierarchy.
                 const title = document.createElement("div");
                 title.style.cssText = "font-size:14px;font-weight:700;";
                 title.textContent = cropLabel(crop);
@@ -9186,7 +9230,9 @@ Draw.loadPlugin(function (ui) {
 
             function saveDraft(validationErrors) {
                 if (session.holdLost) return null; // NEW: forced-close disposers cannot publish a recovered draft.
-                const record = PlanRepository.saveDraftForYear(moduleCell, currentYear, plan);
+                const context = ui.editor.graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+                const writeDraft = () => PlanRepository.saveDraftForYear(moduleCell, currentYear, plan); // CHANGE
+                const record = context?.apply ? context.apply({ cells: [moduleCell], manualSources: [moduleCell], includeAncestors: false, editor: plannerHold }, writeDraft) : writeDraft(); // CHANGE
                 noteDraftSaved(record, validationErrors || commitValidationErrors());
                 return record;
             } // CHANGE
@@ -9207,8 +9253,8 @@ Draw.loadPlugin(function (ui) {
                 else if (planCheckHeader) focusAndHighlight(planCheckHeader); // CHANGE: empty-plan save failures have only the Plan Check list.
             }
 
-            function saveCurrent(closeAfter, requireCommit = false) { return withPlannerHold(() => commitCurrent(closeAfter, requireCommit)); } // CHANGE
-            function commitCurrent(closeAfter, requireCommit = false) { // NEW
+            function saveCurrent(closeAfter, requireCommit = false) { const quickstartCapture = graph.__trellisQuickstart?.capture(); return plannerHold?.commit ? plannerHold.commit({ explicit: true, closeAfter, requireCommit, quickstartCapture }) : withPlannerHold(() => commitCurrent(closeAfter, requireCommit, quickstartCapture)); } // CHANGE: capture before asynchronous hold acquisition.
+            function commitCurrent(closeAfter, requireCommit = false, quickstartCapture = null) { // CHANGE
                 state.saveValidationErrors = validateSaveReadiness(); // CHANGE: save-only rule runs for Save/commit readiness and draft diagnostics.
                 refreshDerived();
                 const validationErrors = commitValidationErrors(); // CHANGE
@@ -9223,9 +9269,10 @@ Draw.loadPlugin(function (ui) {
                     focusSaveValidationFailure();
                     return !requireCommit; // CHANGE
                 }
-                persistPackageDefaults();
-                PlanRepository.savePlanForYear(moduleCell, currentYear, plan);
-                PlanRepository.deleteDraftForYear(moduleCell, currentYear); // CHANGE
+                const graph = ui.editor.graph, context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+                const defaults = (plan.crops || []).filter(crop => crop.savePackagesAsDefault && crop.plantId && Array.isArray(crop.packages)).map(crop => ({ plantId: crop.plantId, packages: JSON.parse(JSON.stringify(crop.packages)) })); // CHANGE
+                const apply = () => { PlanRepository.savePlanForYear(moduleCell, currentYear, plan); PlanRepository.deleteDraftForYear(moduleCell, currentYear); }; // CHANGE
+                if (context?.apply) context.apply({ cells: [moduleCell], manualSources: [moduleCell], includeAncestors: false, editor: plannerHold }, apply); else apply(); // CHANGE
                 loadedExistingForCurrentYear = true;
                 loadedDraftForCurrentYear = false; // CHANGE
                 YearPlanDashboard.markBaseline(state, plan, new Date());
@@ -9235,6 +9282,8 @@ Draw.loadPlugin(function (ui) {
                 state.lastDraftSavedAt = null; // CHANGE
                 refreshDerived();
                 plannerHold?.complete?.(); // CHANGE: the open, clean planner stops pinning the garden.
+                graph.__trellisQuickstart?.recordPlanAction?.('plan-committed', quickstartCapture); // NEW: drafts and failed validation never reach this path.
+                if (context?.saveDefaults && defaults.length) void context.saveDefaults({ id: 'year-plan-defaults:' + moduleCell.id + ':' + currentYear, title: 'Year plan applied', notify: true, tasks: defaults.map(item => ({ name: 'crop ' + item.plantId + ' packages', save: async guard => { guard(); PlanRepository.saveDefaultsForPlant(item.plantId, item.packages); } })) }); else if (!context?.saveDefaults) persistPackageDefaults(); // CHANGE
                 if (closeAfter) { // CHANGE: only a committed Save & Close can complete this round trip.
                     const returnTarget = session.returnToAllocate; // CHANGE
                     SessionController.close(); // CHANGE: remove the modal and release its session resources before reopening Allocate.
@@ -9672,6 +9721,7 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
 
             function openAddCropPicker() {
+                const quickstartCapture = graph.__trellisQuickstart?.capture(); // NEW
                 const key = "add-crop"; // CHANGE
                 const history = getCropChangeHistory(moduleCell, currentYear); // CHANGE: applied actions survive picker/planner reopens without changing the plan.
                 const roots = Array.isArray(addCropPickerNodes) ? addCropPickerNodes : []; // CHANGE
@@ -9698,6 +9748,7 @@ Draw.loadPlugin(function (ui) {
                 dialog.setAttribute("aria-modal", "true"); // CHANGE
                 const head = document.createElement("div"); // CHANGE
                 head.className = "yp-picker-head"; // CHANGE
+                head.dataset.trellisSurface = "header"; // NEW: shared picker heading.
                 const title = document.createElement("div"); // CHANGE
                 title.className = "yp-picker-title"; // CHANGE
                 dialog.dataset.quickstartSurface = 'crop-picker'; dialog.dataset.quickstartGarden = String(moduleCell.id); // NEW
@@ -9715,8 +9766,10 @@ Draw.loadPlugin(function (ui) {
                 panes.className = "yp-package-transfer-panes"; // CHANGE
                 const availablePane = document.createElement("section"); // CHANGE
                 availablePane.className = "yp-package-transfer-pane"; // CHANGE
+                availablePane.dataset.trellisSurface = "inset"; // NEW: shared surface hierarchy.
                 const includedPane = document.createElement("section"); // CHANGE
                 includedPane.className = "yp-package-transfer-pane"; // CHANGE
+                includedPane.dataset.trellisSurface = "inset"; // NEW: shared surface hierarchy.
                 panes.appendChild(availablePane); panes.appendChild(includedPane); // CHANGE
                 bodyEl.appendChild(search); bodyEl.appendChild(summary); bodyEl.appendChild(panes); // CHANGE
                 const foot = document.createElement("div"); // CHANGE
@@ -9839,6 +9892,7 @@ Draw.loadPlugin(function (ui) {
                     host.innerHTML = ""; // CHANGE
                     const headEl = document.createElement("div"); // CHANGE
                     headEl.className = "yp-package-transfer-pane-head"; // CHANGE
+                    headEl.dataset.trellisSurface = "header"; // NEW: shared picker heading.
                     const titleEl = document.createElement("div"); // CHANGE
                     titleEl.textContent = `${label} ${countText}`; // CHANGE
                     const all = mkBtn(actionLabel, label === "Available" ? "add" : "danger"); // CHANGE
@@ -10052,6 +10106,7 @@ Draw.loadPlugin(function (ui) {
                     const addedOptions = leafOrder.filter(id => addedLeafIds.has(id)).map(id => leafById.get(id)).filter(Boolean).map(node => node.value); // CHANGE
                     closePicker(true); // CHANGE
                     applyAddCropTransferChanges(addedOptions, removedCrops, previousSelectedId); // CHANGE
+                    if (plan.crops.length) graph.__trellisQuickstart?.recordPlanAction?.('crops-applied', quickstartCapture); // NEW: notify only after an applied, nonempty selection.
                 }); // CHANGE
                 cancel.addEventListener("click", () => closePicker(false)); // CHANGE
                 close.addEventListener("click", () => closePicker(false)); // CHANGE

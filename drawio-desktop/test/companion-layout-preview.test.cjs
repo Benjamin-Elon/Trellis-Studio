@@ -40,6 +40,63 @@ async function allocationSetup({ noFit = false } = {}) { // CHANGE
     catch (error) { h.window.USL.allocate?.close(); h.close(); throw error; } // CHANGE
 } // CHANGE
 
+test('Spacing restores each axis after blank input and corrects numeric edits only at commit boundaries', () => { // CHANGE:
+    const h = setup(); // CHANGE:
+    try { // CHANGE:
+        const body = h.window.document.createElement('div'); h.window.document.body.appendChild(body); // CHANGE:
+        let draft, valid; // CHANGE:
+        const handle = h.graph.__trellisPlantingSpacingEditor.render(body, { rows: [{ ...h.row, offsetXCm: 1 / 3, offsetYCm: -1 / 3 }] }, // CHANGE:
+            { live: true, fitToDemand: true, onChange: (rows, preview, ok) => { draft = rows; valid = ok; } }); // CHANGE:
+        const fields = body.querySelectorAll('input[type=number]'), before = h.source.value.outerHTML; // CHANGE:
+        for (const [axis, key] of [[0, 'spacingXCm'], [1, 'spacingYCm']]) { // CHANGE:
+            const field = fields[axis]; assert.equal(field.min, '1'); assert.equal(field.step, '1'); // CHANGE:
+            for (const [text, expected] of [['12.4', 12], ['12.5', 13], ['0', 1], ['-8', 1], ['27', 27], ['', 27], ['invalid', 27]]) { // CHANGE:
+                field.focus(); field.value = text; field.dispatchEvent(new h.window.Event('input')); // CHANGE:
+                assert.equal(field.value, text === 'invalid' ? '' : text); assert.equal(valid, text === '27'); // CHANGE:
+                field.blur(); assert.equal(field.value, String(expected)); assert.equal(Number(draft[0][key]), expected); assert.equal(valid, true); // CHANGE:
+            } // CHANGE:
+            field.value = '18.5'; field.dispatchEvent(new h.window.Event('input')); handle.commitSpacing(); // CHANGE: handoffs correct without relying on native blur.
+            assert.equal(field.value, '19'); assert.equal(Number(draft[0][key]), 19); // CHANGE:
+            field.stepUp(); field.dispatchEvent(new h.window.Event('input')); assert.equal(Number(draft[0][key]), 20); // CHANGE:
+        } // CHANGE:
+        assert.equal(fields[2].min, ''); assert.equal(fields[3].min, ''); assert.equal(fields[4].step, 'any'); // CHANGE:
+        assert.equal(Number(draft[0].offsetXCm), 1 / 3); assert.equal(Number(draft[0].offsetYCm), -1 / 3); // CHANGE:
+        assert.equal(h.source.value.outerHTML, before); assert.equal(h.undoManager.history.length, 0); assert.equal(h.writes.length, 0); // CHANGE:
+    } finally { h.close(); } // CHANGE:
+}); // CHANGE:
+
+test('Spacing normalizes loaded and restored defaults without editing inactive rows or saved records', () => { // CHANGE:
+    const h = setup(); // CHANGE:
+    try { // CHANGE:
+        const body = h.window.document.createElement('div'); let draft; // CHANGE:
+        const active = { ...h.row, spacingXCm: 12.4, spacingYCm: 12.5, plantDefaultLayout: { spacingXCm: 23.5, spacingYCm: -2, offsetXCm: 1 / 3, offsetYCm: -1 / 3 } }; // CHANGE:
+        const rows = [active, { ...h.row, cellId: 'inactive', enabled: false, spacingXCm: 0.4, spacingYCm: -2.5 }, { ...h.row, cellId: 'missing', spacingXCm: null, spacingYCm: Infinity }]; // CHANGE:
+        h.graph.__trellisPlantingSpacingEditor.render(body, { rows, hasSetDefault: true, setDefault: { rows: [{ ...active, identityKey: 'p:2', spacingXCm: 34.5, spacingYCm: 42.4 }] } }, // CHANGE:
+            { live: true, fitToDemand: true, onChange: value => { draft = value; } }); // CHANGE:
+        assert.deepEqual(Array.from(draft, row => [Number(row.spacingXCm), Number(row.spacingYCm)]), [[12, 13], [0.4, -2.5], [30, 30]]); // CHANGE:
+        body.querySelector('[aria-label="Restore plant defaults"]').click(); // CHANGE:
+        assert.equal(Number(draft[0].spacingXCm), 24); assert.equal(Number(draft[0].spacingYCm), 1); assert.equal(Number(draft[0].offsetXCm), 1 / 3); // CHANGE:
+        Array.from(body.querySelectorAll('button')).find(button => button.textContent === 'Apply set default').click(); // CHANGE:
+        assert.equal(Number(draft[0].spacingXCm), 35); assert.equal(Number(draft[0].spacingYCm), 42); // CHANGE:
+        assert.equal(Number(draft[1].spacingXCm), 0.4); assert.equal(Number(draft[1].spacingYCm), -2.5); // CHANGE:
+        assert.equal(active.spacingXCm, 12.4); assert.equal(h.undoManager.history.length, 0); assert.equal(h.writes.length, 0); // CHANGE:
+    } finally { h.close(); } // CHANGE:
+}); // CHANGE:
+
+test('scheduler spacing validation rejects decimals and nonpositive values that bypass correction', async () => { // CHANGE:
+    const h = setup(); // CHANGE:
+    try { // CHANGE:
+        const context = await h.tools.buildSpacingLayoutRows(h.graph, h.source), row = context.rows.find(row => row.cellId === h.source.id); // CHANGE:
+        const before = h.source.value.outerHTML, writes = h.writes.length; // CHANGE:
+        for (const key of ['spacingXCm', 'spacingYCm']) for (const value of [12.5, 0, -1, '', null, Infinity, NaN]) { // CHANGE:
+            const draft = [{ ...row, [key]: value }]; assert.equal(h.tools.validateSpacingDraft(draft).ok, false); // CHANGE:
+            await assert.rejects(h.tools.applySpacingDraft(h.graph, draft), /positive integer/); // CHANGE:
+        } // CHANGE:
+        assert.equal(h.tools.validateSpacingDraft([{ ...row, spacingXCm: '1', spacingYCm: '12', offsetXCm: 1 / 3, offsetYCm: -1 / 3 }]).ok, true); // CHANGE:
+        assert.equal(h.source.value.outerHTML, before); assert.equal(h.undoManager.history.length, 0); assert.equal(h.writes.length, writes); // CHANGE:
+    } finally { h.close(); } // CHANGE:
+}); // CHANGE:
+
 test('percentage controls synchronize active same-crop drafts, reject invalid input, and retain canceled edits without writes', async () => { // CHANGE
     const h = setup(); // CHANGE
     try { // CHANGE
@@ -370,6 +427,34 @@ test('inline ordinary spacing updates live, retains focus and raw input, recover
     } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
 }); // CHANGE
 
+test('Allocate rounds spacing, discards older previews, and saves exactly the corrected creation', async () => { // CHANGE:
+    const h = await allocationSetup(); // CHANGE:
+    try { // CHANGE:
+        const { document, Event } = h.window, state = h.state; let savedRows; // CHANGE:
+        h.tools.saveSpacingDefaultsForRows = async rows => { savedRows = rows; }; // CHANGE:
+        document.querySelector('[data-allocation-view="spacing"]').click(); await allocationWait(() => state.draft && !state.spacingPending); // CHANGE:
+        const fields = state.spacingBody.querySelectorAll('input[type=number]'), x = fields[0], y = fields[1]; // CHANGE:
+        x.focus(); x.value = '60'; x.dispatchEvent(new Event('input')); // CHANGE:
+        x.value = '18.5'; x.dispatchEvent(new Event('input')); assert.equal(state.spacingValid, false); assert.equal(state.hudRefs.create.disabled, true); // CHANGE:
+        await Promise.resolve(); assert.equal(state.spacingValid, false); assert.equal(x.value, '18.5'); // CHANGE:
+        x.blur(); await allocationWait(() => state.draft && !state.spacingPending); assert.equal(x.value, '19'); // CHANGE:
+        assert.equal(Number(state.draft.geometry.spacingXCm), 19); // CHANGE:
+        y.focus(); y.value = '24.4'; y.dispatchEvent(new Event('input')); y.blur(); // CHANGE:
+        await allocationWait(() => state.draft && !state.spacingPending); assert.equal(y.value, '24'); // CHANGE:
+        const save = state.spacingBody.querySelector('input[type=checkbox]'); save.checked = true; save.dispatchEvent(new Event('change')); // CHANGE:
+        await allocationWait(() => state.draft && !state.spacingPending); const draft = state.draft; // CHANGE:
+        assert.equal(h.undoManager.history.length, 0); assert.equal(h.writes.length, 0); assert.equal(savedRows, undefined); // CHANGE:
+        state.hudRefs.create.click(); await allocationWait(() => !state.reviewing); // CHANGE:
+        assert.equal(h.getDialog(), null); // CHANGE:
+        const group = Object.values(h.graph.getModel().cells).find(cell => cell.getAttribute?.('allocation_source') === 'year_plan'); // CHANGE:
+        assert.ok(group, state.noticeMessage); assert.equal(Number(group.getAttribute('spacing_x_cm')), 19); assert.equal(Number(group.getAttribute('spacing_y_cm')), 24); // CHANGE:
+        assert.equal(Number(group.getAttribute('plant_count')), draft.plantCount); // CHANGE:
+        assert.equal(Number(savedRows[0].spacingXCm), 19); assert.equal(Number(savedRows[0].spacingYCm), 24); // CHANGE:
+        assert.equal(h.undoManager.history.length, 1); h.undoManager.undo(); assert.equal(h.graph.getModel().getCell(group.id), undefined); // CHANGE:
+        h.undoManager.redo(); assert.equal(h.graph.getModel().getCell(group.id), group); assert.equal(Number(group.getAttribute('plant_count')), draft.plantCount); // CHANGE:
+    } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE:
+}); // CHANGE:
+
 test('inline companion controls preview both crops without mutation and commit them in one undo step', async () => { // CHANGE
     const h = await allocationSetup(); // CHANGE
     try { // CHANGE
@@ -410,7 +495,8 @@ test('ordinary spacing defaults require opt-in and successful creation; a defaul
         h.window.USL.tasks.applySchedulerTaskReplacement = applyTasks; // CHANGE
         await new Promise(resolve => h.window.requestAnimationFrame(resolve)); assert.equal(h.graph.getSelectionCell()?.id, selectionBeforeCreate?.id); assert.ok(state.draft); // CHANGE: rollback restores the original canvas target for retry.
         state.hudRefs.create.click(); await allocationWait(() => !state.reviewing); // CHANGE
-        assert.equal(saves, 1, state.noticeMessage); assert.match(state.noticeMessage, /Planting created, but its spacing default could not be saved: Default storage unavailable/); // CHANGE
+        assert.equal(saves, 1, state.noticeMessage); assert.match(state.noticeMessage, /Planting created\. Reusable defaults failed; use Retry defaults/); // CHANGE: the current commit owner reports deferred defaults separately from creation.
+        assert.match(document.body.textContent, /Default storage unavailable/); // CHANGE: the retry notice retains the underlying spacing-default failure.
         assert.equal(h.undoManager.history.length, 1); assert.equal(h.tiler.listPlantingFootprints(h.moduleCell).filter(item => item.plantId === '2').length, 1); // CHANGE
     } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
 }); // CHANGE
@@ -431,7 +517,7 @@ test('a known companion with unchanged source capacity creates directly and rema
     } finally { h.window.USL.allocate.close(); h.close(); } // CHANGE
 }); // CHANGE
 
-for (const pattern of ['aligned', 'staggered']) for (const rotation of [0, 37]) test(`${pattern} companion rows preserve tangency, counts, and one-step undo at ${rotation} degrees`, async () => { // CHANGE
+for (const pattern of ['aligned', 'staggered']) for (const rotation of [0, 37]) test(`${pattern} companion rows use integer spacing with matching counts and one-step undo at ${rotation} degrees`, async () => { // CHANGE:
     const h = setup({ rotation }); // CHANGE
     try { // CHANGE
         const context = await h.tools.prepareCompanionPair(h.graph, h.source, h.row); // CHANGE
@@ -439,19 +525,20 @@ for (const pattern of ['aligned', 'staggered']) for (const rotation of [0, 37]) 
         const preview = h.tools.buildSpacingPreviewModel(h.graph, rows); // CHANGE
         assert.equal(preview.status, 'ok'); // CHANGE
         const [a, b] = preview.rows.map(row => row.groupPreview); // CHANGE
-        let closest = Infinity; // CHANGE
-        for (const p of a.circles) for (const q of b.circles) closest = Math.min(closest, Math.hypot(p.x - q.x, p.y - q.y) - p.r - q.r); // CHANGE
-        assert.ok(Math.abs(closest) < 1e-6, `circle clearance ${closest}`); // CHANGE
+        rows.forEach(row => { assert.ok(Number.isInteger(row.spacingXCm) && row.spacingXCm > 0); assert.ok(Number.isInteger(row.spacingYCm) && row.spacingYCm > 0); }); // CHANGE:
+        assert.equal(rows[0].spacingXCm, 20); assert.equal(rows[0].spacingYCm, pattern === 'aligned' ? 40 : 35); // CHANGE:
+        assert.ok(Math.abs(rows[1].offsetXCm - (pattern === 'aligned' ? 0 : 10)) < 1e-7); // CHANGE:
+        assert.ok(Math.abs(rows[1].offsetYCm - rows[0].offsetYCm - rows[0].spacingYCm / 2) < 1e-7); // CHANGE: phases derive from corrected spacing even when contact changes.
         assert.equal(h.undoManager.history.length, 0); // CHANGE
         const beforeCount = h.source.getAttribute('plant_count'), beforeGeometry = JSON.stringify(h.source.geometry); // CHANGE
-        const model = h.graph.getModel(); model.beginUpdate(); let group; // CHANGE
-        try { // CHANGE
+        const model = h.graph.getModel(); let group; // CHANGE:
+        h.graph.__trellisEditContext.apply({ cells: [h.source], includeAncestors: false }, () => { // CHANGE: use the production commit owner for one atomic companion transaction.
             h.tools.applyLayoutRowsToGraph(h.graph, [rows[0]]); // CHANGE
             group = h.tiler.createPlantingFromProposal({ moduleCell: h.moduleCell, insideUpdate: true, attributes: { plant_id: '2', plant_name: 'Basil', plant_abbr: 'BAS', plant_yield: '1', sow_date: '2027-04-15', harvest_end: '2027-08-01' }, // CHANGE
                 proposal: { ok: true, sharedFootprint: true, geometry: rows[1].modelRect, rotation: rows[1].rotationDeg, plantCount: b.actual, // CHANGE
                     spacingXCm: rows[1].spacingXCm, spacingYCm: rows[1].spacingYCm, vegDiameterCm: rows[1].vegDiameterCm, // CHANGE
                     layoutOffsetXCm: rows[1].offsetXCm, layoutOffsetYCm: rows[1].offsetYCm, disabledSlots: b.disabledSlots } }); // CHANGE
-        } finally { model.endUpdate(); } // CHANGE
+        }); // CHANGE:
         assert.equal(Number(h.source.getAttribute('plant_count')), a.actual); assert.equal(Number(group.getAttribute('plant_count')), b.actual); // CHANGE
         assert.equal(Number(group.getAttribute('planting_expected_yield_kg')), b.actual); // CHANGE
         assert.equal(h.undoManager.history.length, 1); // CHANGE
@@ -594,7 +681,7 @@ test('saved-group apply and undo preserve untouched fractional offsets behind ro
 }); // CHANGE
 
 test('generated patterns, revert and saved defaults retain fractional offsets while displaying rounded values', async () => { // CHANGE
-    const h = setup({ diameters: [20, 25] }); // CHANGE
+    const h = setup({ diameters: [20.4, 25.6] }); // CHANGE: both patterns must normalize fractional circle-derived spacing.
     try { // CHANGE
         const context = await h.tools.prepareCompanionPair(h.graph, h.source, h.row), body = h.window.document.createElement('div'); h.window.document.body.appendChild(body); // CHANGE
         context.hasSetDefault = true; context.setDefault = { rows: context.rows.map((row, index) => ({ ...row, identityKey: 'p:' + row.plantId, offsetXCm: index ? -1 / 3 : 1 / 3, offsetYCm: index ? 1 / 3 : -1 / 3 })) }; // CHANGE
@@ -604,6 +691,7 @@ test('generated patterns, revert and saved defaults retain fractional offsets wh
             const generated = h.tools.generateCompanionPairLayout(h.graph, draft, pattern); body.querySelector('[data-spacing-pattern="' + pattern + '"]').click(); // CHANGE
             const fields = body.querySelectorAll('input[type=number]'); // CHANGE
             draft.forEach((row, index) => { // CHANGE
+                assert.equal(Number(row.spacingXCm), 26); assert.ok(Number.isInteger(Number(row.spacingYCm)) && Number(row.spacingYCm) > 0); // CHANGE:
                 assert.equal(Number(row.offsetXCm), generated[index].offsetXCm); assert.equal(Number(row.offsetYCm), generated[index].offsetYCm); // CHANGE
                 assert.equal(fields[index * 5 + 2].value, String(Math.round(row.offsetXCm) || 0)); assert.equal(fields[index * 5 + 3].value, String(Math.round(row.offsetYCm) || 0)); // CHANGE
             }); // CHANGE

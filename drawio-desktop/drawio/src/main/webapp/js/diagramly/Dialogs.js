@@ -623,7 +623,8 @@ var SplashDialog = function(editorUi)
 	function createTrellisInfoSection(title, body) // NEW
 	{ // NEW
 		var section = createTrellisElement('div', 'trellis-splash-section'); // NEW
-		section.style.cssText = 'box-sizing:border-box;border:1px solid #d8e0d8;border-radius:6px;padding:10px;text-align:left;background:#fff;'; // NEW
+		section.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
+		section.style.cssText = 'box-sizing:border-box;padding:10px;text-align:left;'; // CHANGE: the shared section role owns its surface.
 		var heading = createTrellisCardHeading(title); // CHANGE
 		heading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
 		var copy = createTrellisElement('div', null, body); // NEW
@@ -635,7 +636,7 @@ var SplashDialog = function(editorUi)
 
 	function createTrellisCardHeading(title) // NEW
 	{ // NEW
-		return createTrellisElement('div', 'trellis-card-heading', title); // NEW
+		var heading = createTrellisElement('div', 'trellis-card-heading', title); heading.dataset.trellisSurface = 'header'; return heading; // CHANGE: shared header band.
 	} // NEW
 
 	function createTrellisInlineIcon(name) // NEW
@@ -705,6 +706,7 @@ var SplashDialog = function(editorUi)
 		var panel = createTrellisElement('div', 'trellis-license-contact-panel'); // NEW
 		panel.style.cssText = 'box-sizing:border-box;text-align:left;'; // CHANGE
 		var contact = createTrellisElement('div', 'trellis-support-card trellis-contact-column'); // CHANGE
+		contact.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
 		var heading = createTrellisCardHeading('Support & contact'); // CHANGE
 		heading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
 		var details = createTrellisElement('div', 'trellis-contact-rows'); // CHANGE
@@ -715,6 +717,7 @@ var SplashDialog = function(editorUi)
 		contact.appendChild(heading); // NEW
 		contact.appendChild(details); // NEW
 		licenseColumn.className += ' trellis-license-card'; // NEW
+		licenseColumn.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
 		panel.appendChild(licenseColumn); // NEW
 		panel.appendChild(contact); // NEW
 		panel.appendChild(createTrellisObligationNotice(pathInfo, obligationText)); // CHANGE
@@ -744,6 +747,7 @@ var SplashDialog = function(editorUi)
 	{ // NEW
 		var center = createTrellisElement('div', 'trellis-splash-center'); // NEW
 		center.style.cssText = 'margin:8px auto 0 auto;max-width:700px;text-align:left;font-size:12px;white-space:normal;'; // NEW
+		center.classList.add('trellis-surfaces'); center.style.setProperty('--trellis-surface-base', '#fffdf6'); center.style.setProperty('--trellis-surface-ink', '#314437'); // NEW: shared surface hierarchy.
 
 		function writeHeader(subtitle) // NEW
 		{ // NEW
@@ -771,6 +775,7 @@ var SplashDialog = function(editorUi)
 			center.innerHTML = ''; // NEW
 			writeHeader(); // CHANGE
 			var summary = createTrellisElement('div', 'trellis-license-panel-column trellis-saved-license-card'); // CHANGE
+			summary.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
 			var summaryHeading = createTrellisCardHeading('License'); // CHANGE
 			summaryHeading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
 			var pathInfo = trellisLicensePaths[trellisSavedWizard.path]; // NEW

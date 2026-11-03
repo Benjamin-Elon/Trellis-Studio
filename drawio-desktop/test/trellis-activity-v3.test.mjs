@@ -55,37 +55,39 @@ test('activity observations increase across services and do not enter signed pee
 test('handoff keeps its five-minute deadline independently of renewed thirty-second heartbeats', async t => { // CHANGE
     const f = await fixture(t), activity = f.activity(); await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); const requested = await activity.action(2, 'alice', { kind: 'request', targets: [target] }); // CHANGE
     assert.equal(requested.collaboration.holds[0].requestDeadline, REQUEST_MS); assert.equal(requested.collaboration.holds[0].expiresAt, REQUEST_MS); // CHANGE
-    f.time(290000); await activity.action(2, 'alice', { kind: 'publish' }); const renewed = await activity.action(1, 'alice', { kind: 'publish' }); assert.equal(renewed.collaboration.holds[0].requestDeadline, 300000); // CHANGE
+    await heartbeatUntil(f, activity, 1, 290000); await activity.action(2, 'alice', { kind: 'publish' }); const renewed = await activity.action(1, 'alice', { kind: 'publish' }); assert.equal(renewed.collaboration.holds[0].requestDeadline, 300000); // CHANGE: only requester presence is allowed to lapse in a connected-holder handoff.
     f.time(300000); const expired = await activity.action(1, 'alice', { kind: 'snapshot' }); assert.equal(expired.collaboration.holds.length, 0); assert.equal(expired.collaboration.losses[0].code, 'HANDOFF_EXPIRED'); // CHANGE
 }); // CHANGE
-test('inactivity, sleep and activity-service restart retain the same signed ownership generation', async t => { // CHANGE
+test('thirty seconds without a heartbeat expires a generation through sleep, restart and delayed publication', async t => { // CHANGE
     const f = await fixture(t), first = f.activity(); // CHANGE
     const claimed = await first.action(1, 'alice', { kind: 'claim', targets: [target], revision: 3 }), claimId = claimed.collaboration.holds[0].claimId; // CHANGE
-    f.time(86400000); const idle = await first.action(1, 'alice', { kind: 'snapshot' }); // CHANGE
-    assert.equal(idle.collaboration.holds[0].expiresAt, null); assert.equal(idle.collaboration.holds[0].online, false); assert.deepEqual(idle.collaboration.losses, []); // CHANGE
+    f.time(LEASE_MS - 1); assert.equal(first.snapshot().holds[0].claimId, claimId); // CHANGE
+    f.time(LEASE_MS); const idle = await first.action(1, 'alice', { kind: 'snapshot' }); // CHANGE
+    assert.deepEqual(idle.collaboration.holds, []); assert.equal(idle.collaboration.losses[0].code, 'SESSION_OFFLINE'); // CHANGE
     await first.close(); const restarted = f.activity(); await restarted.start(); // CHANGE
-    assert.equal(restarted.snapshot().holds[0].claimId, claimId); assert.equal(restarted.snapshot().holds[0].online, false); // CHANGE
+    assert.deepEqual(restarted.snapshot().holds, []); // CHANGE
     const resumed = await restarted.action(1, 'alice', { kind: 'publish', revision: 4 }); // CHANGE
-    assert.equal(resumed.collaboration.holds[0].claimId, claimId); assert.equal(resumed.collaboration.holds[0].online, true); // CHANGE
-    await restarted.action(1, 'alice', { kind: 'claim', targets: [target] }); assert.equal(restarted.snapshot().holds[0].claimId, claimId); // CHANGE
+    assert.deepEqual(resumed.collaboration.holds, []); assert.equal(resumed.collaboration.losses[0].code, 'SESSION_OFFLINE'); // CHANGE
+    assert.equal((await restarted.action(1, 'alice', { kind: 'claim', targets: [target] })).code, 'HOLD_LOST'); // CHANGE
+    await restarted.action(1, 'alice', { kind: 'release', targets: [target], claimIds: [claimId] }); // CHANGE
+    const fresh = await restarted.action(1, 'alice', { kind: 'claim', targets: [target] }); assert.notEqual(fresh.collaboration.holds[0].claimId, claimId); // CHANGE
 }); // CHANGE
-test('a stalled activity write cannot expire ownership or block a read-only loss confirmation', async t => { // CHANGE
+test('a stalled activity write cannot block read-only confirmation of offline loss', async t => { // CHANGE
     const f = await fixture(t); let blocked = false, release; const gate = new Promise(resolve => { release = resolve; }); t.after(release); // CHANGE
     const activity = f.activity('device', { writeAtomic: async (...args) => { if (blocked) await gate; return f.writeAtomic(...args); } }); // CHANGE
     const claimed = await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); blocked = true; // CHANGE
     const publication = activity.action(1, 'alice', { kind: 'publish', revision: 1 }); await new Promise(resolve => setImmediate(resolve)); f.time(REQUEST_MS * 2); // CHANGE
     const confirmed = await activity.action(1, 'alice', { kind: 'snapshot' }); // CHANGE
-    assert.equal(confirmed.collaboration.holds[0].claimId, claimed.collaboration.holds[0].claimId); assert.equal(confirmed.collaboration.holds[0].expiresAt, null); assert.deepEqual(confirmed.collaboration.losses, []); // CHANGE
-    release(); await publication; // CHANGE
+    try { assert.deepEqual(confirmed.collaboration.holds, []); assert.equal(confirmed.collaboration.losses[0].claimId, claimed.collaboration.holds[0].claimId); assert.equal(confirmed.collaboration.losses[0].code, 'SESSION_OFFLINE'); } finally { release(); await publication; } // CHANGE
 }); // CHANGE
 test('stale requester presence, repeated requests and delayed delivery keep the original deadline', async t => { // CHANGE
     const f = await fixture(t), owner = f.activity(), requester = f.activity('peer'); // CHANGE
     await owner.action(1, 'alice', { kind: 'claim', targets: [target] }); await requester.start(); // CHANGE
     f.time(1000); await requester.action(2, 'alice', { kind: 'request', targets: [target] }); // CHANGE
-    f.time(250000); const repeated = await requester.action(2, 'alice', { kind: 'request', targets: [target] }); // CHANGE
+    await heartbeatUntil(f, owner, 1, 250000, [requester]); const repeated = await requester.action(2, 'alice', { kind: 'request', targets: [target] }); // CHANGE
     assert.equal(repeated.collaboration.holds[0].requestDeadline, 1000 + REQUEST_MS); // CHANGE
     await owner.scan(); assert.equal(owner.snapshot().holds[0].requestDeadline, 1000 + REQUEST_MS); // CHANGE
-    f.time(1000 + REQUEST_MS); const expired = await owner.action(1, 'alice', { kind: 'publish' }); // CHANGE
+    await heartbeatUntil(f, owner, 1, 1000 + REQUEST_MS, [requester]); const expired = await owner.action(1, 'alice', { kind: 'publish' }); // CHANGE
     assert.deepEqual(expired.collaboration.holds, []); assert.equal(expired.collaboration.losses[0].code, 'HANDOFF_EXPIRED'); // CHANGE
     const refused = await owner.action(1, 'alice', { kind: 'claim', targets: [target] }); assert.equal(refused.ok, false); assert.equal(refused.code, 'HOLD_LOST'); // CHANGE
 }); // CHANGE
@@ -93,8 +95,8 @@ test('explicit requester close or window cleanup cancels a pending request and c
     for (const exit of ['close', 'forget']) await t.test(exit, async t => { // CHANGE
         const f = await fixture(t), activity = f.activity(); // CHANGE
         await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); await activity.action(2, 'alice', { kind: 'request', targets: [target] }); // CHANGE
-        f.time(10000); if (exit === 'close') await activity.action(2, 'alice', { kind: 'close' }); else { activity.forget(2); await activity.close(); } // CHANGE
-        const restarted = f.activity(); await restarted.start(); f.time(REQUEST_MS * 2); // CHANGE
+        f.time(10000); if (exit === 'close') await activity.action(2, 'alice', { kind: 'close' }); else activity.forget(2); await activity.close(); // CHANGE: restart replaces the service rather than running two owners of one device snapshot.
+        const restarted = f.activity(); await restarted.start(); await heartbeatUntil(f, restarted, 1, REQUEST_MS * 2); // CHANGE
         assert.equal(restarted.snapshot().holds.length, 1); assert.equal(restarted.snapshot().holds[0].expiresAt, null); // CHANGE
         await assert.rejects(restarted.action(2, 'alice', { kind: 'publish' }), /closed/); // CHANGE
     }); // CHANGE
@@ -102,17 +104,17 @@ test('explicit requester close or window cleanup cancels a pending request and c
 test('requester exit after the deadline preserves expiry through restart and later owner heartbeats', async t => { // CHANGE
     const f = await fixture(t), activity = f.activity(); // CHANGE
     await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); await activity.action(2, 'alice', { kind: 'request', targets: [target] }); // CHANGE
-    f.time(REQUEST_MS); await activity.action(2, 'alice', { kind: 'close' }); await activity.close(); // CHANGE
+    await heartbeatUntil(f, activity, 1, REQUEST_MS); await activity.action(2, 'alice', { kind: 'close' }); await activity.close(); // CHANGE
     const restarted = f.activity(); await restarted.start(); const resumed = await restarted.action(1, 'alice', { kind: 'publish' }); // CHANGE
     assert.deepEqual(resumed.collaboration.holds, []); assert.equal(resumed.collaboration.losses[0].code, 'HANDOFF_EXPIRED'); // CHANGE
     assert.equal((await restarted.action(3, 'alice', { kind: 'claim', targets: [target] })).ok, true); // CHANGE
 }); // CHANGE
 test('multiple requesters retain their own deadlines when an earlier request is cancelled', async t => { // CHANGE
     const f = await fixture(t), activity = f.activity(); await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); // CHANGE
-    await activity.action(2, 'alice', { kind: 'request', targets: [target] }); f.time(10000); await activity.action(3, 'alice', { kind: 'request', targets: [target] }); // CHANGE
-    f.time(20000); const cancelled = await activity.action(2, 'alice', { kind: 'close' }); // CHANGE
+    await activity.action(2, 'alice', { kind: 'request', targets: [target] }); await heartbeatUntil(f, activity, 1, 10000); await activity.action(3, 'alice', { kind: 'request', targets: [target] }); // CHANGE
+    await heartbeatUntil(f, activity, 1, 20000); const cancelled = await activity.action(2, 'alice', { kind: 'close' }); // CHANGE
     assert.equal(cancelled.collaboration.holds[0].requestDeadline, 10000 + REQUEST_MS); assert.equal(cancelled.collaboration.holds[0].requesters.length, 1); // CHANGE
-    f.time(REQUEST_MS); assert.equal(activity.snapshot().holds.length, 1); f.time(10000 + REQUEST_MS); assert.deepEqual(activity.snapshot().holds, []); // CHANGE
+    await heartbeatUntil(f, activity, 1, REQUEST_MS); assert.equal(activity.snapshot().holds.length, 1); f.time(10000 + REQUEST_MS); assert.deepEqual(activity.snapshot().holds, []); // CHANGE
 }); // CHANGE
 test('requests cannot target the same session or an object the requester cannot edit', async t => { // CHANGE
     const f = await fixture(t), activity = f.activity('device', { authorize: user => ['alice', 'bob'].includes(user), canClaim: user => user === 'alice' }); // CHANGE
@@ -126,7 +128,7 @@ test('a signed peer request without object editing authority cannot start a hand
     const f = await fixture(t), authorize = user => ['alice', 'bob'].includes(user); // CHANGE
     const owner = f.activity('device', { authorize, canClaim: user => user === 'alice' }), peer = f.activity('peer', { authorize }); // CHANGE
     await owner.action(1, 'alice', { kind: 'claim', targets: [target] }); await peer.start(); // CHANGE
-    await peer.action(2, 'bob', { kind: 'request', targets: [target] }); await owner.scan(); f.time(REQUEST_MS * 2); // CHANGE
+    await peer.action(2, 'bob', { kind: 'request', targets: [target] }); await owner.scan(); await heartbeatUntil(f, owner, 1, REQUEST_MS * 2, [peer]); // CHANGE
     assert.equal(owner.snapshot().holds.length, 1); assert.equal(owner.snapshot().holds[0].requested, false); // CHANGE
 }); // CHANGE
 test('new acquisitions have distinct generations and old handoff requests never expire them', async t => { // CHANGE
@@ -136,7 +138,7 @@ test('new acquisitions have distinct generations and old handoff requests never 
     const fresh = await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); // CHANGE
     assert.notEqual(fresh.collaboration.holds[0].claimId, firstId); assert.equal(fresh.collaboration.holds[0].requested, false); // CHANGE
     await activity.action(1, 'alice', { kind: 'release', targets: [target], claimIds: [firstId] }); assert.equal(activity.snapshot().holds[0].claimId, fresh.collaboration.holds[0].claimId); // CHANGE: a delayed old editor cannot release the new generation.
-    f.time(REQUEST_MS); const current = await activity.action(1, 'alice', { kind: 'publish' }); // CHANGE
+    await heartbeatUntil(f, activity, 1, REQUEST_MS); const current = await activity.action(1, 'alice', { kind: 'publish' }); // CHANGE
     assert.equal(current.collaboration.holds.length, 1); assert.equal(current.collaboration.holds[0].expiresAt, null); assert.deepEqual(current.collaboration.losses, []); // CHANGE
 }); // CHANGE
 test('reordered signed snapshots and attempts to rewrite requests cannot resurrect expired ownership', async t => { // CHANGE
@@ -144,7 +146,7 @@ test('reordered signed snapshots and attempts to rewrite requests cannot resurre
     await owner.action(1, 'alice', { kind: 'claim', targets: [target] }); await requester.start(); // CHANGE
     await requester.action(2, 'alice', { kind: 'request', targets: [target] }); await owner.scan(); // CHANGE
     const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('peer:session-2') + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // CHANGE
-    f.time(REQUEST_MS); assert.deepEqual(owner.snapshot().holds, []); // CHANGE
+    await heartbeatUntil(f, owner, 1, REQUEST_MS, [requester]); assert.deepEqual(owner.snapshot().holds, []); // CHANGE
     for (const payload of [{ ...envelope.payload, sequence: envelope.payload.sequence - 1, requests: [] }, { ...envelope.payload, sequence: envelope.payload.sequence + 1, requests: [] }, { ...envelope.payload, sequence: envelope.payload.sequence + 1, requests: envelope.payload.requests.map(request => ({ ...request, at: REQUEST_MS })) }]) { // CHANGE
         await f.writeAtomic(file, JSON.stringify(signRecord(payload, f.keys.privateKey))); await owner.scan(); assert.deepEqual(owner.snapshot().holds, []); // CHANGE
     } // CHANGE
@@ -184,25 +186,143 @@ async function fixture(t) { // NEW
     const writeAtomic = async (file, value) => { await fs.mkdir(path.dirname(file), { recursive: true }); const temp = file + '.' + crypto.randomUUID() + '.tmp'; await fs.writeFile(temp, value); for (let attempt = 0; ; attempt++) { try { await fs.rename(temp, file); break; } catch (error) { if (!['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || attempt >= 4) throw error; await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1))); } } }; // CHANGE: match production's bounded Windows scanner retry.
     const services = []; const activity = (id = 'device', options = {}) => { const service = createActivityService({ canvas, deviceId: id, keys, sessionFor: caller => 'session-' + caller, writeAtomic, monotonic: mono, now: mono, authorize: user => user === 'alice', ...options }); services.push(service); return service; }; // CHANGE
     t.after(async () => { for (const service of services) await service.close(); }); // NEW
-    return { root, canvas, keys, writeAtomic, activity, time: value => { time = value; } }; // NEW
+    return { root, canvas, keys, writeAtomic, activity, now: mono, time: value => { time = value; } }; // CHANGE
 } // NEW
-test('remote presence requires fresh progression while disconnected ownership blocks ordinary claims', async t => { // CHANGE
+/** Advance the test clock while the holder stays connected, independently of typing and requester presence. */ // CHANGE
+async function heartbeatUntil(f, activity, caller, through, observers = []) { // CHANGE
+    while (f.now() < through) { f.time(Math.min(through, f.now() + LEASE_MS / 2)); await activity.action(caller, 'alice', { kind: 'publish' }); for (const observer of observers) await observer.scan(); } // CHANGE
+} // CHANGE
+test('remote startup grace and fresh progression end in automatic takeover without a release request', async t => { // CHANGE
     const f = await fixture(t), peer = f.activity('peer'), local = f.activity(); // NEW
     await peer.action(2, 'alice', { kind: 'claim', targets: [target] }); await local.start(); assert.equal(local.snapshot().holds.length, 1); assert.equal(local.snapshot().holds[0].expiresAt, null); assert.equal(local.snapshot().holds[0].online, false); // CHANGE
     f.time(5000); await peer.action(2, 'alice', { kind: 'publish', pending: [target], revision: 1 }); await local.scan(); assert.equal(local.snapshot().holds.length, 1); // NEW
     f.time(5000 + LEASE_MS - 1); await local.scan(); assert.equal(local.snapshot().holds.length, 1); // NEW
-    f.time(5000 + LEASE_MS); await local.scan(); assert.equal(local.snapshot().holds.length, 1); assert.equal(local.snapshot().pendingChanges[0].online, false); // CHANGE
-    assert.equal(local.snapshot().presence[0].online, false); assert.deepEqual(local.snapshot().presence[0].targets, [target]); // CHANGE
-    assert.equal((await local.action(1, 'alice', { kind: 'claim', targets: [target] })).ok, false); // CHANGE
-    await local.action(1, 'alice', { kind: 'request', targets: [target] }); f.time(5000 + LEASE_MS + REQUEST_MS); // CHANGE
-    assert.equal((await local.action(1, 'alice', { kind: 'claim', targets: [target] })).ok, true); // CHANGE: takeover needs neither a fresh heartbeat nor an acknowledgment from the owner.
+    f.time(5000 + LEASE_MS); await local.scan(); assert.equal(local.snapshot().holds.length, 0); assert.equal(local.snapshot().pendingChanges[0].online, false); // CHANGE
+    assert.deepEqual(local.snapshot().presence, []); // CHANGE: offline work stays in pendingChanges without being relabeled as viewing.
+    assert.equal((await local.action(1, 'alice', { kind: 'claim', targets: [target] })).ok, true); // CHANGE
+    await peer.scan(); const returned = await peer.action(2, 'alice', { kind: 'publish' }); // CHANGE
+    assert.equal(returned.collaboration.losses[0].code, 'SESSION_OFFLINE'); assert.equal(returned.collaboration.holds.some(hold => hold.sessionId === 'session-2'), false); // CHANGE
 }); // NEW
-test('viewing-only startup snapshots remain explicitly unconfirmed until a fresh heartbeat arrives', async t => { // NEW
+test('viewing-only startup snapshots stay hidden until a fresh heartbeat arrives', async t => { // CHANGE
     const f = await fixture(t), peer = f.activity('peer'), local = f.activity(); // NEW
     await peer.action(2, 'alice', { kind: 'view', objects: [target] }); await local.start(); // NEW
-    assert.equal(local.snapshot().presence[0].online, false); assert.equal(local.snapshot().holds.length, 0); // NEW
+    assert.deepEqual(local.snapshot().presence, []); assert.equal(local.snapshot().holds.length, 0); // CHANGE
     f.time(5000); await peer.action(2, 'alice', { kind: 'publish' }); await local.scan(); assert.equal(local.snapshot().presence[0].online, true); // NEW
 }); // NEW
+test('the existing maintenance timer removes stale viewers and fresh progression restores them without a status refresh', async t => { // CHANGE
+    const timers = [], interval = globalThis.setInterval; // CHANGE
+    t.mock.method(globalThis, 'setInterval', (callback, delay, ...args) => { if (delay === 1000) timers.push(callback); return interval(callback, delay, ...args); }); // CHANGE: observe the production timer without adding a service interface or another timer.
+    const f = await fixture(t), updates = [], owner = f.activity('peer'), observer = f.activity('device', { onChange: state => updates.push(state) }); // CHANGE
+    await owner.action(2, 'alice', { kind: 'view', objects: [target] }); await observer.start(); // CHANGE
+    assert.deepEqual(updates.at(-1).presence, []); assert.equal(timers.length, 2); // CHANGE
+    f.time(5000); await owner.action(2, 'alice', { kind: 'publish' }); await observer.scan(); // CHANGE
+    assert.equal(updates.at(-1).presence[0].online, true); assert.deepEqual(updates.at(-1).presence[0].targets, [target]); // CHANGE
+    const filename = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('peer:session-2') + '.json'), text = await fs.readFile(filename, 'utf8'); // CHANGE
+    f.time(5000 + LEASE_MS - 1); await observer.scan(); await observer.action(1, 'alice', { kind: 'snapshot' }); // CHANGE
+    assert.equal(observer.snapshot().presence.length, 1); // CHANGE: duplicate reads and authority snapshots do not renew the viewer lease.
+    f.time(5000 + LEASE_MS); timers[1](); // CHANGE: exercise automatic expiry before any UI interaction or explicit snapshot request.
+    assert.deepEqual(updates.at(-1).presence, []); await observer.scan(); // CHANGE
+    assert.equal(await fs.readFile(filename, 'utf8'), text); // CHANGE: retiring a viewing badge never deletes or rewrites the stored activity.
+    const envelope = JSON.parse(text); // CHANGE
+    await f.writeAtomic(filename, JSON.stringify(signRecord({ ...envelope.payload, sequence: envelope.payload.sequence - 1 }, f.keys.privateKey))); await observer.scan(); // CHANGE
+    assert.deepEqual(observer.snapshot().presence, []); // CHANGE: delayed snapshots cannot resurrect an expired viewer.
+    f.time(5000 + LEASE_MS + 5000); await owner.action(2, 'alice', { kind: 'publish' }); await observer.scan(); // CHANGE
+    assert.equal(updates.at(-1).presence.length, 1); assert.equal(updates.at(-1).presence[0].online, true); // CHANGE
+    f.time(5000 + LEASE_MS * 2); await owner.action(2, 'alice', { kind: 'publish' }); await observer.scan(); // CHANGE
+    assert.equal(observer.snapshot().presence.length, 1); // CHANGE: continuing heartbeats keep passive viewing visible.
+    await owner.action(2, 'alice', { kind: 'close' }); await observer.scan(); assert.deepEqual(observer.snapshot().presence, []); // CHANGE
+}); // CHANGE
+test('hiding unconfirmed viewers preserves startup hold grace and offline pending-work notices', async t => { // CHANGE
+    const f = await fixture(t), owner = f.activity('peer'), observer = f.activity(); // CHANGE
+    await owner.action(2, 'alice', { kind: 'claim', targets: [target] }); await owner.action(2, 'alice', { kind: 'view', objects: [target], pending: [target], saveState: 'failed' }); // CHANGE
+    await observer.start(); assert.deepEqual(observer.snapshot().presence, []); assert.equal(observer.snapshot().holds.length, 1); // CHANGE
+    assert.equal(observer.snapshot().pendingChanges[0].saveState, 'failed'); // CHANGE
+    f.time(LEASE_MS - 1); assert.equal(observer.snapshot().holds.length, 1); assert.deepEqual(observer.snapshot().presence, []); // CHANGE
+    f.time(LEASE_MS); await observer.scan(); assert.deepEqual(observer.snapshot().holds, []); assert.deepEqual(observer.snapshot().presence, []); // CHANGE
+    assert.equal(observer.snapshot().pendingChanges[0].saveState, 'failed'); assert.equal(observer.snapshot().pendingChanges[0].online, false); // CHANGE
+}); // CHANGE
+test('connected passive editors keep their holds and startup records get only one thirty-second grace', async t => { // CHANGE
+    const f = await fixture(t), owner = f.activity('peer'); // CHANGE
+    const claimed = await owner.action(2, 'alice', { kind: 'claim', targets: [target] }); // CHANGE
+    await heartbeatUntil(f, owner, 2, LEASE_MS * 3); // CHANGE: no input or graph activity accompanies these heartbeats.
+    assert.equal(owner.snapshot().holds[0].claimId, claimed.collaboration.holds[0].claimId); await owner.close(); // CHANGE
+    f.time(1000000); const observer = f.activity(); await observer.start(); // CHANGE
+    assert.equal(observer.snapshot().holds[0].online, false); // CHANGE
+    f.time(1000000 + LEASE_MS - 1); await observer.scan(); assert.equal(observer.snapshot().holds.length, 1); // CHANGE: rereading an unchanged signed snapshot cannot renew startup grace.
+    f.time(1000000 + LEASE_MS); await observer.scan(); assert.equal(observer.snapshot().holds.length, 0); // CHANGE
+    await observer.close(); const restarted = f.activity(); await restarted.start(); assert.equal(restarted.snapshot().holds.length, 0); // CHANGE
+}); // CHANGE
+test('offline expiry is persisted before takeover and a failed witness write retries safely', async t => { // CHANGE
+    const f = await fixture(t); let failing = false; // CHANGE
+    const activity = f.activity('device', { writeAtomic: async (...args) => { if (failing) throw new Error('Expiry disk full'); return f.writeAtomic(...args); } }); // CHANGE
+    const claimed = await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); // CHANGE
+    f.time(LEASE_MS); failing = true; // CHANGE
+    try { await assert.rejects(activity.action(2, 'alice', { kind: 'claim', targets: [target] }), /Expiry disk full/); assert.equal(activity.snapshot().holds.length, 0); } finally { failing = false; } // CHANGE
+    const takeover = await activity.action(2, 'alice', { kind: 'claim', targets: [target] }); assert.equal(takeover.ok, true); // CHANGE
+    const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('device:expiry-' + digest('alice')) + '.json'); // CHANGE
+    const evidence = JSON.parse(await fs.readFile(file, 'utf8')).payload.requests[0]; // CHANGE
+    assert.equal(evidence.claimId, claimed.collaboration.holds[0].claimId); assert.equal(evidence.kind, 'offline-expiry'); assert.equal(evidence.cancelledAt, null); // CHANGE
+    await activity.action(2, 'alice', { kind: 'close' }); await activity.close(); // CHANGE
+    const restarted = f.activity(); const resumed = await restarted.action(1, 'alice', { kind: 'publish' }); // CHANGE
+    assert.equal(resumed.collaboration.losses[0].code, 'SESSION_OFFLINE'); assert.equal(resumed.collaboration.holds.length, 0); // CHANGE
+}); // CHANGE
+test('offline expiry cannot be rewritten or cancelled and an old release cannot end a fresh generation', async t => { // CHANGE
+    const f = await fixture(t), observer = f.activity(), owner = f.activity('peer'); // CHANGE
+    const original = await owner.action(2, 'alice', { kind: 'claim', targets: [target] }), claimId = original.collaboration.holds[0].claimId; // CHANGE
+    await observer.start(); f.time(LEASE_MS); await observer.scan(); // CHANGE
+    const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('device:expiry-' + digest('alice')) + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // CHANGE
+    for (const requests of [[], envelope.payload.requests.map(request => ({ ...request, kind: undefined })), envelope.payload.requests.map(request => ({ ...request, cancelledAt: request.at }))]) { // CHANGE
+        await f.writeAtomic(file, JSON.stringify(signRecord({ ...envelope.payload, sequence: envelope.payload.sequence + 1, requests }, f.keys.privateKey))); await observer.scan(); assert.equal(observer.snapshot().holds.length, 0); // CHANGE
+    } // CHANGE
+    await f.writeAtomic(file, JSON.stringify(envelope)); await owner.scan(); // CHANGE
+    await owner.action(2, 'alice', { kind: 'release', targets: [target], claimIds: [claimId] }); // CHANGE
+    const fresh = await owner.action(2, 'alice', { kind: 'claim', targets: [target] }); assert.equal(fresh.ok, true); assert.notEqual(fresh.collaboration.holds[0].claimId, claimId); // CHANGE
+    await owner.action(2, 'alice', { kind: 'release', targets: [target], claimIds: [claimId] }); assert.equal(owner.snapshot().holds[0].claimId, fresh.collaboration.holds[0].claimId); // CHANGE
+}); // CHANGE
+test('expiry discovered during another witness write is durable before a concurrent takeover completes', async t => { // CHANGE
+    const f = await fixture(t); let release, entered, block = false; // CHANGE
+    const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; }); // CHANGE
+    const activity = f.activity('device', { writeAtomic: async (file, text) => { if (block && JSON.parse(text).payload.sessionId.startsWith('expiry-')) { block = false; entered(); await gate; } return f.writeAtomic(file, text); } }); // CHANGE
+    const second = '["page","b"]'; await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); // CHANGE
+    f.time(1000); await activity.action(2, 'alice', { kind: 'claim', targets: [second] }); // CHANGE
+    f.time(LEASE_MS); block = true; const flushing = activity.scan(); await started; // CHANGE
+    try { // CHANGE
+        f.time(LEASE_MS + 1000); assert.equal(activity.snapshot().holds.length, 0); // CHANGE
+        const takeover = activity.action(3, 'alice', { kind: 'claim', targets: [second] }); release(); await flushing; assert.equal((await takeover).ok, true); // CHANGE
+        const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('device:expiry-' + digest('alice')) + '.json'); // CHANGE
+        assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')).payload.requests.map(request => request.key).sort(), [target, second].sort()); // CHANGE
+    } finally { release(); await flushing; } // CHANGE
+}); // CHANGE
+test('terminal evidence rolls over bounded pages without renewing expired human sessions', async t => { // CHANGE
+    const f = await fixture(t), activity = f.activity(), targets = Array.from({ length: 513 }, (_, index) => JSON.stringify(['page', String(index)])); // CHANGE
+    await activity.action(1, 'alice', { kind: 'claim', targets }); f.time(LEASE_MS); await activity.scan(); // CHANGE
+    const directory = path.join(f.canvas.folderPath, '.trellis/activity-v4'), records = await Promise.all((await fs.readdir(directory)).filter(name => name.endsWith('.json')).map(name => fs.readFile(path.join(directory, name), 'utf8').then(JSON.parse))); // CHANGE
+    const witnesses = records.filter(record => record.payload.sessionId.startsWith('expiry-')); // CHANGE
+    assert.equal(witnesses.length, 2); assert.equal(witnesses.reduce((total, record) => total + record.payload.requests.length, 0), targets.length); // CHANGE
+    assert.ok(witnesses.every(record => record.payload.requests.length <= 512 && Buffer.byteLength(JSON.stringify(record)) < 256 * 1024)); // CHANGE
+    assert.equal(activity.snapshot().sessions.length, 1); assert.equal(activity.snapshot().sessions[0].online, false); assert.equal(activity.snapshot().holds.length, 0); // CHANGE
+    await activity.close(); const restarted = f.activity(); const resumed = await restarted.action(1, 'alice', { kind: 'publish' }); assert.equal(resumed.collaboration.losses.length, targets.length); // CHANGE
+}); // CHANGE
+test('offline expiry uses monotonic receipt time even when wall clocks jump backwards or forwards', async t => { // CHANGE
+    const f = await fixture(t); let wall = 1000000; const activity = f.activity('device', { now: () => wall }); // CHANGE
+    await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); wall = -1000; // CHANGE
+    f.time(LEASE_MS - 1); assert.equal(activity.snapshot().holds.length, 1); // CHANGE
+    f.time(LEASE_MS); const lost = await activity.action(1, 'alice', { kind: 'publish' }); assert.equal(lost.collaboration.losses[0].code, 'SESSION_OFFLINE'); // CHANGE
+    wall = 1000000000000; const returned = await activity.action(1, 'alice', { kind: 'publish' }); assert.equal(returned.collaboration.holds.length, 0); assert.equal(returned.collaboration.losses[0].code, 'SESSION_OFFLINE'); // CHANGE
+}); // CHANGE
+test('closing an already stopped service cannot expire ownership resumed by its replacement', async t => { // CHANGE
+    const f = await fixture(t), first = f.activity(); await first.action(1, 'alice', { kind: 'claim', targets: [target] }); await first.close(); // CHANGE
+    f.time(15000); const replacement = f.activity(); await replacement.action(1, 'alice', { kind: 'publish' }); // CHANGE
+    f.time(LEASE_MS); await first.close(); assert.equal(replacement.snapshot().holds.length, 1); // CHANGE
+    const names = await fs.readdir(path.join(f.canvas.folderPath, '.trellis/activity-v4')); assert.equal(names.filter(name => name.endsWith('.json')).length, 1); // CHANGE
+}); // CHANGE
+test('window cleanup during a terminal-witness flush prevents a delayed acquisition from reopening its session', async t => { // CHANGE
+    const f = await fixture(t); let release, entered, block = false; const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; }); // CHANGE
+    const activity = f.activity('device', { writeAtomic: async (file, text) => { if (block && JSON.parse(text).payload.sessionId.startsWith('expiry-')) { block = false; entered(); await gate; } return f.writeAtomic(file, text); } }); // CHANGE
+    await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); f.time(15000); await activity.action(2, 'alice', { kind: 'publish' }); // CHANGE
+    f.time(LEASE_MS); block = true; const acquisition = activity.action(2, 'alice', { kind: 'claim', targets: ['["page","new"]'] }), refusal = assert.rejects(acquisition, /session is closed/); await started; // CHANGE
+    try { activity.forget(2); release(); await refusal; assert.equal(activity.snapshot().holds.length, 0); } finally { release(); await refusal; } // CHANGE
+}); // CHANGE
 test('concurrent announcements persist the latest signed revision independently for each window', async t => { // NEW
     const f = await fixture(t), activity = f.activity(); await activity.start(); // NEW
     await Promise.all(Array.from({ length: 32 }, (_, revision) => activity.action(1, 'alice', { kind: 'publish', pending: [target], revision: revision + 1 }))); // NEW
@@ -223,7 +343,7 @@ test('a higher sequence with an older model revision cannot refresh presence or 
     await peer.action(2, 'alice', { kind: 'claim', targets: [target], revision: 2 }); await local.start(); f.time(5000); await peer.action(2, 'alice', { kind: 'publish' }); await local.scan(); // NEW
     const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('peer:session-2') + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // NEW
     f.time(34000); await f.writeAtomic(file, JSON.stringify(signRecord({ ...envelope.payload, sequence: envelope.payload.sequence + 1, revision: 1 }, f.keys.privateKey))); await local.scan(); // NEW
-    assert.equal(local.snapshot().sessions[0].revision, 2); f.time(35000); assert.equal(local.snapshot().holds.length, 1); assert.equal(local.snapshot().sessions[0].online, false); // CHANGE
+    assert.equal(local.snapshot().sessions[0].revision, 2); f.time(35000); assert.equal(local.snapshot().holds.length, 0); assert.equal(local.snapshot().sessions[0].online, false); // CHANGE
 }); // NEW
 test('a current-state acceptance may remain blocked while independent status and recovery persist', async t => { // CHANGE
     const f = await fixture(t); let release, entered, block = false, completed = false; // CHANGE

@@ -85,9 +85,23 @@ Draw.loadPlugin(function (ui) { // NEW
         timer = setTimeout(() => { timer = null; refresh(); }, 0); // NEW
     } // NEW
 
-    function button(text, callback) { // NEW
+    /** Use shared semantic button styles, retaining matching static styles when loaded standalone. */ // CHANGE
+    function button(text, variant, callback) { // CHANGE
         const node = document.createElement('button'); node.type = 'button'; node.textContent = text; // NEW
-        node.style.cssText = 'padding:5px 8px;border:1px solid #b8b8b8;border-radius:4px;background:white;color:#222;font:12px Arial;cursor:pointer;text-align:left'; // NEW
+        const shared = window.Trellis?.ui; // CHANGE
+        if (typeof shared?.applyButtonStyle === 'function') { // CHANGE
+            shared.applyButtonStyle(node, variant); // CHANGE
+        } else { // CHANGE
+            const colors = { // CHANGE
+                open: ['#2563eb', '#1d4ed8', '#fff'], // CHANGE
+                add: ['#188038', '#166534', '#fff'], // CHANGE
+                close: ['#b91c1c', '#b91c1c', '#fff'], // CHANGE
+                danger: ['#b91c1c', '#fff', '#b91c1c'] // CHANGE
+            }[variant] || ['#6b7280', '#111827', '#fff']; // CHANGE
+            node.setAttribute('data-trellis-button-variant', variant); // CHANGE
+            node.style.cssText = 'box-sizing:border-box;border:1px solid ' + colors[0] + ';color:' + colors[1] + ';background:' + colors[2] + ';border-radius:6px;padding:6px 10px;cursor:pointer;font:12px Arial,sans-serif'; // CHANGE
+        } // CHANGE
+        node.style.textAlign = 'left'; // CHANGE
         node.addEventListener('click', event => { event.stopPropagation(); callback(); }); // NEW
         return node; // NEW
     } // NEW
@@ -122,10 +136,10 @@ Draw.loadPlugin(function (ui) { // NEW
         }); // CHANGE
         nameInput = input; panel.appendChild(input); // CHANGE
         if (session) { // NEW
-            panel.appendChild(button('Done', done)); panel.appendChild(button('Cancel', cancel)); // NEW
+            panel.appendChild(button('Done', 'add', done)); panel.appendChild(button('Cancel', 'close', cancel)); // CHANGE
         } else { // NEW
-            panel.appendChild(button('Edit Footprint', () => editFootprint(cell))); // NEW
-            panel.appendChild(button('Remove Structure', () => { if (editable(cell)) graph.removeCells([cell]); })); // NEW
+            panel.appendChild(button('Edit Footprint', 'open', () => editFootprint(cell))); // CHANGE
+            panel.appendChild(button('Remove Structure', 'danger', () => { if (editable(cell)) graph.removeCells([cell]); })); // CHANGE
         } // NEW
         const status = document.createElement('div'); status.className = 'trellis-structure-status'; status.setAttribute('role', 'status'); panel.appendChild(status); // NEW
         graph.container.appendChild(panel); graph.__trellisOverlayVisibility?.mark(panel); // NEW
@@ -230,7 +244,7 @@ Draw.loadPlugin(function (ui) { // NEW
             dialog.style.cssText = 'position:fixed;z-index:2000000001;left:50%;top:35%;transform:translate(-50%,-50%);padding:16px;background:white;border:1px solid #999;border-radius:6px;box-shadow:0 4px 24px #0005;font:13px Arial'; // NEW
             const text = document.createElement('p'); text.textContent = 'Discard your footprint changes?'; dialog.appendChild(text); // NEW
             const finish = result => { dialog.remove(); draft.confirmation = null; draft.dismissConfirmation = null; resolve(result); }; // NEW
-            dialog.appendChild(button('Keep Editing', () => finish(false))); dialog.appendChild(button('Discard Changes', () => finish(true))); // NEW
+            dialog.appendChild(button('Keep Editing', 'open', () => finish(false))); dialog.appendChild(button('Discard Changes', 'danger', () => finish(true))); // CHANGE
             dialog.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(false); } if (event.key === 'Tab') { event.preventDefault(); const buttons = dialog.querySelectorAll('button'); (document.activeElement === buttons[0] ? buttons[1] : buttons[0]).focus(); } }); // NEW
             graph.container.appendChild(dialog); dialog.querySelector('button').focus(); draft.dismissConfirmation = () => finish(false); // NEW
         }); // NEW
@@ -310,7 +324,7 @@ Draw.loadPlugin(function (ui) { // NEW
         const y = Math.max(0, Math.min(geo.height - size, (modelPoint?.y ?? origin.y + geo.height / 2) - origin.y - size / 2)); // NEW
         const value = mxUtils.createXmlDocument().createElement('GardenStructure'); value.setAttribute('garden_structure', '1'); value.setAttribute('label', 'Structure'); value.setAttribute(ATTR, JSON.stringify({ version: 1, points: RECT })); // NEW
         const cell = new mxCell(value, new mxGeometry(x, y, size, size), 'shape=' + stencil(RECT) + ';whiteSpace=wrap;html=0;fillColor=#94a3b8;fillOpacity=35;strokeColor=#475569;strokeWidth=2;container=0;connectable=0;'); cell.setVertex(true); cell.setConnectable(false); // NEW
-        model.beginUpdate(); try { graph.addCell(cell, garden); } finally { model.endUpdate(); } // NEW
+        model.beginUpdate(); try { graph.addCell(cell, garden); if (model.contains(cell)) graph.__trellisPlantingGroup?.pathSnap?.applyNoTxn(cell); } finally { model.endUpdate(); } // CHANGE: creation and shared path snapping form one undoable edit.
         if (!model.contains(cell)) throw new Error('Structure creation was rejected by permissions.'); // NEW
         hiddenCell = null; message = ''; graph.setSelectionCell(cell); scheduleRefresh(); return cell; // NEW
     } // NEW

@@ -1,6 +1,7 @@
 // NEW: Renderer orchestration for managed canvas sharing; credentials stay in Electron.
 Draw.loadPlugin(function (ui) {
     'use strict';
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE: nonmodal activity details share the Trellis overlay-layer contract.
     const protocol = window.TrellisSyncContract; // NEW: index.html installs the shared protocol contract before plugins.
     if (!protocol) throw new Error('The synchronization contract was not loaded.'); // NEW
     window.TrellisLocalView?.install(ui); // NEW: local-only diagrams use the same folding mechanics.
@@ -229,7 +230,8 @@ Draw.loadPlugin(function (ui) {
             busy: () => [...composingFields].some(field => field.isConnected && !field.closest('[data-trellis-frozen]')), // CHANGE
             dirty: () => !window.__trellisClosing && (current.isModified() || !!holdEditors?.pinnedTargets().length), // CHANGE
             publish: async input => { if (file() !== current || generation !== contextGeneration) return; const result = await bridge.activityAction({ shareId, expectedUserId, ...input, pending: creationPendingKeys(input.pending, input.saveState) }); if (file() === current && generation === contextGeneration) adoptActivity(result.collaboration); }, // CHANGE: peers receive the same garden summary while private save tracking stays per object.
-            capture: () => ({ kind: 'checkpoint', shareId, expectedUserId, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: holdEditors?.capture(['*']) || [] }), // CHANGE
+            whenCapturable: () => graph.__trellisEditContext?.whenSettled(), // CHANGE: graph recovery shares the local commit barrier with content saves.
+            capture: () => { graph.__trellisEditContext?.assertCapturable(); if (file() !== current || generation !== contextGeneration || expectedUserId !== context().userId) throw new Error('The recovery context changed before capture.'); return { kind: 'checkpoint', shareId, expectedUserId, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: holdEditors?.capture(['*']) || [] }; }, // CHANGE
             checkpoint: input => bridge.recoveryAction({ ...input, ...(graph.__trellisProjectFormat === 2 ? { references: referenceDependencies() } : {}) }), report: status, // CHANGE: unsaved immutable definitions accompany private checkpoints without entering the content queue.
             onStatusChange: () => { if (file() === current && generation === contextGeneration && expectedUserId === context().userId) { renderSaveStatus(current); renderBadges(); } }, // CHANGE: failure/conflict transitions immediately restore affected-object badge anchors.
         }); // NEW
@@ -720,6 +722,7 @@ Draw.loadPlugin(function (ui) {
     function showDialog(title, back) { // CHANGE
         const previous = dialog && dialog.__previousFocus || document.activeElement; if (dialog) dialog.remove(); updateDialog = null; // CHANGE
         dialog = document.createElement('div'); dialog.__previousFocus = previous; dialog.className = 'trellis-collaboration-dialog'; // CHANGE
+        dialog.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         dialog.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2147483100;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;'; // CHANGE
         const panel = document.createElement('section'); panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-label', title); panel.tabIndex = -1; // NEW
         panel.style.cssText = 'width:640px;max-width:100%;max-height:calc(100vh - 32px);overflow:auto;background:#fff;color:#111827;border:1px solid #d1d5db;border-radius:8px;padding:20px;font:13px Arial;box-sizing:border-box;box-shadow:0 12px 40px #0003;'; // CHANGE
@@ -740,7 +743,7 @@ Draw.loadPlugin(function (ui) {
         const input = document.createElement(multiline ? 'textarea' : 'input'); input.style.cssText = 'display:block;box-sizing:border-box;width:100%;margin-top:6px;padding:8px;border:1px solid #9ca3af;border-radius:6px;font:13px Arial;'; // CHANGE
         if (multiline) { input.rows = 4; input.style.resize = 'vertical'; } wrapper.appendChild(input); panel.appendChild(wrapper); return input; // CHANGE
     } // CHANGE
-    function details(panel, title) { const d = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = title; d.appendChild(summary); d.style.cssText = 'margin:16px 0;padding-top:12px;border-top:1px solid #e5e7eb;'; panel.appendChild(d); return d; } // NEW
+    function details(panel, title) { const d = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = title; d.appendChild(summary); d.dataset.trellisSurface = 'inset'; summary.dataset.trellisSurface = 'header'; d.style.cssText = 'margin:16px 0;padding-top:12px;'; panel.appendChild(d); return d; } // CHANGE: shared inset surfaces keep native disclosure behavior.
     function copyBlock(panel, label, value) { // NEW
         const block = field(panel, label, true); block.value = value; block.readOnly = true; // NEW
         button('Copy', async () => { try { await window.navigator.clipboard.writeText(value); panel.querySelector('[data-status]').textContent = 'Copied.'; } catch (_) { block.focus(); block.select(); throw new Error('Copy was unavailable. The complete text is selected; use your copy shortcut.'); } }, panel, 'add'); return block; // NEW
@@ -813,6 +816,7 @@ Draw.loadPlugin(function (ui) {
         const canvasTitle = document.createElement('h3'); canvasTitle.textContent = info?.folderLabel || file()?.getTitle?.() || 'Current canvas'; panel.appendChild(canvasTitle); // NEW
         let copies = null, recoveryList = null; // NEW: refresh recovery entries without replacing their controls.
         const health = document.createElement('div'); health.style.cssText = 'padding:14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;line-height:1.6;'; health.setAttribute('aria-live', 'polite'); panel.appendChild(health); // NEW
+        health.dataset.trellisSurface = 'inset'; health.style.background = ''; health.style.borderColor = ''; // NEW: shared surface hierarchy.
         const people = document.createElement('div'); panel.appendChild(people); // NEW
         const activityRows = document.createElement('div'); panel.appendChild(activityRows); // CHANGE: activity controls survive overview updates and share object-dialog descriptions.
         const update = () => { // NEW
@@ -1052,6 +1056,9 @@ Draw.loadPlugin(function (ui) {
                 timings({ operationId: batch.id, phase: 'save claims', durationMs: window.performance.now() - claimStarted }); // NEW
                 if (explicitMode && !viewIdentity) throw new Error('Open or explicitly recover your remembered objects before saving.'); // NEW
                 const captureStarted = window.performance.now(); // NEW
+                await graph.__trellisEditContext?.whenSettled(); // CHANGE: final rendering and complete rollback precede every managed save capture.
+                if (file() !== current || batch.generation !== contextGeneration || saveUser !== context().userId) throw new Error('The project or user changed before capture.'); // CHANGE
+                graph.__trellisEditContext?.assertCapturable(); // CHANGE
                 let captured = ui.getFileData(), capturedRevision = modelRevision; const generation = contextGeneration, baseline = collaborationBaseline || current.data; // CHANGE
                 const releaseCandidates = new Map((collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !(holdEditors?.pinnedTargets() || []).includes(hold.key)).map(hold => [hold.key, hold.claimId])); // CHANGE
                 const capturedObjects = new Map([...dirtyObjects].map(key => [key, objectFingerprint(key)])); background?.state('saving'); // NEW
@@ -1217,8 +1224,20 @@ Draw.loadPlugin(function (ui) {
         editingForm = form || binding; formTargets = targets; window.clearTimeout(formActivityTimer); // CHANGE
         formActivityTimer = window.setTimeout(() => coordinate({ kind: 'claim', targets }).then(result => { if (!result) return; if (!result.ok && editingForm?.isConnected) { if (explicitMode) { recoverLostHolds(targets, result.reason).catch(() => {}); return; } let message = editingForm.querySelector('[data-collaboration-notice]'); if (!message) { message = note(editingForm, ''); message.dataset.collaborationNotice = ''; message.setAttribute('role', 'status'); } message.textContent = result.reason + ' Your form entries remain here. Request release before applying them.'; } }).catch(err => status(err.message)), 250); // CHANGE
     }, true); // NEW
-    let badgeLayer = null, badgeFingerprint = '', popover = null, popoverKey = null, popoverPinned = false, popoverTimer = null; // NEW
-    function closeObjectPopover() { if (popover) popover.remove(); popover = null; popoverKey = null; popoverPinned = false; window.clearTimeout(popoverTimer); } // NEW
+    let badgeLayer = null, badgeFingerprint = '', popover = null, popoverKey = null; // CHANGE: activity details open only through deliberate activation.
+    /** Resolve the current badge after live updates replace its original DOM node. */ // CHANGE
+    function closeObjectPopover(restoreFocus = false) { // CHANGE
+        const anchor = [...(badgeLayer?.querySelectorAll('[data-object-key]') || [])].find(badge => badge.dataset.objectKey === popoverKey); // CHANGE
+        if (popover) popover.remove(); popover = null; popoverKey = null; // CHANGE
+        anchor?.setAttribute('aria-expanded', 'false'); // CHANGE
+        if (restoreFocus && anchor?.isConnected && !anchor.hidden) anchor.focus(); // CHANGE
+    } // CHANGE
+    document.addEventListener('pointerdown', event => { // CHANGE: dismiss without consuming the outside control's normal action or focus.
+        if (popover && !popover.contains(event.target) && !badgeLayer?.contains(event.target)) closeObjectPopover(); // CHANGE
+    }, true); // CHANGE
+    document.addEventListener('keydown', event => { // CHANGE: Escape dismisses even after keyboard focus moves outside the panel.
+        if (popover && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeObjectPopover(true); } // CHANGE
+    }, true); // CHANGE
     /** A user can have several windows/devices; only this session may save this window's draft. */ // CHANGE
     function isLocalActivity(source) { return !!localSessionId && source.sessionId === localSessionId && (!source.userId || source.userId === context().userId) && (!source.deviceId || !info?.deviceId || source.deviceId === info.deviceId); } // CHANGE
     function activityPerson(source) { return isLocalActivity(source) ? source.name || 'You' : (source.name || source.userId || 'Unknown user') + (source.userId === context().userId ? ' (your other session)' : ''); } // CHANGE: retain familiar author names while distinguishing their other sessions.
@@ -1252,7 +1271,7 @@ Draw.loadPlugin(function (ui) {
             } // CHANGE
             return { label: person + ' · ' + meaning + suffix, detail }; // CHANGE
         } // CHANGE
-        if (kind === 'editing') return { label: person + ' · editing' + suffix, detail: subject + ' is editing' + (uncertain ? ' (disconnected or presence unconfirmed)' : '') + '. ' + (source.requested ? 'Release requested. Editing ends in ' + Math.max(0, Math.ceil(((source.requestDeadline ?? source.expiresAt) - Date.now()) / 1000)) + ' seconds.' : 'The editing hold remains until editing ends or release is requested.') }; // CHANGE
+        if (kind === 'editing') return { label: person + ' · editing' + suffix, detail: subject + ' is editing' + (uncertain ? ' (disconnected or presence unconfirmed)' : '') + '. ' + (source.requested ? 'Release requested. Editing ends in ' + Math.max(0, Math.ceil(((source.requestDeadline ?? source.expiresAt) - Date.now()) / 1000)) + ' seconds. ' : '') + 'The editing hold automatically releases after thirty seconds without a fresh session heartbeat.' }; // CHANGE
         if (kind === 'turn') return { label: person + ' · next turn', detail: subject + ' has the next editing turn. Begin within ' + Math.max(0, Math.ceil((source.until - Date.now()) / 1000)) + ' seconds.' }; // CHANGE
         return { label: person + ' · viewing' + suffix, detail: subject + (uncertain ? ' last reported viewing; current presence is unconfirmed.' : ' is viewing.') }; // CHANGE
     } // CHANGE
@@ -1300,28 +1319,29 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE
         for (const [id, row] of existing) if (!seen.has(id)) { const focused = row.contains(document.activeElement); row.remove(); if (focused) panel.querySelector('[data-activity-close]')?.focus(); } // CHANGE
     } // CHANGE
-    function updateObjectPopover() { // CHANGE: live pending status and ownership retain focus and pinned state.
+    function updateObjectPopover() { // CHANGE: live pending status and ownership retain focus and the open panel.
         if (!popover) return; // CHANGE
         const entries = objectActivity(), records = [...(entries.get(popoverKey) || []), ...(popoverKey === '*' ? [] : entries.get('*') || [])]; // CHANGE
         renderActivityRows(popover.querySelector('[data-activity-rows]'), records); // CHANGE
-        popover.querySelector('[data-editing-status]').textContent = records.length ? '' : 'No pending changes or editing hold are currently reported.'; // CHANGE
+        popover.querySelector('[data-editing-status]').textContent = records.length ? '' : 'No viewing activity, pending changes, or editing holds are currently reported for this object.'; // CHANGE: automatic presence expiry leaves the open details panel useful without retaining a stale viewing row.
         const peers = lastStatus?.connectedPeers ?? lastStatus?.connectedCollaborators; // CHANGE
         popover.querySelector('[data-connection-status]').textContent = peers == null ? 'Connection status is unavailable; reported activity may be out of date.' : peers > 0 ? 'Other computers are connected; reported activity updates may be delayed.' : 'Working locally. No other computers are connected; their activity may be out of date.'; // CHANGE
         if (popover.isConnected) { const bounds = popover.getBoundingClientRect(); if (bounds.bottom > window.innerHeight - 12) popover.style.top = Math.max(12, window.innerHeight - bounds.height - 12) + 'px'; } // CHANGE: expanded session explanations and actions stay within the viewport.
     } // CHANGE
-    function showObjectPopover(key, anchor, pinned) { // NEW
-        window.clearTimeout(popoverTimer); if (popoverKey === key && popover) { if (pinned) { popoverPinned = !popoverPinned; if (popoverPinned) popover.querySelector('button:not([hidden])')?.focus(); } return; } closeObjectPopover(); // NEW
-        popoverKey = key; popoverPinned = !!pinned; popover = document.createElement('section'); popover.setAttribute('role', 'dialog'); popover.setAttribute('aria-label', 'Activity for ' + objectLabel(key)); // NEW
-        popover.style.cssText = 'position:fixed;z-index:2147483099;width:324px;max-width:calc(100vw - 24px);box-sizing:border-box;max-height:min(480px,calc(100vh - 24px));overflow:auto;padding:12px;background:#fff;color:#111827;border:1px solid #9ca3af;border-radius:6px;box-shadow:0 6px 18px #0003;font:13px Arial;'; // CHANGE: allow room for pending explanations and actions while bounding multi-session dialogs.
+    function showObjectPopover(key, anchor) { // CHANGE
+        if (popoverKey === key && popover) { closeObjectPopover(); return; } closeObjectPopover(); // CHANGE: activating another badge switches objects; the same badge toggles closed.
+        popoverKey = key; anchor.setAttribute('aria-expanded', 'true'); popover = document.createElement('section'); popover.setAttribute('role', 'dialog'); popover.setAttribute('aria-label', 'Activity for ' + objectLabel(key)); // CHANGE
+        popover.style.cssText = 'position:fixed;z-index:' + GRAPH_OVERLAY_Z.CONTROL_TOP + ';width:324px;max-width:calc(100vw - 24px);box-sizing:border-box;max-height:min(480px,calc(100vh - 24px));overflow:auto;padding:12px;background:#fff;color:#111827;border:1px solid #9ca3af;border-radius:6px;box-shadow:0 6px 18px #0003;font:13px Arial;'; // CHANGE: expanded activity details sit above ordinary controls and below modal dialogs.
+        popover.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         const bounds = anchor.getBoundingClientRect(); popover.style.left = Math.max(12, Math.min(bounds.left, window.innerWidth - 324)) + 'px'; popover.style.top = Math.max(12, Math.min(bounds.bottom + 4, window.innerHeight - 312)) + 'px'; // NEW
         note(popover, objectLabel(key)); // NEW
         const rows = document.createElement('div'); rows.dataset.activityRows = ''; popover.appendChild(rows); // CHANGE
         note(popover, '').dataset.editingStatus = ''; note(popover, '').dataset.connectionStatus = ''; // CHANGE
         const error = note(popover, ''); error.dataset.status = ''; error.setAttribute('role', 'status'); // CHANGE
-        if (bridge.activityAction) { const refreshStatus = button('Refresh status', () => runActivityAction(popover, refreshActivity), popover); refreshStatus.dataset.activityAction = ''; } // CHANGE
-        button('Close', closeObjectPopover, popover, 'close').dataset.activityClose = ''; updateObjectPopover(); // CHANGE
-        for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'click', 'keydown', 'keypress', 'keyup']) popover.addEventListener(type, e => { e.stopPropagation(); if (e.key === 'Escape') closeObjectPopover(); }); // NEW
-        popover.addEventListener('mouseenter', () => window.clearTimeout(popoverTimer)); popover.addEventListener('mouseleave', () => { if (!popoverPinned) popoverTimer = window.setTimeout(closeObjectPopover, 90); }); document.body.appendChild(popover); updateObjectPopover(); if (pinned) popover.querySelector('button:not([hidden])')?.focus(); // CHANGE: clamp the measured dialog after mounting it.
+        // CHANGE: activity notifications keep this panel current; internal authority confirmation still uses refreshActivity.
+        button('Close', () => closeObjectPopover(true), popover, 'close').dataset.activityClose = ''; updateObjectPopover(); // CHANGE
+        for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'click', 'keydown', 'keypress', 'keyup']) popover.addEventListener(type, e => { e.stopPropagation(); }); // CHANGE: panel input must not invoke graph shortcuts or selection gestures.
+        document.body.appendChild(popover); updateObjectPopover(); popover.querySelector('button:not([hidden])')?.focus(); // CHANGE: keep details open when the pointer leaves, and clamp the mounted panel.
     } // NEW
     function renderBadges() { // NEW
         if (!graph.container || !isCollaborative()) { badgeLayer?.remove(); badgeLayer = null; badgeFingerprint = ''; closeObjectPopover(); return; } // NEW
@@ -1339,10 +1359,9 @@ Draw.loadPlugin(function (ui) {
             badgeFingerprint = fingerprint; badgeLayer.replaceChildren(); // NEW
             for (const [key, labels] of entries) { // NEW
                 if (key === '*') continue; const [page, id] = JSON.parse(key); if (page !== pageId) continue; const cell = graph.getModel?.().getCell(id); if (!cell) continue; // NEW
-                const badge = button(labels.join(' · '), () => showObjectPopover(key, badge, true), badgeLayer); badge.dataset.objectKey = key; badge.title = labels.join('\n'); badge.setAttribute('aria-label', objectLabel(key) + ': ' + labels.join(', ')); // NEW
-                badge.style.cssText += 'position:absolute;pointer-events:auto;font-size:11px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#fff;'; // NEW
-                for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'click', 'keydown', 'keypress', 'keyup']) badge.addEventListener(type, e => { e.stopPropagation(); if (e.key === 'Escape') closeObjectPopover(); }); // NEW
-                badge.addEventListener('mouseenter', () => showObjectPopover(key, badge, false)); badge.addEventListener('focus', () => showObjectPopover(key, badge, false)); badge.addEventListener('mouseleave', () => { if (!popoverPinned) popoverTimer = window.setTimeout(closeObjectPopover, 90); }); // NEW
+                const badge = button(labels.join(' · '), () => showObjectPopover(key, badge), badgeLayer); badge.dataset.objectKey = key; badge.setAttribute('aria-label', objectLabel(key) + ': ' + labels.join(', ')); badge.setAttribute('aria-haspopup', 'dialog'); badge.setAttribute('aria-expanded', String(popoverKey === key && !!popover)); // CHANGE: no native hover tooltip; native buttons retain Enter/Space activation.
+                badge.style.cssText += 'position:absolute;pointer-events:auto;font-size:11px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(255,255,255,0.5);'; // CHANGE: only the fill is translucent; text, border and focus outline remain opaque.
+                for (const type of ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'click', 'keydown', 'keypress', 'keyup']) badge.addEventListener(type, e => { e.stopPropagation(); }); // CHANGE
             } // NEW
         } // NEW
         for (const badge of badgeLayer.querySelectorAll('[data-object-key]')) { const [, id] = JSON.parse(badge.dataset.objectKey), cell = graph.getModel?.().getCell(id), state = graph.view?.getState(cell); badge.hidden = !state; if (state) { const left = state.x + state.width + 4 + 'px', top = state.y + 'px'; if (badge.style.left !== left) badge.style.left = left; if (badge.style.top !== top) badge.style.top = top; } } // CHANGE: do not rewrite stationary badge geometry.
@@ -1390,7 +1409,20 @@ Draw.loadPlugin(function (ui) {
         const pinned = holdEditors?.pinnedTargets() || [], targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); // NEW
         if (targets.length) await coordinate({ kind: 'release', targets }); // NEW
     } // NEW
-    window.Trellis.sharing = { ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: registerSharingEditor, rejectOperation: (edit, reason) => undoRejected(edit, reason), releaseRemovedCreations, registerObjectForm: config => holdEditors?.registerForm(config), whenEditingReady: async () => { const current = file(), generation = contextGeneration, actor = context().userId; await acquisitionPromise; if (current !== file() || generation !== contextGeneration || actor !== context().userId) throw new Error('The editing context changed before the operation could begin.'); }, transitionEditor: operation => holdEditors ? holdEditors.transition(operation) : Promise.resolve(operation()), activeEditorTargets: () => holdEditors?.activeTargets() || [], getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE: registered editors retain their API and report draft disposal to creation-badge presentation.
+    /** Retain a failed local commit separately; never replace a usable checkpoint with quarantined graph state. */ // CHANGE
+    function retainFailedCommit(reason) { // CHANGE
+        if (!isCollaborative()) return; // CHANGE
+        const current = file(), generation = contextGeneration, expectedUserId = context().userId; // CHANGE
+        holdEditors?.freeze(['*'], reason); // CHANGE
+        let input; // CHANGE
+        try { input = { shareId: info.shareId, expectedUserId, kind: 'retain', lossId: window.crypto.randomUUID(), reason, revision: modelRevision, baseXml: collaborationBaseline || current.data, xml: ui.getFileData(), editorDrafts: holdEditors?.capture(['*']) || [], ...(graph.__trellisProjectFormat === 2 ? { references: referenceDependencies() } : {}) }; } catch (error) { status(reason + ' Recovery capture failed: ' + error.message); return; } // CHANGE
+        const preserve = async () => { // CHANGE
+            try { await bridge.recoveryAction(input); if (file() === current && generation === contextGeneration && expectedUserId === context().userId) holdEditors?.preservation(['*'], true); } // CHANGE
+            catch (error) { if (file() === current && generation === contextGeneration && expectedUserId === context().userId) { holdEditors?.preservation(['*'], false, error.message, preserve); status(reason + ' Recovery preservation failed: ' + error.message); } } // CHANGE
+        }; // CHANGE
+        void preserve(); status(reason); // CHANGE
+    } // CHANGE
+    window.Trellis.sharing = { retainFailedCommit, ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: registerSharingEditor, rejectOperation: (edit, reason) => undoRejected(edit, reason), releaseRemovedCreations, registerObjectForm: config => holdEditors?.registerForm(config), whenEditingReady: async () => { const current = file(), generation = contextGeneration, actor = context().userId; await acquisitionPromise; if (current !== file() || generation !== contextGeneration || actor !== context().userId) throw new Error('The editing context changed before the operation could begin.'); }, transitionEditor: operation => holdEditors ? holdEditors.transition(operation) : Promise.resolve(operation()), activeEditorTargets: () => holdEditors?.activeTargets() || [], getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE: registered editors retain their API and report draft disposal to creation-badge presentation.
     /** Authenticate, initialize the remembered base, then claim and save the same account transition. */ // NEW
     window.Trellis.sharing.finishIdentityJoin = async function (options) { // NEW
         if (identityJoinInProgress) throw new Error('This invitation is already being completed.'); // NEW

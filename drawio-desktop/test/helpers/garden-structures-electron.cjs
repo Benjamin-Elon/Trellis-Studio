@@ -11,11 +11,12 @@ app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-structure
 /** Real pointer events exercise native custom handles, dialogs, draft preservation, SVG, and PDF output. */ // NEW
 app.whenReady().then(async () => { // NEW
     const win = new BrowserWindow({ show: false, width: 1200, height: 900, webPreferences: { sandbox: false, backgroundThrottling: false } }); // NEW
+    win.webContents.on('console-message', event => { if (event.level === 'error') console.error('Renderer error: ' + event.message); }); // CHANGE: include the actual renderer exception when a native scenario fails.
     try { // NEW
         await win.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><body style="margin:0"><div id="graph" style="position:absolute;left:20px;top:20px;width:1150px;height:840px;overflow:auto"></div></body>')); // NEW
         const run = async code => { // NEW
             let timeout; // NEW
-            try { return await Promise.race([win.webContents.executeJavaScript(code), new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('Renderer timed out: ' + code.slice(0, 180))), 10000); })]); } finally { clearTimeout(timeout); } // NEW
+            try { return await Promise.race([win.webContents.executeJavaScript(code), new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('Renderer timed out: ' + code.slice(0, 180))), 10000); })]); } catch (error) { throw new Error(error.message + '\nRenderer script: ' + code.slice(0, 300), { cause: error }); } finally { clearTimeout(timeout); } // CHANGE
         }; // NEW
         await run('window.mxLoadResources=false;window.mxLoadStylesheets=false;'); // NEW
         await run(read('mxgraph/mxClient.js') + '\nvoid 0;'); for (const script of runtimeScripts()) await run(script + '\nvoid 0;'); // NEW
@@ -100,7 +101,59 @@ app.whenReady().then(async () => { // NEW
         const projection = await PDFDocument.create(), page = projection.addPage([1200, 900]); for (const d of paths) page.drawSvgPath(d, { x: 0, y: 900, borderColor: rgb(.28, .33, .41), borderWidth: 2 }); // NEW
         const pdf = await projection.save(); assert.equal((await PDFDocument.load(pdf)).getPageCount(), 1); // NEW
         if (process.argv.includes('--native-pdf')) { const nativePdf = await win.webContents.printToPDF({ printBackground: true }); assert.equal(nativePdf.subarray(0, 5).toString(), '%PDF-'); } // NEW: independent host printing service is opt-in, matching existing projection tests.
-        console.log('Chromium structures: native focus/typing, click toggles, guarded Undo/Redo, corner/midpoint drags, overlay restoration and SVG/PDF projections passed'); // CHANGE
+        // Native move/resize gestures must show the same oblique clearance that reaches the model. // CHANGE
+        await run(` // CHANGE
+            window.snapDistance=(a,b,geometry=a.geometry)=>{ // CHANGE
+                const corners=(cell,g=cell.geometry)=>{ // CHANGE
+                    if(cell.getAttribute('garden_structure')==='1')return api.footprint(cell,g); // CHANGE
+                    const center=new mxPoint(g.x+g.width/2,g.y+g.height/2),angle=Number(graph.getCellStyle(cell).rotation||0)*Math.PI/180; // CHANGE
+                    return [[g.x,g.y],[g.x+g.width,g.y],[g.x+g.width,g.y+g.height],[g.x,g.y+g.height]].map(([x,y])=>{const p=mxUtils.getRotatedPoint(new mxPoint(x,y),Math.cos(angle),Math.sin(angle),center);return[p.x,p.y]}); // CHANGE
+                }; // CHANGE
+                const left=corners(a,geometry),right=corners(b);let distance=Infinity; // CHANGE
+                for(const [vertices,edges]of [[left,right],[right,left]])for(const p of vertices)for(let i=0;i<edges.length;i++){const q=edges[i],r=edges[(i+1)%edges.length];distance=Math.min(distance,mxUtils.ptSegDistSq(q[0],q[1],r[0],r[1],p[0],p[1]));} // CHANGE
+                return Math.sqrt(distance); // CHANGE
+            }; // CHANGE
+            window.screenRect=node=>{const r=node.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}}; // CHANGE
+            window.snapSnapshot=()=>mxUtils.getXml(new mxCodec().encode(graph.model)); // CHANGE
+            graph.gridEnabled=false;graph.graphHandler.guidesEnabled=false;graph.setExtendParents(false);graph.setConstrainChildren(false); // CHANGE
+            graph.view.scaleAndTranslate(1.25,4,6);graph.panGraph(8,6);void 0; // CHANGE
+        `); // CHANGE
+        for (const movingKind of ['structure', 'bed']) { // CHANGE
+            await run(` // CHANGE
+                graph.clearSelection();graph.removeCells(graph.getChildVertices(garden)); // CHANGE
+                for(const id of ['small','medium','large'])garden.value.setAttribute('default_path_'+id+'_enabled','0'); // CHANGE
+                window.snapStructure=api.create(garden);graph.model.setGeometry(snapStructure,new mxGeometry(${movingKind === 'structure' ? 550 : 300},300,120,100));graph.setCellStyles('rotation','30',[snapStructure]); // CHANGE
+                window.snapBed=graph.insertVertex(garden,'snap-bed',value({garden_bed:'1',label:'Snap bed'}),${movingKind === 'bed' ? 550 : 300},300,120,100,'rotation=${movingKind === 'bed' ? -15 : 0};'); // CHANGE
+                window.snapActive=${movingKind === 'structure' ? 'snapStructure' : 'snapBed'};window.snapOther=${movingKind === 'structure' ? 'snapBed' : 'snapStructure'}; // CHANGE
+                window.snapProposed=snapActive.geometry.clone();snapProposed.x-=20;window.snapTarget=snapDistance(snapActive,snapOther,snapProposed)-5; // CHANGE
+                garden.value.setAttribute('default_path_small_enabled','1');garden.value.setAttribute('default_path_small_width_cm',String(snapTarget/.9)); // CHANGE
+                graph.setSelectionCell(snapActive);undoManager.clear();window.beforeSnap=snapSnapshot();frames(); // CHANGE
+            `); // CHANGE
+            const point = await run('(()=>{const r=graph.container.getBoundingClientRect(),s=graph.view.getState(snapActive);return{x:Math.round(r.left+s.getCenterX()+graph.panDx),y:Math.round(r.top+s.getCenterY()+graph.panDy)}})()'); // CHANGE
+            mouse('mouseDown', point); mouse('mouseMove', { x: point.x - 25, y: point.y }); await run('frames()'); // CHANGE
+            assert.equal(await run('snapSnapshot()===beforeSnap'), true, movingKind + ' preview is transient'); // CHANGE
+            assert.equal(await run('!!document.querySelector(".trellis-path-snap-segment")'), true, movingKind + ' has an angled clearance guide'); // CHANGE
+            const preview = await run('screenRect(document.querySelector(\'[data-trellis-bed-preview-cell="\'+snapActive.id+\'"][data-trellis-bed-preview-kind="shape"]\'))'); // CHANGE
+            mouse('mouseUp', { x: point.x - 25, y: point.y }); await run('frames()'); // CHANGE
+            const committed = await run('screenRect(graph.view.getState(snapActive).shape.node)'); // CHANGE
+            for (const axis of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(preview[axis] - committed[axis]) < .1, movingKind + ' preview/commit ' + axis); // CHANGE
+            assert.ok(await run('Math.abs(snapDistance(snapActive,snapOther)-snapTarget)<1e-6')); // CHANGE
+            assert.equal(await run('undoManager.history.length'), 1); // CHANGE
+            await run('undoManager.undo();frames()'); assert.equal(await run('snapSnapshot()===beforeSnap'), true); // CHANGE
+            await run('undoManager.redo();frames()'); // CHANGE
+            if (movingKind === 'structure') { // CHANGE
+                await run('undoManager.clear();window.beforeResize=snapSnapshot();frames()'); // CHANGE
+                const handle = await run('(()=>{const h=graph.selectionCellsHandler.getHandler(snapActive);const r=h.sizers[7].node.getBoundingClientRect();return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()'); // CHANGE
+                mouse('mouseDown', handle); mouse('mouseMove', { x: handle.x + 20, y: handle.y + 10 }); await run('frames()'); // CHANGE
+                const bounds = await run('(()=>{const b=graph.selectionCellsHandler.getHandler(snapActive).unscaledBounds;return{x:b.x,y:b.y,width:b.width,height:b.height}})()'); // CHANGE
+                assert.equal(await run('snapSnapshot()===beforeResize'), true); // CHANGE
+                mouse('mouseUp', { x: handle.x + 20, y: handle.y + 10 }); await run('frames()'); // CHANGE
+                const geometry = await run('({x:snapActive.geometry.x,y:snapActive.geometry.y,width:snapActive.geometry.width,height:snapActive.geometry.height})'); // CHANGE
+                for (const axis of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(bounds[axis] - geometry[axis]) < 1e-6, 'resize preview/commit ' + axis); // CHANGE
+                assert.equal(await run('undoManager.history.length'), 1); // CHANGE
+            } // CHANGE
+        } // CHANGE
+        console.log('Chromium structures: native focus/typing, click toggles, guarded Undo/Redo, corner/midpoint drags, overlay restoration, rotated path snapping and SVG/PDF projections passed'); // CHANGE
     } finally { win.destroy(); } // NEW
     app.quit(); // NEW
 }).catch(error => { console.error(error.stack || error); app.exit(1); }); // NEW

@@ -9,6 +9,20 @@
         const pageId = () => ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || '';
         const objectKey = cell => JSON.stringify([pageId(), String(cell.id)]);
         const clone = value => value?.clone ? value.clone() : value;
+        let pendingFolds = null, flushingFolds = false; // NEW: suppressed model edits still need native rendering notifications.
+
+        /** Deliver already-applied folds only to the graph, after the complete display transaction. */ // NEW
+        function flushFoldRendering() { // NEW
+            if (!pendingFolds || flushingFolds || depth || model.updateLevel || model.endingUpdate || suspended || presentationDepth || mutationDepth || encoding || applying) return; // NEW
+            const previous = graph.__trellisLocalViewChanging, internal = graph.__trellisUsersInternalChange; // NEW
+            flushingFolds = true; graph.__trellisLocalViewChanging = true; graph.__trellisUsersInternalChange = true; // NEW
+            try { // NEW
+                while (pendingFolds && !model.updateLevel) { // NEW: cluster normalization can enqueue more native folds while processing this batch.
+                    const pending = pendingFolds; pendingFolds = null; // NEW
+                    if (pending.root === model.getRoot() && pending.page === pageId()) fold(() => graph.graphModelChanged(pending.changes)); // NEW: obsolete pages are skipped; normalization stays private even through pre-install native references.
+                } // NEW
+            } finally { flushingFolds = false; graph.__trellisLocalViewChanging = previous; graph.__trellisUsersInternalChange = internal; } // NEW
+        } // NEW
 
         // Presentation journals retain the actual authored cells, including native undo references. // NEW
         const presentations = new Map(); // NEW
@@ -88,6 +102,7 @@
                 graph.view?.states?.visit?.((_key, state) => { if (!model.contains(state.cell)) graph.view.removeState(state.cell); }); // NEW: suppressed model edits must still remove orphaned summary/circle DOM.
                 graph.updateSelection?.(); // NEW: prune deleted objects only after local children are back in the model.
             } // NEW
+            flushFoldRendering(); // NEW: native fold changes may have waited for the planting display to be restored.
         } // NEW
 
         const updateSelection = graph.updateSelection; // NEW
@@ -139,7 +154,10 @@
             const outer = transaction && this.updateLevel === 1 && !endingTransaction; // CHANGE
             if (outer) endingTransaction = true; // NEW: nested edits from native publish observers remain on the same canonical base.
             try { return presentationEnd.apply(this, arguments); } // NEW
-            finally { if (outer) { endingTransaction = false; if (!this.updateLevel && transaction) { transaction = false; resumePresentations(true); graph.view?.revalidate?.(); } } } // CHANGE
+            finally { // CHANGE: a native outer edit can contain private folds even without planting preferences.
+                try { if (outer) { endingTransaction = false; if (!this.updateLevel && transaction) { transaction = false; resumePresentations(true); graph.view?.revalidate?.(); } } } // CHANGE
+                finally { flushFoldRendering(); } // NEW
+            } // CHANGE
         }; // NEW
         model.addListener?.(root.mxEvent.START_EDIT, () => { // NEW
             if (hasPresentationPreferences() && !model.updateLevel && !presentationDepth && !suspended && !depth) { history = true; suspendPresentations(); } // CHANGE
@@ -219,14 +237,24 @@
         function fold(operation) {
             if (depth) return operation();
             const edit = model.currentEdit, start = edit?.changes.length || 0;
-            const internal = graph.__trellisUsersInternalChange;
+            const internal = graph.__trellisUsersInternalChange, previous = graph.__trellisLocalViewChanging; // CHANGE
+            const foldRoot = model.getRoot(), foldPage = pageId(); // NEW
             depth++; graph.__trellisLocalViewChanging = true; graph.__trellisUsersInternalChange = true;
             model.beginUpdate();
             try { return operation(); }
             finally {
-                if (model.currentEdit === edit) edit.changes.splice(start);
+                if (model.currentEdit === edit) { // CHANGE
+                    const changes = edit.changes.splice(start); // CHANGE: keep native invalidation data outside document history.
+                    if (changes.length && foldRoot === model.getRoot() && foldPage === pageId()) { // NEW
+                        if (!pendingFolds || pendingFolds.root !== foldRoot || pendingFolds.page !== foldPage) pendingFolds = { root: foldRoot, page: foldPage, changes: [] }; // NEW
+                        for (const change of changes) pendingFolds.changes.push(change); // NEW
+                    } // NEW
+                } // CHANGE
                 try { model.endUpdate(); }
-                finally { depth--; graph.__trellisLocalViewChanging = false; graph.__trellisUsersInternalChange = internal; persist(); }
+                finally { // CHANGE
+                    depth--; graph.__trellisLocalViewChanging = previous; graph.__trellisUsersInternalChange = internal; // CHANGE
+                    try { persist(); } finally { flushFoldRendering(); } // CHANGE
+                } // CHANGE
             }
         }
         for (const name of ['foldCells', 'cellsFolded']) if (graph[name]) {
@@ -244,7 +272,10 @@
                 cell.geometry = state.geometry; cell.collapsed = state.collapsed;
             }
             try { return operation(); }
-            finally { for (const [cell, geometry, collapsed] of display) { cell.geometry = geometry; cell.collapsed = collapsed; } resumePresentations(false); encoding--; } // CHANGE
+            finally { // CHANGE
+                for (const [cell, geometry, collapsed] of display) { cell.geometry = geometry; cell.collapsed = collapsed; } // CHANGE
+                try { resumePresentations(false); } finally { encoding--; flushFoldRendering(); } // CHANGE
+            } // CHANGE
         }
         function restore() {
             const next = storageKey();
@@ -267,10 +298,13 @@
             if (applying) return operation(); // NEW
             applying = true; // NEW
             suspendPresentations(); // NEW
-            for (const [cell, state] of authored) { cell.geometry = state.geometry; cell.collapsed = state.collapsed; }
+            for (const [cell, state] of authored) { // CHANGE
+                if (!!cell.collapsed !== state.collapsed) graph.removeStateForCell(cell); // NEW: direct base restoration must recreate the fold icon, as native collapse processing does.
+                cell.geometry = state.geometry; cell.collapsed = state.collapsed; // CHANGE
+            } // CHANGE
             authored.clear();
             try { return operation(); }
-            finally { try { restore(); resumePresentations(true); graph.view?.revalidate?.(); } finally { applying = false; } } // CHANGE
+            finally { try { restore(); resumePresentations(true); graph.view?.revalidate?.(); } finally { applying = false; flushFoldRendering(); } } // CHANGE
         }
         if (ui.getXmlFileData) {
             const encode = ui.getXmlFileData;

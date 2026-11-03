@@ -420,8 +420,9 @@ const lifecycle = createLifecycleCoordinator({ // NEW
 	onError: error => { log.error('Trellis shutdown:', error.message); if (lifecycle.acceptsWork) dialog.showErrorBox('Trellis could not close', error.message); } // NEW
 }); // NEW
 let closeRequestSequence = 0; // NEW
-let firstWinLoaded = false
 let firstWinFilePath = null
+let startupOpenRejected = false; // NEW: coalesce notices for additional native opens before a window can exist.
+const readyEditorWindows = new WeakSet(), busyEditorWindows = new WeakSet(); // NEW: readiness and rejected requests never retain closed editors.
 const isMac = process.platform === 'darwin'
 const isWin = process.platform === 'win32'
 let enableSpellCheck = store != null ? store.get('enableSpellCheck') : false;
@@ -500,6 +501,8 @@ function isWithinDisplayBounds(pos) {
 
 function createWindow(opt = {}) {
 	if (!lifecycle.acceptsWindows) return null; // NEW: confirmations and committed shutdown cannot acquire new windows.
+	const existing = windowsRegistry.find(win => !win.isDestroyed()); // NEW: all normal editor creation obeys the same single-window limit.
+	if (existing) return existing; // NEW: a crashed renderer still owns its editor window.
 	let lastWinSizeStr = (store && store.get('lastWinSize')) || '1200,800,0,0,false,false';
 	let lastWinSize = lastWinSizeStr ? lastWinSizeStr.split(',') : [1200, 800];
 
@@ -614,8 +617,34 @@ function createWindow(opt = {}) {
 			services: [sharingService, ...identityTransports.values()].filter(Boolean), disposers: [() => ipcMain.removeListener('openDevTools', openDevTools)], onError: error => log.warn('Window cleanup:', error.message) }); // NEW
 	}); // CHANGE
 
+	bindWindowLoad(mainWindow, () => { // NEW: every editor, including tray and dock reopenings, owns one readiness signal.
+		readyEditorWindows.add(mainWindow); // NEW
+		const rejected = busyEditorWindows.delete(mainWindow) || startupOpenRejected; startupOpenRejected = false; // NEW
+		if (rejected) mainWindow.webContents.send('trellisEditorBusy'); // NEW
+	}); // NEW
 	return mainWindow
 }
+
+/** Report a rejected request without replacing the editor's active dialog. */ // NEW
+function reportEditorBusy(win) { // NEW
+	if (!win || win.isDestroyed()) return; // NEW
+	if (readyEditorWindows.has(win) && canNotifyWindow(win)) win.webContents.send('trellisEditorBusy'); // NEW
+	else busyEditorWindows.add(win); // NEW: only the notice waits for startup, never the rejected open request.
+} // NEW
+
+/** Reuse one editor for desktop launches, native file opens, New, and tray navigation. */ // NEW
+function requestEditorOpen(filename, create = false) { // NEW
+	if (!lifecycle.acceptsWindows) return null; // NEW
+	const existing = windowsRegistry.find(win => !win.isDestroyed()); // NEW
+	const win = existing || createWindow(); if (!win) return null; // NEW
+	if (win.isMinimized()) win.restore(); win.show(); win.focus(); // NEW
+	if (!filename && !create) return win; // NEW: a plain relaunch only brings the current work forward.
+	const send = () => win.webContents.send('trellisEditorOpen', { path: filename, create }); // NEW
+	if (!existing) bindWindowLoad(win, send); // NEW: only the request that creates an editor may await its initial load.
+	else if (dialogOpen || !readyEditorWindows.has(win) || !canNotifyWindow(win)) reportEditorBusy(win); // NEW
+	else send(); // NEW: renderer checks dialogs, saves and document changes before switching.
+	return win; // NEW
+} // NEW
 
 function isPluginsEnabled() {
 	return enablePlugins;
@@ -667,22 +696,9 @@ app.whenReady().then(() => {
 		} catch (_) { callback({ cancel: true }); } // CHANGE: fail closed on path validation errors.
 	});
 
-	ipcMain.on('newfile', (e, arg) => {
+	ipcMain.on('newfile', e => { // CHANGE: legacy New requests use the existing creation view.
 		if (!validateSender(e.senderFrame)) return null;
-
-		let opts = {};
-
-		if (arg) {
-			if (arg.width) {
-				opts.width = arg.width;
-			}
-
-			if (arg.height) {
-				opts.height = arg.height;
-			}
-		}
-
-		createWindow(opts);
+		requestEditorOpen(null, true); // CHANGE
 	})
 
 	let argv = process.argv
@@ -1071,29 +1087,22 @@ app.whenReady().then(() => {
 	}
 
 	//Prevent multiple instances of the application (casuses issues with configuration)
-	const gotTheLock = app.requestSingleInstanceLock()
+	const gotTheLock = app.requestSingleInstanceLock({ args: program.args }); // CHANGE: pass parsed file arguments without mistaking the executable or development script for a garden.
 
 	if (!gotTheLock) {
 		app.quit()
 		return; // NEW: the second instance must never start another synchronization process.
 	}
 	else {
-		app.on('second-instance', (event, commandLine, workingDirectory) => {
-			// Creating a new window while a save/open dialog is open crashes the app
-			if (dialogOpen || !lifecycle.acceptsWindows) return; // CHANGE: do not reopen during Quit.
-
-			//Create another window
-			let win = createWindow()
-
-			bindWindowLoad(win, () => { // CHANGE: only this window's renderer may complete its load.
-				const potFile = commandLine[commandLine.length - 1]; // NEW
-				if (potFile && fs.existsSync(potFile)) win.webContents.send('args-obj', { args: [potFile] }); // NEW
-			}); // CHANGE
+		app.on('second-instance', (event, commandLine, workingDirectory, additionalData) => { // CHANGE
+			const argument = additionalData?.args?.[0]; // CHANGE: use the same first input selected by initial argument loading.
+			const potFile = argument && !argument.startsWith('-') ? path.resolve(workingDirectory, argument) : null; // NEW
+			requestEditorOpen(potFile); // CHANGE: failed reads remain visible through the guarded opening flow.
 		})
 	}
 
 	const background = initializeBackgroundSync(); // CHANGE: resume installed identity transports while credentials remain locked.
-	if (options.trellisBackground && (!program.args || !program.args.length)) { // CHANGE
+	if (options.trellisBackground && !firstWinFilePath && (!program.args || !program.args.length)) { // CHANGE: an initial OS file opening takes precedence over background-only startup.
 		background.then(async () => { // NEW
 			await ensureSharingTray(); // NEW
 			if (!lifecycle.acceptsWindows) return; // NEW
@@ -1107,7 +1116,7 @@ app.whenReady().then(() => {
 
 	bindWindowLoad(win, () => { // CHANGE
 		if (firstWinFilePath != null) { program.args = program.args || []; program.args.push(firstWinFilePath); } // NEW
-		firstWinLoaded = true; win.webContents.send('args-obj', { args: program.args, create: options.create }); // NEW
+		win.webContents.send('args-obj', { args: program.args, create: options.create }); // CHANGE: initial argument loading remains distinct from replacement requests.
 	}); // CHANGE
 
 	function toggleSpellCheck(e) {
@@ -1313,27 +1322,14 @@ app.on('activate', function () {
 
 	// On OS X it's common to re-create a window in the app when the
 	// dock icon is clicked and there are no other windows open.
-	if (windowsRegistry.length === 0 && lifecycle.acceptsWindows) { // CHANGE
-		createWindow()
-	}
+	requestEditorOpen(); // CHANGE: dock activation restores the existing editor or creates its sole replacement.
 })
 
-app.on('will-finish-launching', function () {
-	app.on("open-file", function (event, filePath) {
-		event.preventDefault();
-		// Creating a new window while a save/open dialog is open crashes the app
-		if (dialogOpen || !lifecycle.acceptsWindows) return; // CHANGE: do not reopen during Quit.
-
-		if (firstWinLoaded) {
-			let win = createWindow();
-
-			bindWindowLoad(win, () => win.webContents.send('args-obj', { args: [filePath] })); // CHANGE
-		}
-		else {
-			firstWinFilePath = filePath
-		}
-	});
-});
+app.on('open-file', function (event, filePath) { // CHANGE: register directly so delayed initialization also receives native opens.
+	event.preventDefault(); // CHANGE
+	if (!app.isReady()) { if (firstWinFilePath == null) firstWinFilePath = filePath; else startupOpenRejected = true; return; } // CHANGE: only the first native opening waits for initial startup.
+	requestEditorOpen(filePath); // CHANGE
+}); // CHANGE
 
 app.on('web-contents-created', (event, contents) => {
     const assetOwner = contents.id; contents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) { assetBroker.revoke(assetOwner); assetContexts.delete(assetOwner); } }); contents.once('destroyed', () => { assetBroker.revoke(assetOwner); assetContexts.delete(assetOwner); }); // NEW: navigation revokes even same-file capabilities.
@@ -2829,8 +2825,7 @@ async function ensureSharingTray() { // CHANGE
 	sharingTrayCreation = (async () => { // CHANGE
 		try { // NEW
 			const tray = await createSharingTray({ app, Tray, Menu: menu, nativeImage, service: sharingGroup, store, iconPath: path.join(codeDir, 'images/window-icon.png'), openWindow: diagramPath => { // CHANGE
-				const win = createWindow(); if (!win) return; // NEW
-				if (diagramPath) bindWindowLoad(win, () => win.webContents.send('args-obj', { args: [diagramPath] })); // CHANGE
+				requestEditorOpen(diagramPath); // CHANGE: tray navigation shares the same editor and replacement safeguards.
 			} }); // NEW
 			if (!lifecycle.acceptsWork) tray.dispose(); else sharingTray = tray; // NEW: delayed native tray creation cannot survive shutdown.
 		} catch (error) { log.error('Sharing tray unavailable:', error.message); void quitWithoutTray(); } // CHANGE

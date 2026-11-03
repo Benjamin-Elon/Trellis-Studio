@@ -1,5 +1,9 @@
 # Managed garden editing and loss recovery
 
+Form graph mutations now share an application/rendering/rollback owner described
+in [Editor commits](editor-commits.md). Reusable defaults have a separate outcome
+and retry; successful Apply still means a local diagram commit. <!-- CHANGE -->
+
 Managed gardens save after 20 seconds without a graph edit or relevant text entry.
 Private text entry resets the quiet timer without marking the graph dirty or
 starting a graph save. Manual Save bypasses the timer. Heartbeats remain on a
@@ -42,7 +46,18 @@ edit context's optional synchronous `onBlocked(holds)` callback runs before queu
 throwing reports the captured blocker without mutation or deferral. Other callers
 retain their existing deferred return and Retry behavior. <!-- CHANGE -->
 
+Scheduler companion-default preparation protects the target, explicitly linked
+layout members, and companions in the relevant bed with overlapping occupancy
+dates. It reuses the layout relationship calculation for both holds and stale-state
+checks. A companion in another bed or outside the proposed dates does not block
+Save or invalidate its asynchronous preparation. Bed-first creation retains its
+live bed separately from the serializable geometry proposal, preventing its nested
+preflight from falling back to the whole garden. Real conflicts on generated tasks
+and applicable layout members still reject the entire commit. <!-- CHANGE -->
+
 ## Ownership observations
+
+Clicking an object activity badge toggles its details open or closed; clicking another badge switches directly to that object's details. Hovering or focusing a badge does not open details. The expanded panel uses Trellis top-control layer `10030`, above ordinary controls and Quickstart at `10020`, below editor dialogs at `2000000000`. It retains its existing outside-click dismissal, Escape handling, and focus restoration. <!-- CHANGE -->
 
 Object badges, their pinned activity dialogs, and the Sharing overview describe pending
 changes, viewing, and editing ownership independently. Pending-only activity without
@@ -50,19 +65,33 @@ a reported hold does not block editing. A disconnected session's last reported s
 state remains explicitly unconfirmed. “Working locally” describes connectivity;
 it does not establish whether an object has an editing hold. <!-- CHANGE -->
 
+Viewing badges show only confirmed, fresh sessions. Stored viewing records remain
+hidden on opening until a verified advancing heartbeat arrives. Thirty seconds
+without progression removes viewing from badges, open details and the Sharing
+overview through the existing activity maintenance timer and notifications. Stale
+editing targets never become historical viewing records. Reconnection restores
+viewing after fresh progression; duplicate snapshots and status reads cannot renew
+it. Editing-hold startup grace and pending-work/recovery notices remain independent.
+<!-- CHANGE: automatically retire stale viewing without discarding unfinished work. -->
+
 Explicit session closure and window cleanup retire pending activity notices without
 declaring unfinished work saved or deleting private recovery data. Historical signed
-closed-session notices are excluded when read; missed heartbeats alone do not retire
-pending work or ownership. No activity-format migration is required. <!-- CHANGE -->
+closed-session notices are excluded when read. Missing heartbeats retire ownership
+after thirty seconds, while pending-work notices and private drafts remain available.
+No existing activity files require migration. <!-- CHANGE -->
 
 Activity dialogs offer Save now or Retry save for this window's committed changes,
 Review changes for its conflicts, and the existing release/request actions for holds.
 Save actions persist all committed pending changes in this window. Another session
 belonging to the current author links to private recovery drafts on this computer;
 a draft stored on another computer may only be available there. Another author's
-private draft remains accessible only to that author. Refresh status reads activity
-without renewing ownership or refreshing diagram content. Live updates preserve
-focused controls, and action errors remain visible for retry. <!-- CHANGE -->
+private draft remains accessible only to that author. Details update automatically
+and have no Refresh status button. An open panel remains open after its final row
+expires and reports “No viewing activity, pending changes, or editing holds are
+currently reported for this object.” Live updates preserve focused controls, and
+action errors remain visible for retry. Internal authority-confirmation snapshots
+remain available without renewing ownership or refreshing diagram content.
+<!-- CHANGE: rely on automatic activity updates while retaining internal loss confirmation. -->
 
 The activity service assigns every IPC snapshot a process-wide increasing
 `observationRevision`. Status notifications sample current activity instead of
@@ -78,24 +107,36 @@ not renew a lease. A failed confirmation reports unconfirmed status and does not
 authorize rollback. Duplicate checks share their pending claim-specific operation.
 Intentional releases suppress loss only for the claims actually being released.
 
-Snapshot `losses` distinguish changed access, requested handoff expiry, and
-concurrent-editor priority. Missed heartbeats never end ownership. A verified access revocation stages the
+Snapshot `losses` distinguish changed access, requested handoff expiry, offline
+session expiry (`SESSION_OFFLINE`), and concurrent-editor priority. A verified access revocation stages the
 original author's private fields before permission revalidation can sign them out.
 Graph reconciliation still waits for confirmation and any accepted in-flight save.
 The displayed handoff countdown uses its request deadline. Presence becomes
-disconnected or unconfirmed after thirty seconds without fresh progression;
-ownership has no deadline until another authorized editing session requests release.
-<!-- CHANGE: presence freshness no longer determines editing ownership. -->
+disconnected or unconfirmed after thirty seconds without fresh progression, and its
+editing holds end automatically. Receipt time is monotonic; duplicate and reordered
+snapshots cannot refresh it. Stored unconfirmed sessions receive at most thirty
+seconds of startup grace. Connected sessions retain ownership while typing is idle.
+<!-- CHANGE: heartbeat expiry releases abandoned ownership independently of requested handoff. -->
 
 Signed activity snapshots retain a distinct claim generation for each acquisition.
 Unrequested holds expose `expiresAt: null`; requested holds expose the five-minute
 deadline measured from the request's original timestamp. Duplicate requests and
-heartbeats cannot extend it. Stored ownership and requests remain effective after
-activity-service restart even while presence is unconfirmed. Another window of the
+heartbeats cannot extend it; thirty-second offline expiry may end it sooner. Another window of the
 same user may request release; the holding session cannot request its own release.
 Release publications carry the observed `claimIds`; the service ignores an old
 generation's release if a replacement acquisition now owns that target.
 <!-- CHANGE: request-driven ownership uses the existing activity channel and protocol. -->
+
+Offline expiry is terminal for a specific claim generation. Authorized devices add
+immutable requests with `kind: "offline-expiry"` and `cancelledAt: null` to separate
+signed maintenance snapshots in the existing activity directory. They take effect
+immediately on receipt, independently of cross-device wall-clock differences, and
+never appear as human viewing/editing sessions. Maintenance does not refresh the
+holder's heartbeat. Failed witness writes remain retryable and block acquisition
+until terminal evidence is durable. Restart and delayed owner heartbeats cannot
+restore an expired generation. Recovery confirms the loss, preserves and freezes
+the original draft, and requires review/reopening before a new acquisition.
+<!-- CHANGE: reuse signed requests and the existing loss/recovery boundary. -->
 
 An explicit requester exit records cancellation timestamps in its signed snapshot.
 Cancellation before that request's deadline withdraws it; cancellation at or after
@@ -103,11 +144,14 @@ the deadline retains terminal expiry evidence. Other requesters keep their origi
 deadlines. A missed heartbeat never cancels a request. Expired editors must release
 their old generation before acquiring a fresh one, and delayed heartbeats cannot
 restore it. Activity-service shutdown flushes pending window-exit publications.
-<!-- CHANGE: retain request outcomes independently of presence and window lifetime. -->
+Offline-expiry evidence is never cancelled by requester closure; shutdown also
+flushes its maintenance snapshots. <!-- CHANGE -->
 
 Network partitions can permit overlapping local work until release information
-arrives. Delayed delivery may leave less than five minutes of visible warning,
-and cross-device clock differences affect deadlines. Existing content validation
+arrives. Sleep and stalled heartbeats can end a hold even when its editor still has
+private work. Delayed delivery may leave less than five minutes of visible handoff
+warning, and cross-device clock differences affect requested handoff deadlines.
+Offline detection uses local monotonic receipt time. Existing content validation
 and private recovery handle rejected work. All collaborating devices are assumed
 to run the updated build; no migration or compatibility gate is introduced.
 <!-- CHANGE: document the limits of advisory ownership. -->

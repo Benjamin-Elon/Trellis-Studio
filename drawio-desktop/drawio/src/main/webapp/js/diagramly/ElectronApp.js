@@ -637,19 +637,10 @@ mxStencilRegistry.allowEval = false;
 			}
 		}));
 		
-		// Replaces new action
-		var oldNew = this.actions.get('new').funct;
-		
+		// CHANGE: New always uses the existing Garden Projects creation view.
 		this.actions.addAction('new...', mxUtils.bind(this, function()
 		{
-			if (this.getCurrentFile() == null)
-			{
-				oldNew();
-			}
-			else
-			{
-				electron.sendMessage('newfile', {width: 1600});
-			}
+			window.TrellisGardenHome.openRequested(this, { create: true }).catch(error => this.handleError(error)); // CHANGE
 		}), null, null, Editor.ctrlKey + '+N');
 		
 		this.actions.get('open').shortcut = Editor.ctrlKey + '+O';
@@ -1035,6 +1026,7 @@ mxStencilRegistry.allowEval = false;
 		}
 		else
 		{
+			this.__trellisCheckingDrafts = true; // NEW: initial recovery can outlive the renderer's load signal.
 			this.checkDrafts();
 		}
 	}

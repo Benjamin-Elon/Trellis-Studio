@@ -44,6 +44,8 @@
     function createEl(tagName, className, value) {
         const el = document.createElement(tagName);
         if (className) el.className = className;
+        if (className === 'trellis-updates-pane-title') el.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
+        if (className === 'trellis-release' || className === 'trellis-link-group') el.dataset.trellisSurface = 'inset'; // NEW: release and link groups sit inside their main panes.
         if (value != null) appendText(el, value);
         return el;
     }
@@ -417,12 +419,15 @@
     function buildDialog(ui) {
         const state = { appInfo: DEFAULT_APP_INFO };
         const root = createEl("div", "trellis-updates-dialog");
+        root.classList.add('trellis-surfaces'); root.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         addStyles(root);
         root.appendChild(createEl("div", "trellis-updates-title", ACTION_LABEL));
 
         const panels = createEl("div", "trellis-updates-panels");
         const updatesPane = createEl("div", "trellis-updates-pane");
+        updatesPane.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
         const linksPane = createEl("div", "trellis-updates-pane");
+        linksPane.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
         panels.appendChild(updatesPane);
         panels.appendChild(linksPane);
         root.appendChild(panels);

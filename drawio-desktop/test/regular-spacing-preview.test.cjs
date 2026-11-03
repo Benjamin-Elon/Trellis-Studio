@@ -57,6 +57,39 @@ function assertAligned(h, preview, sourceRows = null) { // CHANGE
     assert.equal(circles.length, index); // CHANGE
 } // CHANGE
 
+test('regular spacing corrects decimals before applying and preserves fractional offsets through undo and redo', async t => { // CHANGE:
+    const h = await setup(t), { graph } = h, group = h.groups[0]; // CHANGE:
+    group.value.setAttribute('spacing_x_cm', '30.4'); group.value.setAttribute('spacing_y_cm', '30.5'); // CHANGE:
+    group.value.setAttribute('layout_offset_x_cm', String(1 / 3)); group.value.setAttribute('layout_offset_y_cm', String(-1 / 3)); // CHANGE:
+    const before = group.value.outerHTML, entry = await h.open(); // CHANGE:
+    const row = entry.panel.querySelector('[data-spacing-row-cell="' + group.id + '"]'), fields = row.querySelectorAll('input[type=number]'); // CHANGE:
+    assert.equal(fields[0].value, '30'); assert.equal(fields[1].value, '31'); assert.equal(group.value.outerHTML, before); // CHANGE:
+    assert.equal(h.writes.length, 0); assert.equal(h.undoManager.history.length, 0); // CHANGE:
+    const x = h.edit(entry, 0, '32.5'); assert.equal(x.value, '32.5'); // CHANGE:
+    const apply = Array.from(entry.panel.querySelectorAll('button')).find(button => button.textContent === 'Apply'); assert.equal(apply.disabled, true); // CHANGE:
+    x.blur(); assert.equal(x.value, '33'); assert.equal(apply.disabled, false); // CHANGE:
+    const context = await h.tools.buildSpacingLayoutRows(graph, group); // CHANGE:
+    const rows = context.rows.map(item => ({ ...item, enabled: item.cellId === group.id, spacingXCm: item.cellId === group.id ? 33 : item.spacingXCm, spacingYCm: item.cellId === group.id ? 31 : item.spacingYCm })); // CHANGE:
+    const preview = h.tools.buildSpacingPreviewModel(graph, rows).rows.find(item => item.cellId === group.id).groupPreview; // CHANGE:
+    apply.click(); for (let attempt = 0; attempt < 100 && group.getAttribute('spacing_x_cm') !== '33'; attempt++) await h.settle(); // CHANGE:
+    assert.equal(group.getAttribute('spacing_x_cm'), '33'); assert.equal(group.getAttribute('spacing_y_cm'), '31'); // CHANGE:
+    assert.equal(Number(group.getAttribute('plant_count_actual')), preview.actual); // CHANGE:
+    assert.equal(Number(group.getAttribute('layout_offset_x_cm')), 1 / 3); assert.equal(Number(group.getAttribute('layout_offset_y_cm')), -1 / 3); // CHANGE:
+    await h.settle(); await h.settle(); assert.equal(h.undoManager.history.length, 1); assert.equal(h.writes.length, 0); // CHANGE:
+    const applied = group.value.outerHTML; h.undoManager.undo(); assert.equal(group.value.outerHTML, before); h.undoManager.redo(); assert.equal(group.value.outerHTML, applied); // CHANGE:
+}); // CHANGE:
+
+test('regular spacing retains raw input and the last valid axis value when its editor remounts', async t => { // CHANGE:
+    const h = await setup(t), { window: w } = h, entry = await h.open(); // CHANGE:
+    h.edit(entry, 0, '27'); const field = h.edit(entry, 0, ''); // CHANGE:
+    const before = h.serialize(); h.overlay.refresh(); // CHANGE:
+    const currentField = () => entry.panel.querySelector('[data-spacing-row-cell="' + h.groups[0].id + '"] input[type=number]'); // CHANGE:
+    for (let attempt = 0; attempt < 100 && (!currentField() || currentField() === field); attempt++) await h.settle(); // CHANGE:
+    const restored = currentField(); assert.ok(restored); assert.notEqual(restored, field); assert.equal(restored.value, ''); // CHANGE:
+    restored.dispatchEvent(new w.Event('blur')); assert.equal(restored.value, '27'); // CHANGE:
+    assert.equal(h.serialize(), before); assert.equal(h.undoManager.history.length, 0); assert.equal(h.writes.length, 0); // CHANGE:
+}); // CHANGE:
+
 test('regular spacing follows personal projection, zoom, scroll and root changes without rebuilding the draft', async t => { // CHANGE
     const h = await setup(t), { graph, window: w } = h; // CHANGE
     const entry = await h.open(), before = h.serialize(), history = h.undoManager.history.length; // CHANGE

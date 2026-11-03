@@ -1060,6 +1060,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     function dialog(title, build, height) {
         const body = element('div', null, 'trellis-roadmap-dialog');
+        body.classList.add('trellis-surfaces'); body.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
         body.style.cssText = 'padding:16px;font:12px Arial;overflow:auto;box-sizing:border-box;height:100%;'; // CHANGE
         body.appendChild(element('h3', title)); dialogError = element('div', '', 'trellis-roadmap-validation'); dialogError.setAttribute('role', 'alert'); dialogError.style.color = '#b91c1c'; body.appendChild(dialogError); build(body); // NEW
         if (graph.__trellisTaskUi) graph.__trellisTaskUi.showDialog(body, 440, height || 440, true, true); // NEW

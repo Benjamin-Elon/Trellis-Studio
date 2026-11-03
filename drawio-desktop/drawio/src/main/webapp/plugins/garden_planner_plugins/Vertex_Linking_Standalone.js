@@ -834,6 +834,25 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- View-only Link Overlay Manager --------------------               (replaces previous block)
     // Pure DOM-based overlays using mxPolyline + mxText; no model changes, no undo impact. 
+    const linkVisibilityPreferences = new Map(); // NEW: one device-local preference per user, independent of diagram/page.
+    function linkVisibilityPreferenceKey() { // NEW
+        const user = window.Trellis?.users?.getCurrentUser?.(); // NEW
+        return 'trellis.showLinks.v1:' + JSON.stringify(user?.id ? 'user:' + user.id : 'anonymous'); // NEW
+    } // NEW
+    function getShowLinks() { // NEW
+        const key = linkVisibilityPreferenceKey(); // NEW
+        if (!linkVisibilityPreferences.has(key)) { // NEW
+            let enabled = true; try { enabled = JSON.parse(window.localStorage.getItem(key) || 'true') !== false; } catch (_) { /* Optional or corrupt storage keeps links visible by default. */ } // NEW
+            linkVisibilityPreferences.set(key, enabled); // NEW
+        } // NEW
+        return linkVisibilityPreferences.get(key); // NEW
+    } // NEW
+    /** Only redraw existing view records; visibility changes must never invoke link pruning or model edits. */ // NEW
+    function setShowLinks(enabled) { // NEW
+        const key = linkVisibilityPreferenceKey(), value = !!enabled; // NEW
+        linkVisibilityPreferences.set(key, value); try { window.localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* Keep this session usable if persistence fails. */ } // NEW
+        linkOverlays.refreshAll(); // NEW
+    } // NEW
     const linkOverlays = (function () {
         const registry = new Map(); // pairKey -> entry                                    
         // entry: { srcId, trgId, exitHint, color, label, poly, labelElt }                 
@@ -1012,7 +1031,7 @@ Draw.loadPlugin(function (ui) {
 
         function createOrUpdatePolyline(entry) {
             const pane = getOverlayPane();
-            const pts = computePointsFor(entry);
+            const pts = getShowLinks() ? computePointsFor(entry) : null; // CHANGE: suppress lines, labels and their hit targets centrally while retaining live link records.
             if (!pane || !pts) {
                 // Remove any existing poly and label if we can no longer compute geometry
                 if (entry.poly && entry.poly.node && entry.poly.node.parentNode) {
@@ -2415,6 +2434,19 @@ Draw.loadPlugin(function (ui) {
     });
 
     window.addEventListener('yearFilterChanged', requestCurrentHighlightRefresh); // NEW: year filtering can change without an undoable model edit
+    window.addEventListener('trellisUsersSessionChanged', linkOverlays.refreshAll); // NEW: restore this user's connector preference without altering highlights or links.
+    window.addEventListener('trellisUsersStoreChanged', linkOverlays.refreshAll); // NEW: Users can finish initializing after this plugin.
+    function reloadLinkVisibilityPreference(event) { // NEW
+        if (event.key != null && !event.key.startsWith('trellis.showLinks.v1:')) return; // NEW
+        if (event.key == null) linkVisibilityPreferences.clear(); else linkVisibilityPreferences.delete(event.key); linkOverlays.refreshAll(); // NEW
+    } // NEW
+    window.addEventListener('storage', reloadLinkVisibilityPreference); // NEW
+    const destroyLinkVisibilityGraph = graph.destroy; // NEW
+    graph.destroy = function () { // NEW
+        window.removeEventListener('trellisUsersSessionChanged', linkOverlays.refreshAll); window.removeEventListener('trellisUsersStoreChanged', linkOverlays.refreshAll); // NEW
+        window.removeEventListener('storage', reloadLinkVisibilityPreference); // NEW
+        linkOverlays.clearAll(); linkVisibilityPreferences.clear(); return destroyLinkVisibilityGraph.apply(this, arguments); // NEW
+    }; // NEW
 
     window.addEventListener('trellisHistoryBeforeRestore', function () {
         try { clearAllHighlights(); } catch (e) { }
@@ -2430,7 +2462,8 @@ Draw.loadPlugin(function (ui) {
     graph.__trellisPlantingLinking = { // CHANGE
         normalizeSelection: normalizeForLinkingAndPrimary, // CHANGE
         getContext: source => ({ source, cards: collectLinkedKanbanCardsForSource(source), linkLabels: new Map() }), // CHANGE
-        navigate: selectAndReveal // CHANGE
+        navigate: selectAndReveal, // CHANGE
+        getShowLinks, setShowLinks // NEW: dashboard controls share the renderer's personal visibility preference.
     }; // CHANGE
     if (graph.__trellisPlantingGroup) graph.__trellisPlantingGroup.overlay.syncSelection(); // CHANGE
     graph.fireEvent(new mxEventObject('trellisPlantingLinkingReady')); // CHANGE

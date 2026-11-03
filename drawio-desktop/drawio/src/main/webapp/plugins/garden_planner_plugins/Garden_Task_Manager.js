@@ -1801,6 +1801,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const body = typeof opts === 'function' ? opts : fn;
             if (typeof body !== 'function') return undefined;
             const insideUpdate = !!options.insideUpdate;
+            const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+            if (!insideUpdate && !model.updateLevel && context?.apply && !context.committing()) return context.apply({ cells: options.cells || [], includeAncestors: false }, () => runModelUpdate({ ...options, insideUpdate: true }, body)); // CHANGE
             if (!insideUpdate) model.beginUpdate();
             try {
                 return body();
@@ -2633,6 +2635,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const board = shouldReflow ? findBoardAncestor(card) : null;
         if (shouldReflow && !board) return false;
 
+        const apply = () => { // CHANGE: task data and board reflow share the common rollback owner.
         model.beginUpdate();
         try {
             model.setValue(card, cloneCardValueWithAttributes(card, attributes));
@@ -2645,8 +2648,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             model.endUpdate();
         }
 
-        if (!shouldReflow) graph.refresh(card);
         return true;
+        }; // CHANGE
+        const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+        return context?.apply ? context.apply({ cells: [card, board].filter(Boolean), manualSources: [card], includeAncestors: false, finalize: () => { if (!shouldReflow) graph.refresh(card); } }, apply) : apply(); // CHANGE
     }
 
     function applyCardDateOverride(card, newStartISO) {
@@ -3608,9 +3613,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     /** A source, its linked tasks, and affected boards form one conservative dependency group. */ // NEW
     function taskAutomationCells(targetGroupId) { // NEW
         const source = buildDifferentialTaskSyncRecords(targetGroupId);
-        if (!source) return [];
-        const garden = findGardenModuleAncestor(source.group); // NEW: newly generated tasks can reflow an existing board even when the source has no old tasks.
-        return [source.group, ...source.records.map(record => record.card), ...new Set([...source.records.map(record => findBoardAncestor(record.card)), ...(garden ? [findBoardsIn(boardContainerForGarden(garden)).main].filter(Boolean) : [])].filter(Boolean))]; // CHANGE
+        const group = source?.group || model.getCell(targetGroupId), records = source?.records || []; // CHANGE: bed-first creation must also protect its existing destination board.
+        if (!group) return []; // CHANGE
+        const garden = findGardenModuleAncestor(group); // CHANGE
+        return [group, ...records.map(record => record.card), ...new Set([...records.map(record => findBoardAncestor(record.card)), ...(garden ? [findBoardsIn(boardContainerForGarden(garden)).main].filter(Boolean) : [])].filter(Boolean))]; // CHANGE
     }
 
     /** Preserve facts only across unique stable occurrence identities; ambiguous replacements are new objects. */ // NEW
@@ -5828,6 +5834,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     }
 
     function showTaskManagerDialogImpl(node, width, height, modal, closable, editorSpec) {
+        node.classList.add('trellis-surfaces'); node.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
         const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
         const editor = editorSpec && graph.__trellisSharing?.registerObjectForm?.({ ...editorSpec, element: node, targets: editorSpec.cells.map(cell => JSON.stringify([pageId, String(cell.id)])), discard: () => ui.hideDialog() }); // CHANGE
         ui.showDialog(node, width, height, modal, closable, () => editor?.dispose(true));
@@ -5860,6 +5867,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const weekOverrides = normalizeWeekWorkHours(weeks[weekStart], defaults);
         const div = document.createElement('div');
         div.className = 'trellis-task-hours-dialog';
+        div.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         div.style.cssText = 'padding:12px;box-sizing:border-box;font:12px Arial,sans-serif;';
         const title = document.createElement('div');
         title.textContent = 'Edit Hours';
@@ -5876,7 +5884,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             end.disabled = isClosed;
             row.style.opacity = isClosed ? '0.72' : '1';
         }
-        function addHeaderRow() {
+        function addHeaderRow(section) { // CHANGE: each hours group owns its rows.
             const header = document.createElement('div');
             header.style.cssText = rowGridCss + 'font-weight:bold;color:#374151;margin:0 0 5px;border-bottom:1px solid #d1d5db;padding-bottom:4px;';
             ['Day', 'Closed', 'Start', 'End'].forEach(text => {
@@ -5884,14 +5892,15 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 cell.textContent = text;
                 header.appendChild(cell);
             });
-            div.appendChild(header);
+            section.appendChild(header); // CHANGE
         }
         function addSection(labelText, sourceDays, kind) {
+            const section = document.createElement('section'); section.dataset.trellisSurface = 'section'; div.appendChild(section); // NEW
             const label = document.createElement('div');
             label.textContent = labelText;
             label.style.cssText = 'font-weight:bold;margin:12px 0 6px;';
-            div.appendChild(label);
-            addHeaderRow();
+            label.dataset.trellisSurface = 'header'; section.appendChild(label); // CHANGE
+            addHeaderRow(section); // CHANGE
             sourceDays.forEach((day, index) => {
                 const row = document.createElement('div');
                 row.style.cssText = rowGridCss + 'margin-bottom:5px;';
@@ -5916,7 +5925,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                 row.appendChild(closed);
                 row.appendChild(start);
                 row.appendChild(end);
-                div.appendChild(row);
+                section.appendChild(row); // CHANGE
                 rows.push({ kind, index, closed, start, end, fallback: day });
             });
         }
@@ -6402,7 +6411,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             });
         }
 
-        return Object.freeze({
+        const commands = { // CHANGE: the command seam owns editor mutation boundaries.
             runModelUpdate: transactions.runModelUpdate,
             createTasks,
             removeTasksLinkedOnlyTo,
@@ -6427,6 +6436,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             addBreakToSelectedDay,
             applyCardWorkflowAction,
             applyCardWorkflowActions,
+            applyTaskAssignmentSets, // CHANGE: assignment forms share the same ownership boundary.
             applyStagedStartDateAllocation,
             addSelectedBacklogCards, // NEW
             removeSelectedBacklogCards, // NEW
@@ -6437,8 +6447,23 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             scanAllBoards,
             ensureBoardTemplateIn: boardLayout.ensureBoardTemplateIn,
             ensureBoardTemplateInUpdate
-        });
-    }
+        }; // CHANGE
+        const localOnly = new Set(['commitCardPatch', 'setCardNote', 'clearCardNote', 'applyTaskPlanningChange', 'applyTaskAssignmentSets']); // CHANGE
+        const transactional = ['commitCardPatch', 'applyTaskPlanningChange', 'applyTaskAssignmentSets', 'applyCardDateOverride', 'resetCardDates', 'resetCardDatesForCards', 'setCardNote', 'clearCardNote', 'saveBoardWeekWorkHours', 'saveSelectedWeekDayWorkHours', 'openSelectedWeekDayFromDefaults', 'closeSelectedWeekDay', 'endDay', 'endWeek', 'addBreakToSelectedDay', 'applyCardWorkflowAction', 'applyCardWorkflowActions', 'applyStagedStartDateAllocation', 'applyBulkCardEdit']; // CHANGE
+        for (const name of transactional) { // CHANGE
+            const command = commands[name]; // CHANGE
+            commands[name] = function (...args) { // CHANGE: forms and toolbar commands preflight their sources and actual reflow containers together.
+                const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+                if (!context?.apply) return command(...args); // CHANGE
+                const sources = (Array.isArray(args[0]) ? args[0] : [args[0]]).filter(cell => cell && typeof cell.getAttribute === 'function'); // CHANGE
+                const reflows = !localOnly.has(name) || name === 'commitCardPatch' && args[2]?.reflow; // CHANGE
+                const boards = reflows ? [...new Set(sources.map(cell => isBoardCell(cell) ? cell : findBoardAncestor(cell)).filter(Boolean))] : []; // CHANGE
+                const metadata = { category: name === 'applyTaskAssignmentSets' ? 'Assignments' : 'Tasks', action: name, origin: 'Garden_Task_Manager', title: name === 'applyTaskAssignmentSets' ? 'Update task assignments' : name.replace(/([A-Z])/g, ' $1').replace(/^./, character => character.toUpperCase()), affectedCellIds: sources.map(cell => cell.id) }; // CHANGE
+                return context.apply({ cells: [...sources, ...boards], manualSources: sources, includeAncestors: false, metadata, finalize: () => sources.forEach(cell => graph.refresh(cell)) }, () => command(...args)); // CHANGE
+            }; // CHANGE
+        } // CHANGE
+        return Object.freeze(commands); // CHANGE
+    } // CHANGE
 
     const taskCommands = createTaskCommandRuntime({
         graph,
@@ -8251,6 +8276,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             closeAssignmentPicker(false);
             const picker = document.createElement('div');
             picker.className = 'trellis-task-assignee-picker';
+            picker.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
             picker.setAttribute('role', 'dialog');
             picker.setAttribute('aria-label', 'Assign task cards');
             picker.style.cssText = 'position:absolute;width:340px;max-width:calc(100vw - 16px);max-height:420px;display:flex;flex-direction:column;background:#fff;border:1px solid #111;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.25);padding:6px;pointer-events:auto;font:12px Arial,sans-serif;z-index:' + GRAPH_OVERLAY_Z.CONTROL_TOP + ';';
@@ -8282,6 +8308,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             groups.forEach(group => {
                 const section = document.createElement('section');
                 section.className = 'trellis-task-assignee-picker-group';
+                section.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
                 const heading = document.createElement('div');
                 heading.textContent = group.label;
                 heading.style.cssText = 'margin-top:4px;padding:3px 2px;border-bottom:1px solid #D1D5DB;font-weight:700;color:' + (group.warning ? '#B45309' : '#111') + ';';
@@ -8367,7 +8394,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
                     });
                     nextIdsByCard.set(card, Array.from(next));
                 });
-                applyTaskAssignmentSets(liveContext.cards, nextIdsByCard);
+                taskCommands.applyTaskAssignmentSets(liveContext.cards, nextIdsByCard); // CHANGE
                 closeAssignmentPicker();
             });
             footer.appendChild(cancel); footer.appendChild(apply); picker.appendChild(footer);
@@ -8382,6 +8409,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         }
 
         const planning = document.createElement('div'); // NEW
+        planning.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         planning.className = 'trellis-task-planning-controls'; // CHANGE
         planning.style.cssText = 'display:flex;flex-direction:column;gap:5px;width:300px;max-width:calc(100vw - 32px);font:12px Arial,sans-serif;'; // CHANGE
         ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'click', 'dblclick', 'keydown', 'keypress', 'keyup'].forEach(type => planning.addEventListener(type, stopDomPropagation)); // NEW: keep native input focus and keyboard behaviour.
@@ -8460,6 +8488,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             typeSelect.addEventListener('change', () => { if (typeSelect.value) chooseScope({ taskTypeId: typeSelect.value === '__inherit__' ? null : typeSelect.value }, planning); }); // CHANGE
             typeLabel.appendChild(typeSelect); planning.appendChild(typeLabel); // CHANGE
             const tools = document.createElement('details'); tools.className = 'trellis-task-equipment-dropdown'; // CHANGE
+            tools.classList.add('trellis-surfaces'); tools.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
             const heading = document.createElement('summary'); heading.style.cssText = 'cursor:pointer;padding:4px;border:1px solid #aaa;border-radius:3px;'; // CHANGE
             const names = result.selected.map(item => item.equipment.name); // CHANGE
             heading.textContent = result.selection === null ? 'Suggested tools (' + result.available.length + ')' : 'Selected tools: ' + (names.length ? names.slice(0, 2).join(', ') + (names.length > 2 ? ' +' + (names.length - 2) : '') : 'No tools'); // CHANGE

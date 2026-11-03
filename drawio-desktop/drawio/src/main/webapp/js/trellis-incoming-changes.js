@@ -25,6 +25,7 @@
         function appendDetails(section, detail) { // NEW: both structural and object reviews use the same accessible disclosure.
             if (!detail?.fields.length) return;
             const expanded = document.createElement('details'), title = document.createElement('summary'); title.textContent = 'Before / after'; expanded.appendChild(title);
+            expanded.dataset.trellisSurface = 'inset'; title.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
             for (const field of detail.fields) {
                 const name = ({ label: 'Name', geometry: 'Position and size', style: 'Appearance', trellis_comments_json: 'Comments and alerts', trellis_details_html: 'Details', trellis_users_json: 'People and permissions' })[field.name] || field.name.replace(/_/g, ' ');
                 note(expanded, name.charAt(0).toUpperCase() + name.slice(1)).style.fontWeight = '600';
@@ -42,7 +43,9 @@
             const visible = review?.groups || groups.filter(group => !selection || selection.includes(group.id));
             for (const group of visible) {
                 const section = document.createElement('details'); section.open = true;
+                section.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
                 const heading = document.createElement('summary'); heading.textContent = (group.structural ? 'Page / project structure' : 'Related changes') + ' · ' + group.objects.length + (group.objects.length === 1 ? ' object' : ' objects'); section.appendChild(heading); // CHANGE
+                heading.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
                 if (group.authors.length) note(section, 'Changed by ' + group.authors.join(', '));
                 if (group.structural) { note(section, 'Refresh affects the entire project, including all pages.'); appendDetails(section, review?.details.find(item => item.key === '*')); } // NEW
                 for (const object of group.objects) {
@@ -62,6 +65,7 @@
             if (panel && pinned && pin && panel.__anchor === anchor) { close(); return; } // NEW
             close(); selection = ids; pinned = pin;
             panel = document.createElement('div'); panel.className = 'trellis-incoming-review'; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Incoming changes');
+            panel.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
             panel.__anchor = anchor; // NEW
             panel.style.cssText = 'position:fixed;z-index:10020;box-sizing:border-box;width:400px;max-width:calc(100vw - 16px);max-height:65vh;overflow:auto;background:#fff;color:#111827;border:1px solid #b56a00;border-radius:7px;padding:10px;box-shadow:0 6px 18px #0003;font:12px Arial;line-height:1.5;';
             const bounds = anchor.getBoundingClientRect(); panel.style.left = Math.max(8, Math.min(bounds.left, root.innerWidth - 408)) + 'px'; panel.style.top = Math.max(8, Math.min(bounds.bottom + 4, root.innerHeight * .3)) + 'px';

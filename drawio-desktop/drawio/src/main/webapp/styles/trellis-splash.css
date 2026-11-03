@@ -232,9 +232,9 @@
 }
 
 .trellis-splash-section {
-	background: #fffdf6 !important;
-	border: 1px solid #d3dac8 !important;
-	border-radius: 10px !important;
+	background: var(--trellis-surface-base, #fffdf6); /* CHANGE: shared surfaces retain the warm palette. */
+	border: 1px solid var(--trellis-surface-border, #d3dac8); /* CHANGE */
+	border-radius: 8px; /* CHANGE: shared main section radius. */
 	box-shadow: 0 3px 12px rgba(53, 72, 42, 0.05);
 	color: #314437;
 	margin-bottom: 12px;
@@ -253,9 +253,9 @@
 
 .trellis-license-card,
 .trellis-support-card {
-	background: #fffdf6 !important;
-	border: 1px solid #d3dac8 !important;
-	border-radius: 10px !important;
+	background: var(--trellis-surface-base, #fffdf6); /* CHANGE: shared surfaces retain the warm palette. */
+	border: 1px solid var(--trellis-surface-border, #d3dac8); /* CHANGE */
+	border-radius: 8px; /* CHANGE: shared main section radius. */
 	box-shadow: 0 3px 12px rgba(53, 72, 42, 0.05);
 	box-sizing: border-box;
 	color: #314437;
@@ -346,9 +346,9 @@
 }
 
 .trellis-splash-center > .trellis-saved-license-card {
-	background: #fffdf6 !important;
-	border: 1px solid #d3dac8 !important;
-	border-radius: 10px !important;
+	background: var(--trellis-surface-base, #fffdf6); /* CHANGE: shared surfaces retain the warm palette. */
+	border: 1px solid var(--trellis-surface-border, #d3dac8); /* CHANGE */
+	border-radius: 8px; /* CHANGE: shared main section radius. */
 	box-shadow: 0 3px 12px rgba(53, 72, 42, 0.05);
 	margin-bottom: 12px;
 	padding: 14px 16px !important;

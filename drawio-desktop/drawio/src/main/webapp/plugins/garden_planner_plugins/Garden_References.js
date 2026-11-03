@@ -277,6 +277,7 @@
             if (!cell) throw new Error('Select a garden first.');
             if (!draftReady.has(draftKey(cell)) && !drafts.has(draftKey(cell))) { const user = actor(), diagram = model.getRoot(); restoreDraft(cell).then(() => { if (actor() === user && model.getRoot() === diagram && model.getCell(cell.id) === cell) show(cell); }).catch(error => ui.handleError?.(error)); return; } // CHANGE
             const store = read(cell), panel = document.createElement('div'); panel.style.cssText = 'padding:16px;overflow:auto;max-height:70vh;';
+            panel.classList.add('trellis-surfaces'); panel.dataset.trellisSurface = 'canvas'; panel.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
             text(panel, 'Garden references — ' + (attr(cell, 'garden_name') || attr(cell, 'label') || 'Garden')).style.fontWeight = 'bold';
             text(panel, 'Accepted definitions travel with this garden. Existing plantings retain their pinned revisions.');
             const input = document.createElement('textarea'); input.rows = 8; input.style.width = '100%'; input.setAttribute('aria-label', 'Reference JSON'); panel.appendChild(input);
@@ -301,6 +302,7 @@
             renderMessages(panel, { scopeCell: cell }); // CHANGE
             if (root.trellisGardenLibrary?.referenceTemplates) root.trellisGardenLibrary.referenceTemplates().then(result => { if (!panel.isConnected) return; result.messages.filter(item => item.diagramId !== diagramId() && item.source?.diagramId === diagramId()).forEach(item => text(panel, 'Proposal to ' + item.gardenName + ': ' + item.pending + ' item(s) awaiting a decision; ' + item.decisions.map(decision => decision.status + ' ' + decision.items.length).join(', '))); }).catch(() => {}); // NEW
             const records = document.createElement('details'); text(records, 'Retire or restore definitions'); panel.appendChild(records);
+            records.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
             const picker = document.createElement('select'); Object.entries(store.manifests[store.current].heads).forEach(([entity, rid]) => { const rev = store.revisions[rid]; if (C.CATALOGS.includes(rev.kind) && !rev.data.item) return; const option = document.createElement('option'); option.value = entity; option.textContent = rev.kind + ': ' + (rev.data.item?.name || rev.data.item?.id || rev.data.plant_name || rev.data.city_name || rev.data.variety_name || rev.data.name || entity) + (rev.retired ? ' (retired)' : ''); picker.appendChild(option); }); records.appendChild(picker); // CHANGE
             if (editor(cell)) button('Propose retirement / restoration', () => { const entity = picker.value, rev = store.revisions[store.manifests[store.current].heads[entity]]; putDraft(cell, store, C.retire(store, entity, !rev.retired, { author: actor() })); ui.hideDialog(); show(cell); }, records);
             button('Close', () => ui.hideDialog(), panel); ui.showDialog(panel, 780, 640, true, true);
@@ -312,11 +314,13 @@
                 const log = messages(cell);
                 log.requests.filter(item => owner(cell) || item.author === actor()).forEach(proposal => {
                     count++; const box = document.createElement('fieldset'); parent.appendChild(box);
+                    box.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
                     text(box, 'Reference proposal: ' + (attr(cell, 'garden_name') || cell.id) + ' — ' + proposal.author); text(box, proposal.note || 'No rationale supplied.');
                     const decided = selectedItems(log, proposal.id), checked = [], resolutions = {}, mappings = {}, plantingChoices = []; let prepared; // CHANGE
                     proposal.changes.forEach(item => {
                         const label = document.createElement('label'), check = document.createElement('input'); check.type = 'checkbox'; check.checked = !decided.has(item.entityId); check.disabled = decided.has(item.entityId); checked.push({ check, item }); label.appendChild(check); label.appendChild(document.createTextNode(item.candidate.kind + ': ' + (item.candidate.data.plant_name || item.candidate.data.city_name || item.candidate.data.item?.name || item.candidate.data.item?.id || item.candidate.data.name || item.entityId) + (!item.base ? ' (new distinct entity)' : '') + (decided.has(item.entityId) ? ' — decided' : ''))); box.appendChild(label); box.appendChild(document.createElement('br'));
                         const details = document.createElement('details'); text(details, 'Base and proposed definition'); const pre = document.createElement('pre'); pre.textContent = JSON.stringify({ base: item.base, candidate: item.candidate }, null, 2); details.appendChild(pre); box.appendChild(details);
+                        details.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
                         if (owner(cell) && !decided.has(item.entityId) && !read(cell).manifests[read(cell).current].heads[item.entityId]) { // NEW
                             const select = document.createElement('select'), distinct = document.createElement('option'); distinct.value = ''; distinct.textContent = 'Adopt as a distinct new identity'; select.appendChild(distinct); // NEW
                             Object.entries(read(cell).manifests[read(cell).current].heads).forEach(([entity, rid]) => { const local = read(cell).revisions[rid]; if (local.kind !== item.candidate.kind) return; const option = document.createElement('option'); option.value = entity; option.textContent = 'Map to: ' + (local.data.item?.name || local.data.item?.id || local.data.plant_name || local.data.variety_name || local.data.city_name || (local.data.metadata ? 'Catalog metadata' : entity)); select.appendChild(option); }); // NEW
@@ -327,6 +331,7 @@
                     if (owner(cell) && checked.some(entry => !entry.check.disabled)) {
                         const status = text(box, ''), conflicts = document.createElement('div'); box.appendChild(conflicts); // CHANGE
                         const plantingPanel = document.createElement('details'); text(plantingPanel, 'Optional: recalculate selected unstarted plantings'); box.appendChild(plantingPanel); // NEW
+                        plantingPanel.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
                         Object.values(model.cells || {}).filter(item => gardenFor(item) === cell && (attr(item, 'tiler_group') === '1' || /(?:^|;)tiler_group=1(?:;|$)/.test(model.getStyle?.(item) || item.style || ''))).forEach(planting => { // NEW
                             const status = plantingStatus(planting), label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.disabled = !status.ok; input.onchange = () => { prepared = null; }; label.appendChild(input); label.appendChild(document.createTextNode((attr(planting, 'label') || planting.id) + (status.ok ? '' : ' — ' + status.reason))); plantingPanel.appendChild(label); plantingPanel.appendChild(document.createElement('br')); plantingChoices.push({ input, planting }); // NEW
                         }); // NEW

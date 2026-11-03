@@ -593,8 +593,10 @@ Draw.loadPlugin(function (ui) {
         section.style.borderTop = "1px solid #e5e7eb";
         section.style.paddingTop = "8px";
         section.style.marginTop = "8px";
+        section.dataset.trellisSurface = 'section'; section.style.borderTop = ''; // NEW: shared surface hierarchy.
         const label = document.createElement("div");
         label.textContent = title;
+        label.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
         label.style.fontWeight = "bold";
         label.style.marginBottom = "6px";
         section.appendChild(label);
@@ -755,6 +757,7 @@ Draw.loadPlugin(function (ui) {
         div.style.maxHeight = dialogHeight + "px";
         const body = document.createElement("div");
         body.setAttribute("data-bed-conditions-dialog-body", "1");
+        body.classList.add('trellis-surfaces'); body.dataset.trellisSurface = 'canvas'; body.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
         body.style.flex = "1 1 auto";
         body.style.minHeight = "0px";
         body.style.overflowY = "auto";
@@ -863,19 +866,27 @@ Draw.loadPlugin(function (ui) {
         secondaryButtons.style.gap = "8px";
         actionRow.appendChild(document.createElement("span"));
         secondaryButtons.appendChild(bedButton("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); }, "neutral", { title: "Copy the current bed conditions for use on other beds." })); // CHANGE
-        secondaryButtons.appendChild(bedButton("Paste", function () {
+        secondaryButtons.appendChild(bedButton("Paste", async function () {
             if (!copiedProfile) { ui.alert("No copied bed conditions are available."); return; }
             const targets = collectSelectedBeds(targetCell);
-            model.beginUpdate();
-            try { targets.forEach(function (target) { writeBedConditions(target, copiedProfile, { writeIdentityLabel: true }); }); }
-            finally { model.endUpdate(); }
+            try { // CHANGE
+                if (conditionsHold) await conditionsHold.acquire(); // CHANGE
+                const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+                const apply = () => { model.beginUpdate(); try { targets.forEach(function (target) { writeBedConditions(target, copiedProfile, { writeIdentityLabel: true }); }); } finally { model.endUpdate(); } }; // CHANGE
+                if (context?.apply) context.apply({ cells: targets, manualSources: [targetCell], includeAncestors: false, editor: conditionsHold }, apply); else apply(); // CHANGE
+                conditionsHold?.complete?.(); // CHANGE
+            } catch (error) { ui.alert(error.message); return; } // CHANGE
             ui.hideDialog();
         }, "add", { title: "Apply previously copied bed conditions to the selected beds and close this dialog." })); // CHANGE
-        secondaryButtons.appendChild(bedButton("Clear", function () {
+        secondaryButtons.appendChild(bedButton("Clear", async function () {
             const targets = collectSelectedBeds(targetCell);
-            model.beginUpdate();
-            try { targets.forEach(clearBedConditions); }
-            finally { model.endUpdate(); }
+            try { // CHANGE
+                if (conditionsHold) await conditionsHold.acquire(); // CHANGE
+                const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+                const apply = () => { model.beginUpdate(); try { targets.forEach(clearBedConditions); } finally { model.endUpdate(); } }; // CHANGE
+                if (context?.apply) context.apply({ cells: targets, manualSources: [targetCell], includeAncestors: false, editor: conditionsHold }, apply); else apply(); // CHANGE
+                conditionsHold?.complete?.(); // CHANGE
+            } catch (error) { ui.alert(error.message); return; } // CHANGE
             ui.hideDialog();
         }, "danger", { title: "Clear saved conditions from the selected beds and close this dialog." })); // CHANGE
 
@@ -891,9 +902,9 @@ Draw.loadPlugin(function (ui) {
         let conditionsHold = null; // CHANGE
         function saveConditions(saveOptions = {}) { // CHANGE
             if (String(controls.bedHeight.value || '').trim() && displayHeightToCm(controls.bedHeight.value, identityUnits) == null) { ui.alert('Bed height must be greater than 0.'); controls.bedHeight.focus(); return false; } // CHANGE
-            const edit = model.currentEdit; model.beginUpdate(); // CHANGE
-            try { writeBedConditions(targetCell, readDialogProfile(), { writeIdentityLabel: true }); } finally { model.endUpdate(); } // CHANGE
-            if (edit?.__trellisUsersRejected) throw new Error(edit.__trellisUsersRejectedReason || 'Bed conditions were rejected.'); // CHANGE
+            const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+            const apply = () => { model.beginUpdate(); try { writeBedConditions(targetCell, readDialogProfile(), { writeIdentityLabel: true }); } finally { model.endUpdate(); } }; // CHANGE
+            if (context?.apply) context.apply({ cells: [targetCell], manualSources: [targetCell], includeAncestors: false, editor: conditionsHold, finalize: () => graph.refresh(targetCell) }, apply); else apply(); // CHANGE
             conditionsHold?.complete?.(); if (saveOptions.closeAfter !== false) ui.hideDialog(); return true; // CHANGE
         } // CHANGE
         buttonRow.appendChild(bedButton('Save', () => { if (conditionsHold) void conditionsHold.commit(); else saveConditions(); }, 'add', { title: 'Save the current conditions to this garden bed.' })); // CHANGE

@@ -23,14 +23,11 @@ module.exports = async function homeNavigationSmoke({ app, dialog, BrowserWindow
             return { empty: !ui.getCurrentFile(), stayed: ui.dialog === dialog, exitControls: [...dialog.container.children].filter(node => node.classList.contains('geButton')).length }; // NEW
         })()`); // NEW
         assert.deepEqual(startup, { empty: true, stayed: true, exitControls: 0 }); // NEW
-        const existing = new Set(BrowserWindow.getAllWindows()); app.emit('second-instance', {}, ['trellis-home-navigation-smoke'], profile); // NEW: create a second window through the production application handler.
-        const second = await until(() => BrowserWindow.getAllWindows().find(candidate => !existing.has(candidate)), 'second Home test window'); // NEW
-        await until(() => expression(second, '!!window.Draw?.loadPlugin && !!window.TrellisGardenHome').catch(() => false), 'second window Home scripts'); // NEW
-        await expression(second, 'new Promise(resolve => Draw.loadPlugin(ui => { window.smokeUi = ui; resolve(); }))'); // NEW
-        await loadDocument(second, 'Other window stays open'); // NEW
+        const existing = BrowserWindow.getAllWindows(); app.emit('second-instance', {}, [], profile, { args: [] }); // CHANGE: relaunch must reuse the existing editor.
+        assert.deepEqual(BrowserWindow.getAllWindows(), existing); // CHANGE
         await loadDocument(primary, 'Saved before returning Home', 2); // NEW
         const canceled = await expression(primary, `(async () => { const file = smokeUi.getCurrentFile(); await smokeUi.showSplash(true); return { same: smokeUi.getCurrentFile() === file, modified: file.isModified(), pending: !!smokeUi.__trellisGardenHome.homeTransition, splash: !!document.querySelector('.trellis-splash-root') }; })()`); // NEW
-        assert.deepEqual(canceled, { same: true, modified: true, pending: false, splash: false }); assert.equal(saveDialogs, 1); assert.equal(await current(second), true); // NEW
+        assert.deepEqual(canceled, { same: true, modified: true, pending: false, splash: false }); assert.equal(saveDialogs, 1); // CHANGE
         cancel = false; // NEW
         const saved = await expression(primary, `(async () => { await smokeUi.showSplash(true); const ui = smokeUi, graph = ui.editor.graph, dialog = ui.dialog; ui.hideDialog(true, true); return { empty: !ui.getCurrentFile(), pages: ui.pages?.length || 0, graphCleared: !graph.model.getCell('home-test-cell'), undoCleared: !ui.editor.undoManager.canUndo(), splash: !!document.querySelector('.trellis-splash-root'), stayed: ui.dialog === dialog }; })()`); // NEW
         assert.deepEqual(saved, { empty: true, pages: 0, graphCleared: true, undoCleared: true, splash: true, stayed: true }); assert.equal(saveDialogs, 2); // NEW
@@ -41,8 +38,7 @@ module.exports = async function homeNavigationSmoke({ app, dialog, BrowserWindow
         await loadDocument(primary, 'Untouched blank'); // NEW
         await expression(primary, `(async () => { smokeUi.editor.graph.removeCells([smokeUi.editor.graph.model.getCell('home-test-cell')]); smokeUi.getCurrentFile().setModified(false); await smokeUi.showSplash(true); })()`); // NEW
         assert.equal(await current(primary), false); assert.equal(saveDialogs, 2); // NEW
-        assert.equal(await expression(second, '(() => { const cell = smokeUi.editor.graph.model.getCell("home-test-cell"); return typeof cell.value === "string" ? cell.value : cell.getAttribute("label"); })()'), 'Other window stays open'); // CHANGE
-        await expression(second, 'smokeUi.getCurrentFile().setModified(false)'); // NEW
-        return { ok: true, startupStaysOpen: true, nativeSaveCancellation: true, saveRetry: true, multipageSaved: true, lifecycleCleanup: true, blankSkipsSave: true, secondWindowPreserved: true }; // NEW
+        assert.deepEqual(BrowserWindow.getAllWindows(), existing); // CHANGE
+        return { ok: true, startupStaysOpen: true, nativeSaveCancellation: true, saveRetry: true, multipageSaved: true, lifecycleCleanup: true, blankSkipsSave: true, singleWindowReused: true }; // CHANGE
     } finally { dialog.showSaveDialog = nativeSave; } // NEW
 }; // NEW

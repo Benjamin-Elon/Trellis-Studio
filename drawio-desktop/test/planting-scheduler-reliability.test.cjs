@@ -3330,40 +3330,7 @@ test('Guide scheduler facade reads saved instructions offline and saves recipe l
     dom.window.close(); // CHANGE
 }); // CHANGE
 
-test('database persistence failure prevents graph mutation', async () => {
-    const cell = makeAttributeCell({ sow_date: '2026-04-01', method_id: 'direct_sow.field' });
-    const patch = { sow_date: '2026-05-01', method_id: 'transplant.indoor', lifespan_end: '2029-12-31' };
-    const snapshot = hooks.snapshotCellAttributes(cell, Object.keys(patch));
-    let graphPatchCount = 0;
-    await assert.rejects(
-        hooks.runCompensatedSaveSteps({
-            applyGraphPatch: () => { graphPatchCount += 1; hooks.applyCellAttributePatch(cell, patch); },
-            persist: async () => { throw new Error('db failed'); },
-            restoreGraphPatch: () => hooks.restoreCellAttributeSnapshot(cell, snapshot)
-        }),
-        /db failed/
-    );
-    assert.equal(graphPatchCount, 0);
-    assert.equal(cell.getAttribute('sow_date'), '2026-04-01');
-    assert.equal(cell.getAttribute('method_id'), 'direct_sow.field');
-    assert.equal(cell.value.hasAttribute('lifespan_end'), false);
-});
-
-test('graph patch failure restores snapshotted graph attributes', async () => {
-    const cell = makeAttributeCell({ harvest_end: '2026-06-01' });
-    const patch = { harvest_end: '2026-07-01', lifespan_start: '' };
-    const snapshot = hooks.snapshotCellAttributes(cell, Object.keys(patch));
-    await assert.rejects(
-        hooks.runCompensatedSaveSteps({
-            applyGraphPatch: () => { hooks.applyCellAttributePatch(cell, patch); throw new Error('graph patch failed'); },
-            persist: async () => {},
-            restoreGraphPatch: () => hooks.restoreCellAttributeSnapshot(cell, snapshot)
-        }),
-        /graph patch failed/
-    );
-    assert.equal(cell.getAttribute('harvest_end'), '2026-06-01');
-    assert.equal(cell.value.hasAttribute('lifespan_start'), false);
-});
+// CHANGE: complete native rollback and independent default failures are covered in trellis-editor-commits.test.cjs.
 
 test('scheduler permission guard blocks unauthorized planting groups', () => {
     const tiler = makeSchedulerGuardCell({ tiler_group: '1' });
@@ -4233,9 +4200,9 @@ test('task manager schedule order is date scoped for tasks and breaks', () => {
 
 test('task manager edit hours dialog uses a readable table layout and preserves save reflow', () => {
     const source = fs.readFileSync(taskManagerPath, 'utf8');
-    const saveBlock = source.slice(source.indexOf("const save = mxUtils.button('Save'"), source.indexOf("buttons.appendChild(cancel)", source.indexOf("const save = mxUtils.button('Save'")));
+    const saveBlock = source.slice(source.indexOf('function applyWeekHours'), source.indexOf("const save = mxUtils.button('Save'", source.indexOf('function applyWeekHours'))); // CHANGE: validate the shared button/handoff hours implementation.
     const hoursBlock = source.slice(source.indexOf('function showEditHoursDialogImpl'), source.indexOf('function saveBoardWeekWorkHours'));
-    assert.match(hoursBlock, /taskDialogs\.showTaskManagerDialog\(div,\s*660,\s*600,\s*true,\s*true\)/);
+    assert.match(hoursBlock, /taskDialogs\.showTaskManagerDialog\(div,\s*660,\s*600,\s*true,\s*true,\s*\{[^\n]*save: applyWeekHours/); // CHANGE: the bound editor reuses the same hours command.
     assert.match(hoursBlock, /grid-template-columns:110px 78px minmax\(136px,1fr\) minmax\(136px,1fr\)/);
     assert.match(hoursBlock, /width:100%;min-width:136px;box-sizing:border-box/);
     assert.match(hoursBlock, /\['Day',\s*'Closed',\s*'Start',\s*'End'\]/);
@@ -4299,7 +4266,7 @@ test('schedule save requests selection overlay refresh after final graph refresh
     const source = fs.readFileSync(schedulerPath, 'utf8');
     assert.match(source, /function requestSelectionVisualsRefresh\(graph, cell\)/);
     assert.match(source, /new mxEventObject\('trellisSelectionVisualsRefresh', 'cell', cell\)/);
-    assert.match(source, /finalizeGraph:\s*async \(\) => \{[\s\S]*graph\.refresh\(appliedTargetCell \|\| cell\);[\s\S]*requestSelectionVisualsRefresh\(graph, appliedTargetCell \|\| cell\);/);
+    assert.match(source, /finalize: target => \{[\s\S]*graph\.refresh\(target\);[\s\S]*requestSelectionVisualsRefresh\(graph, target\);/);
 });
 
 test('scheduler clears stale no-window warning after feasible crop recovery', () => {

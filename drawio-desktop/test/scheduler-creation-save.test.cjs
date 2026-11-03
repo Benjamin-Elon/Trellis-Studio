@@ -48,28 +48,82 @@ test('task failures remove provisional bed plantings, suppress creation selectio
     } finally { h.close(); } // CHANGE
 }); // CHANGE
 
-test('cancellation while deferred persistence resolves prevents bed-target creation', async () => { // CHANGE
+test('cancellation during read-only preparation prevents bed-target creation', async () => { // CHANGE
     const h = fixture(); // CHANGE
     try { // CHANGE
         let active = true, release, started; // CHANGE
         const reachedPersistence = new Promise(resolve => { started = resolve; }); // CHANGE
-        const pending = h.save({ isCurrent: () => active, afterGraphUpdate: () => { started(); return new Promise(resolve => { release = resolve; }); } }); // CHANGE
+        let first = true; h.api.__testWindow.dbBridge.query = async () => { if (first) { first = false; started(); await new Promise(resolve => { release = resolve; }); } return { rows: [] }; }; // CHANGE
+        const pending = h.save({ isCurrent: () => active }); // CHANGE
         await reachedPersistence; active = false; release(); // CHANGE
-        await assert.rejects(pending, /Scheduler closed/); await h.flush(); // CHANGE
+        await assert.rejects(pending, /changed|current/); await h.flush(); // CHANGE
         assert.equal(h.groups().length, 0); assert.equal(h.taskCalls(), 0); // CHANGE
         await h.save(); await h.flush(); assert.equal(h.groups().length, 1); // CHANGE
     } finally { h.close(); } // CHANGE
 }); // CHANGE
 
-test('default persistence and post-commit rendering failures leave no new planting or delayed circles', async () => { // CHANGE
+test('post-commit rendering failures leave no new planting or delayed circles', async () => { // CHANGE
     const h = fixture(); // CHANGE
     try { // CHANGE
-        await assert.rejects(h.save({ afterGraphUpdate: async () => { throw new Error('Injected persistence failure'); } }), /Injected persistence failure/); // CHANGE
-        assert.equal(h.groups().length, 0); assert.equal(h.taskCalls(), 0); // CHANGE
         const refresh = h.graph.refresh; let failRefresh = true; // CHANGE
         h.graph.refresh = function (cell) { if (failRefresh && !this.model.updateLevel && cell?.getAttribute('tiler_group') === '1') { failRefresh = false; throw new Error('Injected final rendering failure'); } return refresh.apply(this, arguments); }; // CHANGE
         await assert.rejects(h.save(), /Injected final rendering failure/); h.graph.refresh = refresh; await h.flush(); // CHANGE
         assert.equal(h.groups().length, 0); assert.equal(Object.values(h.graph.model.cells).filter(cell => cell.getAttribute?.('plant_tiler') === '1').length, 0); // CHANGE
         await h.save(); await h.flush(); assert.equal(h.groups().length, 1); // CHANGE
     } finally { h.close(); } // CHANGE
+}); // CHANGE
+
+/** Reproduce the real companion-default lookup with Cilantro already scheduled in the garden. */ // CHANGE
+async function companionFixture(t) { // CHANGE
+    const h = fixture(); t.after(() => { h.api.__testWindow.document.defaultView.close(); h.close(); }); // CHANGE
+    await h.save(); const cilantro = h.groups()[0]; // CHANGE
+    cilantro.setAttribute('plant_id', '2'); cilantro.setAttribute('plant_name', 'Cilantro'); cilantro.setAttribute('label', 'Cilantro'); // CHANGE
+    const plants = [makePlant(h.api, { plant_id: 1, plant_name: 'Pea', spacing_cm: 30 }), makePlant(h.api, { plant_id: 2, plant_name: 'Cilantro', spacing_cm: 30 })]; // CHANGE
+    const query = h.api.__testWindow.dbBridge.query; // CHANGE
+    h.api.__testWindow.dbBridge.query = async (id, sql, params = []) => { // CHANGE
+        if (/FROM Companions c/i.test(sql)) return { rows: [{ relation_id: 12, source_plant_id: 1, companion_plant_id: 2, rating: 1 }] }; // CHANGE
+        if (/FROM\s+Plants\b/i.test(sql)) return { rows: plants.filter(plant => Number(plant.plant_id) === Number(params[0])) }; // CHANGE
+        return query(id, sql, params); // CHANGE
+    }; // CHANGE
+    const otherBed = h.graph.insertVertex(h.moduleCell, null, h.bed.value.cloneNode(true), 600, 200, 150, 300, h.bed.style); // CHANGE
+    const savePea = async (bed = otherBed, startISO = '2026-04-01') => { // CHANGE
+        const inputs = makeInputs(h.api, { plant: plants[0], startISO }), result = h.api.computeScheduleResult(inputs); // CHANGE
+        const creation = await h.api.prepareBedScheduleCreation(h.ui, bed, inputs, result); // CHANGE
+        return h.api.applyScheduleToGraph(h.ui, bed, inputs, { result, createTargetCell: creation.createTargetCell, applyCompanionSetDefaults: true, taskTemplate: { version: 2, rules: [] } }); // CHANGE
+    }; // CHANGE
+    return { ...h, cilantro, otherBed, savePea }; // CHANGE
+} // CHANGE
+
+test('Cilantro in another bed cannot block Pea scheduling whether its holder is connected or disconnected', async t => { // CHANGE
+    for (const online of [true, false]) await t.test(String(online), async t => { // CHANGE
+        const h = await companionFixture(t), key = JSON.stringify(['', String(h.cilantro.id)]); // CHANGE
+        h.graph.__trellisSharing = { automationHolds: () => [{ key, sessionId: 'other-window', name: 'Benny', online }] }; // CHANGE
+        const before = h.window.mxUtils.getXml(h.cilantro.value), geometry = JSON.stringify(h.cilantro.geometry); // CHANGE
+        const pea = await h.savePea(); // CHANGE
+        assert.equal(pea.getAttribute('plant_name'), 'Pea'); assert.equal(h.groups().length, 2); // CHANGE
+        assert.equal(h.window.mxUtils.getXml(h.cilantro.value), before); assert.equal(JSON.stringify(h.cilantro.geometry), geometry); // CHANGE
+    }); // CHANGE
+}); // CHANGE
+
+test('non-overlapping companions do not block, while an overlapping companion hold blocks before any mutation', async t => { // CHANGE
+    const h = await companionFixture(t), key = JSON.stringify(['', String(h.cilantro.id)]); // CHANGE
+    h.graph.__trellisSharing = { automationHolds: () => [{ key, sessionId: 'peer', name: 'Benny' }] }; // CHANGE
+    const snapshot = () => h.window.mxUtils.getXml(new h.window.mxCodec().encode(h.graph.model)); // CHANGE
+    const before = snapshot(), taskCalls = h.taskCalls(), undoCount = h.undoManager.history.length; // CHANGE
+    await assert.rejects(h.savePea(h.bed), error => error.code === 'TRELLIS_EDIT_BLOCKED' && /Benny on Cilantro/.test(error.message)); // CHANGE
+    assert.equal(snapshot(), before); assert.equal(h.taskCalls(), taskCalls); assert.equal(h.undoManager.history.length, undoCount); // CHANGE
+    const pea = await h.savePea(h.bed, '2026-08-01'); assert.equal(pea.getAttribute('plant_name'), 'Pea'); // CHANGE
+}); // CHANGE
+
+test('only relevant companion changes invalidate asynchronous schedule preparation', async t => { // CHANGE
+    for (const sameBed of [false, true]) await t.test(String(sameBed), async t => { // CHANGE
+        const h = await companionFixture(t), query = h.api.__testWindow.dbBridge.query; let changed = false; // CHANGE
+        h.api.__testWindow.dbBridge.query = async (id, sql, params) => { // CHANGE
+            if (!changed && /FROM CompanionSetLayoutDefaults/i.test(sql)) { changed = true; h.cilantro.setAttribute('spacing_x_cm', '31'); } // CHANGE
+            return query(id, sql, params); // CHANGE
+        }; // CHANGE
+        if (sameBed) { await assert.rejects(h.savePea(h.bed), error => error.code === 'TRELLIS_EDIT_STALE'); assert.equal(h.groups().length, 1); } // CHANGE
+        else { const pea = await h.savePea(); assert.equal(pea.getAttribute('plant_name'), 'Pea'); } // CHANGE
+        assert.equal(changed, true); // CHANGE
+    }); // CHANGE
 }); // CHANGE

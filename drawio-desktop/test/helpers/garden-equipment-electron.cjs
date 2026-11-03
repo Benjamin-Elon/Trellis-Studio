@@ -45,6 +45,7 @@ app.whenReady().then(async () => { // NEW
             graph.__trellisModules={findExistingCompanionTask:target=>target===garden?taskModule:null};void 0;
         `); // NEW
         for (const name of ['Garden_Equipment.js', 'Garden_Task_Manager.js']) await run(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins', name), 'utf8')); // NEW
+        await run('window.__surfacePluginLoader=Draw.loadPlugin;Draw.loadPlugin=()=>{};' + fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8') + ';Draw.loadPlugin=window.__surfacePluginLoader;delete window.__surfacePluginLoader;void 0;'); // NEW: exercise shared surfaces during native interaction checks.
         await run(`const equipment=graph.__trellisEquipment, inventory=equipment.readEquipmentInventory(garden);inventory.forEach(item=>{if(item.status==='owned')item.skillLevelRequired='none';});equipment.writeEquipmentInventory(garden,inventory);equipment.openDialog(garden);[...document.querySelectorAll('.trellis-eq-table tbody tr')].find(row=>row.textContent.includes('Bypass Pruners')).click();void 0;`); // NEW
         const desktop = await run(`({tabs:document.querySelectorAll('.trellis-eq-editor-tab').length,maintenance:document.querySelector('[data-section="maintenance"]').open,tasks:document.querySelector('[data-section="plannedTasks"]').textContent})`); // NEW
         assert.equal(desktop.tabs, 0); assert.equal(desktop.maintenance, false); assert.match(desktop.tasks, /Harvest tomatoes/); // NEW

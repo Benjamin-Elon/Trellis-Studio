@@ -126,15 +126,68 @@ async function activityStatusHarness(t, options = {}) { // CHANGE
 } // CHANGE
 const pendingActivity = (extra = {}) => ({ userId: 'alice', name: 'Alice', sessionId: 'local', online: true, saveState: 'pending', targets: ['["","a"]'], ...extra }); // CHANGE
 
-test('pending-only object status explains the badge and refreshes metadata without refreshing content', async t => { // CHANGE
+test('activity badges keep full opaque labels over a translucent fill and open only on activation', async t => { // CHANGE
+    const h = await activityStatusHarness(t); h.report({ pendingChanges: [pendingActivity()] }); // CHANGE
+    const badge = h.window.document.querySelector('[data-object-key]'); // CHANGE
+    assert.equal(badge.textContent, 'Alice · changed · pending project save'); assert.equal(badge.hasAttribute('title'), false); // CHANGE
+    assert.match(badge.getAttribute('aria-label'), /Emitter 30.5 cm: Alice/); assert.equal(badge.getAttribute('aria-haspopup'), 'dialog'); // CHANGE
+    const style = h.window.getComputedStyle(badge); assert.equal(style.backgroundColor, 'rgba(255, 255, 255, 0.5)'); assert.equal(style.opacity, ''); // CHANGE
+    assert.equal(style.color, 'rgb(37, 99, 235)'); assert.equal(style.borderTopColor, 'rgb(37, 99, 235)'); // CHANGE
+    badge.dispatchEvent(new h.window.MouseEvent('mouseenter')); badge.focus(); assert.equal(h.dialog(), null); // CHANGE
+    badge.click(); await settle(); const panel = h.dialog(); assert.ok(panel); assert.equal(badge.getAttribute('aria-expanded'), 'true'); // CHANGE
+    assert.equal(panel.parentNode, h.window.document.body); assert.equal(h.window.getComputedStyle(panel).position, 'fixed'); // CHANGE
+    assert.equal(h.window.getComputedStyle(panel).zIndex, '10030'); // CHANGE: activity details use the nonmodal top-control layer.
+    assert.equal(h.window.getComputedStyle(panel).backgroundColor, 'rgb(255, 255, 255)'); // CHANGE
+    badge.dispatchEvent(new h.window.MouseEvent('mouseleave')); panel.dispatchEvent(new h.window.MouseEvent('mouseleave')); // CHANGE
+    await new Promise(resolve => setTimeout(resolve, 120)); assert.equal(h.dialog(), panel); // CHANGE
+    badge.click(); await settle(); assert.equal(h.dialog(), null); assert.equal(badge.getAttribute('aria-expanded'), 'false'); // CHANGE
+    badge.click(); await settle(); assert.ok(h.dialog()); assert.equal(badge.getAttribute('aria-expanded'), 'true'); // CHANGE: the third click reopens details.
+    assert.equal(h.window.getComputedStyle(h.dialog()).zIndex, '10030'); // CHANGE
+}); // CHANGE
+
+test('activity details restore the current badge on Close or Escape and let outside clicks proceed', async t => { // CHANGE
+    const h = await activityStatusHarness(t); h.report({ pendingChanges: [pendingActivity()] }); h.open(); await settle(); // CHANGE
+    const original = h.window.document.querySelector('[data-object-key]'), panel = h.dialog(); // CHANGE
+    h.report({ pendingChanges: [pendingActivity({ saveState: 'failed' })] }); // CHANGE
+    const badge = h.window.document.querySelector('[data-object-key]'); assert.notEqual(badge, original); assert.equal(h.dialog(), panel); // CHANGE
+    assert.equal(h.window.getComputedStyle(panel).zIndex, '10030'); // CHANGE: live updates retain the correct layer.
+    assert.equal(badge.getAttribute('aria-expanded'), 'true'); h.control('Close').click(); await settle(); // CHANGE
+    assert.equal(h.dialog(), null); assert.equal(h.window.document.activeElement, badge); // CHANGE
+    h.open(); await settle(); const escape = new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); // CHANGE
+    h.window.document.activeElement.dispatchEvent(escape); assert.equal(escape.defaultPrevented, true); // CHANGE
+    assert.equal(h.dialog(), null); assert.equal(h.window.document.activeElement, badge); // CHANGE
+    const outside = h.window.document.createElement('button'); h.window.document.body.append(outside); let clicks = 0, pointerEvents = 0; // CHANGE
+    outside.addEventListener('click', () => { clicks++; }); outside.addEventListener('pointerdown', () => { pointerEvents++; }); // CHANGE
+    h.open(); await settle(); const down = new h.window.Event('pointerdown', { bubbles: true, cancelable: true }); // CHANGE
+    outside.dispatchEvent(down); outside.focus(); outside.click(); assert.equal(h.dialog(), null); // CHANGE
+    assert.equal(down.defaultPrevented, false); assert.equal(pointerEvents, 1); assert.equal(clicks, 1); assert.equal(h.window.document.activeElement, outside); // CHANGE
+    h.open(); await settle(); outside.focus(); outside.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); // CHANGE
+    assert.equal(h.dialog(), null); assert.equal(h.window.document.activeElement, badge); // CHANGE
+}); // CHANGE
+
+test('clicking another activity badge switches directly without outside dismissal or graph input', async t => { // CHANGE
+    const h = await activityStatusHarness(t), model = h.graph.getModel(); // CHANGE
+    h.graph.getModel = () => ({ ...model, getCell: id => id === 'b' ? { id, getAttribute: name => name === 'label' ? 'Other planting' : null } : model.getCell(id) }); // CHANGE
+    h.report({ presence: [{ userId: 'bob', name: 'Bob', sessionId: 'remote', targets: ['["","a"]', '["","b"]'] }] }); // CHANGE
+    const [first, second] = h.window.document.querySelectorAll('[data-object-key]'); let graphEvents = 0; // CHANGE
+    for (const type of ['pointerdown', 'mousedown', 'click', 'keydown', 'keyup']) h.graph.container.addEventListener(type, () => { graphEvents++; }); // CHANGE
+    first.click(); await settle(); const panel = h.dialog(); // CHANGE
+    second.dispatchEvent(new h.window.Event('pointerdown', { bubbles: true })); assert.equal(h.dialog(), panel); // CHANGE
+    second.click(); await settle(); assert.equal(h.dialog(), null); // CHANGE
+    assert.ok(h.window.document.querySelector('[aria-label="Activity for Other planting"]')); // CHANGE
+    assert.equal(first.getAttribute('aria-expanded'), 'false'); assert.equal(second.getAttribute('aria-expanded'), 'true'); // CHANGE
+    second.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); // CHANGE
+    assert.equal(h.window.document.querySelector('[aria-label="Activity for Other planting"]'), null); assert.equal(graphEvents, 0); // CHANGE
+}); // CHANGE
+
+test('pending-only object status updates automatically without a refresh control or content changes', async t => { // CHANGE
     const h = await activityStatusHarness(t); h.report({ pendingChanges: [pendingActivity({ userId: 'bob', name: 'Bob', sessionId: 'old', online: false })] }); h.open(); // CHANGE
     const panel = h.dialog(); assert.match(panel.textContent, /Bob last reported changed.*current save status is unknown/); assert.match(panel.textContent, /this notice does not block editing/); assert.match(panel.textContent, /only be checked by its author/); // CHANGE
     assert.equal(h.control('Request release'), undefined); assert.equal(h.control('Save now'), undefined); // CHANGE
     h.state.connectedCollaborators = 0; h.fireStatus(); assert.match(panel.textContent, /Working locally\. No other computers are connected/); assert.doesNotMatch(panel.textContent, /holds are unconfirmed/); // CHANGE
-    const start = h.calls.length; h.control('Refresh status').click(); await settle(); // CHANGE
-    assert.deepEqual(h.calls.slice(start).filter(call => call.activity).map(call => call.activity.kind), ['snapshot']); // CHANGE
-    assert.equal(h.calls.slice(start).some(call => call.apply || call.collaboration), false); // CHANGE
-    h.report({ pendingChanges: [] }); assert.equal(h.dialog(), panel); assert.match(panel.textContent, /No pending changes or editing hold/); assert.ok(h.control('Close')); // CHANGE
+    assert.equal(h.control('Refresh status'), undefined); const start = h.calls.length; // CHANGE
+    h.report({ pendingChanges: [] }); await settle(); assert.equal(h.dialog(), panel); assert.equal(panel.querySelector('[data-editing-status]').textContent, 'No viewing activity, pending changes, or editing holds are currently reported for this object.'); assert.ok(h.control('Close')); // CHANGE
+    assert.equal(h.calls.slice(start).some(call => call.apply || call.collaboration || call.activity), false); // CHANGE
 }); // CHANGE
 test('live object rows preserve focused actions while independent sessions and ownership change', async t => { // CHANGE
     const h = await activityStatusHarness(t, { recovery: async () => ({ ok: true, drafts: [] }) }); // CHANGE
@@ -156,12 +209,12 @@ test('status save actions retain failures, coalesce clicks and reuse project-wid
     const h = await activityStatusHarness(t); h.current.modified = true; h.report({ pendingChanges: [pendingActivity()] }); h.open(); // CHANGE
     let fail; h.bridge.collaborationAction = async input => { h.calls.push({ collaboration: input }); return new Promise((_resolve, reject) => { fail = reject; }); }; // CHANGE
     assert.match(h.dialog().textContent, /Saves all committed pending changes in this window/); // CHANGE
-    const save = h.control('Save now'); save.click(); save.click(); await settle(); assert.equal(h.calls.filter(call => call.collaboration?.kind === 'save').length, 1); assert.equal(h.control('Refresh status').disabled, true); // CHANGE
+    const save = h.control('Save now'); save.click(); save.click(); await settle(); assert.equal(h.calls.filter(call => call.collaboration?.kind === 'save').length, 1); assert.equal(save.disabled, true); assert.equal(h.control('Refresh status'), undefined); // CHANGE
     fail(new Error('Disk unavailable')); await settle(); assert.match(h.dialog().querySelector('[data-status]').textContent, /Disk unavailable/); assert.equal(h.current.modified, true); // CHANGE
     h.report({ pendingChanges: [pendingActivity({ saveState: 'failed' })] }); assert.match(h.dialog().textContent, /Disk unavailable/); // CHANGE
     h.bridge.collaborationAction = async input => { h.calls.push({ collaboration: input }); return { ok: true, xml: input.xml, collaboration: h.snapshot() }; }; // CHANGE
     h.control('Retry save').click(); await settle(); assert.equal(h.current.modified, false); assert.equal(h.calls.filter(call => call.collaboration?.kind === 'save').length, 2); // CHANGE
-    h.report({ pendingChanges: [] }); assert.match(h.dialog().textContent, /No pending changes or editing hold/); // CHANGE
+    h.report({ pendingChanges: [] }); assert.match(h.dialog().textContent, /No viewing activity, pending changes, or editing holds/); // CHANGE
 }); // CHANGE
 test('status actions use existing conflict review and uncertain-ownership handoff workflows', async t => { // CHANGE
     const h = await activityStatusHarness(t); h.report({ pendingChanges: [pendingActivity({ saveState: 'conflict' })] }); h.open(); // CHANGE
@@ -176,12 +229,12 @@ test('overview and object dialog share pending descriptions and retain focused c
     const description = h.dialog().querySelector('[data-activity-description]').textContent; await h.sharing.showSharingDialog(); assert.ok(h.window.document.body.textContent.includes(description)); // CHANGE
     h.report({ pendingChanges: [pendingActivity()] }); const save = h.control('Save now'); save.focus(); h.report({ pendingChanges: [pendingActivity({ saveState: 'failed' })] }); assert.equal(h.control('Retry save'), save); assert.equal(h.window.document.activeElement, save); // CHANGE
 }); // CHANGE
-test('failed status reads and stale observations retain notices; author changes invalidate pending actions', async t => { // CHANGE
-    const h = await activityStatusHarness(t, { explicitRefresh: true }); h.report({ pendingChanges: [pendingActivity()] }); h.open(); const panel = h.dialog(); // CHANGE
-    let rejectStatus; h.bridge.activityAction = () => new Promise((_resolve, reject) => { rejectStatus = reject; }); h.control('Refresh status').click(); await settle(); // CHANGE
+test('failed hold requests and stale observations retain notices; author changes invalidate pending actions', async t => { // CHANGE
+    const h = await activityStatusHarness(t, { explicitRefresh: true }); h.report({ pendingChanges: [pendingActivity()], holds: [{ ...activeHold(), sessionId: 'peer', userId: 'bob', name: 'Bob' }] }); h.open(); const panel = h.dialog(); // CHANGE
+    let rejectStatus; h.bridge.activityAction = () => new Promise((_resolve, reject) => { rejectStatus = reject; }); h.control('Request release').click(); await settle(); // CHANGE
     rejectStatus(new Error('Activity unavailable')); await settle(); assert.match(panel.querySelector('[data-status]').textContent, /Activity unavailable/); assert.ok(h.control('Save now')); // CHANGE
     h.fireActivity(observation(0)); assert.ok(h.control('Save now')); // CHANGE
-    let complete; h.bridge.activityAction = () => new Promise(resolve => { complete = resolve; }); h.control('Refresh status').click(); await settle(); // CHANGE
+    let complete; h.bridge.activityAction = () => new Promise(resolve => { complete = resolve; }); h.control('Request release').click(); await settle(); // CHANGE
     h.users.getCurrentUser = () => ({ id: 'bob' }); h.window.dispatchEvent(new h.window.Event('trellisUsersSessionChanged')); assert.equal(h.dialog(), null); // CHANGE
     const count = h.calls.length; complete({ ok: true, collaboration: h.snapshot() }); await settle(); assert.equal(panel.isConnected, false); assert.equal(h.calls.slice(count).some(call => call.status?.includes('context changed')), false); // CHANGE
 }); // CHANGE
@@ -195,8 +248,32 @@ test('hidden or detached status controls cannot submit after saving begins or th
 test('viewing and next-turn reports remain independent from pending work and actual holds', async t => { // CHANGE
     const h = await activityStatusHarness(t), viewer = { userId: 'bob', name: 'Bob', sessionId: 'viewer', online: true, targets: ['["","a"]'] }; // CHANGE
     h.report({ presence: [viewer] }); h.open(); assert.match(h.dialog().textContent, /Bob is viewing/); assert.equal(h.control('Request release'), undefined); assert.equal(h.control('Save now'), undefined); // CHANGE
-    h.report({ presence: [{ ...viewer, online: false }], pendingChanges: [pendingActivity()], reservations: [{ userId: 'bob', name: 'Bob', sessionId: 'viewer', key: '["","a"]', until: Date.now() + 30000 }] }); // CHANGE
-    assert.match(h.dialog().textContent, /last reported viewing; current presence is unconfirmed/); assert.match(h.dialog().textContent, /has the next editing turn/); assert.ok(h.control('Save now')); assert.equal(h.control('Request release'), undefined); // CHANGE
+    h.report({ presence: [], pendingChanges: [pendingActivity()], reservations: [{ userId: 'bob', name: 'Bob', sessionId: 'viewer', key: '["","a"]', until: Date.now() + 30000 }] }); // CHANGE: the service removes expired viewers while retaining independent activity.
+    assert.doesNotMatch(h.dialog().textContent, /viewing|presence is unconfirmed/); assert.match(h.dialog().textContent, /has the next editing turn/); assert.ok(h.control('Save now')); assert.equal(h.control('Request release'), undefined); // CHANGE
+}); // CHANGE
+
+test('automatic viewing expiry removes the badge and leaves open details and focus intact until reconnection', async t => { // CHANGE
+    const h = await activityStatusHarness(t), viewer = { userId: 'bob', name: 'Bob', sessionId: 'viewer', online: true, targets: ['["","a"]'] }; // CHANGE
+    h.report({ presence: [viewer] }); h.open(); const panel = h.dialog(), close = h.control('Close'), start = h.calls.length; // CHANGE
+    assert.equal(h.window.document.activeElement, close); assert.equal(h.control('Refresh status'), undefined); // CHANGE
+    h.report({ presence: [] }); await settle(); // CHANGE: simulate the service's existing timed activity notification, without user interaction.
+    assert.equal(h.window.document.querySelector('[data-object-key]'), null); assert.equal(h.dialog(), panel); assert.equal(h.window.document.activeElement, close); // CHANGE
+    assert.equal(panel.querySelector('[data-editing-status]').textContent, 'No viewing activity, pending changes, or editing holds are currently reported for this object.'); assert.doesNotMatch(panel.textContent, /Bob/); // CHANGE
+    assert.equal(h.calls.slice(start).some(call => call.activity || call.collaboration || call.apply), false); // CHANGE
+    h.report({ presence: [viewer] }); assert.equal(h.dialog(), panel); assert.match(panel.textContent, /Bob is viewing/); // CHANGE
+    const badge = h.window.document.querySelector('[data-object-key]'); assert.equal(badge.getAttribute('aria-expanded'), 'true'); // CHANGE
+    close.click(); assert.equal(h.dialog(), null); assert.equal(h.window.document.activeElement, badge); // CHANGE
+}); // CHANGE
+
+test('automatic viewing expiry updates the Sharing overview while preserving pending-work rows and focused actions', async t => { // CHANGE
+    const h = await activityStatusHarness(t, { recovery: async () => ({ ok: true, drafts: [] }) }), viewer = { userId: 'bob', name: 'Bob', sessionId: 'viewer', online: true, targets: ['["","a"]'] }; // CHANGE
+    h.report({ presence: [viewer], pendingChanges: [pendingActivity(), pendingActivity({ sessionId: 'old', deviceId: 'peer', online: false, saveState: 'failed' })] }); // CHANGE
+    await h.sharing.showSharingDialog(); const overview = h.window.document.querySelector('[aria-label="Canvas collaboration"]'); // CHANGE
+    const save = [...overview.querySelectorAll('button')].find(button => button.textContent === 'Save now'); save.focus(); // CHANGE
+    assert.match(overview.textContent, /Bob is viewing/); h.report({ presence: [] }); // CHANGE
+    assert.doesNotMatch(overview.textContent, /Bob is viewing|last reported viewing/); assert.equal(h.window.document.activeElement, save); // CHANGE
+    assert.ok([...overview.querySelectorAll('button')].some(button => button.textContent === 'Check private recovery drafts')); assert.match(overview.textContent, /last reported save failed/); // CHANGE
+    const badge = h.window.document.querySelector('[data-object-key]'); assert.ok(badge); assert.doesNotMatch(badge.textContent, /viewing/); assert.match(badge.textContent, /pending project save|save failed/); // CHANGE
 }); // CHANGE
 
 /** Drive the real countdown and quiet waits without waiting twenty wall-clock seconds. */ // NEW
@@ -299,24 +376,27 @@ test('sharing shows disconnected ownership separately from the requested release
     const hold = { ...activeHold(), sessionId: 'peer', name: 'Bob', online: false, requested: true, requestDeadline: Date.now() + 300000, expiresAt: Date.now() + 300000 }; // CHANGE
     const h = harness(t, { activity: async () => ({ ok: true, collaboration: observation(30, [hold]) }) }); await settle(); // CHANGE
     h.fireActivity(observation(40, [hold])); await h.sharing.showSharingDialog(); // CHANGE
-    const text = h.window.document.body.textContent; assert.match(text, /disconnected or presence unconfirmed/); assert.match(text, /Release requested\. Editing ends in/); assert.doesNotMatch(text, /without a fresh heartbeat/); // CHANGE
+    const text = h.window.document.body.textContent; assert.match(text, /disconnected or presence unconfirmed/); assert.match(text, /Release requested\. Editing ends in/); assert.match(text, /automatically releases after thirty seconds without a fresh session heartbeat/); // CHANGE
 }); // CHANGE
 test('failed confirmation leaves the graph and editors unchanged and reports unconfirmed status', async t => { // CHANGE
     const h = harness(t, { explicitRefresh: true, activity: async () => { throw new Error('Status offline'); } }); await settle(); // CHANGE
     h.setXml('unchanged local draft'); h.current.modified = true; h.fireActivity(observation(20, [activeHold()])); h.fireActivity(observation(21)); await settle(); // CHANGE
     assert.equal(h.ui.getFileData(), 'unchanged local draft'); assert.equal(h.calls.some(call => call.collaboration?.kind === 'recover-holds'), false); assert.ok(h.calls.some(call => call.status?.includes('Editing status unconfirmed'))); // CHANGE
 }); // CHANGE
-test('confirmed loss retains and freezes original fields before graph rollback; repeated reports do not discard them', async t => { // CHANGE
-    const h = harness(t, { explicitRefresh: true, editingHolds: true, activity: async () => ({ ok: true, collaboration: observation(30) }), recovery: async () => ({ ok: true }) }); await settle(); // CHANGE
+test('confirmed offline loss retains and freezes original fields before graph rollback; repeated reports do not discard them', async t => { // CHANGE
+    const loss = { key: activeHold().key, claimId: activeHold().claimId, code: 'SESSION_OFFLINE', reason: 'Your editing hold was released after thirty seconds without a fresh session heartbeat. Review the current object and reopen its editor to continue.' }; // CHANGE
+    const h = harness(t, { explicitRefresh: true, editingHolds: true, activity: async () => ({ ok: true, collaboration: observation(30, [], { losses: [loss] }) }), recovery: async () => ({ ok: true }) }); await settle(); // CHANGE
     const form = h.window.document.createElement('section'); form.dataset.collaborationObjectId = 'a'; form.innerHTML = '<input name="notes" value="unfinished entry"><input type="password" value="never retain">'; h.window.document.body.append(form); // CHANGE
     h.setXml('rejected graph draft'); h.current.modified = true; h.bridge.collaborationAction = async input => { h.calls.push({ collaboration: input }); return { ok: true, xml: 'accepted graph', discardedKeys: ['["","a"]'], recoveryPath: 'private.drawio', collaboration: observation(31) }; }; // CHANGE
     h.fireActivity(observation(20, [activeHold()])); h.fireActivity(observation(21)); await settle(); // CHANGE
     const retained = h.calls.find(call => call.privateRecovery?.kind === 'retain').privateRecovery; assert.equal(retained.editorDrafts[0].fields.length, 1); assert.equal(retained.editorDrafts[0].fields[0].value, 'unfinished entry'); // CHANGE
+    assert.match(retained.reason, /reopen its editor/); assert.match(form.textContent, /thirty seconds/); // CHANGE
     assert.equal(h.ui.getFileData(), 'accepted graph'); assert.equal(form.querySelector('input').value, 'unfinished entry'); assert.equal(form.querySelector('input').readOnly, true); assert.match(form.textContent, /private recovery draft has been saved/); // CHANGE
     h.fireActivity(observation(32)); await settle(); assert.equal(h.calls.filter(call => call.privateRecovery?.kind === 'retain').length, 1); assert.ok(form.isConnected); // CHANGE
 }); // CHANGE
-test('private retention failure defers rollback and retry uses the same immutable loss identity', async t => { // CHANGE
-    let failing = true; const h = harness(t, { explicitRefresh: true, editingHolds: true, activity: async () => ({ ok: true, collaboration: observation(30) }), recovery: async () => { if (failing) throw new Error('Disk full'); return { ok: true }; } }); await settle(); // CHANGE
+test('offline loss retention failure defers rollback and retry uses the same immutable loss identity', async t => { // CHANGE
+    const losses = [{ key: activeHold().key, claimId: activeHold().claimId, code: 'SESSION_OFFLINE', reason: 'The session heartbeat expired. Reopen the editor after reviewing the preserved draft.' }]; // CHANGE
+    let failing = true; const h = harness(t, { explicitRefresh: true, editingHolds: true, activity: async () => ({ ok: true, collaboration: observation(30, [], { losses }) }), recovery: async () => { if (failing) throw new Error('Disk full'); return { ok: true }; } }); await settle(); // CHANGE
     const form = h.window.document.createElement('section'); form.dataset.collaborationObjectId = 'a'; form.innerHTML = '<textarea>keep this</textarea>'; h.window.document.body.append(form); h.setXml('local graph'); h.current.modified = true; // CHANGE
     h.fireActivity(observation(20, [activeHold()])); h.fireActivity(observation(21)); await settle(); assert.equal(h.ui.getFileData(), 'local graph'); assert.equal(h.calls.some(call => call.collaboration?.kind === 'recover-holds'), false); assert.match(form.textContent, /Disk full/); // CHANGE
     failing = false; form.querySelector('button').click(); await settle(); const attempts = h.calls.filter(call => call.privateRecovery?.kind === 'retain'); assert.equal(attempts.length, 2); assert.equal(attempts[0].privateRecovery.lossId, attempts[1].privateRecovery.lossId); // CHANGE

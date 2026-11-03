@@ -14,17 +14,19 @@ function launch(profile, mode = 'quit', forceColor) { // CHANGE: scope color ove
     if (forceColor !== undefined) env.FORCE_COLOR = forceColor; // CHANGE: exercise both console formats without changing the parent environment.
     const child = spawn(require('electron'), [helper, '--no-sandbox'], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); // CHANGE: only test children disable Chromium's inner sandbox; the trailing switch is not forwarded as an input file.
     let output = '', stderr = '', closed = false, forceTimer, forced = false; // CHANGE
-    const readyWindows = new Set(), readinessWaiters = new Set(); // CHANGE: every owner window must initialize independently.
+    const readyWindows = new Set(), readinessWaiters = new Set(); // CHANGE: readiness and relaunch acknowledgements are independent signals.
     function settleReadiness() { // CHANGE: scanning complete lines also handles markers split across stdout chunks.
         for (const match of output.matchAll(/^LIFECYCLE_READY: (\d+)\r?\n/gm)) readyWindows.add(Number(match[1])); // CHANGE
         for (const waiter of readinessWaiters) { // CHANGE
-            if (readyWindows.size < waiter.count && !closed) continue; // CHANGE
-            readinessWaiters.delete(waiter); waiter.resolve(readyWindows.size >= waiter.count); // CHANGE
+            const count = waiter.reuse ? [...output.matchAll(/^LIFECYCLE_REUSED: 1\r?\n/gm)].length : readyWindows.size; // NEW
+            if (count < waiter.count && !closed) continue; // CHANGE
+            readinessWaiters.delete(waiter); waiter.resolve(count >= waiter.count); // CHANGE
         } // CHANGE
     } // CHANGE
     function waitForReadyWindows(count) { // CHANGE: child exit and the existing parent deadline bound every wait.
         return new Promise(resolve => { readinessWaiters.add({ count, resolve }); settleReadiness(); }); // CHANGE
     } // CHANGE
+    function waitForReuse() { return new Promise(resolve => { readinessWaiters.add({ count: 1, reuse: true, resolve }); settleReadiness(); }); } // NEW
     child.stdout.on('data', data => { output += data; settleReadiness(); }); // CHANGE
     child.stderr.on('data', data => { stderr += data; }); // NEW
     const terminate = () => { // NEW
@@ -44,7 +46,7 @@ function launch(profile, mode = 'quit', forceColor) { // CHANGE: scope color ove
         child.once('error', error => { clearTimeout(deadline); clearTimeout(forceTimer); closed = true; settleReadiness(); reject(error); }); // CHANGE
         child.once('close', (code, signal) => { clearTimeout(deadline); clearTimeout(forceTimer); closed = true; settleReadiness(); resolve({ code, signal, output, stderr, forced }); }); // CHANGE
     }); // NEW
-    const record = { child, waitForReadyWindows, result, terminate, get diagnostics() { return stderr + output; } }; // CHANGE
+    const record = { child, waitForReadyWindows, waitForReuse, result, terminate, get diagnostics() { return stderr + output; } }; // CHANGE
     const runs = profileRuns.get(profile) || []; runs.push(record); profileRuns.set(profile, runs); return record; // NEW
 } // NEW
 async function profile(t) { // NEW
@@ -78,14 +80,19 @@ test('opening a document with a retained draft offers production recovery', { ti
     const directory = await profile(t), run = launch(directory, 'draft-recovery'); t.after(run.terminate); // NEW
     const result = await run.result; successful(result); assert.match(result.output, /^LIFECYCLE_DRAFT_RECOVERY: offered\r?$/m); // NEW
 }); // NEW
+
+test('native opening, New, cancellation, retry and busy rejection reuse the production editor', { timeout: 90000 }, async t => { // NEW
+    const directory = await profile(t), run = launch(directory, 'single-window'); t.after(run.terminate); // NEW
+    const result = await run.result; successful(result); assert.match(result.output, /^LIFECYCLE_SINGLE_WINDOW: passed\r?$/m); // NEW
+}); // NEW
 for (const forceColor of ['0', '1']) { // CHANGE: the owner must remain reachable with numeric console coloring disabled or enabled.
     test('a second instance is rejected while the owning profile stays reachable: FORCE_COLOR=' + forceColor, { timeout: 120000 }, async t => { // CHANGE
         const directory = await profile(t), owner = launch(directory, 'hold', forceColor); t.after(owner.terminate); // CHANGE
         assert.equal(await owner.waitForReadyWindows(1), true, owner.diagnostics); // CHANGE
         const second = launch(directory, 'quit', forceColor); t.after(second.terminate); const duplicate = await second.result; // CHANGE
         successful(duplicate, 0); assert.doesNotMatch(duplicate.output, /LIFECYCLE_READY/); // CHANGE
-        assert.equal(await owner.waitForReadyWindows(2), true, owner.diagnostics); // CHANGE: the owning process creates a window for the rejected second launch.
-        owner.terminate(); successful(await owner.result, 2); // CHANGE
+        assert.equal(await owner.waitForReuse(), true, owner.diagnostics); // CHANGE: wait until the owner handles the relaunch and confirms one live editor.
+        owner.terminate(); successful(await owner.result, 1); // CHANGE
     }); // CHANGE
 } // CHANGE
 test('overlapping production tests use independent profiles and release both', { timeout: 120000 }, async t => { // NEW

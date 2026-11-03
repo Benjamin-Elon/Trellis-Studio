@@ -6,6 +6,7 @@
         const node = document.createElement(tag);
         if (text != null) node.textContent = text;
         if (className) node.className = className;
+        if (className === 'trellis-home-panel') { node.classList.add('trellis-surfaces'); node.dataset.trellisSurface = 'inset'; node.style.setProperty('--trellis-surface-base', '#fffdf6'); } // NEW: identity forms share the Projects palette.
         return node;
     }
     function button(text, action, variant = 'neutral', options) { // CHANGE: every library action declares its semantic intent.
@@ -31,45 +32,94 @@
         if (!filename || (isActive && !isActive())) return false; // CHANGE
         await request({ action: 'writeFile', path: filename, data: JSON.stringify(value, null, 2), enc: 'utf8' }); return true; // CHANGE
     }
-    /** Confirm only when a navigation actually replaces the current document. */
-    function mayReplace(ui) {
-        const file = ui.getCurrentFile();
-        if (!file || !file.isModified()) return Promise.resolve(true);
-        return new Promise(resolve => ui.confirm(mxResources.get('allChangesLost'), () => resolve(false), () => resolve(true), mxResources.get('cancel'), mxResources.get('discardChanges')));
-    }
+    const EDITOR_BUSY = 'Trellis is busy. Finish the current operation, then open the garden again.'; // NEW
+    /** Save/rename/retirement and navigation must never replace one another's document. */ // NEW
+    function editorBusy(ui, creating = false) { // NEW
+        const file = ui.getCurrentFile(), state = ui.__trellisGardenHome; // NEW
+        return !!(root.__trellisClosing || ui.spinner?.active || ui.__trellisCheckingDrafts || ui.__trellisGardenOpening || state?.homeTransition || state?.creating && !creating || state?.namingMove || state?.retirement || file?.savingFile || file?.__trellisCollaborativeSaving || file?.__trellisNamingMove); // NEW
+    } // NEW
+    /** One non-modal notice remains readable above dialogs without stealing their focus. */ // NEW
+    function showEditorBusy() { // NEW
+        let notice = document.querySelector('.trellis-editor-open-notice'); // NEW
+        if (!notice) { notice = element('div', null, 'trellis-editor-open-notice'); notice.setAttribute('role', 'status'); notice.style.cssText = 'position:fixed;bottom:12px;left:12px;right:12px;width:fit-content;max-width:calc(100% - 48px);padding:8px 12px;background:#fff4ce;color:#252525;border:1px solid #8a6d00;border-radius:4px;z-index:2147483647;pointer-events:none;'; document.body.append(notice); } // NEW
+        notice.textContent = EDITOR_BUSY; // NEW
+    } // NEW
+    /** Capture the current authored content so asynchronous verification cannot discard newer edits. */ // NEW
+    function replacementSnapshot(ui) { // NEW
+        const file = ui.getCurrentFile(); // NEW
+        return { file, modified: !!file?.isModified(), xml: file && ui.getXmlFileData ? mxUtils.getXml(ui.getXmlFileData(true, false, true)) : null }; // NEW
+    } // NEW
+    function validateReplacement(ui, snapshot) { // NEW
+        const current = replacementSnapshot(ui); // NEW
+        if (current.file !== snapshot.file || current.xml !== snapshot.xml || current.modified !== snapshot.modified || ui.editor?.graph?.isEditing?.()) throw new Error('The current garden changed while opening another garden. Open it again to review the latest changes.'); // NEW
+        const file = current.file, state = ui.__trellisGardenHome; // NEW
+        if (root.__trellisClosing || ui.spinner?.active || state?.homeTransition || state?.namingMove || state?.retirement || file?.savingFile || file?.__trellisCollaborativeSaving || file?.__trellisNamingMove) throw new Error(EDITOR_BUSY); // NEW
+    } // NEW
+    /** Confirm only when navigation actually replaces the current document. */ // CHANGE
+    async function mayReplace(ui) { // CHANGE
+        const file = ui.getCurrentFile(), graph = ui.editor?.graph; // CHANGE
+        if (graph?.isEditing?.()) graph.stopEditing(); // NEW: include the active label in the existing discard decision.
+        await graph?.__trellisReferences?.flushDrafts(); // NEW
+        if (ui.getCurrentFile() !== file) throw new Error('The current garden changed. Open the garden again.'); // NEW
+        const snapshot = replacementSnapshot(ui); // NEW
+        if (!snapshot.modified) return true; // CHANGE
+        const approved = await new Promise(resolve => ui.confirm(mxResources.get('allChangesLost'), () => resolve(false), () => resolve(true), mxResources.get('cancel'), mxResources.get('discardChanges'))); // CHANGE
+        if (approved) validateReplacement(ui, snapshot); // NEW
+        return approved; // NEW
+    } // CHANGE
+    /** External requests never interrupt a dialog or queue a later, surprising switch. */ // NEW
+    async function openRequested(ui, options = {}) { // NEW
+        const state = install(ui), container = ui.dialog?.container; // NEW
+        if (options.path && projectPathKey(ui.getCurrentFile()?.fileObject?.path) === projectPathKey(options.path)) return true; // NEW: reopening the current garden never interrupts its work.
+        const splash = container?.querySelector('.trellis-splash-root'); // NEW
+        const projects = options.create && state?.projectsRoot?.isConnected && container?.contains(state.projectsRoot) && !state.creationForm?.isConnected && !state.confirmation && !state.communityDraft && state.mode === 'idle'; // NEW
+        if (editorBusy(ui) || container && !splash && !projects) { showEditorBusy(); return false; } // NEW
+        document.querySelector('.trellis-editor-open-notice')?.remove(); // NEW
+        if (options.create) { showProjects(ui, { focus: 'create' }); return true; } // NEW
+        if (!options.path) return false; // NEW
+        return openPath(ui, options.path); // NEW
+    } // NEW
     /** The argument loader creates blank files on ENOENT; never use it here. */
     async function openPath(ui, filename, options = {}) { // CHANGE
         if (options.isActive && !options.isActive()) return false; // NEW
-        if (!(options.replacementApproved && options.previousFile === ui.getCurrentFile()) && !await mayReplace(ui)) return false; // CHANGE
-        if (root.trellisGardenLibrary?.prepareOpen) { // NEW: the library stays mounted during worker verification.
-            const status = ui.__trellisGardenHome?.projectsStatus; // NEW
-            if (status?.isConnected) status.textContent = 'Checking garden…'; // NEW
-            const prepared = await root.trellisGardenLibrary.prepareOpen({ path: filename }); // NEW
-            if (options.isActive && !options.isActive()) return false; // NEW
-            if (status?.isConnected) status.textContent = ''; // NEW
-            if (prepared?.path) filename = prepared.path; // NEW: naming may complete during the serialized preparation.
-        } // NEW
-        let opened = false; // NEW
-        await new Promise((resolve, reject) => ui.readGraphFile((entry, data, stat, name, modified) => {
-            if (options.isActive && !options.isActive()) { resolve(); return; } // NEW: a closed/replaced browser cannot navigate on a late read result.
-            try {
-                if (!data) throw new Error('The garden file is empty.');
-                const parsed = mxUtils.parseXml(data);
-                if (!parsed.documentElement || !['mxfile', 'mxGraphModel'].includes(parsed.documentElement.nodeName) || parsed.getElementsByTagName('parsererror').length) throw new Error('The garden file is not valid diagram XML.');
-                const pages = parsed.documentElement.nodeName === 'mxfile' ? Array.from(parsed.getElementsByTagName('diagram')) : [parsed.documentElement]; // NEW
-                if (!pages.length) throw new Error('The garden has no diagram pages.'); // NEW
-                for (const page of pages) { // NEW: validate every compressed page before the current document is closed.
-                    const model = page.nodeName === 'diagram' ? root.Editor?.parseDiagramNode(page, true) : page; // NEW
-                    if (!model || model.nodeName !== 'mxGraphModel' || !model.getElementsByTagName('root').length) throw new Error('The garden contains an invalid diagram page.'); // NEW
-                    if (root.mxCodec && root.mxGraphModel) new root.mxCodec(model.ownerDocument).decode(model, new root.mxGraphModel()); // NEW
-                } // NEW
-                const file = new LocalFile(ui, data, name || filename.replace(/^.*[\\/]/, ''));
-                file.fileObject = entry; file.stat = stat; file.setModified(!!modified);
-                ui.hideDialog();
-                Promise.resolve(ui.fileLoaded(file)).then(() => { opened = true; resolve(); }, reject); // CHANGE
-            } catch (error) { reject(error); }
-        }, error => { if (options.isActive && !options.isActive()) resolve(); else reject(error); }, filename)); // CHANGE
-        return opened; // CHANGE
+        if (editorBusy(ui, options.creating)) { showEditorBusy(); return false; } // NEW
+        ui.__trellisGardenOpening = true; // NEW: keep one prompt/read/replace operation in flight.
+        try { // NEW
+            if (options.approval) validateReplacement(ui, options.approval); // NEW
+            else if (!await mayReplace(ui)) return false; // CHANGE
+            const snapshot = options.approval || replacementSnapshot(ui); // NEW
+            if (root.trellisGardenLibrary?.prepareOpen) { // NEW: the library stays mounted during worker verification.
+                const status = ui.__trellisGardenHome?.projectsStatus; // NEW
+                if (status?.isConnected) status.textContent = 'Checking garden…'; // NEW
+                const prepared = await root.trellisGardenLibrary.prepareOpen({ path: filename }); // NEW
+                if (options.isActive && !options.isActive()) return false; // NEW
+                validateReplacement(ui, snapshot); // NEW
+                if (status?.isConnected) status.textContent = ''; // NEW
+                if (prepared?.path) filename = prepared.path; // NEW: naming may complete during the serialized preparation.
+            } // NEW
+            let opened = false; // NEW
+            await new Promise((resolve, reject) => ui.readGraphFile((entry, data, stat, name, modified) => {
+                if (options.isActive && !options.isActive()) { resolve(); return; } // NEW: a closed/replaced browser cannot navigate on a late read result.
+                try {
+                    validateReplacement(ui, snapshot); // NEW
+                    if (!data) throw new Error('The garden file is empty.');
+                    const parsed = mxUtils.parseXml(data);
+                    if (!parsed.documentElement || !['mxfile', 'mxGraphModel'].includes(parsed.documentElement.nodeName) || parsed.getElementsByTagName('parsererror').length) throw new Error('The garden file is not valid diagram XML.');
+                    const pages = parsed.documentElement.nodeName === 'mxfile' ? Array.from(parsed.getElementsByTagName('diagram')) : [parsed.documentElement]; // NEW
+                    if (!pages.length) throw new Error('The garden has no diagram pages.'); // NEW
+                    for (const page of pages) { // NEW: validate every compressed page before the current document is closed.
+                        const model = page.nodeName === 'diagram' ? root.Editor?.parseDiagramNode(page, true) : page; // NEW
+                        if (!model || model.nodeName !== 'mxGraphModel' || !model.getElementsByTagName('root').length) throw new Error('The garden contains an invalid diagram page.'); // NEW
+                        if (root.mxCodec && root.mxGraphModel) new root.mxCodec(model.ownerDocument).decode(model, new root.mxGraphModel()); // NEW
+                    } // NEW
+                    const file = new LocalFile(ui, data, name || filename.replace(/^.*[\\/]/, ''));
+                    file.fileObject = entry; file.stat = stat; file.setModified(!!modified);
+                    ui.hideDialog();
+                    Promise.resolve(ui.fileLoaded(file)).then(() => { opened = true; resolve(); }, reject); // CHANGE
+                } catch (error) { reject(error); }
+            }, error => { if (options.isActive && !options.isActive()) resolve(); else reject(error); }, filename)); // CHANGE
+            return opened; // CHANGE
+        } finally { ui.__trellisGardenOpening = false; } // NEW: canceled prompts and failed reads also release navigation.
     }
     function install(ui) {
         if (ui.__trellisGardenHome || !root.trellisIdentity) return ui.__trellisGardenHome;
@@ -78,7 +128,9 @@
         // Dialog snapshots change only through initial reads or explicit actions. // CHANGE
         root.TrellisFieldRuntime?.install(ui); // NEW: install once; commands/plugins are resolved when used.
         const originalSplash = ui.showSplash.bind(ui); // NEW
+        ui.editor?.addListener?.('fileLoaded', () => { ui.__trellisCheckingDrafts = false; }); // NEW: selecting a recovered draft completes startup navigation.
         ui.showSplash = function() { // CHANGE: entering Home retires the current document only after a confirmed save.
+            if (!ui.getCurrentFile()) ui.__trellisCheckingDrafts = false; // NEW: an empty startup completes after draft discovery reaches Home.
             if (state.homeTransition) return state.homeTransition; // NEW: repeated requests share one transition.
             if (root.urlParams?.noFileMenu === '1') return; // NEW: preserve the host's no-file-menu guard.
             if (!ui.getCurrentFile()) { // NEW
@@ -92,6 +144,9 @@
             return state.homeTransition; // NEW
         }; // NEW
         ui.pickFile = () => showProjects(ui, { focus: 'open' }); // CHANGE: ordinary Open always reaches the library, including an empty library.
+        const newAction = ui.actions.get('new'); if (newAction) newAction.funct = () => openRequested(ui, { create: true }).catch(error => ui.handleError(error)); // NEW: preserve New's existing label and keyboard binding.
+        root.electron?.registerMsgListener?.('trellisEditorOpen', options => { openRequested(ui, options).catch(error => ui.handleError(error)); }); // NEW
+        root.electron?.registerMsgListener?.('trellisEditorBusy', () => showEditorBusy()); // NEW
         const home = ui.actions.addAction('trellisHome', () => ui.showSplash(true)); home.label = 'Trellis Home';
         const projects = ui.actions.addAction('trellisGardenProjects', () => showProjects(ui)); projects.label = 'Garden Projects'; // NEW
         if (root.trellisGardenJoin) { const join = ui.actions.addAction('trellisJoinGardenProject', () => showProjects(ui, { focus: 'join' })); join.label = 'Join a garden project'; } // NEW
@@ -406,6 +461,7 @@
         if (!root.trellisGardenJoin) return; // NEW
         const owner = state.projectsRoot, guide = element('section', null, 'trellis-join-guide'), editor = element('div'), pending = element('section'); // NEW
         guide.setAttribute('aria-label', 'Join a garden project'); pending.setAttribute('aria-label', 'Pending invitations'); // NEW
+        guide.dataset.trellisSurface = 'section'; pending.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
         const heading = element('h3', 'Join a garden project'), message = element('p'), details = element('div'), list = element('div'); // NEW
         message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite'); state.joinDetails = details; // NEW
         const label = element('label', 'Paste your invitation email'), text = element('textarea'); text.rows = 6; text.maxLength = 65536; text.setAttribute('aria-label', 'Paste your invitation email'); label.append(text); // NEW
@@ -505,12 +561,14 @@
     } // NEW
     function showProjects(ui, options = {}) { // NEW
         const state = install(ui); if (!state) return; state.quickstartUi = ui; // NEW
-        if (state.projectsRoot?.isConnected) { if (options.focus === 'join') state.openJoinGuide?.(); applyProjectHighlight(state, options); return; } // CHANGE
+        if (state.projectsRoot?.isConnected) { if (options.focus === 'join') state.openJoinGuide?.(); if (options.focus === 'create') { state.focus = 'create'; state.setProjectView('active'); state.projectsRoot.__focused = false; focusProjectRows(state); } applyProjectHighlight(state, options); return; } // CHANGE: New reuses and focuses the mounted creation controls.
         const splashVisible = !!document.querySelector('.trellis-splash-root'), fromSplash = splashVisible || !ui.getCurrentFile(); // CHANGE
         if (splashVisible) ui.hideDialog(); // CHANGE
         state.focus = options.focus || 'open'; state.mode = 'idle'; state.opening = true; // NEW
         const panel = element('section', null, 'trellis-projects-root'); panel.setAttribute('aria-label', 'Garden Projects'); state.view = 'active'; // CHANGE
+        panel.classList.add('trellis-surfaces'); panel.style.setProperty('--trellis-surface-base', '#fffdf6'); // NEW: shared surface hierarchy.
         const header = element('header', null, 'trellis-projects-header'), top = element('div', null, 'trellis-projects-top'), heading = element('h2', 'Garden Projects'), account = element('div', null, 'trellis-projects-account'), body = element('div', null, 'trellis-projects-body'); // CHANGE
+        body.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         top.append(heading, button('Inventories ▾', event => root.TrellisInventories?.showMenu(event.currentTarget, { ui }), 'open'), button('The Grand Exchange', () => root.TrellisInventories?.openExchange({ ui }), 'open'), account); // CHANGE
          header.append(top); panel.append(header, body); state.projectsBody = body; state.accountHost = account; // CHANGE
         const identity = element('section', null, 'trellis-home-panel'); identity.setAttribute('aria-label', 'Identity'); identity.hidden = true; identity.addEventListener('click', () => { identity.hidden = false; }, true); // CHANGE
@@ -533,6 +591,7 @@
         for (const kind of root.trellisGardenCommunities ? ['communities', 'shared', 'private'] : ['shared', 'private']) { // CHANGE
             const label = kind === 'communities' ? 'Garden communities' : kind === 'shared' ? 'Shared garden projects' : 'Private garden projects'; // CHANGE
             const section = element('section', null, 'trellis-projects-section'), title = element('h3', null, 'trellis-projects-heading'); // CHANGE
+            section.dataset.trellisSurface = 'section'; title.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
             const toggle = button('−', () => toggleProjectSection(state, kind)); toggle.classList.add('trellis-projects-toggle'); // NEW
             toggle.setAttribute('aria-controls', 'trellis-projects-' + kind + '-rows'); // NEW
             const counts = element('span', '', 'trellis-projects-count'); title.append(element('span', label, 'trellis-projects-title'), counts, toggle); state.projectSectionCounts[kind] = counts; installLoadHeader(ui, state, kind, title); // CHANGE
@@ -546,8 +605,9 @@
             state[kind + 'Rows'] = rows; // NEW
         } // NEW
         updateProjectSections(state); // NEW: apply saved folds before the dialog becomes visible.
-        if (root.trellisGardenCommunities) { const requests = element('section', null, 'trellis-projects-section'); const title = element('h3', 'Access requests'); installLoadHeader(ui, state, 'requests', title); requests.append(title); state.communityRequestRows = element('div'); requests.append(state.communityRequestRows); body.append(requests); } // CHANGE
+        if (root.trellisGardenCommunities) { const requests = element('section', null, 'trellis-projects-section'); requests.dataset.trellisSurface = 'section'; const title = element('h3', 'Access requests'); title.dataset.trellisSurface = 'header'; installLoadHeader(ui, state, 'requests', title); requests.append(title); state.communityRequestRows = element('div'); requests.append(state.communityRequestRows); body.append(requests); } // CHANGE: the shared surface roles include community access requests.
         const trashSection = element('section', null, 'trellis-projects-section'); trashSection.hidden = true; trashSection.append(element('h3', 'Trash'), element('p', 'Projects stay here until you delete them permanently. Paired devices apply changes when they reconnect.', 'trellis-home-muted')); // NEW
+        trashSection.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
         installLoadHeader(ui, state, 'trash', trashSection.querySelector('h3')); state.trashRows = element('div'); trashSection.append(state.trashRows); body.append(trashSection); state.trashSection = trashSection; // CHANGE
         const folder = element('div', null, 'trellis-home-muted'); state.folderLabel = folder; // NEW
         const footer = element('div', null, 'trellis-home-row'); // NEW
@@ -647,12 +707,12 @@
             event.preventDefault(); if (state.creating || !name.control.value.trim()) return; // NEW
             state.creating = true; submit.disabled = true; // NEW
             try { // NEW
-                const previousFile = ui.getCurrentFile(); // NEW
                 if (!await mayReplace(ui)) return; // NEW
+                const approval = replacementSnapshot(ui); // NEW: creation may await storage while the existing garden continues changing.
                 if (!form.isConnected) return; // NEW
                 if (!created) { const cache = state.projectSnapshot, login = projectLoginKey(state.session); created = await root.trellisGardenLibrary.create({ name: name.control.value }); if (cache === state.projectSnapshot && login === projectLoginKey(state.session) && created.entry) { cache.revision = (cache.revision || 0) + 1; cache.rowVersions ||= new Map(); cache.rowVersions.set(created.entry.diagramId, cache.revision); cache.libraryProjects = [...cache.libraryProjects.filter(project => project.diagramId !== created.entry.diagramId), { ...created.entry, path: created.path, source: 'library', available: true, classification: kind }]; } } // CHANGE: a completed create remains immediately visible even if its form closed or an older read finishes later.
                 if (!form.isConnected) return; // NEW
-                if (await openPath(ui, created.path, { replacementApproved: true, previousFile, isActive: () => form.isConnected })) await initializeProject(ui, kind === 'shared'); // CHANGE
+                if (await openPath(ui, created.path, { approval, creating: true, isActive: () => form.isConnected })) await initializeProject(ui, kind === 'shared'); // CHANGE
             } catch (error) { // NEW
                 status.textContent = error.message; // NEW
                 if (created) { // NEW
@@ -671,7 +731,7 @@
         const state = ui.__trellisGardenHome; // NEW: retry shares the creation guard without issuing another library create.
         const retry = button('Retry opening created project', async () => { // CHANGE
             if (state.creating) return; state.creating = true; retry.disabled = true; // NEW
-            try { if (await openPath(ui, project.path)) await initializeProject(ui, kind === 'shared'); } // NEW
+            try { if (await openPath(ui, project.path, { creating: true })) await initializeProject(ui, kind === 'shared'); } // CHANGE: the recovery operation owns its creation guard.
             catch (failure) { if (panel.isConnected) status.textContent = failure.message; else showCreationRecovery(ui, project, kind, failure); } // NEW
             finally { state.creating = false; retry.disabled = false; } // NEW
         }, 'open'); // CHANGE
@@ -800,9 +860,12 @@
     /** A retained dialog gets one initial focus, including when reopening from fresh cached rows. */ // NEW
     function focusProjectRows(state) { // NEW
         const panel = state.projectsRoot; if (panel.__focused || state.confirmation) return; // CHANGE
+        const create = state.focus === 'create' && state.session ? state.creationButtons.find(control => control.dataset.quickstartProjectKind === 'private' && !control.disabled) : null; // NEW: New creates a garden rather than a community.
+        if (state.focus === 'create' && state.session && !create) return; // NEW: wait for the creation controls to become ready.
+        if (create?.closest('[hidden]')) toggleProjectSection(state, 'private'); // NEW: make the requested creation control visible before focusing.
         const visible = [state.communitiesRows, state.sharedRows, state.privateRows].filter(Boolean).flatMap(rows => [...rows.querySelectorAll('button:not(:disabled)')]).find(control => !control.closest('[hidden]') && !control.closest('details:not([open])')); // NEW
         if (!visible && state.focus !== 'create' && Object.values(state.sectionLoads).some(load => load.loading)) return; panel.__focused = true; // CHANGE
-        ((state.focus === 'create' && state.session ? state.creationButtons.find(control => !control.disabled && !control.closest('[hidden]')) : visible) || state.projectSectionToggles.communities || state.projectSectionToggles.shared)?.focus({ preventScroll: true }); // CHANGE
+        (create || visible || state.projectSectionToggles.communities || state.projectSectionToggles.shared)?.focus({ preventScroll: true }); // CHANGE
     } // NEW
     /** Initial loads are shared by reopened dialogs. Only an explicit action starts subsequent reads. */ // CHANGE
     async function refreshProjects(ui, state, options = {}) { // CHANGE
@@ -1130,12 +1193,13 @@
             if (ui.dialog?.container?.firstChild !== panel) return; // CHANGE
             if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(); } // CHANGE
             else if (event.key === 'Tab') { // CHANGE
-                const focusable = [...panel.querySelectorAll('button,input,select,textarea,[tabindex="0"]')].filter(node => !node.disabled && !node.hidden); // CHANGE
+                const companion = ui.editor?.graph?.__trellisQuickstart?.getCompanion?.(ui.dialog.container); // CHANGE: include the body-level companion without opening focus to the underlying project library.
+                const focusable = [panel, ...(companion ? [companion] : [])].flatMap(host => [...host.querySelectorAll('button,input,select,textarea,[tabindex="0"]')]).filter(node => !node.disabled && !node.hidden && !node.closest('[hidden]')); // CHANGE
                 const index = focusable.indexOf(document.activeElement), next = event.shiftKey ? index <= 0 ? focusable.length - 1 : index - 1 : (index + 1) % focusable.length; // CHANGE
                 event.preventDefault(); event.stopImmediatePropagation(); (focusable[next] || panel).focus(); // CHANGE
             } // CHANGE
         } // CHANGE
-        function containFocus(event) { if (isActive() && ui.dialog?.container?.firstChild === panel && !panel.contains(event.target)) (prompt.busy ? panel : cancel).focus({ preventScroll: true }); } // CHANGE
+        function containFocus(event) { if (isActive() && ui.dialog?.container?.firstChild === panel && !panel.contains(event.target) && !ui.editor?.graph?.__trellisQuickstart?.getCompanion?.(ui.dialog.container)?.contains(event.target)) (prompt.busy ? panel : cancel).focus({ preventScroll: true }); } // CHANGE
         state.confirmation = prompt; // CHANGE
         ui.showDialog(panel, Math.max(180, Math.min(520, (root.innerWidth || 1000) - 100)), Math.max(120, Math.min(360, (root.innerHeight || 900) - 100)), true, true, () => { // CHANGE
             if (prompt.busy && !invalidated) return false; // CHANGE
@@ -1486,5 +1550,5 @@
             if (launcher) launcher.after(join); else actions.prepend(join); // CHANGE
         } // NEW
     } // NEW
-    root.TrellisGardenHome = { attachSplash, install, openPath, importCurrent, saveJson, chooseJson, showProjects, distanceBand }; // CHANGE
+    root.TrellisGardenHome = { attachSplash, install, openPath, openRequested, importCurrent, saveJson, chooseJson, showProjects, distanceBand }; // CHANGE: internal desktop requests share the existing safe opener.
 })(window);

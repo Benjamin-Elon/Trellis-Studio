@@ -3528,6 +3528,7 @@ Draw.loadPlugin(function (ui) {
         box.style.cssText = "border-top:1px solid #E5E7EB;margin-top:12px;padding-top:10px;";
         const title = document.createElement("div");
         title.textContent = "Accept invite";
+        title.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
         title.style.cssText = "font-weight:700;";
         box.appendChild(title);
         const row = document.createElement("div");
@@ -3567,6 +3568,7 @@ Draw.loadPlugin(function (ui) {
         if (!host) return { ok: false, reason: "Auth host is unavailable." };
         authOverlay = document.createElement("div");
         authOverlay.className = "trellis-users-auth-overlay";
+        authOverlay.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         authOverlay.style.cssText = "position:fixed;inset:0;z-index:" + AUTH_OVERLAY_Z + ";background:#fff;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;font:12px Arial,sans-serif;";
         authOverlay.addEventListener("mousedown", function (evt) { evt.stopPropagation(); });
         const card = document.createElement("div");
@@ -3751,7 +3753,9 @@ Draw.loadPlugin(function (ui) {
         const host = document.body;
         if (!host) return;
         panel = document.createElement("div");
-        panel.style.cssText = "position:fixed;top:36px;right:12px;z-index:" + USERS_UI_LAYER_Z + ";background:#fff;border:1px solid #111;border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.22);width:400px;max-height:calc(100vh - 72px);overflow:auto;padding:10px;font:12px Arial,sans-serif;display:none;box-sizing:border-box;";
+        panel.style.cssText = "position:fixed;top:36px;right:12px;z-index:" + USERS_UI_LAYER_Z + ";background:var(--trellis-surface-canvas,#fff);border:1px solid #111;border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.22);width:400px;max-height:calc(100vh - 72px);overflow:auto;padding:10px;font:12px Arial,sans-serif;display:none;box-sizing:border-box;"; // CHANGE: shared roles own surface colors and borders.
+        panel.dataset.trellisSurface = 'canvas'; // NEW: expose the neutral background between section surfaces.
+        panel.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         panel.addEventListener("mousedown", function (evt) { evt.stopPropagation(); });
         const header = document.createElement("div");
         header.style.cssText = "display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px;";
@@ -3853,8 +3857,10 @@ Draw.loadPlugin(function (ui) {
     function appendAcceptInviteSection(parent) {
         const box = document.createElement("div");
         box.style.cssText = "border-top:1px solid #E5E7EB;padding-top:8px;margin-top:8px;";
+        box.dataset.trellisSurface = 'section'; box.style.borderTop = ''; // NEW: shared surface hierarchy.
         const title = document.createElement("div");
         title.textContent = "Accept invite";
+        title.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
         title.style.fontWeight = "700";
         box.appendChild(title);
         const row = document.createElement("div");
@@ -3902,8 +3908,10 @@ Draw.loadPlugin(function (ui) {
         if (!invites.length) return;
         const box = document.createElement("div");
         box.style.cssText = "border-top:1px solid #E5E7EB;padding-top:8px;margin-top:8px;";
+        box.dataset.trellisSurface = 'section'; box.style.borderTop = ''; // NEW: shared surface hierarchy.
         const title = document.createElement("div");
         title.textContent = "Pending invites";
+        title.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
         title.style.fontWeight = "700";
         box.appendChild(title);
         invites.forEach(function (invite) {
@@ -4124,6 +4132,7 @@ Draw.loadPlugin(function (ui) {
     function appendUserGroup(parent, titleText, users) {
         const group = document.createElement("div");
         group.className = "trellis-users-user-group";
+        group.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
         group.setAttribute("data-trellis-users-group", titleText);
         group.style.cssText = "margin-top:8px;";
         const title = document.createElement("div");
@@ -4161,8 +4170,10 @@ Draw.loadPlugin(function (ui) {
         if (!isEnabled() || !isAdmin()) return;
         const box = document.createElement("div");
         box.style.cssText = "border-top:1px solid #E5E7EB;padding-top:8px;margin-top:8px;";
+        box.dataset.trellisSurface = 'section'; box.style.borderTop = ''; // NEW: shared surface hierarchy.
         const title = document.createElement("div");
         title.textContent = "Users";
+        title.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
         title.style.fontWeight = "700";
         box.appendChild(title);
         const users = listUsers().filter(userMatchesPeopleFilter);
@@ -4321,6 +4332,7 @@ Draw.loadPlugin(function (ui) {
         if (typeof document === "undefined") return null;
         const overlay = document.createElement("div");
         overlay.className = "trellis-users-access-dialog";
+        overlay.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         overlay.style.cssText = "position:fixed;inset:0;z-index:" + USERS_UI_LAYER_Z + ";background:rgba(0,0,0,.24);display:flex;align-items:flex-start;justify-content:center;padding-top:72px;box-sizing:border-box;font:12px Arial,sans-serif;";
         overlay.addEventListener("mousedown", function (evt) { if (evt.target === overlay) closeAccessDialog(overlay); });
         const box = document.createElement("div");
@@ -4549,8 +4561,10 @@ Draw.loadPlugin(function (ui) {
         const summary = getAccessSummary(cell);
         const box = document.createElement("div");
         box.style.cssText = "border-top:1px solid #E5E7EB;padding-top:8px;margin-top:8px;";
+        box.dataset.trellisSurface = 'section'; box.style.borderTop = ''; // NEW: shared surface hierarchy.
         const title = document.createElement("div");
         title.textContent = "Selected access";
+        title.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
         title.style.fontWeight = "700";
         box.appendChild(title);
         const summaries = selectedScopeSummaries();
@@ -4982,6 +4996,7 @@ Draw.loadPlugin(function (ui) {
     function renderPermissionSubjectPicker(parent, subjects, active) {
         const box = document.createElement("div"); // NEW
         box.className = "trellis-team-permission-subject-picker"; // NEW
+        box.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
         box.style.cssText = "border-bottom:1px solid #E5E7EB;padding-bottom:8px;margin-bottom:8px;"; // NEW
         const title = document.createElement("div"); // NEW
         title.textContent = "Subjects"; // NEW
@@ -5120,6 +5135,7 @@ Draw.loadPlugin(function (ui) {
         if (!teamPermissionOverlay) { // NEW
             teamPermissionOverlay = document.createElement("div"); // NEW
             teamPermissionOverlay.className = "trellis-team-permission-overlay"; // NEW
+            teamPermissionOverlay.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
             teamPermissionOverlay.style.cssText = "position:fixed;right:16px;top:72px;z-index:" + USERS_UI_LAYER_Z + ";width:440px;max-width:calc(100vw - 32px);max-height:calc(100vh - 96px);overflow:auto;background:#fff;border:1px solid #111;border-radius:4px;box-shadow:0 12px 32px rgba(0,0,0,.22);padding:10px;box-sizing:border-box;font:12px Arial,sans-serif;"; // NEW
             (document.body || graph.container).appendChild(teamPermissionOverlay); // NEW
         } // NEW

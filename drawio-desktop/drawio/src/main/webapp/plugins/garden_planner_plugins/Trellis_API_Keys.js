@@ -18,6 +18,7 @@ Draw.loadPlugin(function (ui) {
         const root = document.createElement('div');
         root.style.cssText = 'padding:20px;box-sizing:border-box;';
         const title = document.createElement('h2'); title.textContent = 'API keys'; root.appendChild(title);
+        root.classList.add('trellis-surfaces'); root.dataset.trellisSurface = 'canvas'; root.dataset.trellisSurfaceTheme = 'editor'; // NEW: shared surface hierarchy.
         const profile = document.createElement('p'); profile.textContent = 'Loading profile…'; root.appendChild(profile);
         const note = document.createElement('p'); note.textContent = 'Keys are encrypted on this device for your Trellis profile. Enter a new key to replace a saved key.'; root.appendChild(note);
         const message = document.createElement('p'); message.setAttribute('role', 'status'); root.appendChild(message);
@@ -51,6 +52,7 @@ Draw.loadPlugin(function (ui) {
         }
         for (const [provider, label] of [['openai', 'OpenAI'], ['fdc', 'FoodData Central']]) {
             const group = document.createElement('fieldset'); group.style.cssText = 'margin:12px 0;padding:12px;';
+            group.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
             const legend = document.createElement('legend'); legend.textContent = label; group.appendChild(legend);
             const status = document.createElement('span'); status.textContent = 'Loading…'; group.appendChild(status);
             const input = document.createElement('input'); input.type = 'password'; input.autocomplete = 'new-password'; input.spellcheck = false; input.setAttribute('aria-label', label + ' API key'); input.style.cssText = 'display:block;width:100%;box-sizing:border-box;margin:8px 0;'; group.appendChild(input); inputs.push(input);

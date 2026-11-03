@@ -1,8 +1,10 @@
 /** Resumable, device-local onboarding. Workflow owners retain all editing and validation. */ // NEW
 (function (root) {
     'use strict';
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE: floating guidance follows the Trellis control-layer contract.
     const STORAGE = 'trellis.quickstart.v1:'; // NEW
     const TARGET = 'data-trellis-quickstart'; // NEW
+    const PLAN_GROUPS = ['year-crops', 'growing', 'harvest', 'demand-setup', 'demand-values', 'review', 'save']; // NEW: stable device-local walkthrough positions.
     const CREATOR = [
         ['settings', 'Garden and settings'], ['layout', 'Create your layout'],
         ['irrigation', 'Connect one irrigated bed', true], ['plan', 'Plan your year'],
@@ -59,7 +61,10 @@
         const graph = ui.editor && ui.editor.graph;
         if (!graph || graph.__trellisQuickstart) return;
         let preferences, identity = '', active = false, offering = false, card = null, body = null, prompt = null;
-        let observer = null, scheduled = null, highlighted = null, highlightedCell = null, cellHighlight = null, surface = null, observedModel = null, generation = 0; // NEW
+        let observer = null, scheduled = null, highlighted = [], highlightedCell = null, cellHighlight = null, surface = null, observedModel = null, generation = 0; // CHANGE: grouped instructions own several highlights.
+        let collapseButton = null, utterance = null, speechKey = '', speechWarning = '', guidanceGeneration = 0; // NEW
+        const focusedDemandLines = new Map(); // NEW: IDs only; planner renders replace their controls.
+        let ownerFrame = null, sizeObserver = null, canvasPlacement = null; // CHANGE: logical ownership and temporary placement are independent of saved preferences.
         let notice = '', storageWarning = '', dragging = null, dragHandle = null, placementTarget = null, placementKey = '', lastPromptKey = '', contextKey = '', portableIdentity = ui.__trellisGardenHome?.session?.identityId || null; // NEW
         const model = () => graph.getModel(), file = () => ui.getCurrentFile && ui.getCurrentFile();
         const users = () => graph.__trellisUsers || root.Trellis && root.Trellis.users;
@@ -79,8 +84,8 @@
             return attr(base, 'trellis_users_diagram_id') || attr(base, 'trellis_history_id') || file()?.fileObject?.path || file()?.getTitle?.() || 'unsaved';
         }
         function readPreferences() { // NEW
-            try { const data = JSON.parse(root.localStorage.getItem(STORAGE + identity) || '{}'); return { ...data, contexts: data.contexts && typeof data.contexts === 'object' && !Array.isArray(data.contexts) ? data.contexts : {} }; }
-            catch (_) { storageWarning = 'Quickstart progress cannot be restored on this device. You can continue for this session.'; return { contexts: {} }; }
+            try { const data = JSON.parse(root.localStorage.getItem(STORAGE + identity) || '{}'); return { ...data, workflowPositions: data.workflowPositions && typeof data.workflowPositions === 'object' && !Array.isArray(data.workflowPositions) ? data.workflowPositions : {}, contexts: data.contexts && typeof data.contexts === 'object' && !Array.isArray(data.contexts) ? data.contexts : {} }; } // CHANGE
+            catch (_) { storageWarning = 'Quickstart progress cannot be restored on this device. You can continue for this session.'; return { contexts: {}, workflowPositions: {} }; } // CHANGE
         }
         function persist() { // NEW
             try { root.localStorage.setItem(STORAGE + identity, JSON.stringify(preferences)); return true; }
@@ -106,7 +111,7 @@
             p.gardenId = String(gardenId); p.year = Number(year);
             const saved = p.bindings[p.gardenId + ':' + p.year] || {};
             for (const key of fields) p[key] = saved[key] || {};
-            generation++; clearHighlight(); lastPromptKey = ''; persist();
+            generation++; clearHighlight(); stopSpeech(); focusedDemandLines.clear(); lastPromptKey = ''; persist(); // CHANGE
         }
         function bindGarden() { // NEW
             const p = progress(), list = gardens();
@@ -116,7 +121,16 @@
             if (candidate && Number(attr(candidate, 'current_year')) >= 1900 && Number(attr(candidate, 'current_year')) <= 3000) p.year = Number(attr(candidate, 'current_year')); // NEW
         }
         /** Captures are checked again after asynchronous sharing operations and identity changes. */ // NEW
-        function capture() { return { generation, identity, diagramId: documentId(), pageId: pageId(), gardenId: progress().gardenId, year: progress().year }; }
+        function capture() { return { generation, identity, diagramId: documentId(), pageId: pageId(), gardenId: progress().gardenId, year: progress().year, guidanceGeneration, planGroup: stage()[0] === 'plan' ? planGroup() : null, demandRoute: progress().demand || 'self', planSession: planSurface()?.dataset.quickstartSession }; } // CHANGE
+        /** Only the matching open planner and current instruction may consume a successful native action. */ // NEW
+        function recordPlanAction(action, token) { // NEW
+            const owner = planSurface(), now = capture(); // NEW
+            if (!active || stage()[0] !== 'plan' || !owner || !token || !token.planSession || Object.keys(now).some(key => now[key] !== token[key])) return; // CHANGE
+            if (owner.dataset.quickstartGarden !== progress().gardenId || owner.dataset.quickstartYear !== String(progress().year)) return; // NEW
+            const next = { 'crops-applied': ['year-crops', 'growing'], 'demand-added': ['demand-setup', 'demand-values'] }[action]; // NEW
+            if (next && planGroup() === next[0]) { progress().positions.planGroup = next[1]; guidanceGeneration++; persist(); schedule(); } // NEW
+            if (action === 'plan-committed' && planGroup() === 'save' && completions().plan) { notice = 'Your year plan is saved. Continue when you are ready to allocate a planting.'; schedule(); } // NEW
+        } // NEW
         function record(name, token) { // NEW
             if (!token || token.generation !== generation || token.identity !== identity || token.diagramId !== documentId() || token.pageId !== pageId() || token.gardenId !== progress().gardenId || token.year !== progress().year) return;
             if (!['people', 'community'].includes(name)) return;
@@ -152,39 +166,48 @@
         }
         function target(name, parent = document) { return [...parent.querySelectorAll('[' + TARGET + '="' + name + '"]')].find(visible); } // NEW
         function clearHighlight() { // NEW
-            if (highlighted) highlighted.classList.remove('trellis-quickstart-target'); highlighted = null;
+            for (const node of highlighted) node.classList.remove('trellis-quickstart-target'); highlighted = []; // CHANGE
             cellHighlight?.destroy(); cellHighlight = null; highlightedCell = null;
         }
         function highlight(node, cell) { // NEW
-            if (node === highlighted && !cell || cell && cell === highlightedCell && cellHighlight) return;
+            const nodes = [...new Set((Array.isArray(node) ? node : [node]).filter(item => item && visible(item)))]; // NEW
+            if (nodes.length === highlighted.length && nodes.every((item, index) => item === highlighted[index]) && (!cell || cell === highlightedCell && cellHighlight)) return; // CHANGE
             clearHighlight();
-            if (node) { highlighted = node; node.classList.add('trellis-quickstart-target'); }
+            if (nodes.length) { highlighted = nodes; for (const item of nodes) item.classList.add('trellis-quickstart-target'); } // CHANGE
             else if (cell && typeof mxCellHighlight !== 'undefined') {
                 const state = graph.view?.getState(cell); highlightedCell = cell;
                 if (state) { cellHighlight = new mxCellHighlight(graph, '#2563eb', 4); cellHighlight.highlight(state); }
             }
         }
-        function clampCard(position = dragging?.position || preferences.position || { x: 16, y: 100 }) { // NEW
-            if (!card || surface) return;
+        function clampCard(position = dragging?.position || (!surface && canvasPlacement) || preferences.position || { x: 16, y: 100 }) { // CHANGE
+            if (!card) return; // CHANGE: companion gestures use the same viewport bounds as canvas gestures.
             const width = card.getBoundingClientRect().width || 310, height = card.getBoundingClientRect().height || 180;
             const bounded = { x: Math.max(8, Math.min(position.x, root.innerWidth - width - 8)), y: Math.max(8, Math.min(position.y, root.innerHeight - height - 8)) }; // NEW
             card.style.left = bounded.x + 'px'; card.style.top = bounded.y + 'px'; // NEW
             return bounded; // NEW: save viewport coordinates rather than an out-of-bounds pointer position.
         }
+        /** Save preferred offsets only for deliberate movement, never for automatic avoidance or resizing. */ // CHANGE
+        function savePosition(position) { // CHANGE
+            if (surface && ownerFrame) { // CHANGE
+                const box = ownerFrame.getBoundingClientRect(); // CHANGE
+                preferences.workflowPositions[surface.dataset.quickstartSurface || 'dialog'] = { x: position.x - box.left, y: position.y - box.top }; // CHANGE
+            } else { preferences.position = position; canvasPlacement = null; } // CHANGE
+            persist(); // CHANGE
+        } // CHANGE
         /** End once on every exit path; cancelled gestures restore their starting position without saving. */ // NEW
         function finishDrag(cancelled = false) { // NEW
             if (!dragging) return; // NEW
             const gesture = dragging; dragging = null; gesture.cleanup(); // NEW
             card?.classList.remove('trellis-quickstart-dragging'); // NEW
-            if (card && !surface) { // NEW
+            if (card) { // CHANGE
                 const position = clampCard(cancelled ? gesture.origin : gesture.position); // NEW
-                if (!cancelled) { preferences.position = position; persist(); } // NEW
+                if (!cancelled) savePosition(position); // CHANGE
             } // NEW
             schedule(); // NEW: render any workflow changes deferred during the gesture.
         }
         /** Match native window gestures: start on the handle, then follow the pointer on the document. */ // NEW
         function beginDrag(event) { // NEW
-            if (surface || dragging || event.button != null && event.button !== 0 || event.isPrimary === false || event.touches?.length > 1) return; // NEW
+            if (dragging || event.button != null && event.button !== 0 || event.isPrimary === false || event.touches?.length > 1) return; // CHANGE
             const box = card.getBoundingClientRect(), origin = { x: box.left, y: box.top }; // NEW
             const matches = next => event.pointerId == null || next.pointerId === event.pointerId; // NEW
             const move = next => { // NEW
@@ -193,14 +216,13 @@
             }; // NEW
             const end = next => { if (matches(next)) { move(next); finishDrag(); mxEvent.consume(next); } }; // NEW
             const cancel = () => finishDrag(true); // NEW
-            const escape = next => { if (next.key === 'Escape') { mxEvent.consume(next); finishDrag(true); } }; // NEW
             dragging = { x: mxEvent.getClientX(event), y: mxEvent.getClientY(event), origin, position: origin, cleanup() { // NEW
                 mxEvent.removeGestureListeners(document, null, move, end); // NEW
-                root.removeEventListener('blur', cancel); document.removeEventListener('keydown', escape, true); // NEW
+                root.removeEventListener('blur', cancel); // CHANGE: Escape is handled before workflow window-capture listeners.
                 document.removeEventListener('pointercancel', cancel, true); document.removeEventListener('touchcancel', cancel, true); // NEW
             } }; // NEW
             mxEvent.addGestureListeners(document, null, move, end); // NEW
-            root.addEventListener('blur', cancel); document.addEventListener('keydown', escape, true); // NEW
+            root.addEventListener('blur', cancel); // CHANGE
             document.addEventListener('pointercancel', cancel, true); document.addEventListener('touchcancel', cancel, true); // NEW
             card.classList.add('trellis-quickstart-dragging'); dragHandle.focus({ preventScroll: true }); mxEvent.consume(event); // NEW
         }
@@ -213,51 +235,130 @@
             } else handle.textContent = '+'; // NEW: match the module handle fallback.
             mxEvent.addGestureListeners(handle, beginDrag); // NEW
             handle.addEventListener('keydown', event => { // NEW
-                if (surface || dragging || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; // NEW
+                if (dragging || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; // CHANGE
                 const box = card.getBoundingClientRect(); // NEW
-                preferences.position = clampCard({ x: box.left + (event.key === 'ArrowRight' ? 16 : event.key === 'ArrowLeft' ? -16 : 0), y: box.top + (event.key === 'ArrowDown' ? 16 : event.key === 'ArrowUp' ? -16 : 0) }); // NEW
-                mxEvent.consume(event); persist(); // NEW
+                savePosition(clampCard({ x: box.left + (event.key === 'ArrowRight' ? 16 : event.key === 'ArrowLeft' ? -16 : 0), y: box.top + (event.key === 'ArrowDown' ? 16 : event.key === 'ArrowUp' ? -16 : 0) })); // CHANGE
+                mxEvent.consume(event); schedule(); // CHANGE
             }); // NEW
             return handle; // NEW
         }
-        /** One card follows the active modal, keeping its buttons inside native focus containment. */ // NEW
-        function moveCard(destination) {
-            if (!card || card.parentNode === destination) return;
-            finishDrag(true); // NEW
-            destination.appendChild(card); surface = destination === document.body ? null : destination;
-            card.style.position = surface ? 'sticky' : 'fixed'; card.style.bottom = surface ? '0' : ''; // NEW
-            card.style.left = surface ? '0' : ''; card.style.top = surface ? '0' : ''; dragHandle.hidden = !!surface; // NEW
-            placementTarget = null; placementKey = ''; // NEW: a new surface must resolve placement again.
-            card.style.width = surface ? 'auto' : '310px'; card.style.margin = surface ? '8px 0' : '0';
-            card.style.maxHeight = surface ? 'min(34vh, 260px)' : 'calc(100vh - 24px)'; card.style.flex = '0 0 auto'; // NEW
-            clampCard();
-        }
+        /** Compare stacking contexts, rather than treating a high local picker layer as a global modal. */ // CHANGE
+        function stackingPath(node) { // CHANGE
+            const path = []; // CHANGE
+            for (let item = node; item && item !== document.body; item = item.parentElement) { // CHANGE
+                const style = root.getComputedStyle(item), z = Number.parseInt(style.zIndex, 10); // CHANGE
+                if (Number.isFinite(z) || style.transform && style.transform !== 'none' || style.isolation === 'isolate') path.unshift({ node: item, z: Number.isFinite(z) ? z : 0 }); // CHANGE
+            } // CHANGE
+            return path; // CHANGE
+        } // CHANGE
+        function compareSurfaces(a, b) { // CHANGE
+            if (a.contains(b)) return -1; if (b.contains(a)) return 1; // CHANGE
+            const left = stackingPath(a), right = stackingPath(b); let index = 0; // CHANGE
+            while (left[index] && right[index] && left[index].node === right[index].node) index++; // CHANGE
+            const x = left[index], y = right[index]; // CHANGE
+            if ((x?.z || 0) !== (y?.z || 0)) return (x?.z || 0) - (y?.z || 0); // CHANGE
+            return ((x?.node || a).compareDocumentPosition(y?.node || b) & 4) ? -1 : 1; // CHANGE
+        } // CHANGE
+        /** The highest visible tagged workflow or native modal owns both guidance and companion interaction. */ // CHANGE
+        function activeOwner() { // CHANGE
+            const candidates = [...document.querySelectorAll('[data-quickstart-surface]')].filter(visible); // CHANGE
+            const modal = ui.dialog?.container; if (visible(modal) && !candidates.includes(modal)) candidates.push(modal); // CHANGE
+            return candidates.sort(compareSurfaces).pop() || null; // CHANGE
+        } // CHANGE
+        function frameFor(owner) { // CHANGE
+            const modal = ui.dialog?.container, nested = owner?.closest('[role="dialog"]'); // CHANGE
+            return nested || (modal?.contains(owner) ? modal : owner); // CHANGE
+        } // CHANGE
+        /** A portal escapes transformed/clipped dialog content without changing the dialog's layout. */ // CHANGE
+        function moveCard(owner) { // CHANGE
+            const frame = frameFor(owner); // CHANGE
+            if (surface !== owner || ownerFrame !== frame) { // CHANGE
+                finishDrag(true); surface = owner; ownerFrame = frame; canvasPlacement = null; placementTarget = null; placementKey = ''; // CHANGE
+                sizeObserver?.disconnect(); sizeObserver?.observe(card); if (frame) sizeObserver?.observe(frame); // CHANGE
+            } // CHANGE
+            const layer = owner && stackingPath(owner)[0]; // CHANGE
+            card.style.zIndex = layer ? String(Math.max(GRAPH_OVERLAY_Z.CONTROL, layer.z)) : ''; // CHANGE
+            let anchor = layer?.node; while (anchor?.parentElement && anchor.parentElement !== document.body) anchor = anchor.parentElement; // CHANGE
+            if (anchor && card.previousSibling !== anchor) anchor.after(card); // CHANGE: equal-z DOM order puts this companion above its owner and below later modals.
+            if (!owner) clampCard(); // CHANGE
+        } // CHANGE
+        /** Focus traps may include only the companion owned by their workflow or enclosing dialog. */ // CHANGE
+        function getCompanion(owner) { // CHANGE
+            return card?.isConnected && surface && activeOwner() === surface && owner && (owner === surface || owner.contains(surface)) ? card : null; // CHANGE
+        } // CHANGE
+        /** Relative preferred positions survive recentering; avoidance is temporary and never persisted. */ // CHANGE
+        function placeCompanion(nodes) { // CHANGE
+            if (!surface || !ownerFrame || dragging) return; // CHANGE
+            const frame = ownerFrame.getBoundingClientRect(), box = card.getBoundingClientRect(); // CHANGE
+            const width = box.width || Math.min(310, root.innerWidth - 16), height = box.height || 180; // CHANGE
+            const bound = point => ({ x: Math.max(8, Math.min(point.x, root.innerWidth - width - 8)), y: Math.max(8, Math.min(point.y, root.innerHeight - height - 8)) }); // CHANGE
+            const saved = preferences.workflowPositions[surface.dataset.quickstartSurface || 'dialog']; // CHANGE
+            const valid = saved && Number.isFinite(saved.x) && Number.isFinite(saved.y); // CHANGE
+            const right = { x: frame.right + 12, y: frame.top }, left = { x: frame.left - width - 12, y: frame.top }; // CHANGE
+            const fits = point => point.x >= 8 && point.x + width <= root.innerWidth - 8; // CHANGE
+            const sides = [right, left].filter(fits); // CHANGE
+            const corners = [{ x: root.innerWidth - width - 8, y: 8 }, { x: 8, y: 8 }, { x: root.innerWidth - width - 8, y: root.innerHeight - height - 8 }, { x: 8, y: root.innerHeight - height - 8 }]; // CHANGE
+            const planner = surface.dataset.quickstartSurface === 'plan'; // NEW
+            const candidates = [...sides, ...corners].map(bound), preferred = valid ? bound({ x: frame.left + saved.x, y: frame.top + saved.y }) : planner ? bound({ x: 16, y: root.innerHeight - height - 16 }) : candidates[0]; // CHANGE
+            const targetBoxes = (Array.isArray(nodes) ? nodes : [nodes]).filter(Boolean).map(node => node.getBoundingClientRect()); // CHANGE
+            const area = (point, rect, gap = 0) => rect ? Math.max(0, Math.min(point.x + width, rect.right + gap) - Math.max(point.x, rect.left - gap)) * Math.max(0, Math.min(point.y + height, rect.bottom + gap) - Math.max(point.y, rect.top - gap)) : 0; // CHANGE
+            const targetArea = point => targetBoxes.reduce((sum, rect) => sum + (rect.width > 0 && rect.height > 0 ? area(point, rect, 8) : 0), 0); // CHANGE
+            if ((valid || planner || sides.length) && !targetArea(preferred)) { clampCard(preferred); return; } // CHANGE
+            candidates.unshift(preferred); candidates.sort((a, b) => targetArea(a) - targetArea(b) || area(a, frame) - area(b, frame)); // CHANGE
+            clampCard(candidates[0]); // CHANGE
+        } // CHANGE
         /** Prefer a free viewport corner when the floating card would cover its target control. */ // NEW
         function avoidTarget(node, key) { // NEW
             if (surface || !card || dragging) return; // NEW
             if (node === placementTarget && key === placementKey) return; // NEW: ordinary refreshes respect a manual drop.
-            placementTarget = node; placementKey = key; if (!node) return; // NEW
+            placementTarget = node; placementKey = key; canvasPlacement = null; clampCard(); if (!node) return; // CHANGE: a new target starts from the saved preference rather than a previous temporary avoidance.
             const box = card.getBoundingClientRect(), targetBox = node.getBoundingClientRect();
             const overlaps = (x, y) => x < targetBox.right + 8 && x + box.width > targetBox.left - 8 && y < targetBox.bottom + 8 && y + box.height > targetBox.top - 8;
             if (!overlaps(box.left, box.top)) return;
             const right = Math.max(8, root.innerWidth - box.width - 16), bottom = Math.max(8, root.innerHeight - box.height - 16);
             for (const [x, y] of [[right, 100], [16, bottom], [right, bottom], [16, 100]]) {
-                if (y + box.height <= root.innerHeight && !overlaps(x, y)) { preferences.position = clampCard({ x, y }); return; } // NEW
+                if (y + box.height <= root.innerHeight && !overlaps(x, y)) { canvasPlacement = clampCard({ x, y }); return; } // CHANGE: automatic avoidance must not overwrite preferred canvas coordinates.
             }
         }
         function ensureCard() { // NEW
             if (card?.isConnected) return;
             finishDrag(true); // NEW: external removal must not leave document listeners pointing at a detached card.
             surface = null; card = element('section'); card.className = 'trellis-quickstart-card'; card.style.position = 'fixed'; card.style.width = '310px'; card.setAttribute('aria-label', 'Trellis Quickstart'); // NEW
+            card.classList.add('trellis-surfaces'); card.style.setProperty('--trellis-surface-base', '#F5F0E6'); // NEW: shared surface hierarchy.
             for (const event of ['mousedown', 'click', 'dblclick']) card.addEventListener(event, event => event.stopPropagation()); // NEW
             const header = element('header', null, card); dragHandle = createDragHandle(header); element('strong', 'Quickstart', header); // NEW
-            button('Collapse', () => { preferences.collapsed = !preferences.collapsed; persist(); }, header);
+            header.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
+            collapseButton = button('Collapse', () => { preferences.collapsed = !preferences.collapsed; clearHighlight(); stopSpeech(); persist(); }, header); // CHANGE
+            collapseButton.setAttribute('aria-controls', 'trellis-quickstart-body'); // NEW
             button('Close', close, header);
-            body = element('div', null, card); document.body.appendChild(card);
+            body = element('div', null, card); body.id = 'trellis-quickstart-body'; body.className = 'trellis-quickstart-body'; document.body.appendChild(card); sizeObserver?.observe(card); // CHANGE
+            body.dataset.trellisSurface = 'entry'; // NEW: shared surface hierarchy.
             clampCard();
         }
-        function selectStage(key) { finishDrag(true); progress().stage = key; lastPromptKey = ''; persist(); schedule(); } // NEW
-        function advanceField(delta) { const p = progress(), key = stage()[0]; p.positions[key] = Math.max(0, (p.positions[key] || 0) + delta); persist(); } // NEW
+        /** Cancel only speech started by this guide, and invalidate late error callbacks. */ // NEW
+        function stopSpeech() { // NEW
+            const speaking = utterance; utterance = null; speechKey = ''; // NEW
+            if (speaking) { try { root.speechSynthesis?.cancel(); } catch (_) { /* Text guidance remains available. */ } } // NEW
+        } // NEW
+        /** The key represents a guidance context, not individual field values or DOM refreshes. */ // NEW
+        function narrate(text, key) { // NEW
+            if (!preferences.readAloud || preferences.collapsed || !active || key === speechKey) return; // NEW
+            stopSpeech(); speechKey = key; // NEW
+            try { // NEW
+                if (!root.speechSynthesis || !root.SpeechSynthesisUtterance) throw new Error('Speech unavailable'); // NEW
+                const speech = new root.SpeechSynthesisUtterance(text); utterance = speech; // NEW
+                speech.onend = () => { if (utterance === speech) utterance = null; }; // NEW
+                speech.onerror = () => { if (utterance !== speech) return; utterance = null; speechWarning = 'Read aloud is unavailable on this device. You can continue with the written instructions.'; schedule(); }; // NEW
+                root.speechSynthesis.speak(speech); // NEW
+            } catch (_) { utterance = null; speechWarning = 'Read aloud is unavailable on this device. You can continue with the written instructions.'; } // NEW
+        } // NEW
+        function selectStage(key) { finishDrag(true); clearHighlight(); stopSpeech(); guidanceGeneration++; progress().stage = key; lastPromptKey = ''; persist(); schedule(); } // CHANGE
+        function advanceField(delta) { // CHANGE
+            const p = progress(), key = stage()[0]; clearHighlight(); stopSpeech(); guidanceGeneration++; // NEW
+            if (key === 'plan') p.positions.planGroup = PLAN_GROUPS[Math.max(0, Math.min(6, PLAN_GROUPS.indexOf(planGroup()) + delta))]; // NEW
+            else p.positions[key] = Math.max(0, (p.positions[key] || 0) + delta); // CHANGE
+            persist(); // NEW
+        } // CHANGE
         function choose(label, values, value, change, parent = body) { // NEW
             const wrapper = element('label', label + ' ', parent), input = element('select', null, wrapper);
             input.setAttribute('aria-label', label); input.dataset.quickstartFocus = 'select:' + label; // NEW
@@ -279,9 +380,7 @@
             return action.funct();
         }
         function currentSurface() { // NEW
-            const candidates = [...document.querySelectorAll('[data-quickstart-surface]')].filter(visible);
-            const garden = progress().gardenId;
-            return candidates.reverse()[0] || null; // NEW: mismatched workflows receive an explicit context action rather than a hidden guide.
+            const owner = activeOwner(); return owner?.dataset.quickstartSurface ? owner : null; // CHANGE: underlying workflows cannot outrank a newer blocking modal.
         }
         /** Return an explicit prerequisite rather than waiting for an absent contextual toolbar. */ // NEW
         function prerequisite(key) {
@@ -326,23 +425,75 @@
             return selector ? [...container.querySelectorAll(selector)].find(visible) : null;
         }
 
+        /** Locate the main planner even while its nested picker owns the companion. */ // NEW
+        function planSurface() { // NEW
+            return [...document.querySelectorAll('[data-quickstart-surface="plan"]')].find(node => node.dataset.quickstartGarden === progress().gardenId && node.dataset.quickstartYear === String(progress().year)); // NEW
+        } // NEW
+        /** Translate legacy field positions once; subsequent progress uses stable group identifiers. */ // NEW
+        function planGroup() { // NEW
+            const p = progress(); // NEW
+            if (PLAN_GROUPS.includes(p.positions.planGroup)) return p.positions.planGroup; // NEW
+            let legacy = fields.plan; // NEW
+            if (p.demand === 'sales') { const at = legacy.findIndex(step => step[0] === 'plan-demand-add'); legacy = [...legacy.slice(0, at), ['plan-sales-channel'], ['plan-sales-name'], ['plan-sales-type'], ...legacy.slice(at)]; } // NEW
+            const field = legacy[Math.max(0, Math.min(legacy.length - 1, Number(p.positions.plan) || 0))]?.[0] || 'plan-year'; // NEW
+            p.positions.planGroup = ['plan-year', 'plan-add-crops'].includes(field) ? 'year-crops' : ['plan-variety', 'plan-method'].includes(field) ? 'growing' : field.startsWith('plan-harvest') ? 'harvest' : field === 'plan-review' ? 'review' : field === 'plan-save' ? 'save' : field.startsWith('plan-sales') || ['plan-demand', 'plan-demand-add'].includes(field) ? 'demand-setup' : 'demand-values'; // NEW
+            persist(); return p.positions.planGroup; // NEW
+        } // NEW
+        function demandFocusKey(container, route, cropId) { return [documentId(), pageId(), progress().gardenId, progress().year, container.dataset.quickstartSession, route, cropId].join(':'); } // NEW
+        /** Resolve a single matching line using IDs, including lines whose fields have not been rendered yet. */ // NEW
+        function planningLine(container, route, cropId) { // NEW
+            const attribute = route === 'sales' ? 'yearPlanDemandLineId' : 'yearPlanSelfLineId'; // NEW
+            const controls = [...container.querySelectorAll('[data-year-plan-field]')]; // NEW
+            const lines = container.__trellisQuickstartView?.getDemandLines(route) || controls.filter(node => node.dataset[attribute] && node.dataset.yearPlanField === 'cropId').map(node => ({ id: node.dataset[attribute], cropId: node.value })); // NEW
+            const matching = lines.filter(line => String(line.cropId) === cropId); // NEW
+            const focused = focusedDemandLines.get(demandFocusKey(container, route, cropId)); // NEW
+            return matching.find(line => String(line.id) === focused) || matching[0] || null; // NEW
+        } // NEW
+        /** Group targets stay scoped to the selected crop, route and one demand line. */ // NEW
+        function planInstruction(container) { // NEW
+            const group = planGroup(), route = progress().demand || 'self', cropId = container.dataset.quickstartCrop || ''; // NEW
+            const line = planningLine(container, route, cropId), lineKey = route === 'sales' ? 'yearPlanDemandLineId' : 'yearPlanSelfLineId'; // NEW
+            const controls = [...container.querySelectorAll('[data-year-plan-field]')]; // NEW
+            const cropFields = names => controls.filter(node => node.dataset.cropId === cropId && cropId && names.includes(node.dataset.yearPlanField)); // NEW
+            const area = target('plan-demand-' + route, container); // NEW
+            const routeArea = container.querySelector('[' + TARGET + '="plan-demand-' + route + '"]'); // NEW
+            let nodes = [], text = '', fallback = null; // NEW
+            if (group === 'year-crops') { text = 'Confirm the planning year, then use Add/Remove crops to choose what to grow and Apply changes. Keep the year aligned with this guide.'; nodes = [target('plan-year', container), target('plan-add-crops', container)]; } // NEW
+            if (group === 'growing') { text = 'For the selected crop, choose a variety or keep the base plant, then choose the planting method. You can keep suitable existing values.'; nodes = cropFields(['varietyId', 'method']); fallback = target('plan-basics', container) || target('plan-add-crops', container); } // NEW
+            if (group === 'harvest') { text = 'Choose the selected crop’s harvest window source. For Manual dates, enter a feasible harvest start and end; other sources provide their own dates.'; nodes = cropFields(['harvestWindowSource', 'harvestStart', 'harvestEnd']); fallback = target('plan-basics', container) || target('plan-add-crops', container); } // NEW
+            if (group === 'demand-setup') { // NEW
+                text = route === 'sales' ? 'Open Sales demand. Add a sales channel if needed, name it and choose its type, then use Manage packages and Apply changes to add demand for your crop.' : 'Open Self Sufficiency, then use Manage packages and Apply changes to add demand for your crop. Enable self-use if it is disabled.'; // NEW
+                nodes = [target('plan-demand-add-' + route, routeArea || container)]; // NEW
+                if (route === 'sales') { // NEW
+                    const channelFields = [...(routeArea || container).querySelectorAll('[data-year-plan-field]')].filter(node => ['label', 'type'].includes(node.dataset.yearPlanField)); // NEW
+                    const channelId = line?.channelId || channelFields[0]?.dataset.yearPlanDemandChannelId; // NEW
+                    const channel = [...(routeArea || container).querySelectorAll('[data-demand-channel-id]')].find(node => node.dataset.demandChannelId === channelId); // NEW
+                    nodes = [target('plan-demand-add-sales', channel || routeArea || container)]; // NEW
+                    nodes.push(target('plan-sales-channel', container), ...channelFields.filter(node => node.dataset.yearPlanDemandChannelId === channelId)); // NEW
+                } // NEW
+                fallback = routeArea?.querySelector('.yp-strip-header') || area; // NEW
+            } // NEW
+            if (group === 'demand-values') { // NEW
+                text = 'For the selected crop’s demand line, choose the crop, a positive quantity, unit, frequency, and first and last demand dates. Existing values may be kept if they suit your plan.'; // NEW
+                nodes = line ? controls.filter(node => node.dataset[lineKey] === String(line.id) && ['cropId', 'qty', 'unit', 'frequency', 'from', 'to'].includes(node.dataset.yearPlanField)) : []; // NEW
+                if (!line) text += ' Add a matching demand line in Demand setup first.'; // NEW
+                fallback = routeArea?.querySelector('.yp-strip-header') || area; // NEW
+            } // NEW
+            if (group === 'review') { text = 'Review Plan Check. Read the warnings and resolve blocking issues before saving. Calculated results help you assess the plan; they are not editable inputs.'; nodes = [target('plan-review', container)]; fallback = container.querySelector('[data-year-plan-strip="plan-check"] .yp-strip-header'); } // NEW
+            if (group === 'save') { text = 'Save the plan when Plan Check allows it. A committed plan with positive demand completes this milestone. Saving a draft keeps your work but does not complete it.'; nodes = [target('plan-save', container)]; } // NEW
+            nodes = nodes.filter(node => node && visible(node) && !node.disabled); // NEW
+            if (!nodes.length && !fallback && ['growing', 'harvest', 'year-crops'].includes(group)) fallback = container.querySelector('[data-year-plan-strip="crop-plan"] .yp-strip-header'); // NEW
+            if (!nodes.length && fallback && visible(fallback)) nodes = [fallback]; // NEW
+            if (!nodes.length) text += ' Use Show fields to reveal this group, or finish the displayed prerequisites.'; // NEW
+            return { text, nodes, node: nodes[0], index: PLAN_GROUPS.indexOf(group), total: 7, sequence: true, grouped: true, speechContext: [group, cropId, route, line?.id || ''].join(':'), action: container.__trellisQuickstartView ? () => { container.__trellisQuickstartView.showFields(group, route, line?.id); lastPromptKey = ''; schedule(); } : null, label: 'Show fields' }; // NEW
+        } // NEW
         function fieldInstruction(key, container) { // NEW
+            if (key === 'plan') return planInstruction(container); // NEW
             let steps = fields[key] || [];
             if (key === 'settings' && !container.querySelector('[' + TARGET + '="settings-source"]')) steps = steps.slice(1);
-            if (key === 'plan' && progress().demand === 'sales') { const at = steps.findIndex(step => step[0] === 'plan-demand-add'); steps = [...steps.slice(0, at), ['plan-sales-channel', 'Add a sales channel if none exists, then expand its details.'], ['plan-sales-name', 'Name the sales channel.'], ['plan-sales-type', 'Choose its channel type.'], ...steps.slice(at)]; } // NEW
             const index = Math.min(progress().positions[key] || 0, steps.length - 1), step = steps[index];
             if (!step) return null;
             let node = fieldTarget(step[0], container), cell = null;
-            if (key === 'plan' && step[0].startsWith('plan-demand')) node = fieldTarget(step[0] + '-' + (progress().demand || 'self'), container);
-            let prerequisiteText = '';
-            if (key === 'plan' && !node && step[0].startsWith('plan-demand')) { // NEW
-                const area = target('plan-demand-' + (progress().demand || 'self'), container);
-                node = area && [...area.querySelectorAll('button[aria-expanded="false"]')].find(visible) || fieldTarget('plan-demand-' + (progress().demand || 'self'), container);
-                prerequisiteText = ' First expand the highlighted demand section, channel, or line. Use Manage packages to add the crop’s demand line if needed.';
-            } else if (key === 'plan' && !node && ['plan-variety', 'plan-method', 'plan-harvest-source', 'plan-harvest-start', 'plan-harvest-end'].includes(step[0])) {
-                node = target('plan-basics', container) || target('plan-add-crops', container);
-                prerequisiteText = ' First add a crop and Apply changes, then select its Basics tab.';
-            } // NEW
             if (key === 'irrigation' && !node) { // NEW: canvas selections are first-class targets.
                 const cells = descendants(model(), currentGarden());
                 if (step[0] === 'irrigation-bed') cell = cells.find(isBed);
@@ -350,7 +501,7 @@
                 if (step[0] === 'irrigation-connect') node = [...document.querySelectorAll('.trellis-irrigation-inline-connection-action,.trellis-irrigation-port-badge')].find(visible);
             }
             const suffix = !node && !cell ? ' The control is not visible yet. Complete the previous action or expand the relevant section, then use Retry.' : node?.disabled ? ' This control is disabled. Resolve the workflow’s displayed prerequisites, then retry; the guide will not bypass them.' : '';
-            return { text: step[1] + prerequisiteText + suffix, node, cell, index, total: steps.length, sequence: true };
+            return { text: step[1] + suffix, node, cell, index, total: steps.length, sequence: true }; // CHANGE: planner groups resolve their own prerequisites above.
         }
         function instruction() { // NEW
             const key = stage()[0], container = currentSurface(), kind = container?.dataset.quickstartSurface;
@@ -382,17 +533,18 @@
             if (offering && (ui.dialog || currentSurface())) return; // NEW: never interrupt startup or an existing modal.
             bindGarden(); ensureCard();
             const container = currentSurface();
-            const modal = ui.dialog?.container;
-            moveCard(container || (modal && visible(modal) ? modal : document.body)); // NEW
-            if (dragging) return; // NEW: retain stable card dimensions until release; docking above still cancels.
-            if (surface && !surface.isConnected) { surface = null; document.body.appendChild(card); }
+            moveCard(activeOwner()); // CHANGE: keep one body-level card associated with the active workflow.
+            if (dragging) return; // NEW: retain stable card dimensions until release; changing ownership above still cancels.
             const focus = document.activeElement, focusKey = card.contains(focus) && focus.dataset.quickstartFocus;
             body.replaceChildren(); body.hidden = !!preferences.collapsed;
+            collapseButton.textContent = preferences.collapsed ? 'Expand' : 'Collapse'; collapseButton.setAttribute('aria-expanded', String(!preferences.collapsed)); // NEW
+            if (preferences.collapsed) { clearHighlight(); stopSpeech(); if (surface) placeCompanion([]); else clampCard(); return; } // NEW
             if (offering) {
                 element('p', 'Build your first garden plan, or find your way around a shared project.', body);
                 button('Start / Resume', () => { offering = false; active = true; preferences.collapsed = false; observe(); persist(); });
                 button('Do not show again', () => { preferences.suppressed = true; if (persist()) close(); });
                 if (storageWarning) element('p', storageWarning, body).setAttribute('role', 'status'); // NEW
+                clampCard(); // CHANGE: offer height can change after its content is rendered.
                 return;
             }
             const p = progress(), garden = currentGarden(), values = completions();
@@ -408,18 +560,19 @@
                     control.setAttribute('aria-current', String(stage()[0] === key)); control.dataset.quickstartFocus = key;
                 }
             } // NEW
-            if (stage()[0] === 'plan') choose('Planning for', [['self', 'Self-use'], ['sales', 'Sales']], p.demand || 'self', value => { p.demand = value; p.positions.plan = 0; });
+            if (stage()[0] === 'plan') choose('Planning for', [['self', 'Self-use'], ['sales', 'Sales']], p.demand || 'self', value => { p.demand = value; p.positions.planGroup = 'year-crops'; guidanceGeneration++; stopSpeech(); clearHighlight(); }); // CHANGE
             const detail = instruction() || { text: 'Reopen the current workflow, then choose Retry to continue.' };
             prompt = element('p', detail.text, body); prompt.setAttribute('role', 'status'); prompt.setAttribute('aria-live', 'polite');
             if (notice || storageWarning) element('p', [notice, storageWarning].filter(Boolean).join(' '), body).setAttribute('role', 'status');
-            highlight(detail.node, detail.cell);
+            highlight(detail.nodes || detail.node, detail.cell); // CHANGE
             const promptKey = stage()[0] + ':' + (detail.index || 0) + ':' + detail.text;
-            if (detail.node && promptKey !== lastPromptKey) { detail.node.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); lastPromptKey = promptKey; }
+            const targetKey = promptKey + ':' + (detail.speechContext || ''); // NEW
+            if (detail.node && targetKey !== lastPromptKey) { detail.node.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); lastPromptKey = targetKey; } // CHANGE
             if (detail.action) button(detail.label, detail.action);
             if (preferences.journey === 'invitee' && stage()[0] === 'access') button('People & Access', () => invoke('trellisUsers')); // NEW
             if (detail.community) { button('Existing community', () => root.TrellisGardenHome.showProjects(ui, { highlight: 'community-sharing', diagramId: documentId(), communityPath: 'existing' })); button('Create a community', () => root.TrellisGardenHome.showProjects(ui, { highlight: 'community-sharing', diagramId: documentId(), communityPath: 'create' })); } // NEW
             if (detail.sequence) {
-                element('div', 'Field ' + (detail.index + 1) + ' of ' + detail.total, body);
+                element('div', (detail.grouped ? 'Step ' : 'Field ') + (detail.index + 1) + ' of ' + detail.total, body); // CHANGE
                 button('Back', () => advanceField(-1)).disabled = detail.index === 0;
                 button('Next', () => advanceField(1)).disabled = detail.index === detail.total - 1;
             } else if (detail.orientation) button('Next', () => { p.viewed[stage()[0]] = true; const index = stages().findIndex(item => item[0] === stage()[0]); if (index + 1 < stages().length) p.stage = stages()[index + 1][0]; persist(); });
@@ -430,17 +583,23 @@
                 button('Continue', () => { const next = stages().find(([key, , optional]) => !values[key] && !(optional && p.skipped[key])); if (next) selectStage(next[0]); });
             }
             button('Finish', () => { if (!completeAll(values)) return; preferences.completed = true; if (persist()) close(); }).disabled = !completeAll(values);
+            const speechLabel = element('label', null, body), speechToggle = element('input', null, speechLabel); speechToggle.type = 'checkbox'; speechToggle.checked = !!preferences.readAloud; speechToggle.dataset.quickstartFocus = 'read-aloud'; speechLabel.appendChild(document.createTextNode(' Read instructions aloud')); // NEW
+            speechToggle.addEventListener('change', () => { preferences.readAloud = speechToggle.checked; speechWarning = ''; stopSpeech(); persist(); schedule(); }); // NEW
+            const narrationKey = [identity, documentId(), pageId(), p.gardenId, p.year, stage()[0], container?.dataset.quickstartSurface || 'canvas', container?.dataset.quickstartSession || '', detail.speechContext || promptKey].join(':'); // NEW
+            if (preferences.readAloud) button('Read again', () => { speechWarning = ''; stopSpeech(); narrate(detail.text, narrationKey); }); // NEW
+            narrate(detail.text, narrationKey); // NEW
+            if (speechWarning) element('p', speechWarning, body).setAttribute('role', 'status'); // NEW
             if (focusKey) [...card.querySelectorAll('[data-quickstart-focus]')].find(node => node.dataset.quickstartFocus === focusKey)?.focus({ preventScroll: true });
-            clampCard(); avoidTarget(detail.node, promptKey); // NEW
+            if (surface) placeCompanion(detail.nodes || detail.node); else { clampCard(); avoidTarget(detail.node, targetKey); } // CHANGE
         }
         function schedule() { if ((active || offering) && scheduled == null) scheduled = root.setTimeout(render, 30); } // NEW
         /** Observe active guidance only; ignore our own DOM and highlight class mutations. */ // NEW
         function observe() {
             observer?.disconnect();
             observer = new MutationObserver(records => { if (records.some(event => !card?.contains(event.target) && event.target !== card && (event.type === 'attributes' || ![...event.addedNodes, ...event.removedNodes].every(node => node === card)))) schedule(); }); // NEW
-            observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'hidden', 'disabled', 'open', TARGET] });
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'hidden', 'disabled', 'open', TARGET, 'data-quickstart-crop', 'data-quickstart-year'] }); // CHANGE
         }
-        function close() { finishDrag(true); active = false; offering = false; observer?.disconnect(); observer = null; clearHighlight(); root.clearTimeout(scheduled); scheduled = null; card?.remove(); card = null; dragHandle = null; surface = null; placementTarget = null; placementKey = ''; } // NEW
+        function close() { finishDrag(true); stopSpeech(); focusedDemandLines.clear(); guidanceGeneration++; speechWarning = ''; active = false; offering = false; observer?.disconnect(); observer = null; sizeObserver?.disconnect(); clearHighlight(); root.clearTimeout(scheduled); scheduled = null; card?.remove(); card = null; dragHandle = null; collapseButton = null; surface = null; ownerFrame = null; canvasPlacement = null; placementTarget = null; placementKey = ''; } // CHANGE
         function show() { close(); preferences.collapsed = false; active = true; bindGarden(); observe(); render(); } // NEW
         function resetIdentity() { close(); generation++; identity = userKey(); preferences = readPreferences(); contextKey = ''; notice = ''; } // NEW
         function watchModel() { // NEW: files can replace the mxGraph model.
@@ -458,8 +617,8 @@
             schedule();
         }
 
-        const style = element('style'); style.textContent = '.trellis-quickstart-card{box-sizing:border-box;z-index:2000000010;max-width:calc(100vw - 16px);max-height:calc(100vh - 24px);overflow:auto;padding:10px;border:1px solid #94a3b8;border-radius:8px;background:var(--ge-dialog-bg-color,#fff);color:var(--ge-dialog-color,#172033);box-shadow:0 4px 18px #0003;font:12px/1.45 Arial,sans-serif}.trellis-quickstart-card header{display:flex;align-items:center;gap:4px}.trellis-quickstart-card header strong{flex:1}.trellis-quickstart-card [data-trellis-quickstart-drag-handle]{flex:0 0 auto;width:18px;height:18px;padding:0;border:1px solid rgba(60,64,67,.35);border-radius:4px;background:rgba(255,255,255,.96);box-shadow:0 1px 4px rgba(0,0,0,.20);cursor:move;color:#3c4043;font:13px Arial,sans-serif;line-height:18px;text-align:center;pointer-events:auto;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}.trellis-quickstart-card [data-trellis-quickstart-drag-handle][hidden]{display:none}.trellis-quickstart-card [data-trellis-quickstart-drag-handle] img{width:16px;height:16px;display:block;pointer-events:none}.trellis-quickstart-dragging,.trellis-quickstart-dragging [data-trellis-quickstart-drag-handle]{cursor:grabbing;user-select:none}.trellis-quickstart-card label{display:block;margin:5px 0}.trellis-quickstart-card select{max-width:100%}.trellis-quickstart-card ol{padding-left:20px}.trellis-quickstart-card li .geBtn{border:0;text-align:left;white-space:normal;margin:1px;padding:3px}.trellis-quickstart-card [aria-current=true]{font-weight:bold;text-decoration:underline}.trellis-quickstart-target{outline:3px solid #2563eb!important;outline-offset:3px;scroll-margin:12px}'; document.head.appendChild(style); // NEW
-        const api = { show, close, capture, record, refresh: schedule, getState: () => ({ active, offering, identity, preferences, progress: progress(), completion: completions() }) }; // NEW
+        const style = element('style'); style.textContent = '.trellis-quickstart-card{box-sizing:border-box;z-index:' + GRAPH_OVERLAY_Z.CONTROL + ';max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);display:flex;flex-direction:column;overflow:hidden;padding:10px;border:1px solid #94a3b8;border-radius:8px;background:#F5F0E6;color:#172033;box-shadow:0 4px 18px #0003;font:12px/1.45 Arial,sans-serif}.trellis-quickstart-card header{display:flex;align-items:center;gap:4px;flex:0 0 auto}.trellis-quickstart-body{min-height:0;overflow:auto;overflow-wrap:anywhere}.trellis-quickstart-card header strong{flex:1}.trellis-quickstart-card [data-trellis-quickstart-drag-handle]{flex:0 0 auto;width:18px;height:18px;padding:0;border:1px solid rgba(60,64,67,.35);border-radius:4px;background:rgba(255,255,255,.96);box-shadow:0 1px 4px rgba(0,0,0,.20);cursor:move;color:#3c4043;font:13px Arial,sans-serif;line-height:18px;text-align:center;pointer-events:auto;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}.trellis-quickstart-card [data-trellis-quickstart-drag-handle][hidden]{display:none}.trellis-quickstart-card [data-trellis-quickstart-drag-handle] img{width:16px;height:16px;display:block;pointer-events:none}.trellis-quickstart-dragging,.trellis-quickstart-dragging [data-trellis-quickstart-drag-handle]{cursor:grabbing;user-select:none}.trellis-quickstart-card label{display:block;margin:5px 0}.trellis-quickstart-card select{max-width:100%}.trellis-quickstart-card ol{padding-left:20px}.trellis-quickstart-card li .geBtn{border:0;text-align:left;white-space:normal;margin:1px;padding:3px}.trellis-quickstart-card [aria-current=true]{font-weight:bold;text-decoration:underline}.trellis-quickstart-target{outline:3px solid #2563eb!important;outline-offset:3px;scroll-margin:12px}'; document.head.appendChild(style); // CHANGE: use beige with dark text in every theme; floating cards share the Trellis control layer.
+        const api = { show, close, capture, record, recordPlanAction, getCompanion, refresh: schedule, getState: () => ({ active, offering, identity, preferences, progress: progress(), completion: completions() }) }; // CHANGE
         graph.__trellisQuickstart = api; root.Trellis = root.Trellis || {}; root.Trellis.quickstart = api;
         ui.actions.addAction('trellisQuickstart', show).label = 'Quickstart';
         const help = ui.menus?.get('help') || ui.menus?.get('extras');
@@ -470,7 +629,20 @@
         for (const event of ['trellisUsersSessionChanged', 'trellisUsersStoreChanged']) root.addEventListener(event, () => { if (identity !== userKey()) resetIdentity(); else schedule(); });
         root.trellisIdentity?.onStatus(value => { portableIdentity = value.session?.identityId || null; if (identity !== userKey()) resetIdentity(); }); // NEW
         for (const event of ['yearFilterChanged', 'trellisIrrigationModeChanged', 'trellisSharingStatusChanged']) root.addEventListener(event, schedule);
-        root.addEventListener('resize', () => { clampCard(); schedule(); });
+        if (root.ResizeObserver) sizeObserver = new root.ResizeObserver(schedule); // CHANGE: owner and card dimensions may change without style mutations.
+        root.addEventListener('resize', schedule); // CHANGE: owner-relative layout must be recomputed before clamping.
+        document.addEventListener('focusin', event => { // NEW: remember native demand-line focus without retaining replaced DOM controls.
+            if (!active) return; const node = event.target, owner = node.closest?.('[data-quickstart-surface="plan"]'); // NEW
+            if (!owner || owner !== planSurface()) return; // NEW
+            const route = node.dataset.yearPlanDemandLineId ? 'sales' : 'self', lineId = node.dataset.yearPlanDemandLineId || node.dataset.yearPlanSelfLineId; // NEW
+            if (!lineId) return; const cropId = owner.dataset.quickstartCrop || '', line = owner.__trellisQuickstartView?.getDemandLines(route).find(item => String(item.id) === lineId); // NEW
+            if (line && String(line.cropId) !== cropId) return; // NEW
+            focusedDemandLines.set(demandFocusKey(owner, route, cropId), lineId); schedule(); // NEW
+        }); // NEW
+        root.addEventListener('scroll', event => { if (!card?.contains(event.target)) schedule(); }, true); // CHANGE
+        root.addEventListener('keydown', event => { // CHANGE: installed before workflow handlers, including nested picker window-capture handlers.
+            if (dragging && event.key === 'Escape') { event.stopImmediatePropagation(); mxEvent.consume(event); finishDrag(true); } // CHANGE
+        }, true); // CHANGE
         root.addEventListener('beforeunload', close);
         identity = userKey(); preferences = readPreferences(); if (file()) opened();
         root.trellisIdentity?.getSession?.().then(session => { portableIdentity = session?.identityId || null; if (identity !== userKey()) opened(); }).catch(() => {}); // NEW

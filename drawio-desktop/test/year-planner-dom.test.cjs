@@ -24,6 +24,42 @@ function addDemand(plan, overrides = {}) {
     return line;
 }
 
+test('Quickstart view reveals grouped fields without modifying plan values or crop selection', async t => { // NEW
+    const h = createYearPlannerHarness(); t.after(() => h.dom.window.close()); // NEW
+    savePlan(h, 2026, plan => { plan.crops.push(makePlanCrop({ id: 'crop_two', plantId: 2 })); addDemand(plan); }); // NEW
+    const session = await h.openModal(2026), card = h.document.querySelector('[data-quickstart-surface="plan"]'), view = card.__trellisQuickstartView; // NEW
+    const original = JSON.stringify(session.plan), selected = card.dataset.quickstartCrop; assert.equal(selected, 'crop_1'); // NEW
+    for (const group of ['year-crops', 'growing', 'harvest', 'demand-setup', 'demand-values', 'review', 'save']) { view.showFields(group, 'sales', 'demand_1'); await h.settle(); assert.equal(JSON.stringify(session.plan), original); assert.equal(card.dataset.quickstartCrop, selected); } // NEW
+    assert.equal(findStripDetails(h.document, 'demand').style.display, 'block'); assert.ok(h.document.querySelector('[data-trellis-quickstart="plan-review"]').matches('[data-year-plan-strip="plan-check"]')); // NEW
+    h.setControlValue(h.document.querySelector('[data-trellis-quickstart="plan-year"]'), 2027, 'change'); await h.settle(); assert.equal(card.dataset.quickstartYear, '2027'); // NEW
+}); // NEW
+
+test('Quickstart receives committed save notifications but never draft or failed-save notifications', async t => { // NEW
+    for (const scenario of ['committed', 'draft', 'failure']) await t.test(scenario, async t => { // NEW
+        const h = createYearPlannerHarness(); t.after(() => h.dom.window.close()); const actions = [], token = { marker: scenario }; // NEW
+        h.graph.__trellisQuickstart = { capture: () => token, recordPlanAction: (action, capture) => actions.push({ action, capture }) }; // NEW
+        if (scenario !== 'draft') savePlan(h, 2026, plan => addDemand(plan)); // NEW
+        await h.openModal(2026); // NEW
+        if (scenario === 'failure') h.api.PlanRepository.savePlanForYear = () => { throw new Error('Quickstart test persistence failure'); }; // NEW
+        const errors = []; h.window.addEventListener('error', event => { errors.push(event.error); event.preventDefault(); }); // NEW
+        h.findButton(scenario === 'draft' ? 'Save draft' : 'Save').click(); await h.settle(); // NEW
+        assert.equal(actions.length, scenario === 'committed' ? 1 : 0); // NEW
+        if (actions.length) { assert.equal(actions[0].action, 'plan-committed'); assert.equal(actions[0].capture, token); } // NEW
+        if (scenario === 'failure') assert.equal(errors.length, 1); // NEW
+    }); // NEW
+}); // NEW
+
+test('Quickstart picker notifications follow Apply rather than staging or cancellation', async t => { // NEW
+    const h = createCropCountHarness(); t.after(() => h.dom.window.close()); const actions = [], token = { demandRoute: 'self' }; // NEW
+    h.graph.__trellisQuickstart = { capture: () => token, recordPlanAction: (action, capture) => { assert.equal(capture, token); actions.push(action); } }; // NEW
+    const session = await h.openModal(2026); h.findButton('Add/Remove crops').click(); // NEW
+    clickTransferButton(h.document, 'Available', 'Add all visible'); assert.deepEqual(actions, []); h.findButton('Cancel').click(); await h.settle(); assert.deepEqual(actions, []); // NEW
+    h.findButton('Add/Remove crops').click(); clickTransferButton(h.document, 'Available', 'Add all visible'); h.findButton('Apply changes').click(); await h.settle(); assert.deepEqual(actions, ['crops-applied']); // NEW
+    const demand = createYearPlannerHarness(); t.after(() => demand.dom.window.close()); demand.graph.__trellisQuickstart = h.graph.__trellisQuickstart; savePlan(demand, 2026); await demand.openModal(2026); // CHANGE
+    const card = demand.document.querySelector('[data-quickstart-surface="plan"]'); card.__trellisQuickstartView.showFields('demand-setup', 'self'); await demand.settle(); // CHANGE
+    await addFirstTransferPackage(demand, demand.document.querySelector('[data-trellis-quickstart="plan-demand-add-self"]')); assert.deepEqual(actions, ['crops-applied', 'demand-added']); // CHANGE
+}); // NEW
+
 /** Exercise both production plugins so navigation, cleanup, and committed-plan reload share one window. */ // CHANGE
 test("Allocate opens its Year Plan and Save & Close returns once after cleanup with fresh plan data", async t => { // CHANGE
     const h = createYearPlannerHarness({ allocate: true }), usl = h.window.USL, returns = []; // CHANGE

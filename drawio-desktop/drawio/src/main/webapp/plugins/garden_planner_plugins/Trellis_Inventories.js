@@ -14,6 +14,7 @@
         overlay.style.cssText = 'position:fixed;inset:0;z-index:12000;background:#0006;display:flex;align-items:center;justify-content:center;padding:24px;'; // NEW
         dialog.style.cssText = 'background:var(--ge-dialog-background,#fff);color:var(--ge-text-color,#222);border:1px solid #888;border-radius:8px;width:1000px;max-width:100%;max-height:90vh;overflow:auto;padding:20px;box-sizing:border-box;font:13px/1.5 system-ui,sans-serif;'; // NEW
         dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); dialog.setAttribute('aria-label', title); // NEW
+        dialog.classList.add('trellis-surfaces'); body.dataset.trellisSurface = 'entry'; heading.dataset.trellisSurface = 'header'; dialog.style.setProperty('--trellis-surface-base', 'var(--ge-dialog-background,#fff)'); dialog.style.setProperty('--trellis-surface-ink', 'var(--ge-text-color,#222)'); // NEW: shared surface hierarchy.
         status.setAttribute('role', 'status'); footer.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;margin-top:18px;'; // NEW
         let dirty = () => false, busy = false; const disposers = []; // NEW // NEW
         const destroy = () => { overlay.remove(); disposers.forEach(dispose => dispose()); previous?.focus?.(); return true; }; // NEW
@@ -51,7 +52,9 @@
                 S.validateDefinitions(items, JSON.parse(raw('trellis_references_json') || 'null')); // NEW
                 const next = S.normalize({ ...snapshot.seeds, items }); // NEW
                 const node = garden.value?.cloneNode?.(true) || mxUtils.createXmlDocument().createElement('object'); node.setAttribute(S.ATTR, JSON.stringify(next)); // NEW
-                model.beginUpdate(); try { model.setValue(garden, node); } finally { model.endUpdate(); } // NEW
+                const context = graph.__trellisEditContext || root.TrellisEditContext?.install(ui); // CHANGE
+                const apply = () => { model.beginUpdate(); try { model.setValue(garden, node); } finally { model.endUpdate(); } }; // CHANGE
+                if (context?.apply) context.apply({ cells: [garden], manualSources: [garden], includeAncestors: false }, apply); else apply(); // CHANGE
                 snapshot.seeds = S.normalize(raw(S.ATTR)); snapshot.revision = raw(S.ATTR); return { persistence: 'diagram-draft' }; // NEW
             }, // NEW
             equipment: () => graph.__trellisEquipment.openDialog(garden) // NEW
@@ -105,6 +108,7 @@
         const table = element('table'); table.style.cssText = 'width:100%;min-width:630px;border-collapse:collapse;text-align:left;'; const body = element('tbody'); // NEW
         const header = element('tr'); for (const name of ['Crop / variety', 'Unit', 'Seeds per unit', 'Stock', 'Seeds', 'Protected', 'Reserved', 'Available']) { const th = element('th', name); th.scope = 'col'; th.style.cssText = 'padding:8px 8px 8px 0;border-bottom:1px solid #ddd;white-space:nowrap;'; header.append(th); } // NEW
         table.append(header, body); const tableScroll = element('div'); tableScroll.style.cssText = 'max-width:100%;overflow-x:auto;margin:12px 0;'; tableScroll.append(table); view.body.append(tableScroll); // NEW
+        tableScroll.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
         function render() { // NEW
             body.replaceChildren(); // NEW
             const current = S.normalize({ ...snapshot.seeds, items }), protection = S.planningStatus(current, snapshot.plans, snapshot.references), availability = protection.availability; // CHANGE
@@ -136,8 +140,11 @@
             return view.run(async () => { // NEW
                 for (const node of [...view.body.querySelectorAll('input')]) { if (!node.checkValidity()) { node.reportValidity(); throw new Error('Correct the highlighted inventory quantity.'); } if (node.value !== node.defaultValue) node.dispatchEvent(new Event('change')); } // NEW
                 if (hold && root.Trellis?.sharing?.getInfo?.()?.managed) await hold.acquire(); // NEW
-                const result = await source.save(snapshot, items); items.splice(0, items.length, ...JSON.parse(JSON.stringify(snapshot.seeds.items))); baseline = JSON.stringify(items); render(); hold?.complete?.(); // CHANGE: persisted inventory no longer pins its clean panel.
-                view.status.textContent = result.persistence === 'accepted' ? 'Seed inventory saved.' : 'Seed inventory updated. Save the diagram to synchronize it.'; return true; // NEW
+                const submitted = JSON.stringify(items), result = await source.save(snapshot, JSON.parse(submitted)); // CHANGE: native IPC receives immutable choices while later typing stays local.
+                const unchanged = JSON.stringify(items) === submitted; // CHANGE
+                if (unchanged) items.splice(0, items.length, ...JSON.parse(JSON.stringify(snapshot.seeds.items))); // CHANGE
+                baseline = JSON.stringify(snapshot.seeds.items); render(); if (unchanged) hold?.complete?.(); // CHANGE
+                view.status.textContent = !unchanged ? 'Earlier inventory changes saved. Newer edits remain in this editor.' : result.persistence === 'accepted' ? 'Seed inventory saved.' : 'Seed inventory applied. Project save is pending.'; return unchanged ? true : { draftRetained: true }; // CHANGE
             }); // NEW
         } // NEW
         if (snapshot.canEdit) { // NEW

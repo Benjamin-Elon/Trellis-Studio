@@ -55,6 +55,7 @@ function loadSchedulerHooks(options = {}) { // CHANGE: full-dialog integration c
             filename: corePath
         });
     }
+    vm.runInContext(fs.readFileSync(path.join(PLUGIN_DIR, '../../js/trellis-edit-context.js'), 'utf8'), context); // CHANGE: save tests exercise the production commit owner.
     vm.runInContext(fs.readFileSync(SCHEDULER_PATH, 'utf8'), context, {
         filename: SCHEDULER_PATH
     });

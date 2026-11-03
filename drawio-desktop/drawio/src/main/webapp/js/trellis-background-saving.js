@@ -26,7 +26,7 @@
             if (disposed || !force && !options.dirty()) return; // NEW
             checkpointAgain = true; if (checkpointTask) return checkpointTask; // NEW
             checkpointTask = Promise.resolve().then(async () => { // NEW
-                try { while (checkpointAgain && !disposed) { checkpointAgain = false; const captured = options.capture(); await options.checkpoint(captured); } } finally { checkpointTask = null; } // CHANGE: close requests arriving at drain completion must receive their own completed capture.
+                try { while (checkpointAgain && !disposed) { checkpointAgain = false; if (options.whenCapturable) await options.whenCapturable(); if (disposed) return; const captured = options.capture(); await options.checkpoint(captured); } } finally { checkpointTask = null; } // CHANGE: recovery cannot serialize an editor's provisional application or failed compensation.
             }); // CHANGE
             return checkpointTask; // NEW
         } // NEW

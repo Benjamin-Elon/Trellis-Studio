@@ -145,13 +145,24 @@
             } // CHANGE
             entry.handle = { // CHANGE
                 /** Domain validation/application succeeds before the editor becomes clean. */ // CHANGE
-                commit: async saveOptions => { // CHANGE
-                    try { // CHANGE
-                        await acquire(); // CHANGE
-                        if (await entry.save(saveOptions || {}) === false) return false; // CHANGE
-                        void finish(entry); return true; // CHANGE
-                    } catch (error) { options.status(error.message); return false; } // CHANGE
+                commit: saveOptions => { // CHANGE: button, navigation and handoff share the same in-flight submission.
+                    if (entry.committing) return entry.committing; // CHANGE
+                    const task = Promise.resolve().then(async () => { // CHANGE
+                        try { // CHANGE
+                            await acquire(); // CHANGE
+                            if (!active()) throw new Error('This editor is closed or frozen.'); // CHANGE
+                            if (entry.prepare) { // CHANGE: prepared domain editors use the shared graph owner.
+                                const context = ui.editor.graph.__trellisEditContext || root.TrellisEditContext.install(ui); // CHANGE
+                                const outcome = await context.commit({ editor: entry.handle, id: 'editor:' + entry.id, capture: () => snapshot(entry), isCurrent: active, prepare: input => entry.prepare(input, saveOptions || {}) }); // CHANGE
+                                entry.outcome = outcome; if (!['applied', 'unchanged'].includes(outcome.status)) throw outcome.error; // CHANGE
+                            } else { const result = await entry.save(saveOptions || {}); if (result === false || result?.draftRetained) return false; } // CHANGE: successful older work cannot mark newer fields clean or close their editor.
+                            if (entry.editing) void finish(entry); return true; // CHANGE
+                        } catch (error) { options.status(error.message); return false; } // CHANGE
+                    }).finally(() => { if (entry.committing === task) entry.committing = null; }); // CHANGE
+                    entry.committing = task; return task; // CHANGE
                 }, // CHANGE
+                outcome: () => entry.outcome, // CHANGE: a local commit outcome is never a durable-save acknowledgement.
+                freeze: reason => freeze(targetsOf(entry), reason), // CHANGE: failed compensation uses the existing recoverable frozen surface.
                 acquire, active, frozen: () => entry.frozen, dirty: () => dirty(entry), checkpoint: () => checkpoint(entry), complete: () => finish(entry), // CHANGE
                 transition: operation => transition(entry, operation, true), // CHANGE
                 touch() { entry.changed = true; acquire().catch(error => options.status(error.message)); }, // CHANGE

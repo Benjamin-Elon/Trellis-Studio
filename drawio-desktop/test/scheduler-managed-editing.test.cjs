@@ -44,6 +44,19 @@ test('Cilantro persistence holds allow another planting while the project save i
     assert.deepEqual(h.errors, []); // CHANGE
 }); // CHANGE
 
+test('another session editing Cilantro cannot block creating Pea in a different bed with real Users and generated tasks', async t => { // CHANGE
+    const h = await schedulerFixture(t, { plant_name: 'Cilantro', abbr: 'CIL' }), cilantro = await h.saveSchedule(); await h.settle(); await h.save(); // CHANGE
+    const otherBed = h.graph.insertVertex(h.garden, null, h.bed.value.cloneNode(true), 650, 200, 150, 300, h.bed.style); await h.settle(); await h.save(); await h.settle(); // CHANGE
+    const key = h.key(cilantro); h.held.set(key, { key, claimId: 'other-session-cilantro', sessionId: 'other-window', userId: h.users.getCurrentUser().id, online: true }); h.heartbeat(); await h.settle(); // CHANGE
+    const pea = makePlant(h.api, { plant_id: 2, plant_name: 'Pea', spacing_cm: 30 }), inputs = makeInputs(h.api, { plant: pea }); // CHANGE
+    h.api.__testWindow.dbBridge.query = async (_id, sql, params = []) => ({ rows: /FROM Companions c/i.test(sql) ? [{ relation_id: 21, source_plant_id: 2, companion_plant_id: 1, rating: 1 }] : /FROM\s+Plants\b/i.test(sql) ? [Number(params[0]) === 2 ? pea : h.inputs.plant] : [] }); // CHANGE
+    const result = h.api.computeScheduleResult(inputs), creation = await h.api.prepareBedScheduleCreation(h.ui, otherBed, inputs, result); // CHANGE
+    const saved = await h.api.applyScheduleToGraph(h.ui, otherBed, inputs, { result, createTargetCell: creation.createTargetCell, applyCompanionSetDefaults: true, taskTemplate: { version: 2, rules: [{ id: 'water', title: 'Water', startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 0 }] } }); // CHANGE
+    await h.settle(); assert.equal(saved.getAttribute('plant_name'), 'Pea'); assert.equal(h.groups().length, 2); // CHANGE
+    assert.equal(h.held.get(key)?.claimId, 'other-session-cilantro'); assert.ok(Object.values(h.graph.model.cells).some(cell => cell.getAttribute?.('kanban_card') === '1' && String(cell.getAttribute('linkedTo')).split(',').includes(saved.id))); // CHANGE
+    assert.deepEqual(h.errors, []); // CHANGE
+}); // CHANGE
+
 test('nested creation blockers report their reason without provisional objects or a queued scheduler Retry', async t => { // CHANGE
     const h = await schedulerFixture(t), layer = h.graph.model.getParent(h.garden), key = h.key(layer); // CHANGE
     h.held.set(key, { key, claimId: 'earlier-session', sessionId: 'earlier-window', userId: h.users.getCurrentUser().id, objectLabel: 'Containing layer' }); h.heartbeat(); await h.settle(); // CHANGE
@@ -115,3 +128,12 @@ function canonicalDiagram(window, xml) { // CHANGE
     } // CHANGE
     return normalize(document.documentElement); // CHANGE
 } // CHANGE
+test('the shared task editor command restores its value and Undo history when final rendering fails', async t => { // CHANGE
+    const h = await schedulerFixture(t), group = await h.saveSchedule(); await h.settle(); await h.save(); // CHANGE
+    const card = Object.values(h.graph.model.cells).find(cell => cell.getAttribute?.('kanban_card') === '1' && String(cell.getAttribute('linkedTo')).split(',').includes(group.id)); // CHANGE
+    const before = h.ui.getFileData(), history = h.undo.history.slice(), refresh = h.graph.refresh; let fail = true; // CHANGE
+    h.graph.refresh = function (cell) { if (fail && cell === card && !this.model.updateLevel) { fail = false; throw new Error('Task editor rendering failed'); } return refresh.apply(this, arguments); }; // CHANGE
+    assert.throws(() => h.w.Trellis.taskCommands.commitCardPatch(card, { task_note: 'failed edit' }, { reflow: false }), /Task editor rendering failed/); // CHANGE
+    h.graph.refresh = refresh; await h.settle(); assert.deepEqual(canonicalDiagram(h.w, h.ui.getFileData()), canonicalDiagram(h.w, before)); assert.deepEqual(h.undo.history, history); // CHANGE
+    assert.equal(h.w.Trellis.taskCommands.commitCardPatch(card, { task_note: 'retry succeeded' }, { reflow: false }), true); assert.equal(card.getAttribute('task_note'), 'retry succeeded'); // CHANGE
+}); // CHANGE

@@ -1645,6 +1645,7 @@ Draw.loadPlugin(function (ui) {
 
         const overlay = document.createElement("div");
         overlay.className = "trellis-eq-overlay";
+        overlay.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         document.body.appendChild(overlay);
 
         function refreshPreview() { // NEW
@@ -1675,11 +1676,13 @@ Draw.loadPlugin(function (ui) {
         model.addListener?.('change', refreshPreview); // NEW
         window.addEventListener('trellisReferencesChanged', refreshPreview); // NEW
 
-        async function saveAll() { // CHANGE
+        function saveAll(options) { return equipmentHold?.commit ? equipmentHold.commit(options) : applyEquipment(); } // CHANGE: all submit paths share duplicate protection.
+        async function applyEquipment() { // CHANGE
             if (equipmentHold) { try { await equipmentHold.acquire(); } catch (error) { alert(error.message); return false; } } // CHANGE
             if (options.save) { // NEW: keep drafts in the existing dialog when a detached save fails.
                 if (!canSaveState(state)) { render(); return false; } // NEW
-                return options.save({ equipment_inventory_json: { version: PLUGIN_VERSION, items: state.inventory.map(normalizeEquipment) }, task_type_registry_json: { version: PLUGIN_VERSION, items: state.taskTypes.map(normalizeTaskType) }, equipment_capability_registry_json: { version: PLUGIN_VERSION, items: state.capabilities.map(normalizeCapability) } }).then(() => { state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); equipmentHold?.complete?.(); return true; }).catch(error => { alert(error.message); return false; }); // NEW
+                const submitted = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); // CHANGE: a late detached save cannot bless newer edits as saved.
+                return options.save({ equipment_inventory_json: { version: PLUGIN_VERSION, items: state.inventory.map(normalizeEquipment) }, task_type_registry_json: { version: PLUGIN_VERSION, items: state.taskTypes.map(normalizeTaskType) }, equipment_capability_registry_json: { version: PLUGIN_VERSION, items: state.capabilities.map(normalizeCapability) } }).then(() => { state.savedSnapshot = submitted; const unchanged = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]) === submitted; if (unchanged) equipmentHold?.complete?.(); return unchanged ? true : { draftRetained: true }; }).catch(error => { alert(error.message); return false; }); // NEW
             } // NEW
             // Preserve unmatched legacy preference IDs; missing catalogs must not erase saved data. // CHANGE
             if (!canSaveState(state)) {
@@ -1687,6 +1690,8 @@ Draw.loadPlugin(function (ui) {
                 alert("Fix equipment validation errors before saving.");
                 return false;
             }
+            const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+            const write = () => { // CHANGE: legacy inventory catalogs are one native action.
             const proposed = graph.__trellisReferences?.saveCatalogBatch(state.moduleCell, { // NEW
                 [ATTRS.EQUIPMENT_INVENTORY_JSON]: { version: PLUGIN_VERSION, items: state.inventory.map(normalizeEquipment) }, // NEW
                 [ATTRS.TASK_TYPE_REGISTRY_JSON]: { version: PLUGIN_VERSION, items: state.taskTypes.map(normalizeTaskType) }, // NEW
@@ -1694,13 +1699,15 @@ Draw.loadPlugin(function (ui) {
             }); // NEW
             if (!proposed) { writeEquipmentInventory(state.moduleCell, state.inventory); writeTaskTypeRegistry(state.moduleCell, state.taskTypes); writeCapabilityRegistry(state.moduleCell, state.capabilities); } // CHANGE
             else fireTrellisEvent(EVENTS.WORKLOAD_ASSUMPTIONS_CHANGED, { moduleCell: state.moduleCell }); // NEW
+            }; // CHANGE
+            try { if (context?.apply && !state.moduleCell.getAttribute?.('trellis_references_json')) context.apply({ cells: [state.moduleCell], manualSources: [state.moduleCell], includeAncestors: false, editor: equipmentHold }, write); else write(); } catch (error) { alert(error.message); return false; } // CHANGE
             state.validationReport = null;
             state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); equipmentHold?.complete?.(); // CHANGE
             return true;
         }
 
         async function saveAndClose() { // CHANGE
-            if (await saveAll()) close(); // CHANGE
+            if (await saveAll() === true) close(); // CHANGE: newer unsaved entries keep the detached editor open.
         }
 
         function render() {
@@ -1736,7 +1743,7 @@ Draw.loadPlugin(function (ui) {
             isDirty: () => JSON.stringify([state.inventory, state.taskTypes, state.capabilities]) !== state.savedSnapshot, // CHANGE
             capture: () => ({ pageId, objectId: String(moduleCell.id), inventory: state.inventory, taskTypes: state.taskTypes, capabilities: state.capabilities }), // CHANGE
             restore: draft => { if (!draft) return; for (const key of ['inventory', 'taskTypes', 'capabilities']) state[key] = JSON.parse(JSON.stringify(draft[key])); state.savedSnapshot = JSON.stringify([state.inventory, state.taskTypes, state.capabilities]); render(); }, // CHANGE
-            save: saveAll, freeze() { overlay.querySelectorAll('input,select,textarea,button').forEach(control => { control.disabled = true; }); }, discard: () => close({ resolved: true }), // CHANGE
+            save: applyEquipment, freeze() { overlay.querySelectorAll('input,select,textarea,button').forEach(control => { control.disabled = true; }); }, discard: () => close({ resolved: true }), // CHANGE
         }); // CHANGE
         overlay.addEventListener('input', () => equipmentHold?.touch()); overlay.addEventListener('change', () => equipmentHold?.touch()); // CHANGE
         render();
@@ -1858,6 +1865,7 @@ Draw.loadPlugin(function (ui) {
         const pane = div("trellis-eq-pane");
         const listPanel = div("trellis-eq-list-panel");
         const editorPanel = div("trellis-eq-editor-panel");
+        editorPanel.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         pane.appendChild(listPanel);
         pane.appendChild(editorPanel);
 
@@ -1943,13 +1951,17 @@ Draw.loadPlugin(function (ui) {
     function renderEquipmentEditor(state, selected, render) {
         if (!selected) return textDiv("trellis-eq-empty", "Choose a preset or add a custom tool to get started."); // CHANGE
         const card = div("trellis-eq-card");
+        card.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
         card.appendChild(textDiv("trellis-eq-card-head", "Tool: " + selected.name)); // CHANGE
         const body = div("trellis-eq-card-body"); card.appendChild(body); // CHANGE
+        body.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         renderEquipmentGeneral(body, selected, render); // CHANGE
         function section(key, label, summary, populate, initiallyOpen = false) { // CHANGE
             const details = document.createElement('details'); details.className = 'trellis-eq-section'; details.dataset.section = key; // CHANGE
+            details.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
             details.open = state.sectionOpen[key] ?? initiallyOpen; // CHANGE
             const heading = document.createElement('summary'); heading.textContent = label + (summary ? ' — ' + summary : ''); details.appendChild(heading); // CHANGE
+            heading.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
             const content = div('trellis-eq-section-body'); details.appendChild(content); populate(content); // CHANGE
             details.addEventListener('toggle', () => { state.sectionOpen[key] = details.open; }); body.appendChild(details); // CHANGE
         } // CHANGE
@@ -2005,6 +2017,7 @@ Draw.loadPlugin(function (ui) {
     /** Operator range describes the tool; additional people assigned to the task are allowed. */ // NEW
     function renderEquipmentCrewRange(eq) { // CHANGE
         const group = document.createElement('fieldset'); group.className = 'trellis-eq-crew-range'; // CHANGE
+        group.dataset.trellisSurface = 'entry'; // NEW: shared surface hierarchy.
         const legend = document.createElement('legend'); legend.textContent = 'People required to operate this tool'; group.appendChild(legend); // CHANGE
         const inputs = div('trellis-eq-crew-inputs'); group.appendChild(inputs); // CHANGE
         let maximum; // CHANGE
@@ -2140,6 +2153,7 @@ Draw.loadPlugin(function (ui) {
         const pane = div("trellis-eq-pane");
         const listPanel = div("trellis-eq-list-panel");
         const editorPanel = div("trellis-eq-editor-panel");
+        editorPanel.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         pane.appendChild(listPanel);
         pane.appendChild(editorPanel);
 
@@ -2201,11 +2215,13 @@ Draw.loadPlugin(function (ui) {
     function renderTaskTypeEditor(state, tt, render) {
         if (!tt) return textDiv("trellis-eq-empty", "No task type selected.");
         const card = div("trellis-eq-card");
+        card.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
         const head = div("trellis-eq-card-head");
         head.appendChild(textNode(`Edit Task Type: ${tt.name}`));
         card.appendChild(head);
         card.appendChild(renderEditorTabs(state, "activeTaskTypeEditorTab", [["general", "General"], ["rules", "Time & quantity"]], render)); // CHANGE
         const body = div("trellis-eq-card-body");
+        body.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         card.appendChild(body);
 
         if (state.activeTaskTypeEditorTab === "general") {
@@ -2234,6 +2250,7 @@ Draw.loadPlugin(function (ui) {
         const note = div("trellis-eq-card");
         note.appendChild(textDiv("trellis-eq-card-head", "How equipment efficiency is applied"));
         const body = div("trellis-eq-card-body");
+        body.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         body.appendChild(paragraph("Efficiency rules live inside each equipment item and use hours multipliers only. The workload helper chooses the best non-stackable multiplier for a task type, then applies explicitly stackable effects."));
         body.appendChild(paragraph("Legacy frequency multipliers are converted to hours multipliers during normalization and import so older saved data remains usable."));
         note.appendChild(body);
@@ -2437,6 +2454,7 @@ Draw.loadPlugin(function (ui) {
     function div(className) {
         const el = document.createElement("div");
         if (className) el.className = className;
+        if (className === 'trellis-eq-card-head') el.dataset.trellisSurface = 'header'; // NEW: the heading builder serves all equipment cards.
         return el;
     }
 

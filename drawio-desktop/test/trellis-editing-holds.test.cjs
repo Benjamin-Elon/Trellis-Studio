@@ -135,3 +135,8 @@ test('child editor normalization preserves group targets and private draft value
     const recovery = f.calls.find(call => call[0] === 'recover'); assert.ok(recovery); assert.deepEqual(Array.from(recovery[2][0].targets), [key('planting')]); assert.equal(recovery[2][0].plan.label, 'unfinished'); // CHANGE
     assert.equal(editor.active(), false); await assert.rejects(editor.acquire(), /frozen/); // CHANGE
 }); // CHANGE
+test('button and navigation submissions coalesce, and an older save cannot complete newer draft fields', async t => { // CHANGE
+    const f = fixture(t); let text = 'draft', release, started, saves = 0; const ready = new Promise(resolve => { started = resolve; }); // CHANGE
+    const editor = f.instance.register({ kind: 'inventory', targets: [key('garden')], capture: () => ({ text }), save: async () => { saves++; started(); await new Promise(resolve => { release = resolve; }); return { draftRetained: true }; }, discard() {} }); // CHANGE
+    const first = editor.commit(), second = editor.commit(); assert.equal(first, second); await ready; text = 'newer'; release(); assert.equal(await first, false); assert.equal(saves, 1); assert.equal(editor.dirty(), true); assert.deepEqual(Array.from(f.instance.activeTargets()), [key('garden')]); // CHANGE
+}); // CHANGE

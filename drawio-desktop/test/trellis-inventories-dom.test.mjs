@@ -75,3 +75,12 @@ test('Home Equipment keeps its comparison base immutable and refreshes it after 
     catalogs.equipment_inventory_json.items[0].quantity = 3; await save(catalogs); // NEW
     assert.equal(calls[1].base.equipment.items[0].quantity, 2); // NEW
 }); // NEW
+test('a delayed seed save preserves newer quantities and the next save uses the accepted older base', async t => { // CHANGE
+    const h = await harness(t), save = h.window.trellisInventories.saveSeeds; let release, started; const ready = new Promise(resolve => { started = resolve; }); // CHANGE
+    h.window.trellisInventories.saveSeeds = async input => { started(); await new Promise(resolve => { release = resolve; }); return save(input); }; // CHANGE
+    await h.window.TrellisInventories.openSeeds(); const dialog = h.document.querySelector('[role="dialog"]'); // CHANGE
+    let quantity = dialog.querySelectorAll('tbody input')[1]; quantity.value = '70'; quantity.dispatchEvent(new h.window.Event('change')); h.button('Save').click(); await ready; // CHANGE
+    quantity = dialog.querySelectorAll('tbody input')[1]; quantity.value = '60'; quantity.dispatchEvent(new h.window.Event('change')); release(); await h.settle(); await h.settle(); // CHANGE
+    assert.equal(dialog.querySelectorAll('tbody input')[1].value, '60'); assert.match(dialog.querySelector('[role="status"]').textContent, /Newer edits remain/); // CHANGE
+    h.window.trellisInventories.saveSeeds = save; h.button('Save').click(); await h.settle(); await h.settle(); assert.equal(h.saves[1].base.items[0].seeds, 70); assert.equal(h.saves[1].items[0].seeds, 60); // CHANGE
+}); // CHANGE

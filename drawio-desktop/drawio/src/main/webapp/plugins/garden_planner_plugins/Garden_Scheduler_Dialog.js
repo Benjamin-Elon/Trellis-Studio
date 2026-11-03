@@ -3952,6 +3952,10 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const n = finiteNumberOrNull(value);
         return n == null ? null : n;
     }
+    /** Normalize editable spacing without treating blank or nonfinite input as zero. */ // CHANGE:
+    function normalizeSpacingCm(value, fallback = 30) { // CHANGE:
+        return Math.max(1, Math.round(layoutNumberOrNull(value) ?? layoutNumberOrNull(fallback) ?? 30)); // CHANGE:
+    } // CHANGE:
     function plantSpacingDefaults(plant) {
         const fallback = layoutNumberOrNull(plant?.spacing_cm) ?? 30;
         return {
@@ -5393,9 +5397,9 @@ function createScheduler(ui, referenceScope = null) { // NEW
     function renderScheduleSummary() {
         const root = document.createElement('div');
         root.className = 'usl-scheduler-summary';
-        root.style.border = '1px solid #93c5fd';
-        root.style.background = '#eff6ff';
-        root.style.borderRadius = '6px';
+        root.style.borderColor = 'var(--trellis-surface-border,#d1d5db)'; // CHANGE
+        root.dataset.trellisSurface = 'section'; // CHANGE: neutral surface; feasibility colors remain on their own indicators.
+        root.style.borderRadius = '8px'; // CHANGE
         root.style.padding = '10px 12px';
         root.style.marginBottom = '10px';
 
@@ -6359,6 +6363,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
 
         const div = document.createElement('div');
         div.className = 'usl-plant-editor';
+        div.classList.add('trellis-surfaces'); div.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         div.style.padding = '12px';
         div.style.width = '900px';
         div.style.maxWidth = 'calc(96vw - 24px)';
@@ -6751,9 +6756,11 @@ function createScheduler(ui, referenceScope = null) { // NEW
         function createPlantEditorSection(titleText, items, options = {}) {
             const section = document.createElement('section');
             section.className = 'usl-plant-editor-section';
+            section.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
             const header = document.createElement('button');
             header.type = 'button';
             header.className = 'usl-plant-editor-section-header';
+            header.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
             const titleEl = document.createElement('span');
             titleEl.className = 'usl-plant-editor-section-title';
             titleEl.textContent = titleText;
@@ -8666,10 +8673,10 @@ function createScheduler(ui, referenceScope = null) { // NEW
         contentGrid.appendChild(rightColumn);
         div.appendChild(contentGrid);
 
-        const advancedDetails = document.createElement('details');
+        const advancedDetails = document.createElement('details'); advancedDetails.dataset.trellisSurface = 'inset'; // CHANGE
         advancedDetails.style.marginTop = '14px';
         advancedDetails.style.borderTop = '1px solid #d1d5db';
-        const advancedSummary = document.createElement('summary');
+        const advancedSummary = document.createElement('summary'); advancedSummary.dataset.trellisSurface = 'header'; // CHANGE
         advancedSummary.textContent = 'Advanced';
         advancedSummary.style.cursor = 'pointer';
         advancedSummary.style.fontWeight = '600';
@@ -8691,10 +8698,12 @@ function createScheduler(ui, referenceScope = null) { // NEW
         function makeSection(title) {
             const wrap = document.createElement('div');
             wrap.className = 'usl-scheduler-section';
+            wrap.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
             wrap.style.marginTop = '12px';
 
             const heading = document.createElement('div');
             heading.className = 'usl-scheduler-section-heading';
+            heading.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
             heading.textContent = title;
             heading.style.fontWeight = '600';
             heading.style.fontSize = '13px';
@@ -9302,6 +9311,11 @@ function createScheduler(ui, referenceScope = null) { // NEW
         let allocationRequiredStatus = allocationDraftContext?.defaultStatus || { missing: allocationDraftContext?.requiredDefaults || [] }; // CHANGE
         const allocationOptionalLifecycle = allocationSaveLifecycle.checked; // CHANGE
         let allocationLifecycleForced = false, allocationTaskDefaultForced = false; // CHANGE: mandatory saves cannot erase separate optional checkbox intent during method refits.
+        function renderDefaultOutcome(result) { // CHANGE: the shared retry notice remains available after editor close or handoff.
+            if (allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE
+            if (result.status !== 'failed') { clearErrorInline(); if (referenceScope && result.completed?.length) ui.editor.setStatus?.('Planting applied. Reusable defaults are private drafts awaiting reference review.'); return; } // CHANGE
+            showErrorInline('Planting applied. Reusable defaults failed: ' + result.failures.map(item => item.name + ': ' + item.reason).join('; ') + '. Use Retry defaults to save them separately.'); // CHANGE
+        } // CHANGE
         let scheduleSavePending = false; // CHANGE: every scheduler workflow rejects duplicate submissions until its save settles.
         let collaborationEditor = null; // NEW: existing planting edits participate in timed handoff and private recovery.
         const allocationSaveGrowthStage = makeCheckbox(false); allocationSaveGrowthStage.setAttribute('data-allocation-save-grown-for', '1'); // CHANGE
@@ -12083,6 +12097,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
                 syncStateFromControls();
                 requireSelectedScheduleDate();
 
+
                 const { inputs } = await buildScheduleContextFromForm(
                     allocationDraftContext ? { ...formState } : formState, // CHANGE: allocation submission resolves one immutable settings snapshot.
                     selPlant,
@@ -12117,6 +12132,8 @@ function createScheduler(ui, referenceScope = null) { // NEW
                 if (allocationDraftContext && (allocationFitPending || allocationFitError)) throw new Error(allocationFitError || 'Allocation recalculation is still running.'); // CHANGE: never accept stale fit data.
                 syncStateFromControls();
                 requireSelectedScheduleDate();
+                const submittedRevision = JSON.stringify([schedulerDraftControls().map(field => [field.value, field.checked]), taskRules]); // CHANGE
+                const submissionCurrent = () => !allocationDialogClosed && tabsContainer.isConnected && submittedRevision === JSON.stringify([schedulerDraftControls().map(field => [field.value, field.checked]), taskRules]); // CHANGE: newer typing remains a draft instead of becoming the baseline of older inputs.
 
                 const { inputs } = await buildScheduleContextFromForm(
                     allocationDraftContext ? { ...formState } : formState, // CHANGE
@@ -12149,60 +12166,40 @@ function createScheduler(ui, referenceScope = null) { // NEW
                     if (setAsGardenClimateDefaultChk.checked || CLIMATE_MODEL_PARAMETER_SCHEMA.some(def => formState.climateModelDraftPatch[def.key] !== savedClimate[def.key])) throw new Error('Change garden climate settings outside Allocate before editing this schedule.');
                 } // CHANGE
 
-                const persistPlantTaskDefault = async () => { // FIX: run DB persistence only after graph mutation succeeds
-                    await persistTaskRecipeSelection(); // NEW
-                    if (saveDefaultChk.checked) {
-                        const methodId = normId(formState.methodId);
-                        if (!methodId) {
-                            throw new Error('Select a planting method before saving a plant default.');
-                        }
-
-                        await TaskTemplateModel.saveForSelection({
-                            plantId: formState.plantId,
-                            methodId,
-                            template: taskTemplate
-                        });
-                    } else if (plantDefaultTaskDeleteRequested) {
-                        await TaskTemplateModel.deleteForSelection({
-                            plantId: formState.plantId,
-                            methodId: normId(formState.methodId)
-                        });
-                    }
-                    if (saveLayoutDefaultChk.checked) {
-                        const layoutDraft = syncLayoutDraftFromControls();
-                        if (derivedContext?.mode === 'companion') {
-                            try {
-                                const relationship = currentLayoutRelationship();
-                                const sourcePlantForPair = derivedContext.sourcePlant || null;
-                                const companionPlantForPair = selectedLayoutPlant();
-                                const actualStartOffsetDays = derivedContext.sourceOccupancy ? daysDeltaISO(derivedContext.sourceOccupancy.startISO, derivedOccupancyStartISO(scheduleResult)) : null;
-                                const ensured = await CompanionRelationshipModel.ensurePairDefaultsRelationship(sourcePlantForPair, companionPlantForPair, relationship, { startOffsetDays: actualStartOffsetDays });
-                                await CompanionRelationshipModel.saveLayoutDefaults(ensured.relationId, layoutDraft, ensured);
-                                const companionKey = String(companionPlantForPair?.plant_id || '');
-                                if (companionKey) {
-                                    derivedContext.relationshipByPlantId?.set?.(companionKey, Object.assign({}, ensured, {
-                                        layoutTemplate: layoutDraft.template,
-                                        layoutSpacingXCm: layoutDraft.spacingXCm,
-                                        layoutSpacingYCm: layoutDraft.spacingYCm,
-                                        layoutOffsetXCm: layoutDraft.offsetXCm,
-                                        layoutOffsetYCm: layoutDraft.offsetYCm
-                                    }));
-                                    derivedContext.metadataByPlantId?.set?.(companionKey, Object.assign({ known: true }, ensured));
-                                }
-                                if (targetCell && ensured.relationId) writeCellAttribute(targetCell, 'companion_relation_id', '', ui?.editor?.graph?.getModel?.() || null); // CHANGE: relationship ids are recommendation data, not planting identity.
-                            } catch (e) {
-                                throw new Error('Save pair default error: ' + (e?.message || String(e)));
-                            }
-                        } else {
-                            const spacingPatch = {};
-                            if (layoutDraft.spacingXCm != null) spacingPatch.spacing_x_cm = layoutDraft.spacingXCm;
-                            if (layoutDraft.spacingYCm != null) spacingPatch.spacing_y_cm = layoutDraft.spacingYCm;
-                            if (layoutDraft.spacingXCm != null && layoutDraft.spacingYCm != null && layoutDraft.spacingXCm === layoutDraft.spacingYCm) spacingPatch.spacing_cm = layoutDraft.spacingXCm;
-                            if (!Object.keys(spacingPatch).length) throw new Error('Enter spacing before saving the plant layout default.');
-                            await PlantModel.update(formState.plantId, spacingPatch);
-                        }
-                    }
-                };
+                const defaultTemplate = JSON.parse(JSON.stringify(taskTemplate)), defaultPlantId = formState.plantId, defaultMethodId = normId(formState.methodId); // CHANGE: retries use captured choices, never live controls.
+                const defaultTasks = [], recipeSelection = captureTaskRecipeSelection(); // CHANGE
+                if (climateModelAttributePatch && Object.entries(climateModelAttributePatch.patch).some(([key, value]) => JSON.stringify(readClimateModelJsonAttr(climateModelAttributePatch.cell, key, {})) !== JSON.stringify(JSON.parse(value || '{}')))) { // CHANGE
+                    const request = { cell: climateModelAttributePatch.cell, patch: { ...climateModelAttributePatch.patch } }; // CHANGE
+                    defaultTasks.push({ name: 'garden climate defaults', save: async guard => { // CHANGE
+                        guard(); const context = ui.editor.graph.__trellisEditContext || window.TrellisEditContext.install(ui); // CHANGE
+                        const write = () => applyCellAttributePatch(request.cell, request.patch, ui.editor.graph.getModel()); // CHANGE
+                        if (request.cell.getAttribute?.('trellis_references_json')) { write(); guard(); await ui.editor.graph.__trellisReferences.persistDraft(request.cell); } else context.apply({ cells: [request.cell], manualSources: [], includeAncestors: false }, write); // CHANGE: a private draft success includes its storage acknowledgement.
+                    } }); // CHANGE
+                } // CHANGE
+                if (recipeSelection.enabled) defaultTasks.push({ name: 'task recipe', save: guard => persistTaskRecipeSelection(recipeSelection, guard) }); // CHANGE
+                if (saveDefaultChk.checked) defaultTasks.push({ name: 'plant task default', save: async guard => { // CHANGE
+                    if (!defaultMethodId) throw new Error('Select a planting method before saving a plant default.'); // CHANGE
+                    guard(); await TaskTemplateModel.saveForSelection({ plantId: defaultPlantId, methodId: defaultMethodId, template: defaultTemplate }); // CHANGE
+                } }); // CHANGE
+                else if (plantDefaultTaskDeleteRequested) defaultTasks.push({ name: 'remove plant task default', save: async guard => { guard(); await TaskTemplateModel.deleteForSelection({ plantId: defaultPlantId, methodId: defaultMethodId }); } }); // CHANGE
+                if (saveLayoutDefaultChk.checked) { // CHANGE
+                    const layoutDraft = JSON.parse(JSON.stringify(syncLayoutDraftFromControls())); // CHANGE
+                    if (derivedContext?.mode === 'companion') { // CHANGE
+                        const relationship = currentLayoutRelationship(), sourcePlant = derivedContext.sourcePlant, companionPlant = selectedLayoutPlant(); // CHANGE
+                        const startOffsetDays = derivedContext.sourceOccupancy ? daysDeltaISO(derivedContext.sourceOccupancy.startISO, derivedOccupancyStartISO(scheduleResult)) : null; // CHANGE
+                        defaultTasks.push({ name: 'companion layout default', save: async guard => { // CHANGE
+                            guard(); const ensured = await CompanionRelationshipModel.ensurePairDefaultsRelationship(sourcePlant, companionPlant, relationship, { startOffsetDays }); // CHANGE
+                            guard(); await CompanionRelationshipModel.saveLayoutDefaults(ensured.relationId, layoutDraft, ensured); // CHANGE
+                        } }); // CHANGE
+                    } else { // CHANGE
+                        const patch = {}; if (layoutDraft.spacingXCm != null) patch.spacing_x_cm = layoutDraft.spacingXCm; if (layoutDraft.spacingYCm != null) patch.spacing_y_cm = layoutDraft.spacingYCm; // CHANGE
+                        if (patch.spacing_x_cm != null && patch.spacing_x_cm === patch.spacing_y_cm) patch.spacing_cm = patch.spacing_x_cm; // CHANGE
+                        defaultTasks.push({ name: 'plant layout default', save: async guard => { if (!Object.keys(patch).length) throw new Error('Enter spacing before saving the plant layout default.'); guard(); await PlantModel.update(defaultPlantId, patch); } }); // CHANGE
+                    } // CHANGE
+                } // CHANGE
+                const defaultDocument = ui.getCurrentFile?.() || ui.editor.graph.getModel().getRoot(), defaultActor = window.Trellis?.users?.getCurrentUser?.()?.id; // CHANGE
+                const defaultsCurrent = () => defaultDocument === (ui.getCurrentFile?.() || ui.editor.graph.getModel().getRoot()) && defaultActor === window.Trellis?.users?.getCurrentUser?.()?.id; // CHANGE
+                const persistPlantTaskDefault = () => defaultTasks.length ? (ui.editor.graph.__trellisEditContext || window.TrellisEditContext.install(ui)).saveDefaults({ id: 'scheduler-defaults:' + (climateModelModuleCell?.id || '') + ':' + defaultPlantId, isCurrent: defaultsCurrent, notify: true, title: 'Planting applied', onOutcome: renderDefaultOutcome, tasks: defaultTasks }) : Promise.resolve({ status: 'saved', failures: [] }); // CHANGE
 
                 const taskTemplateJson = (taskDirty || (saveTaskRecipeChk && saveTaskRecipeChk.checked))
                     ? JSON.stringify(taskTemplate)
@@ -12236,12 +12233,14 @@ function createScheduler(ui, referenceScope = null) { // NEW
                         if (!allocationRequestIsCurrent(allocationVersion)) return; // CHANGE
                         if (!allocationRequiredStatus.complete) throw new Error('Required defaults are still missing. Resolve the highlighted items and try again.'); // CHANGE
                     } // CHANGE
-                    next.commitAllocationDefaults = async function (createdCell) { // CHANGE: reusable defaults are committed only after successful planting creation.
+                    next.commitAllocationDefaults = async function (createdCell) { // CHANGE: all optional default outcomes are independent of planting creation.
                         if (!createdCell) throw new Error('A created planting is required before saving allocation defaults.'); // CHANGE
-                        await persistPlantTaskDefault();
-                        await persistAllocationReusableDefaults(next, { defaultStatus: allocationRequiredMode ? allocationRequiredStatus : allocationDraftContext.defaultStatus }); // CHANGE: already-saved required records are not written again after Create.
-                        if (next.saveSpacingDefaults) await persistAllocationSpacingDefaults(ui.editor.graph, next, createdCell); // CHANGE
-                    };
+                        const context = ui.editor.graph.__trellisEditContext || window.TrellisEditContext.install(ui); // CHANGE
+                        const tasks = [...defaultTasks, { name: 'allocation reusable defaults', save: async guard => { guard(); await persistAllocationReusableDefaults(next, { defaultStatus: allocationRequiredMode ? allocationRequiredStatus : allocationDraftContext.defaultStatus }); } }]; // CHANGE
+                        if (next.saveSpacingDefaults) tasks.push({ name: 'allocation spacing defaults', save: async guard => { guard(); await persistAllocationSpacingDefaults(ui.editor.graph, next, createdCell); } }); // CHANGE
+                        const result = await context.saveDefaults({ id: 'allocation-scheduler-defaults:' + createdCell.id, isCurrent: defaultsCurrent, tasks }); // CHANGE
+                        if (result.status === 'failed') throw Object.assign(new Error(result.failures.map(item => item.name + ': ' + item.reason).join('; ')), { retryDefaults: result.retry }); // CHANGE
+                    }; // CHANGE
                     if (allocationDraftContext.isCurrent && !allocationDraftContext.isCurrent()) throw new Error('Allocation selection changed. Close this scheduler and review the current proposal.');
                     allocationDraftContext.onPreview(next);
                     allocationDialogClosed = true; // CHANGE: closing after Preview also invalidates outstanding computations.
@@ -12257,14 +12256,8 @@ function createScheduler(ui, referenceScope = null) { // NEW
                         const createSibling = getTilerSiblingCreator(graph);
                         if (!createSibling) throw new Error('Plant tiler sibling creation API is unavailable.');
                         const creationOffset = derivedContext.mode === 'companion' ? layoutOffsetForDerivedCreation() : null;
-                        createdDerivedCell = createSibling(graph, relationshipSourceCell, {
-                            source: 'scheduler-' + derivedContext.mode,
-                            attributes: derivedRelationshipPatch,
-                            layoutOffsetCm: creationOffset,
-                            onPlacementWarning: message => showErrorInline(message)
-                        });
-                        if (!createdDerivedCell) throw new Error('Could not create derived plant group.');
-                        targetCell = createdDerivedCell;
+                        const siblingOptions = { source: 'scheduler-' + derivedContext.mode, attributes: { ...derivedRelationshipPatch }, layoutOffsetCm: creationOffset, inTransaction: true, select: false, onPlacementWarning: message => showErrorInline(message) }; // CHANGE
+                        bedTargetCreation = { createTargetCell: () => { createdDerivedCell = createSibling(graph, relationshipSourceCell, siblingOptions); return createdDerivedCell; } }; // CHANGE: sibling creation joins the same atomic commit as its tasks.
                         forceCompanionSetDefaults = derivedContext.mode === 'companion'; // CHANGE: newly guided companion plantings should adopt the current set/plant defaults immediately.
                     }
                 }
@@ -12272,7 +12265,8 @@ function createScheduler(ui, referenceScope = null) { // NEW
                     bedTargetCreation = await prepareBedScheduleCreation(ui, bedCreationContext.bedCell || cell, inputs, scheduleResult); // CHANGE
                 }
                 layoutGraphApplication = bedCreationContext ? { targetPatch: {}, extraAttributePatches: [] } : buildLayoutGraphApplication(targetCell); // CHANGE
-                const targetLayoutPatch = Object.assign({}, derivedRelationshipPatch, layoutGraphApplication.targetPatch || {});
+                const targetLayoutPatch = Object.assign({}, derivedRelationshipPatch, layoutGraphApplication.targetPatch || {}); // CHANGE
+                if (derivedContext?.mode === 'companion' || cell.getAttribute?.('companion_relation_id')) targetLayoutPatch.companion_relation_id = ''; // CHANGE: clear legacy relationship metadata within the graph commit, independently of default storage.
 
                 try {
                     if (allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE: deferred placement must finish before the final lifecycle check.
@@ -12287,13 +12281,13 @@ function createScheduler(ui, referenceScope = null) { // NEW
                     targetAttributePatch: targetLayoutPatch,
                     targetGeometryRect: layoutGraphApplication.targetRect,
                     preserveTargetGeometry: !!derivedContext || !!bedCreationContext,
-                    extraAttributePatches: (layoutGraphApplication.extraAttributePatches || []).concat(climateModelAttributePatch ? [climateModelAttributePatch] : []),
+                    extraAttributePatches: (layoutGraphApplication.extraAttributePatches || []), // CHANGE: reference/default writes have a separate outcome after graph application.
                     applyCompanionSetDefaults: true,
                     spacingLayoutBaseline,
                     forceCompanionSetDefaults,
                     createTargetCell: bedTargetCreation && bedTargetCreation.createTargetCell, // CHANGE: bed-first save materializes the planting only after validation.
-                    isCurrent: () => !allocationDialogClosed && tabsContainer.isConnected, // CHANGE: recheck after task/default loading, immediately before graph mutation.
-                    afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
+                    isCurrent: submissionCurrent, // CHANGE: revalidate the captured form after preparation and immediately before mutation.
+                    recoveryEditor: collaborationEditor // CHANGE: submitSchedule owns completion; failed compensation freezes and preserves its draft.
                     });
                     cell = savedTarget || targetCell; bedCreationContext = null; derivedContext = null; // CHANGE: never recreate the target after a tab commit.
                     hasPersistedSchedule = true; taskDirty = false; taskTemplateResetRequested = false; // CHANGE
@@ -12301,7 +12295,10 @@ function createScheduler(ui, referenceScope = null) { // NEW
                     if (createdDerivedCell) removeDerivedSiblingIfPresent(ui?.editor?.graph, createdDerivedCell);
                     throw saveError;
                 }
-                collaborationEditor?.complete?.(); // CHANGE: applied edits await persistence without pinning the editor.
+                collaborationEditor?.complete?.(); // CHANGE: defaults and project persistence never pin an already-applied planting draft.
+                const defaults = await persistPlantTaskDefault(); // CHANGE: selected defaults are attempted only after a successful canvas commit.
+                renderDefaultOutcome(defaults); // CHANGE
+                if (defaults.status === 'failed') return true; // CHANGE: keep the separate retry visible without reporting planting failure.
                 if (saveOptions.closeAfter !== false) { allocationDialogClosed = true; ui.hideDialog(); } return true; // CHANGE // CHANGE: a handoff releases only after the existing apply operation succeeds.
             } catch (e) {
                 if (allocationDialogClosed || !tabsContainer.isConnected) return; // CHANGE: stale continuations cannot write errors into a closed or replaced dialog.
@@ -12431,9 +12428,11 @@ function createScheduler(ui, referenceScope = null) { // NEW
         tasksTab.appendChild(tasksHeaderRow);
 
         const recipePickerSection = document.createElement('div'); // NEW
-        recipePickerSection.style.cssText = 'border:1px solid #d1d5db;border-radius:6px;padding:10px;margin-bottom:12px;background:#fff;'; // NEW
+        recipePickerSection.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
+        recipePickerSection.style.cssText = 'padding:10px;margin-bottom:12px;'; // CHANGE: shared section role owns the surface. // NEW
         const recipePickerTitle = document.createElement('div'); // NEW
         recipePickerTitle.textContent = 'Task recipe'; // NEW
+        recipePickerTitle.dataset.trellisSurface = 'header'; // NEW: main section heading.
         recipePickerTitle.style.cssText = 'font-weight:600;margin-bottom:8px;'; // NEW
         const recipeComboButton = document.createElement('button'); // NEW
         recipeComboButton.type = 'button'; // NEW
@@ -12464,12 +12463,14 @@ function createScheduler(ui, referenceScope = null) { // NEW
         tasksTab.appendChild(recipePickerSection); // NEW
 
         const taskPreviewSection = document.createElement('div');
-        taskPreviewSection.style.border = '1px solid #d1d5db';
-        taskPreviewSection.style.borderRadius = '6px';
+        taskPreviewSection.dataset.trellisSurface = 'section'; // NEW: shared surface hierarchy.
+        taskPreviewSection.style.borderColor = 'var(--trellis-surface-border,#d1d5db)'; // CHANGE
+        taskPreviewSection.style.borderRadius = '8px'; // CHANGE
         taskPreviewSection.style.padding = '10px';
         taskPreviewSection.style.marginBottom = '12px';
         const taskPreviewTitle = document.createElement('div');
         taskPreviewTitle.textContent = 'Generated task timeline';
+        taskPreviewTitle.dataset.trellisSurface = 'header'; // NEW: main section heading.
         taskPreviewTitle.style.fontWeight = '600';
         taskPreviewTitle.style.marginBottom = '8px';
         const taskPreviewControls = document.createElement('div');
@@ -12770,31 +12771,25 @@ function createScheduler(ui, referenceScope = null) { // NEW
             }
         }
 
-        async function persistTaskRecipeSelection() {
-            syncTaskRecipeSaveState(); // NEW
-            if (!recipeSaveEnabled) return null; // NEW
-            if (!climateModelModuleCell) throw new Error("Select a garden module before saving a task recipe."); // NEW
-            const name = recipeSaveNameValue; // NEW
-            if (!name) throw new Error("Task recipe name is required."); // NEW
-            const methodIds = uniqueMethodIds(recipeSaveMethodIds); // NEW
-            if (!methodIds.length) throw new Error("Select at least one compatible method for the task recipe."); // NEW
-            const growthStageKeys = uniqueGrowthStageKeys(recipeSaveGrowthStageKeys); // NEW
-            if (!growthStageKeys.length) throw new Error("Select at least one compatible grown-for stage for the task recipe."); // NEW
-            const template = normalizeTaskTemplate({ version: 2, rules: taskRules }); // NEW
-            await validateRecipeRulesForMethods(methodIds, template); // NEW
-            const selectedRecipe = selectedTaskRecipeRecord(); // NEW
-            const allowUpdateId = selectedRecipe && selectedTaskRecipeRef.moduleCell === climateModelModuleCell && canUpdateTaskRecipe(selectedRecipe) ? selectedRecipe.id : ""; // NEW
-            const stageLabelByKey = new Map(taskRecipeGrowthStageOptions().map(function (option) { return [option.stageKey, option.label]; })); // NEW
-            const saved = upsertTaskRecipe(climateModelModuleCell, { // NEW
-                id: allowUpdateId,
-                name,
-                plantId: formState.plantId,
-                plantName: String(selPlant && (selPlant.plant_name || selPlant.abbr) || formState.plantId || ""),
-                methodIds,
-                growthStageKeys,
-                growthStageLabels: growthStageKeys.map(function (key) { return stageLabelByKey.get(key) || (key === DEFAULT_GROWTH_STAGE_KEY ? DEFAULT_GROWTH_STAGE_LABEL : key); }), // NEW
-                template
-            }, { allowUpdateId });
+        function captureTaskRecipeSelection() { // CHANGE
+            syncTaskRecipeSaveState(); const selected = selectedTaskRecipeRecord(); // CHANGE
+            const allowUpdateId = selected && selectedTaskRecipeRef.moduleCell === climateModelModuleCell && canUpdateTaskRecipe(selected) ? selected.id : ''; // CHANGE
+            const stages = new Map(taskRecipeGrowthStageOptions().map(option => [option.stageKey, option.label])); // CHANGE
+            const growthStageKeys = uniqueGrowthStageKeys(recipeSaveGrowthStageKeys); // CHANGE
+            return { enabled: recipeSaveEnabled, moduleCell: climateModelModuleCell, name: recipeSaveNameValue, methodIds: uniqueMethodIds(recipeSaveMethodIds), growthStageKeys, growthStageLabels: growthStageKeys.map(key => stages.get(key) || (key === DEFAULT_GROWTH_STAGE_KEY ? DEFAULT_GROWTH_STAGE_LABEL : key)), template: normalizeTaskTemplate({ version: 2, rules: JSON.parse(JSON.stringify(taskRules)) }), recipeId: allowUpdateId || (climateModelModuleCell ? generateTaskRecipeId(climateModelModuleCell) : ''), plantId: formState.plantId, plantName: String(selPlant?.plant_name || selPlant?.abbr || formState.plantId || ''), allowUpdateId }; // CHANGE
+        } // CHANGE
+        async function persistTaskRecipeSelection(selection = captureTaskRecipeSelection(), guard = () => {}) { // CHANGE
+            if (!selection.enabled) return null; // CHANGE
+            const { moduleCell, name, methodIds, growthStageKeys, template, allowUpdateId } = selection; // CHANGE
+            if (!moduleCell) throw new Error('Select a garden module before saving a task recipe.'); // CHANGE
+            if (!name) throw new Error('Task recipe name is required.'); // CHANGE
+            if (!methodIds.length) throw new Error('Select at least one compatible method for the task recipe.'); // CHANGE
+            if (!growthStageKeys.length) throw new Error('Select at least one compatible grown-for stage for the task recipe.'); // CHANGE
+            await validateRecipeRulesForMethods(methodIds, template); guard(); // CHANGE
+            const write = () => upsertTaskRecipe(moduleCell, { id: selection.recipeId, name, plantId: selection.plantId, plantName: selection.plantName, methodIds, growthStageKeys, growthStageLabels: selection.growthStageLabels, template }, { allowUpdateId: allowUpdateId || selection.recipeId }); // CHANGE
+            const context = ui.editor.graph.__trellisEditContext || window.TrellisEditContext.install(ui); // CHANGE
+            const saved = selection.savedRecipe || (referenceScope ? write() : context.apply({ cells: [moduleCell], manualSources: [], includeAncestors: false }, write)); selection.savedRecipe = saved; // CHANGE: interrupted private persistence retries the same recipe, not another upsert.
+            if (referenceScope) { guard(); await ui.editor.graph.__trellisReferences.persistDraft(moduleCell); } // CHANGE: report a failed private checkpoint separately from planting application.
             selectedTaskRecipeRef = { kind: "recipe", moduleId: cellStableId(climateModelModuleCell), recipeId: saved.id, moduleCell: climateModelModuleCell }; // NEW
             recipeSaveNameValue = saved.name; // NEW
             recipeSaveMethodIds = saved.methodIds.slice(); // NEW
@@ -12919,8 +12914,10 @@ function createScheduler(ui, referenceScope = null) { // NEW
             }).filter(function (group) { return group.recipes.length > 0; }); // NEW
             visibleGroups.forEach(function (group) { // NEW
                 const details = document.createElement("details"); // NEW
+                details.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
                 details.open = group.current || group.recipes.some(function (recipe) { return taskRecipeSelectionKey("recipe", group.moduleId, recipe.id) === currentTaskRecipeSelectionKey(); }); // NEW
                 const summary = document.createElement("summary"); // NEW
+                summary.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
                 summary.textContent = (group.current ? "Current garden: " : "") + group.moduleName; // NEW
                 summary.style.cssText = "cursor:pointer;font-weight:600;"; // NEW
                 details.appendChild(summary); // NEW
@@ -13177,14 +13174,15 @@ function createScheduler(ui, referenceScope = null) { // NEW
             taskEditorDiv.appendChild(editorHeader);
 
             const editorBody = document.createElement("div");
+            editorBody.dataset.trellisSurface = 'inset'; // NEW: shared surface hierarchy.
             editorBody.style.display = "flex";
             editorBody.style.flexDirection = "column";
             editorBody.style.gap = "8px";
 
-            editorBody.style.background = "#fafafa";
+            editorBody.style.background = "var(--trellis-surface-inset,#fafafa)"; // CHANGE
             editorBody.style.padding = "8px";
-            editorBody.style.border = "1px solid #ddd";
-            editorBody.style.borderRadius = "4px";
+            editorBody.style.border = "1px solid var(--trellis-surface-border,#ddd)"; // CHANGE
+            editorBody.style.borderRadius = "6px"; // CHANGE
 
             taskEditorDiv.appendChild(editorBody);
 
@@ -13527,6 +13525,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
 
         const tabsContainer = document.createElement("div");
         tabsContainer.className = "usl-scheduler-dialog";
+        tabsContainer.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
         if (cell && cell.id) tabsContainer.dataset.collaborationObjectId = cell.id; // NEW: typing reserves the scheduler's actual target, including context-menu opens.
         tabsContainer.style.display = "flex";
         tabsContainer.style.flexDirection = "column";
@@ -13579,7 +13578,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
             .usl-scheduler-section--allow-popover{overflow:visible}
             .usl-scheduler-section-heading{padding:9px 10px!important;border-bottom:1px solid var(--usl-neutral-300)!important;margin-bottom:0!important;background:var(--usl-neutral-100);font-weight:700!important;font-size:13px!important}
             .usl-scheduler-section-body{padding:10px}
-            .usl-scheduler-summary{border:1px solid var(--usl-neutral-300)!important;border-radius:8px!important;background:linear-gradient(180deg,#fff,var(--usl-neutral-100))!important;margin-bottom:10px!important}
+            .usl-scheduler-summary{margin-bottom:10px!important} /* CHANGE: surface roles own summary elevation. */
             .usl-scheduler-summary-title{font-size:16px;font-weight:700!important;color:var(--usl-neutral-900)}
             .usl-scheduler-summary-grid{display:grid!important;grid-template-columns:repeat(4,minmax(120px,1fr))!important;gap:6px!important}
             .usl-scheduler-summary-item{border:1px solid var(--usl-neutral-300);border-radius:6px;background:#fff;padding:6px 7px;min-width:0}
@@ -13588,7 +13587,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
             .usl-scheduler-summary-value{margin-top:3px;font-size:13px!important;font-weight:700!important;color:var(--usl-neutral-900);white-space:normal;overflow-wrap:anywhere}
             .usl-scheduler-summary-warning-list{margin:3px 0 0 16px!important;padding:0!important}
             .usl-scheduler-summary-warning-list li{margin:0 0 2px 0!important;padding:0!important}
-            .usl-scheduler-dialog details{border:1px solid var(--usl-neutral-300)!important;border-radius:8px;background:#fff;margin-top:12px!important;overflow:hidden}
+            .usl-scheduler-dialog details{border:1px solid var(--trellis-surface-border,var(--usl-neutral-300));border-radius:8px;background:#fff;margin-top:12px!important;overflow:hidden}
             .usl-scheduler-dialog summary{padding:9px 10px!important;background:var(--usl-neutral-100);border-bottom:1px solid var(--usl-neutral-300);font-weight:700!important}
             .usl-layout-preview{min-height:260px;border:1px solid var(--usl-neutral-300);border-radius:8px;background:#f9fafb;display:flex;align-items:center;justify-content:center;overflow:hidden}
             .usl-layout-preview-svg{width:100%;height:260px;display:block;background:#f9fafb}
@@ -13643,6 +13642,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
 
         const tabsBody = document.createElement("div");
         tabsBody.className = "usl-scheduler-body";
+        tabsBody.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
         tabsBody.style.flex = "1";
         tabsBody.style.overflow = "auto";
 
@@ -15604,21 +15604,6 @@ function createScheduler(ui, referenceScope = null) { // NEW
         return patch;
     }
 
-    function snapshotCellAttributes(cell, keys) { // FIX: retain absent versus empty attribute state
-        const value = cell?.value;
-        const snapshot = {};
-        for (const key of keys || []) {
-            const present = typeof value?.hasAttribute === 'function'
-                ? value.hasAttribute(key)
-                : cell?.getAttribute?.(key) != null;
-            snapshot[key] = {
-                present,
-                value: present ? String(cell?.getAttribute?.(key) ?? value?.getAttribute?.(key) ?? '') : null
-            };
-        }
-        return snapshot;
-    }
-
     function writeCellAttribute(cell, key, value, model = null) { // FIX: support true removal during rollback
         const node = cell?.value;
         if (!node) return;
@@ -15643,36 +15628,6 @@ function createScheduler(ui, referenceScope = null) { // NEW
         }
     }
 
-    function restoreCellAttributeSnapshot(cell, snapshot, model = null) {
-        for (const [key, prior] of Object.entries(snapshot || {})) {
-            writeCellAttribute(cell, key, prior.present ? prior.value : null, model);
-        }
-    }
-
-    async function runCompensatedSaveSteps({
-        applyGraphPatch,
-        persist,
-        finalizeGraph,
-        restoreGraphPatch
-    }) { // FIX: centralize graph compensation for every required save step
-        let graphPatchStarted = false;
-        try {
-            if (typeof persist === 'function') await persist();
-            if (typeof applyGraphPatch === 'function') { graphPatchStarted = true; await applyGraphPatch(); }
-            if (typeof finalizeGraph === 'function') await finalizeGraph();
-        } catch (error) {
-            if (graphPatchStarted) {
-                try {
-                    await restoreGraphPatch();
-                } catch (rollbackError) {
-                    console.error('[Scheduler] Graph attribute rollback failed', rollbackError);
-                }
-            }
-            throw error;
-        }
-    }
-
-
     async function applyScheduleToGraph(ui, cell, inputs, options = {}) {
         const hasTargetCreator = typeof options.createTargetCell === 'function'; // CHANGE: bed-first scheduling creates the planting group during Save.
         if (!hasTargetCreator) requireCanSchedulePlantingGroup(cell);
@@ -15682,14 +15637,6 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const result = options.result || computeScheduleResult(inputs);
         const schedule = result.schedule;
         const timelines = result.timelines;
-
-        function runTrellisHistoryTransaction(metadata, operation) {
-            const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history;
-            if (history && typeof history.run === "function" && !(typeof history.isRestoring === "function" && history.isRestoring())) {
-                return history.run(metadata, operation);
-            }
-            return operation();
-        }
 
         function getSchedulerTaskReplacementCommand() {
             const tasksApi = typeof window !== "undefined" && window.USL && window.USL.tasks;
@@ -15734,134 +15681,53 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const model = graph.getModel();
         const attributePatch = buildScheduleAttributePatch(inputs, result, options);
         Object.assign(attributePatch, options.targetAttributePatch || {});
-        const attributeSnapshot = hasTargetCreator ? null : snapshotCellAttributes(cell, Object.keys(attributePatch)); // CHANGE
-        const geometrySnapshot = hasTargetCreator ? null : cell?.getGeometry?.()?.clone?.() || null; // CHANGE
-        const extraAttributePatches = (options.extraAttributePatches || []).filter(spec => spec && spec.cell && spec.patch);
-        const extraAttributeSnapshots = extraAttributePatches.map(spec => ({
-            cell: spec.cell,
-            snapshot: snapshotCellAttributes(spec.cell, Object.keys(spec.patch)),
-            geometry: spec.cell?.getGeometry?.()?.clone?.() || null
-        }));
-        const taskReplacementBase = await buildTaskReplacementForPlan({
-            method,
-            plant,
-            cell,
-            schedule,
-            timelines,
-            plantId: Number(inputs?.plant?.plant_id ?? null),
-            varietyId: inputs?.varietyId ?? null,
-            varietyName: inputs?.varietyName ?? '',
-            methodCategoryId: normId(inputs?.methodCategoryId),
-            methodId: normId(inputs?.methodId),
-            taskTemplate: options.taskTemplate ?? null
-        });
-        const applySchedulerTaskReplacement = getSchedulerTaskReplacementCommand();
-        if (!applySchedulerTaskReplacement) throw new Error("Cannot save schedule tasks: Task manager command is unavailable.");
+        const extraAttributePatches = (options.extraAttributePatches || []).filter(spec => spec && spec.cell && spec.patch); // CHANGE
+        const context = graph.__trellisEditContext || window.TrellisEditContext.install(ui); // CHANGE
         let appliedTargetCell = cell; // CHANGE
-        const preexistingIds = new Set(Object.keys(model.cells || {})), createdIds = new Set(); // CHANGE: rollback cleanup owns only IDs created by this save.
-        let graphPatchEdit = null; // CHANGE: compensate generated tasks with their source, using the native transaction.
-        let graphMutationStarted = false; // CHANGE: cancellation before mutation must not restore an obsolete snapshot.
-
-        const applyGraphPatch = async () => {
-            await graph.__trellisSharing?.whenEditingReady?.(); // CHANGE: complete prior claim acquisition without flushing the autosave queue.
-            if (options.isCurrent && !options.isCurrent()) throw new Error('Scheduler closed before the schedule could be saved.'); // CHANGE
-            const editContext = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
-            const onBlocked = holds => { // CHANGE: both preflight layers report their captured blocker without scheduling a second save action.
-                const error = new Error('Schedule and task updates deferred: ' + editContext.describeHolds(holds) + '. Your schedule entries remain in this editor. Resolve the edit, then click Save again.'); // CHANGE
-                error.code = 'TRELLIS_EDIT_BLOCKED'; throw error; // CHANGE
-            }; // CHANGE
-            const dependencies = () => [cell, ...(window.USL.tasks?.automationCellsForSource?.(cell?.id) || Object.values(model.cells || {}).filter(item => String(item.getAttribute?.('linkedTo') || '').split(',').map(id => id.trim()).includes(String(cell?.id))))]; // CHANGE: include boards whose reflow is part of task generation.
-            editContext?.run('manual', { id: 'schedule-save:' + cell?.id, title: 'Schedule and generated tasks', cells: dependencies, manualSources: [cell], includeAncestors: false, exactCells: () => [model.getParent(cell)], onBlocked }, () => true); // CHANGE: allow the initiating source hold; a genuine conflict stays in this editor for manual retry.
-            return runTrellisHistoryTransaction({ category: "Garden scheduling", action: "saveSchedule", origin: "Garden_Scheduler_Dialog", title: "Save schedule and generated tasks", affectedCellIds: [cell && cell.id].filter(Boolean), tags: ["Tasks"] }, function () {
-                model.beginUpdate();
-                const creationEdit = model.currentEdit, creationStart = creationEdit?.changes?.length || 0; graphPatchEdit = creationStart === 0 ? creationEdit : null; // CHANGE: failed target/task creation is reversed before publication to Undo history.
-                try {
-                    graphMutationStarted = true; // CHANGE: once graph mutation starts, complete it or compensate.
-                    const targetCell = hasTargetCreator ? options.createTargetCell({ graph, model, inputs, result, attributePatch, schedule, timelines, onBlocked }) : cell; // CHANGE
-                    if (!targetCell || !isTilerGroup(targetCell)) throw new Error('Scheduler save target is not a planting group.'); // CHANGE
-                    appliedTargetCell = targetCell; // CHANGE
-                    applyCellAttributePatch(targetCell, attributePatch, model);
-                    graph.__trellisReferences?.pin(targetCell, referenceScope?.manifestId); // NEW
-                    if (options.targetGeometryRect) setCellAbsoluteRect(graph, targetCell, options.targetGeometryRect, model);
-                    extraAttributePatches.forEach(spec => {
-                        applyCellAttributePatch(spec.cell, spec.patch, model);
-                        if (spec.geometryRect) setCellAbsoluteRect(graph, spec.cell, spec.geometryRect, model);
-                    });
-                    const taskReplacement = Object.assign({}, taskReplacementBase, { targetGroupId: targetCell.id }); // CHANGE
-                    applySchedulerTaskReplacement(taskReplacement, { insideUpdate: true });
-                    const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
-                    extraAttributePatches.forEach(spec => {
-                        if (spec.retile && tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, spec.cell, { inTransaction: true, preferInPlace: true });
-                    });
-                    if (!hasTargetCreator && options.preserveTargetGeometry) { // CHANGE: new proposal targets already contain their final circles or LOD summary.
-                        if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, targetCell, { inTransaction: true });
-                    } else if (!hasTargetCreator) { // CHANGE
-                        retileAndFitGroupIfAvailable(graph, targetCell, { source: 'schedule-save' });
-                    }
-                } catch (error) { // CHANGE
-                    if (creationEdit?.changes) { // CHANGE: reverse only this save's provisional mutations, including generated tasks and extra patches.
-                        const changes = creationEdit.changes.splice(creationStart); // CHANGE
-                        for (let index = changes.length - 1; index >= 0; index--) changes[index].execute(); // CHANGE
-                        for (const change of changes) { // CHANGE: intermediate rendering must not retain detached provisional shapes.
-                            const changedCell = change.child || change.cell; // CHANGE
-                            if (changedCell && !model.contains(changedCell)) graph.removeStateForCell?.(changedCell); // CHANGE
-                        } // CHANGE
-                        appliedTargetCell = cell; graphMutationStarted = false; graph.refresh(); // CHANGE
+        const outcome = await context.commit({ // CHANGE: one owner covers planting, generated tasks, companion layout and final rendering.
+            id: 'schedule-save:' + cell.id, editor: options.editor, recoveryEditor: options.recoveryEditor, cells: () => [cell, ...extraAttributePatches.map(spec => spec.cell)], // CHANGE
+            isCurrent: () => !options.isCurrent || options.isCurrent(), // CHANGE
+            prepare: async ({ assertCurrent }) => { // CHANGE
+                await graph.__trellisSharing?.whenEditingReady?.(); assertCurrent(); // CHANGE
+                const taskReplacementBase = await buildTaskReplacementForPlan({ method, plant, schedule, timelines, plantId: Number(inputs?.plant?.plant_id ?? null), varietyId: inputs?.varietyId ?? null, varietyName: inputs?.varietyName ?? '', methodCategoryId: normId(inputs?.methodCategoryId), methodId: normId(inputs?.methodId), taskTemplate: options.taskTemplate ?? null }); // CHANGE
+                const applySchedulerTaskReplacement = getSchedulerTaskReplacementCommand(); // CHANGE
+                if (!applySchedulerTaskReplacement) throw new Error('Cannot save schedule tasks: Task manager command is unavailable.'); // CHANGE
+                const companionDefaults = await prepareScheduleCompanionDefaults(graph, cell, inputs, options, result); assertCurrent(); // CHANGE: preflight uses the proposed bed occupancy rather than the previous schedule.
+                const dependencies = () => [cell, ...(window.USL.tasks?.automationCellsForSource?.(cell.id) || []), ...(companionDefaults?.cells || []), ...extraAttributePatches.map(spec => spec.cell)]; // CHANGE
+                const onBlocked = holds => { const error = new Error('Schedule and task updates deferred: ' + context.describeHolds(holds) + '. Your schedule entries remain in this editor. Resolve the edit, then click Save again.'); error.code = 'TRELLIS_EDIT_BLOCKED'; throw error; }; // CHANGE
+                return { cells: dependencies, manualSources: [cell], includeAncestors: false, exactCells: () => [model.getParent(cell)], onBlocked, assertCurrent: () => companionDefaults?.assertCurrent(), // CHANGE
+                    metadata: { category: 'Garden scheduling', action: 'saveSchedule', origin: 'Garden_Scheduler_Dialog', title: 'Save schedule and generated tasks', affectedCellIds: [cell.id], tags: ['Tasks'] }, // CHANGE
+                    apply: () => { // CHANGE
+                        if (!hasTargetCreator) requireCanSchedulePlantingGroup(cell); // CHANGE
+                        const target = hasTargetCreator ? options.createTargetCell({ graph, model, inputs, result, attributePatch, schedule, timelines, onBlocked }) : cell; // CHANGE
+                        if (!target || !isTilerGroup(target)) throw new Error('Scheduler save target is not a planting group.'); // CHANGE
+                        appliedTargetCell = target; // CHANGE
+                        applyCellAttributePatch(target, attributePatch, model); graph.__trellisReferences?.pin(target, referenceScope?.manifestId); // CHANGE
+                        if (options.targetGeometryRect) setCellAbsoluteRect(graph, target, options.targetGeometryRect, model); // CHANGE
+                        const tiler = window.USL?.tiler; // CHANGE
+                        extraAttributePatches.forEach(spec => { // CHANGE
+                            applyCellAttributePatch(spec.cell, spec.patch, model); // CHANGE
+                            if (spec.geometryRect) setCellAbsoluteRect(graph, spec.cell, spec.geometryRect, model); // CHANGE
+                            if (spec.retile) tiler?.retileGroup?.(graph, spec.cell, { inTransaction: true, preferInPlace: true }); // CHANGE
+                        }); // CHANGE
+                        applySchedulerTaskReplacement({ ...taskReplacementBase, targetGroupId: target.id }, { insideUpdate: true }); // CHANGE
+                        if (!hasTargetCreator && options.preserveTargetGeometry) tiler?.retileGroup?.(graph, target, { inTransaction: true }); // CHANGE
+                        else if (!hasTargetCreator) retileAndFitGroupIfAvailable(graph, target, { source: 'schedule-save' }); // CHANGE
+                        return target; // CHANGE
+                    }, // CHANGE
+                    finalize: target => { // CHANGE
+                        if (!model.contains(target)) throw new Error('The planting could not be committed.'); // CHANGE
+                        companionDefaults?.(target); // CHANGE
+                        graph.refresh(target); extraAttributePatches.forEach(spec => graph.refresh(spec.cell)); // CHANGE
+                        requestSelectionVisualsRefresh(graph, target); // CHANGE
+                        if (hasTargetCreator) graph.setSelectionCell?.(target); // CHANGE
                     } // CHANGE
-                    throw error; // CHANGE
-                } finally {
-                    for (const change of creationEdit?.changes?.slice(creationStart) || []) if (change.constructor?.name === 'mxChildChange' && change.child && !preexistingIds.has(String(change.child.id))) createdIds.add(String(change.child.id)); // CHANGE
-                    model.endUpdate();
-                }
-                if (creationEdit?.__trellisUsersRejected || hasTargetCreator && !model.contains(appliedTargetCell)) { graphMutationStarted = false; throw new Error(creationEdit?.__trellisUsersRejectedReason || 'The planting could not be committed.'); } // CHANGE // CHANGE: host permission rejection cannot be reported as a successful creation.
-                graph.refresh(appliedTargetCell);
-                extraAttributePatches.forEach(spec => graph.refresh(spec.cell));
-            });
-        };
-
-        const restoreGraphPatch = async () => {
-            if (!graphMutationStarted) return; // CHANGE
-            if (graphPatchEdit && !graphPatchEdit.undone) { // CHANGE: reverting the native edit also restores tasks, links and board reflow.
-                if (graph.__trellisSharing?.rejectOperation) graph.__trellisSharing.rejectOperation(graphPatchEdit, 'Schedule application failed; its graph changes were reverted.'); // CHANGE
-                else graphPatchEdit.undo(); // CHANGE
-                const undo = ui.editor.undoManager; // CHANGE
-                if (Array.isArray(undo?.history)) { // CHANGE: Undo must not resurrect a failed schedule.
-                    const index = undo.history.indexOf(graphPatchEdit); if (index >= 0) { undo.history.splice(index, 1); if (index < undo.indexOfNextAdd) undo.indexOfNextAdd--; }
-                } // CHANGE
-                graphMutationStarted = false; graph.refresh(); return; // CHANGE
+                }; // CHANGE
             } // CHANGE
-            model.beginUpdate();
-            try {
-                if (hasTargetCreator && appliedTargetCell !== cell && model.contains(appliedTargetCell)) graph.removeCells([appliedTargetCell]); // CHANGE: failed bed-first saves must not leave provisional plantings behind.
-                if (attributeSnapshot) restoreCellAttributeSnapshot(cell, attributeSnapshot, model); // CHANGE
-                if (geometrySnapshot && typeof model.setGeometry === 'function') model.setGeometry(cell, geometrySnapshot);
-                extraAttributeSnapshots.forEach(spec => restoreCellAttributeSnapshot(spec.cell, spec.snapshot, model));
-                extraAttributeSnapshots.forEach(spec => { if (spec.geometry && typeof model.setGeometry === 'function') model.setGeometry(spec.cell, spec.geometry); });
-            } finally {
-                model.endUpdate();
-            }
-            graph.refresh(appliedTargetCell || cell);
-            extraAttributeSnapshots.forEach(spec => graph.refresh(spec.cell));
-        };
-
-        try { await runCompensatedSaveSteps({ // CHANGE
-            applyGraphPatch,
-            persist: options.afterGraphUpdate,
-            finalizeGraph: async () => {
-                if (options.applyCompanionSetDefaults) {
-                    await applyScheduleCompanionSetDefaults(graph, appliedTargetCell || cell, options.spacingLayoutBaseline || null, { force: !!options.forceCompanionSetDefaults }); // CHANGE: schedule saves can reapply anchorless companion-set defaults after occupancy changes.
-                }
-                graph.refresh(appliedTargetCell || cell);
-                requestSelectionVisualsRefresh(graph, appliedTargetCell || cell);
-                if (hasTargetCreator && graph.setSelectionCell) graph.setSelectionCell(appliedTargetCell); // CHANGE: select only a successfully completed planting.
-            },
-            restoreGraphPatch
-        }); } catch (error) { // CHANGE
-            try { await graph.__trellisSharing?.releaseRemovedCreations?.([...createdIds]); } catch (releaseError) { console.error('[Scheduler] Failed creation activity cleanup', releaseError); } // CHANGE
-            throw error; // CHANGE
-        } // CHANGE
-        return appliedTargetCell; // CHANGE: non-closing commits bind subsequent edits to the created planting.
-    }
+        }); // CHANGE
+        if (!['applied', 'unchanged'].includes(outcome.status)) throw outcome.error; // CHANGE: the shared owner also cleans up holds on removed provisional objects.
+        return appliedTargetCell; // CHANGE: persistence and selected reusable defaults have independent outcomes.
+    } // CHANGE
 
     function readGraphCellAttribute(cell, key) {
         if (cell && typeof cell.getAttribute === 'function') return cell.getAttribute(key);
@@ -16233,6 +16099,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
                 return tiler.createPlantingFromProposal({
                     graph,
                     moduleCell,
+                    bedCell, // CHANGE: geometry proposals contain no live cells; retain the actual bed for nested creation preflight.
                     proposal,
                     attributes: attributePatch, // CHANGE
                     source: 'bed-schedule-create',
@@ -17515,22 +17382,24 @@ function createScheduler(ui, referenceScope = null) { // NEW
         return JSON.stringify([cell.getGeometry(), cell.getStyle?.() || cell.style || '', names.map(name => cell.getAttribute(name)), cell.getAttribute('lod_layout_snapshot_v1'), children]); // CHANGE
     } // CHANGE
 
-    /** Generate touching rows in a common local frame; effective diameters are frozen in the resulting draft. */ // CHANGE
+    /** Generate whole-centimetre row spacing in a common frame; rounding may change circle contact. */ // CHANGE:
     function generateCompanionPairLayout(activeGraph, rows, pattern = 'aligned') { // CHANGE
         if (rows.length !== 2 || !['aligned', 'staggered'].includes(pattern)) throw new Error('Choose two plantings and a row layout.'); // CHANGE
         const initial = buildSpacingPreviewModel(activeGraph, rows).rows; // CHANGE
         if (initial.length !== 2 || initial.some(row => !row.groupPreview)) throw new Error('Planting preview tools are unavailable.'); // CHANGE
         const pxPerCm = 5 * 0.18, previews = initial.map(row => row.groupPreview); // CHANGE
-        const diameters = previews.map(preview => preview.iconDiameterPx), pitch = Math.max(...diameters); // CHANGE
+        const diameters = previews.map(preview => preview.iconDiameterPx), diameterPitch = Math.max(...diameters); // CHANGE:
         const radiusSum = (diameters[0] + diameters[1]) / 2; // CHANGE
-        const separation = pattern === 'staggered' ? Math.sqrt(radiusSum * radiusSum - pitch * pitch / 4) : radiusSum; // CHANGE
-        if (!Number.isFinite(separation) || separation <= 0 || 2 * separation < pitch - 1e-7) throw new Error('Staggered touching rows cannot fit these circle sizes without intersecting. Use Aligned or manual spacing.'); // CHANGE
+        const touchingSeparation = pattern === 'staggered' ? Math.sqrt(radiusSum * radiusSum - diameterPitch * diameterPitch / 4) : radiusSum; // CHANGE:
+        if (!Number.isFinite(touchingSeparation) || touchingSeparation <= 0 || 2 * touchingSeparation < diameterPitch - 1e-7) throw new Error('Staggered rows cannot fit these circle sizes. Use Aligned or manual spacing.'); // CHANGE:
+        const spacingXCm = normalizeSpacingCm(diameterPitch / pxPerCm), spacingYCm = normalizeSpacingCm(2 * touchingSeparation / pxPerCm); // CHANGE:
+        const pitch = spacingXCm * pxPerCm, separation = spacingYCm * pxPerCm / 2; // CHANGE: pattern offsets share the corrected row spacing.
         const frame = rows[0].rect, baseBounds = previews[0].contentBounds; // CHANGE
         const top = Math.max(...previews.map(preview => preview.contentBounds.minY)); // CHANGE
         const bounds = { minX: baseBounds.minX, maxX: baseBounds.maxX, minY: top, maxY: baseBounds.maxY }; // CHANGE
         return rows.map((row, index) => Object.assign({}, row, { // CHANGE
             rect: Object.assign({}, frame), modelRect: rows[0].modelRect, rotationDeg: rows[0].rotationDeg, // CHANGE
-            spacingXCm: pitch / pxPerCm, spacingYCm: 2 * separation / pxPerCm, vegDiameterCm: diameters[index] / pxPerCm, // CHANGE
+            spacingXCm, spacingYCm, vegDiameterCm: diameters[index] / pxPerCm, // CHANGE:
             offsetXCm: (index && pattern === 'staggered' ? pitch / 2 : 0) / pxPerCm, // CHANGE
             offsetYCm: (top + pitch / 2 + index * separation - previews[index].contentBounds.minY - separation) / pxPerCm, // CHANGE
             clipBounds: bounds, resetDisabled: true, generatedPattern: pattern, strictFootprint: false // CHANGE
@@ -17571,10 +17440,9 @@ function createScheduler(ui, referenceScope = null) { // NEW
             setDefault: setInfo.default, hasSetDefault: !!setInfo.default, companionTargets: [target] }; // CHANGE
     } // CHANGE
 
-    async function buildSpacingLayoutRows(activeGraph, selectedCell) {
+    function spacingLayoutRowsFromData(activeGraph, selectedCell, plants, bedRelationships) { // CHANGE: pure graph/definition projection, usable inside an atomic commit.
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         const context = spacingLayoutContextForCell(activeGraph, selectedCell);
-        const bedRelationships = await companionBedRelationships(activeGraph, selectedCell); // CHANGE
         if (bedRelationships) { // CHANGE
             context.cellIds = Array.from(new Set([...(context.cellIds || []), ...bedRelationships.companion.map(item => item.groupId)])); // CHANGE
             context.enabledIds = Array.from(new Set([...(context.enabledIds || context.cellIds || []), ...bedRelationships.companion.map(item => item.groupId)])); // CHANGE
@@ -17585,7 +17453,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
             const cell = model && typeof model.getCell === 'function' ? model.getCell(cellId) : null;
             if (!cell || !isTilerGroup(cell)) continue;
             const plantId = cellPlantId(cell);
-            const plant = plantId != null ? await PlantModel.loadById(plantId) : null;
+            const plant = plants.get(String(plantId)) || null; // CHANGE: all definition reads finish before graph application.
             const defaults = plantSpacingDefaults(plant);
             const bed = findContainingBedForScheduleCell(cell);
             const offsets = spacingBedOffsetForCell(cell, bed);
@@ -17616,18 +17484,28 @@ function createScheduler(ui, referenceScope = null) { // NEW
                 bedRect: graphRectForCell(bed)
             }); // CHANGE: diagram overlay receives editable spacing rows without owning scheduler internals.
         }
-        const activeRows = rows.filter(row => row.enabled && row.plantId != null);
-        const setInfo = activeRows.length > 1 ? await CompanionSetLayoutDefaultModel.loadForRows(activeRows) : { exactKey: '', broadKey: '', default: null };
-        const companionTargets = bedRelationships && !bedRelationships.incompatible.length // CHANGE
-            ? bedRelationships.companion.map(item => rows.find(row => row.cellId === item.groupId)).filter(Boolean) : []; // CHANGE
-        return Object.assign({}, context, { // CHANGE
-            rows, companionTargets, bedRelationships, layoutSource: setInfo.default && activeRows.every(row => spacingLayoutMatches(row, setDefaultRowForSpacingRow(setInfo.default, row))) ? 'Saved layout' : 'Custom', // CHANGE
-            activeSetKey: setInfo.exactKey,
-            activeBroadSetKey: setInfo.broadKey,
-            setDefault: setInfo.default,
-            hasSetDefault: !!setInfo.default
-        }); // CHANGE: spacing context carries anchorless set-default availability for the overlay.
-    }
+        return Object.assign({}, context, { rows, bedRelationships }); // CHANGE
+    } // CHANGE
+
+    /** Preserve the public asynchronous reader while sharing its pure row projection with commits. */ // CHANGE
+    async function buildSpacingLayoutRows(activeGraph, selectedCell) { // CHANGE
+        const bedRelationships = await companionBedRelationships(activeGraph, selectedCell); // CHANGE
+        const context = spacingLayoutContextForCell(activeGraph, selectedCell), model = activeGraph.getModel(); // CHANGE
+        const ids = new Set([...(context.cellIds || []), ...(bedRelationships?.companion || []).map(item => item.groupId)]); // CHANGE
+        const plants = new Map(); // CHANGE
+        await Promise.all([...ids].map(async id => { const cell = model.getCell(id), plantId = cellPlantId(cell); if (plantId != null) plants.set(String(plantId), await PlantModel.loadById(plantId, { readOnly: true })); })); // CHANGE
+        const projected = spacingLayoutRowsFromData(activeGraph, selectedCell, plants, bedRelationships); // CHANGE
+        const activeRows = projected.rows.filter(row => row.enabled && row.plantId != null); // CHANGE
+        const setInfo = activeRows.length > 1 ? await CompanionSetLayoutDefaultModel.loadForRows(activeRows) : { exactKey: '', broadKey: '', default: null }; // CHANGE
+        return spacingLayoutContextWithDefaults(projected, setInfo); // CHANGE
+    } // CHANGE
+
+    /** Attach the selected set default without mutating either the graph or its definitions. */ // CHANGE
+    function spacingLayoutContextWithDefaults(context, setInfo) { // CHANGE
+        const { rows, bedRelationships } = context, activeRows = rows.filter(row => row.enabled && row.plantId != null); // CHANGE
+        const companionTargets = bedRelationships && !bedRelationships.incompatible.length ? bedRelationships.companion.map(item => rows.find(row => row.cellId === item.groupId)).filter(Boolean) : []; // CHANGE
+        return Object.assign({}, context, { rows, companionTargets, bedRelationships, layoutSource: setInfo.default && activeRows.every(row => spacingLayoutMatches(row, setDefaultRowForSpacingRow(setInfo.default, row))) ? 'Saved layout' : 'Custom', activeSetKey: setInfo.exactKey, activeBroadSetKey: setInfo.broadKey, setDefault: setInfo.default, hasSetDefault: !!setInfo.default }); // CHANGE
+    } // CHANGE
 
     /** Use the planting owner's policy, including zero and nullable legacy crop defaults. */ // CHANGE
     function cropAllowedOverhangPct(value) { // CHANGE
@@ -17713,8 +17591,8 @@ function createScheduler(ui, referenceScope = null) { // NEW
         normalizeSpacingDraftRows(rows).forEach(row => {
             if (!row.enabled) return;
             const label = row.label || row.cellId || 'Planting';
-            if (!(row.spacingXCm > 0)) errors.push(label + ': Spacing X must be a positive number.');
-            if (!(row.spacingYCm > 0)) errors.push(label + ': Spacing Y must be a positive number.');
+            if (!Number.isInteger(row.spacingXCm) || row.spacingXCm < 1) errors.push(label + ': Spacing X must be a positive integer.'); // CHANGE:
+            if (!Number.isInteger(row.spacingYCm) || row.spacingYCm < 1) errors.push(label + ': Spacing Y must be a positive integer.'); // CHANGE:
             if (row.offsetXCm == null) errors.push(label + ': Offset X must be a finite number.');
             if (row.offsetYCm == null) errors.push(label + ': Offset Y must be a finite number.');
             if (row.allowedOverhangPct == null || row.allowedOverhangPct < 0 || row.allowedOverhangPct > 50) errors.push(label + ': Allowed overhang must be between 0% and 50%.'); // CHANGE
@@ -17827,9 +17705,14 @@ function createScheduler(ui, referenceScope = null) { // NEW
         }
     }
 
-    function applyLayoutRowsToGraph(activeGraph, rows) { // CHANGE: synchronous edits can join the atomic allocation transaction.
+    function applyLayoutRowsToGraph(activeGraph, rows, options = {}) { // CHANGE: nested layout commands still preflight their actual affected objects.
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         if (!activeGraph || !model) throw new Error('Graph is unavailable.');
+        const context = activeGraph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+        if (context?.apply && !options.insideCommit) { // CHANGE
+            const cells = (rows || []).filter(row => row.enabled !== false).map(row => graphCellById(activeGraph, row.cellId)).filter(Boolean); // CHANGE
+            return context.apply({ cells, manualSources: context.committing() ? [] : (rows || []).filter(row => row.selected).map(row => graphCellById(activeGraph, row.cellId)), includeAncestors: false, finalize: () => cells.forEach(cell => activeGraph.refresh(cell)) }, () => applyLayoutRowsToGraph(activeGraph, rows, { insideCommit: true })); // CHANGE
+        } // CHANGE
         const editable = prepareSpacingBedFitRows(activeGraph, normalizeSpacingDraftRows(rows)).filter(row => row.enabled); // CHANGE
         const geometryValidation = validateSpacingDraftGeometry(activeGraph, editable); // CHANGE
         const preview = buildSpacingPreviewModel(activeGraph, editable); // CHANGE
@@ -17911,9 +17794,8 @@ function createScheduler(ui, referenceScope = null) { // NEW
         }
     }
 
-    async function applyScheduleCompanionSetDefaults(activeGraph, cell, beforeContext, options = {}) {
-        const afterContext = await captureSpacingLayoutContext(activeGraph, cell);
-        if (!afterContext) return null;
+    /** Apply a prepared companion layout synchronously so failure restores the entire owning commit. */ // CHANGE
+    function applyScheduleCompanionLayouts(activeGraph, afterContext, beforeContext, options = {}) { // CHANGE
         const beforeKey = spacingContextKey(beforeContext);
         const afterKey = spacingContextKey(afterContext);
         if (!options.force && beforeKey === afterKey) return null;
@@ -17945,6 +17827,49 @@ function createScheduler(ui, referenceScope = null) { // NEW
         return applyLayoutRowsToGraph(activeGraph, rowsToApply); // CHANGE: schedule changes reapply set/plant defaults without overwriting manual layout edits.
     }
 
+    /** Preload definitions only; the resulting finalizer reads the post-application graph synchronously. */ // CHANGE
+    async function prepareScheduleCompanionDefaults(activeGraph, source, inputs, options, result) { // CHANGE
+        if (!options.applyCompanionSetDefaults) return null; // CHANGE
+        const model = activeGraph.getModel(), garden = findGardenModuleAncestor(model, source); // CHANGE
+        if (!garden) return null; // CHANGE
+        const cells = Object.values(model.cells || {}).filter(cell => isTilerGroup(cell) && findGardenModuleAncestor(model, cell) === garden); // CHANGE
+        const before = new Map(cells.map(cell => [cell, spacingCellRevision(cell)])); // CHANGE: asynchronous definition reads cannot bless changed companion geometry.
+        const bed = findContainingBedForScheduleCell(source), startISO = derivedOccupancyStartISO(result), endISO = derivedOccupancyEndISO(result); // CHANGE
+        const tiler = globalThis.window.USL?.tiler, initialOccupancy = tiler?.listPlantingFootprints?.(garden, { includeUndatedOccupancy: true }) || []; // CHANGE
+        const linkedIds = () => new Set([...(options.spacingLayoutBaseline?.rows || []).filter(row => row.enabled).map(row => String(row.cellId)), ...(spacingLayoutContextForCell(activeGraph, source).enabledIds || []).map(String)]); // CHANGE: explicit layout members remain dependencies even across beds.
+        const initialLinked = linkedIds(); // CHANGE
+        const relationships = await listAllocationOverlapRelationships(inputs.plant.plant_id); // CHANGE
+        const byPlant = new Map(relationships.map(item => [String(item.companionPlantId), item])); // CHANGE
+        const relevantCells = (occupancy, linked) => { // CHANGE: reuse the layout's exact bed/date relationship policy before examining editing holds.
+            const summary = bed ? summarizeBedRelationships(occupancy.map(item => ({ ...item, conflictKind: byPlant.get(String(item.plantId))?.conflictKind || 'unknown' })), bed.id, startISO, endISO, source.id) : null; // CHANGE
+            const ids = new Set([...linked, ...(summary?.companion || []).map(item => String(item.groupId))]); // CHANGE
+            return cells.filter(cell => ids.has(String(cell.id))); // CHANGE
+        }; // CHANGE
+        const relevant = relevantCells(initialOccupancy, initialLinked), plants = new Map(); // CHANGE
+        const ids = new Set([String(inputs.plant.plant_id), ...relevant.map(cell => String(cellPlantId(cell)))]); // CHANGE
+        await Promise.all([...ids].map(async id => { if (id && id !== 'null') plants.set(id, await PlantModel.loadById(id, { readOnly: true })); })); // CHANGE
+        const defaults = await queryAll('SELECT * FROM CompanionSetLayoutDefaults;', []); // CHANGE
+        const byKey = new Map(defaults.map(row => [row.crop_set_key, CompanionSetLayoutDefaultModel.parseRow(row)])); // CHANGE
+        const finalize = target => { // CHANGE
+            const bed = findContainingBedForScheduleCell(target), window = sourceOccupancyWindowForDerived(target), tiler = globalThis.window.USL?.tiler; // CHANGE
+            const occupancy = tiler?.listPlantingFootprints?.(garden, { includeUndatedOccupancy: true }) || []; // CHANGE
+            const relationships = bed && window ? summarizeBedRelationships(occupancy.map(item => ({ ...item, conflictKind: byPlant.get(String(item.plantId))?.conflictKind || 'unknown' })), bed.id, window.startISO, window.endISO, target.id) : null; // CHANGE
+            const projected = spacingLayoutRowsFromData(activeGraph, target, plants, relationships), activeRows = projected.rows.filter(row => row.enabled && row.plantId != null); // CHANGE
+            const exactKey = CompanionSetLayoutDefaultModel.cropSetKey(activeRows, false), broadKey = CompanionSetLayoutDefaultModel.cropSetKey(activeRows, true); // CHANGE
+            const after = spacingLayoutContextWithDefaults(projected, { exactKey, broadKey, default: byKey.get(exactKey) || byKey.get(broadKey) || null }); // CHANGE
+            return applyScheduleCompanionLayouts(activeGraph, after, options.spacingLayoutBaseline || null, { force: !!options.forceCompanionSetDefaults }); // CHANGE
+        }; // CHANGE
+        finalize.cells = relevant; // CHANGE: other beds and non-overlapping crops cannot block schedule creation.
+        finalize.assertCurrent = () => { // CHANGE: unrelated edits are harmless, but membership and relevant layout inputs must remain current.
+            const currentOccupancy = tiler?.listPlantingFootprints?.(garden, { includeUndatedOccupancy: true }) || []; // CHANGE
+            const currentLinked = linkedIds(), current = relevantCells(currentOccupancy, currentLinked); // CHANGE
+            const initialIds = new Set(relevant.map(cell => String(cell.id))); // CHANGE
+            const addedCompanion = bed && summarizeBedRelationships(currentOccupancy.map(item => ({ ...item, conflictKind: byPlant.get(String(item.plantId))?.conflictKind || 'unknown' })), bed.id, startISO, endISO, source.id).companion.some(item => !initialIds.has(String(item.groupId))); // CHANGE
+            if (addedCompanion || [...currentLinked].some(id => !initialLinked.has(id)) || [...initialLinked].some(id => !currentLinked.has(id)) || current.length !== relevant.length || relevant.some(cell => model.getCell(cell.id) !== cell || spacingCellRevision(cell) !== before.get(cell))) { const error = new Error('A companion planting changed while preparing the schedule. Review and save again.'); error.code = 'TRELLIS_EDIT_STALE'; throw error; } // CHANGE
+        }; // CHANGE
+        return finalize; // CHANGE
+    } // CHANGE
+
     async function applySpacingDraft(activeGraph, rows, options = {}) {
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         if (!activeGraph || !model) throw new Error('Graph is unavailable.');
@@ -17959,12 +17884,16 @@ function createScheduler(ui, referenceScope = null) { // NEW
         if (!validation.ok) throw new Error(validation.errors.join('\n'));
         const result = applyLayoutRowsToGraph(activeGraph, normalized); // CHANGE
         result.overhangDefaults = await saveOverhangDefaultsForRows(normalized, activeGraph); // CHANGE: a database failure never rolls back a valid diagram edit.
-        if (options.saveDefaults) await saveSpacingDefaultsForRows(normalized, activeGraph, model); // CHANGE: only persist reusable defaults after a successful graph commit.
+        if (options.saveDefaults) { // CHANGE: default retry cannot reapply the spacing or regenerate circles.
+            const context = activeGraph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
+            if (context?.saveDefaults) result.defaults = await context.saveDefaults({ id: 'spacing-defaults:' + normalized.map(row => row.cellId).sort().join(','), title: 'Spacing applied', notify: true, tasks: [{ name: 'spacing defaults', save: async guard => { guard(); await saveSpacingDefaultsForRows(normalized, activeGraph, model); } }] }); else await saveSpacingDefaultsForRows(normalized, activeGraph, model); // CHANGE
+        } // CHANGE
         return result; // CHANGE
     }
 
     const layoutTools = {
         buildSpacingLayoutRows, // CHANGE
+        normalizeSpacingCm, // CHANGE: shared editor and generated layouts use the same whole-centimetre rule.
         summarizeBedRelationships, prepareCompanionPair, generateCompanionPairLayout, saveSpacingDefaultsForRows, applyLayoutRowsToGraph, setDefaultRowForSpacingRow, // CHANGE
         saveOverhangDefaultsForRows, // CHANGE: automatic crop-only defaults run after successful Apply/Create.
         validateSpacingDraft,
@@ -18825,10 +18754,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
             resolveStartAfterWindow,
             requireCanSchedulePlantingGroup,
             buildScheduleAttributePatch,
-            snapshotCellAttributes,
             applyCellAttributePatch,
-            restoreCellAttributeSnapshot,
-            runCompensatedSaveSteps,
             applyScheduleToGraph, prepareBedScheduleCreation, // CHANGE: exercise real new-planting transactions and cancellation through the test-only surface.
             readGraphCellAttribute,
             normalizeLinkedCellIds,

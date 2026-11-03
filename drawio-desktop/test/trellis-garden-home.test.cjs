@@ -400,6 +400,63 @@ test('unsaved navigation cancellation leaves draft and document untouched', asyn
     assert.equal(await f.window.TrellisGardenHome.openPath(f.ui, 'garden.drawio'), false);
     assert.deepEqual(f.calls, []);
 });
+
+test('desktop opening reuses the current garden without a prompt, read, or reload', async () => { // NEW
+    const f = fixture(), file = { fileObject: { path: 'C:\\Gardens\\Current.drawio' }, isModified: () => true, savingFile: true }; f.setCurrent(file); // NEW
+    let prompts = 0, reads = 0; f.ui.confirm = () => prompts++; f.ui.readGraphFile = () => reads++; // NEW
+    assert.equal(await f.window.TrellisGardenHome.openRequested(f.ui, { path: 'c:/gardens/current.drawio' }), true); // NEW
+    assert.equal(f.ui.getCurrentFile(), file); assert.equal(prompts, 0); assert.equal(reads, 0); // NEW
+}); // NEW
+
+test('rapid desktop openings share no prompts or queued navigation, and retry works after Cancel', async () => { // NEW
+    const f = fixture(), file = { isModified: () => true }; f.setCurrent(file); let cancel, prompts = 0, reads = 0; // NEW
+    f.ui.confirm = (_message, no) => { prompts++; cancel = no; }; f.ui.readGraphFile = success => { reads++; success({ path: '/retry' }, '<mxGraphModel><root/></mxGraphModel>', {}, 'Retry', false); }; // NEW
+    const first = f.window.TrellisGardenHome.openRequested(f.ui, { path: '/first' }); await tick(); // NEW
+    assert.equal(await f.window.TrellisGardenHome.openRequested(f.ui, { path: '/second' }), false); cancel(); assert.equal(await first, false); await tick(); // NEW
+    assert.equal(prompts, 1); assert.equal(reads, 0); assert.equal(f.ui.getCurrentFile(), file); // NEW
+    f.ui.confirm = (_message, _no, yes) => yes(); assert.equal(await f.window.TrellisGardenHome.openRequested(f.ui, { path: '/retry' }), true); // NEW
+    assert.equal(reads, 1); assert.equal(f.ui.getCurrentFile().fileObject.path, '/retry'); assert.equal(f.window.document.querySelector('.trellis-editor-open-notice'), null); // NEW
+}); // NEW
+
+test('changes to an already dirty garden during verification invalidate the discard approval', async () => { // NEW
+    const f = fixture(), file = { isModified: () => true }; f.setCurrent(file); let content = 'before', finish, reads = 0; // NEW
+    f.ui.getXmlFileData = () => content; f.window.mxUtils.getXml = value => value; f.window.trellisGardenLibrary.prepareOpen = () => new Promise(resolve => { finish = resolve; }); // NEW
+    f.ui.readGraphFile = () => reads++; const opening = f.window.TrellisGardenHome.openRequested(f.ui, { path: '/next' }); await tick(); content = 'new unsaved edit'; finish({ path: '/next' }); // NEW
+    await assert.rejects(opening, /current garden changed/); assert.equal(reads, 0); assert.equal(f.ui.getCurrentFile(), file); assert.equal(f.ui.__trellisGardenOpening, false); // NEW
+}); // NEW
+
+test('document changes and renewed label editing during a file read preserve the current garden', async () => { // NEW
+    for (const change of ['document', 'typing']) { // NEW
+        const f = fixture(), file = { isModified: () => false }, replacement = { isModified: () => true }; f.setCurrent(file); let finish, editing = false; // NEW
+        f.ui.editor = { graph: { isEditing: () => editing } }; f.ui.readGraphFile = success => { finish = success; }; // NEW
+        const opening = f.window.TrellisGardenHome.openRequested(f.ui, { path: '/next' }); await tick(); if (change === 'document') f.setCurrent(replacement); else editing = true; // NEW
+        finish({ path: '/next' }, '<mxGraphModel><root/></mxGraphModel>', {}, 'Next', false); await assert.rejects(opening, /current garden changed/); // NEW
+        assert.equal(f.ui.getCurrentFile(), change === 'document' ? replacement : file); assert.equal(f.ui.__trellisGardenOpening, false); // NEW
+    } // NEW
+}); // NEW
+
+test('busy saves, renames, retirement, loading, and dialogs reject desktop opens without stacking notices', async () => { // NEW
+    for (const reason of ['savingFile', '__trellisCollaborativeSaving', '__trellisNamingMove', 'retirement', 'spinner', 'startup', 'dialog']) { // NEW
+        const f = fixture(), file = { isModified: () => false }; f.setCurrent(file); const state = f.window.TrellisGardenHome.install(f.ui); let reads = 0; f.ui.readGraphFile = () => reads++; // NEW
+        if (reason === 'retirement') state.retirement = {}; else if (reason === 'spinner') f.ui.spinner = { active: true }; else if (reason === 'startup') f.ui.__trellisCheckingDrafts = true; else if (reason === 'dialog') f.ui.showDialog(f.window.document.createElement('form'), 200, 100, true, true); else file[reason] = true; // NEW
+        const dialog = f.ui.dialog; assert.equal(await f.window.TrellisGardenHome.openRequested(f.ui, { path: '/next' }), false); assert.equal(await f.window.TrellisGardenHome.openRequested(f.ui, { path: '/another' }), false); // NEW
+        assert.equal(f.ui.dialog, dialog); assert.equal(f.ui.getCurrentFile(), file); assert.equal(reads, 0); assert.equal(f.window.document.querySelectorAll('.trellis-editor-open-notice').length, 1); // NEW
+    } // NEW
+}); // NEW
+
+test('New reuses Garden Projects from Trash and focuses visible garden creation without discarding', async () => { // NEW
+    const f = fixture(), file = { isModified: () => true }; f.setCurrent(file); f.setSession({ identityId: 'alice', username: 'Alice' }); let prompts = 0; f.ui.confirm = () => prompts++; // NEW
+    f.window.TrellisGardenHome.showProjects(f.ui); await tick(); const state = f.ui.__trellisGardenHome, root = state.projectsRoot; state.projectSectionToggles.private.click(); state.setProjectView('trash'); // NEW
+    await f.ui.actions.get('new').funct(); await tick(); const create = state.creationButtons.find(control => control.dataset.quickstartProjectKind === 'private'); // NEW
+    assert.equal(state.projectsRoot, root); assert.equal(state.view, 'active'); assert.equal(f.window.document.activeElement, create); assert.equal(create.hidden, false); assert.equal(prompts, 0); assert.equal(f.ui.getCurrentFile(), file); // NEW
+}); // NEW
+
+test('desktop IPC installs once and reports opening failures without replacing the garden', async () => { // NEW
+    const f = fixture(), listeners = new Map(), errors = [], file = { isModified: () => false }; f.setCurrent(file); // NEW
+    f.window.electron = { registerMsgListener(name, listener) { assert.equal(listeners.has(name), false); listeners.set(name, listener); } }; f.ui.handleError = error => errors.push(error); // NEW
+    f.window.TrellisGardenHome.install(f.ui); f.window.TrellisGardenHome.install(f.ui); assert.equal(listeners.size, 2); listeners.get('trellisEditorOpen')({ path: '/missing' }); await tick(); // NEW
+    assert.match(errors[0].message, /Missing/); assert.equal(f.ui.getCurrentFile(), file); listeners.get('trellisEditorBusy')(); assert.match(f.window.document.querySelector('[role=status]').textContent, /open the garden again/); // NEW
+}); // NEW
 test('Browse opening failures show an error dialog and restore focus without replacing library state', async () => { // NEW
     for (const failure of [new Error('File not found'), new Error('Permission denied'), 'Read failed', null, {}]) { // NEW
         const f = fixture(), previous = { isModified: () => false }; f.setCurrent(previous); // NEW
@@ -722,7 +779,7 @@ test('search folds are temporary and survive typing, refreshes and identity chan
     assert.equal(state.sharedRows.hidden, false); assert.equal(state.privateRows.hidden, false); // NEW
     assert.equal(f.window.localStorage.getItem(foldStorageKey('bob')), null); f.dom.window.close(); // NEW
 }); // NEW
-test('section folds survive refresh, Trash navigation and reopening and hide creation', async () => { // NEW
+test('section folds survive browsing and an explicit creation request reveals its control', async () => { // CHANGE
     const f = fixture(); f.setSession({ identityId: 'alice', username: 'Alice' }); // NEW
     f.window.TrellisGardenHome.showProjects(f.ui); await tick(); let state = f.ui.__trellisGardenHome; // NEW
     state.projectSectionToggles.private.click(); // NEW
@@ -732,8 +789,8 @@ test('section folds survive refresh, Trash navigation and reopening and hide cre
         assert.equal(state.privateRows.parentNode.hidden, label === 'Trash'); // NEW
     } // NEW
     f.ui.hideDialog(); f.window.TrellisGardenHome.showProjects(f.ui, { focus: 'create' }); await tick(); state = f.ui.__trellisGardenHome; // NEW
-    assert.equal(state.privateRows.hidden, true); assert.equal(f.window.document.activeElement, state.creationButtons[0]); // NEW
-    assert.equal(state.creationButtons[1].hidden, true); f.dom.window.close(); // NEW
+    assert.equal(state.privateRows.hidden, false); assert.equal(f.window.document.activeElement, state.creationButtons[1]); // CHANGE
+    assert.equal(state.creationButtons[1].hidden, false); f.dom.window.close(); // CHANGE
 }); // NEW
 test('invalid or unavailable fold storage defaults safely and storage failures keep in-memory choices', async () => { // NEW
     for (const value of ['broken', 'null', 'true', '{"shared":"true","private":1}', '{"shared":true,"private":"bad"}']) { // NEW
@@ -1003,6 +1060,19 @@ test('modal cancellation preserves the library, traps focus, and resolves refres
         await new Promise(resolve => setTimeout(resolve, 5)); assert.equal(f.ui.dialogs.length, 1); assert.equal(f.ui.dialog.container.firstChild, root); assert.equal(root.inert, false); // CHANGE
         assert.equal(f.window.document.activeElement.getAttribute('data-project-focus'), 'garden:menu'); assert.equal(search.value, 'Apple'); assert.equal(root.scrollTop, 123); assert.equal(root.querySelector('details[data-project-details="garden:locations"]').open, true); // CHANGE
     } // CHANGE
+}); // CHANGE
+
+test('confirmation focus containment includes only its active Quickstart companion', async () => { // CHANGE
+    const f = await removalFixture(); f.state.projectsRoot.querySelector('[data-project-focus="garden:remove"]').click(); await tick(); // CHANGE
+    const prompt = f.state.confirmation, owner = f.ui.dialog.container, companion = f.window.document.createElement('section'); // CHANGE
+    companion.innerHTML = '<button>Move Quickstart</button><div hidden><button>Hidden guidance</button></div><button>Close Quickstart</button>'; f.window.document.body.appendChild(companion); // CHANGE
+    f.ui.editor = { graph: { __trellisQuickstart: { getCompanion: element => element === owner ? companion : null } } }; // CHANGE
+    const key = shiftKey => f.window.document.activeElement.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true })); // CHANGE
+    prompt.controls.lastChild.focus(); key(false); assert.equal(f.window.document.activeElement, companion.firstChild); // CHANGE
+    key(false); assert.equal(f.window.document.activeElement, companion.lastChild); key(false); assert.equal(f.window.document.activeElement, prompt.controls.firstChild); // CHANGE
+    key(true); assert.equal(f.window.document.activeElement, companion.lastChild); // CHANGE
+    f.state.searchControl.focus(); assert.equal(f.window.document.activeElement, prompt.controls.lastChild); // CHANGE
+    prompt.controls.lastChild.click(); // CHANGE
 }); // CHANGE
 
 test('cancelling after the originating project disappears falls back to library search', async () => { // CHANGE

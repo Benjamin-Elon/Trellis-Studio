@@ -111,6 +111,28 @@
     window.Trellis.ui.classForVariant = window.Trellis.ui.classForVariant || classForVariant;
     window.Trellis.ui.ensureButtonStyles = window.Trellis.ui.ensureButtonStyles || ensureButtonStyles;
 
+    /** Shared, opt-in surfaces. A scope supplies its existing base/ink colors; roles never own layout or stacking. */ // NEW
+    function ensureSurfaceStyles(doc) { // NEW
+        const owner = doc || window.document; // NEW
+        if (!owner || owner.getElementById('trellis-shared-surface-styles')) return; // NEW
+        const style = owner.createElement('style'); // NEW
+        style.id = 'trellis-shared-surface-styles'; // NEW
+        style.textContent = `
+            .trellis-surfaces{--trellis-surface-base:#fff;--trellis-surface-ink:#172033;--trellis-surface-canvas:color-mix(in srgb,var(--trellis-surface-base) 94%,var(--trellis-surface-ink));--trellis-surface-header:color-mix(in srgb,var(--trellis-surface-base) 90%,var(--trellis-surface-ink));--trellis-surface-inset:color-mix(in srgb,var(--trellis-surface-base) 97%,var(--trellis-surface-ink));--trellis-surface-border:color-mix(in srgb,var(--trellis-surface-base) 76%,var(--trellis-surface-ink));--trellis-surface-shadow:0 1px 3px rgba(0,0,0,.12)} /* NEW */
+            .trellis-surfaces[data-trellis-surface-theme="editor"]{--trellis-surface-base:light-dark(#fff,var(--ge-dark-panel-color,#2a2a2a));--trellis-surface-ink:light-dark(var(--text-color,#172033),var(--dark-text-color,#e5e7eb))} /* NEW: only dialogs that already inherit the editor palette follow its color scheme. */
+            .trellis-surfaces[data-trellis-surface="canvas"],.trellis-surfaces [data-trellis-surface="canvas"]{background:var(--trellis-surface-canvas)} /* NEW */
+            .trellis-surfaces[data-trellis-surface="section"],.trellis-surfaces [data-trellis-surface="section"]{box-sizing:border-box;background:var(--trellis-surface-base);border:1px solid var(--trellis-surface-border);border-radius:8px;box-shadow:var(--trellis-surface-shadow)} /* NEW */
+            .trellis-surfaces[data-trellis-surface="header"],.trellis-surfaces [data-trellis-surface="header"]{background:var(--trellis-surface-header)} /* NEW */
+            .trellis-surfaces[data-trellis-surface="inset"],.trellis-surfaces [data-trellis-surface="inset"]{box-sizing:border-box;background:var(--trellis-surface-inset);border:1px solid var(--trellis-surface-border);border-radius:6px} /* NEW */
+            .trellis-surfaces[data-trellis-surface="entry"],.trellis-surfaces [data-trellis-surface="entry"]{background:var(--trellis-surface-base);border-color:var(--trellis-surface-border)} /* NEW */
+            .trellis-surfaces [data-trellis-surface="inset"] > [data-trellis-surface="header"]{background:var(--trellis-surface-inset)} /* NEW: nested headings have less contrast than main section headings. */
+            .trellis-surfaces :is([data-trellis-surface="section"],[data-trellis-surface="inset"]) > [data-trellis-surface="header"]:first-child{border-start-start-radius:inherit;border-start-end-radius:inherit} /* NEW: round header fills without clipping controls or focus outlines. */
+        `; // NEW
+        (owner.head || owner.documentElement).appendChild(style); // NEW
+    } // NEW
+    window.Trellis.ui.ensureSurfaceStyles = ensureSurfaceStyles; // NEW
+    ensureSurfaceStyles(); // NEW: install before plugin callbacks so existing and later-built surfaces share the same rules.
+
     let overlayGraphSequence = 0; // NEW
 
     /** Keep informational DOM alive, but remove it from rendering and hit-testing during manipulation. */ // NEW
@@ -966,7 +988,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function shouldPreserveMainToolbarChild(child, index) {
-        return index === 0 || !!(child && child.classList && child.classList.contains('geZoomInput'));
+        return index === 0 || !!(child && child.classList && child.classList.contains('geZoomInput')) || !!(child && child.dataset && child.dataset.trellisCanvasViewControls === '1'); // CHANGE: preserve personal view controls alongside native zoom.
     }
 
     function pruneMainToolbar() {

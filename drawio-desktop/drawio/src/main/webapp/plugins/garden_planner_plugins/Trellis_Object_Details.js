@@ -76,8 +76,9 @@
             const previous = entry.cell.value, value = previous && previous.nodeType === 1 ? previous.cloneNode(true) : mxUtils.createXmlDocument().createElement('object'); // CHANGE
             if (!previous || previous.nodeType !== 1) value.setAttribute('label', previous == null ? '' : String(previous)); // CHANGE
             if (raw) value.setAttribute(core.COMMENTS_ATTRIBUTE, raw); else value.removeAttribute(core.COMMENTS_ATTRIBUTE); // CHANGE
-            writing = true; entry.model.beginUpdate(); // CHANGE
-            try { entry.model.setValue(entry.cell, value); } finally { entry.model.endUpdate(); writing = false; } // CHANGE
+            const context = graph.__trellisEditContext || root.TrellisEditContext?.install(ui); // CHANGE
+            const apply = () => { entry.model.beginUpdate(); try { entry.model.setValue(entry.cell, value); } finally { entry.model.endUpdate(); } }; // CHANGE
+            writing = true; try { if (context?.apply) context.apply({ cells: [entry.cell], manualSources: [entry.cell], includeAncestors: false, editor: entry.editHold }, apply); else apply(); } finally { writing = false; } // CHANGE
             if (readComments(entry.cell) !== raw) throw new Error('The comment change was rejected.'); requestRefresh(); // CHANGE
         } // CHANGE
         function exists(entry) { return !disposed && entry.model === model() && entry.root === model().getRoot() && model().getCell(entry.cell.id) === entry.cell; } // NEW
@@ -116,8 +117,9 @@
             const value = previous && previous.nodeType === 1 ? previous.cloneNode(true) : mxUtils.createXmlDocument().createElement('object'); // NEW
             if (!previous || previous.nodeType !== 1) value.setAttribute('label', previous == null ? '' : String(previous)); // NEW
             if (html) value.setAttribute(core.ATTRIBUTE, html); else value.removeAttribute(core.ATTRIBUTE); // NEW
-            writing = true; entry.model.beginUpdate(); // NEW
-            try { entry.model.setValue(entry.cell, value); } finally { entry.model.endUpdate(); writing = false; } // NEW
+            const context = graph.__trellisEditContext || root.TrellisEditContext?.install(ui); // CHANGE
+            const apply = () => { entry.model.beginUpdate(); try { entry.model.setValue(entry.cell, value); } finally { entry.model.endUpdate(); } }; // CHANGE
+            writing = true; try { if (context?.apply) context.apply({ cells: [entry.cell], manualSources: [entry.cell], includeAncestors: false, editor: entry.editHold }, apply); else apply(); } finally { writing = false; } // CHANGE
             if (read(entry.cell) !== html) throw new Error('The change was rejected.'); // NEW
             entry.creating = !html && document.activeElement === entry.editor; requestRefresh(); // NEW
         } // NEW
@@ -196,9 +198,11 @@
         function createEntry(cell, creating) { // NEW
             const entry = { cell, model: model(), root: model().getRoot(), page: pageKey(), user: userKey(), identity: preferenceIdentity(cell), preferences: getPreferences(cell), creating: !!creating, error: null }; // CHANGE
             const panel = document.createElement('section'); entry.panel = panel; panel.className = 'trellis-object-details'; panel.dataset.collaborationObjectId = cell.id; // NEW
+            panel.classList.add('trellis-surfaces'); // NEW: shared surface hierarchy.
             panel.setAttribute('role', 'region'); panel.setAttribute('aria-label', 'Details — ' + title(cell)); // NEW
             panel.style.cssText = 'position:absolute;z-index:' + GRAPH_OVERLAY_Z.CONTROL + ';pointer-events:auto;display:flex;flex-direction:column;box-sizing:border-box;min-width:180px;min-height:100px;resize:both;overflow:hidden;border:1px solid #94a3b8;border-radius:5px;background:#fff;color:#111827;box-shadow:0 2px 7px #0002;font:13px/1.4 Arial,sans-serif;'; // NEW
             const header = document.createElement('div'); header.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 5px;border-bottom:1px solid #e2e8f0;flex-shrink:0;'; // NEW
+            header.dataset.trellisSurface = 'header'; // NEW: shared surface hierarchy.
             const label = document.createElement('span'); label.textContent = title(cell); label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;'; header.appendChild(label); // NEW
             entry.arrows = document.createElement('span'); entry.arrows.style.cssText = 'display:flex;gap:2px;'; header.appendChild(entry.arrows); // NEW
             for (const [side, arrow] of [['above', '↑'], ['below', '↓'], ['left', '←'], ['right', '→']]) { // NEW

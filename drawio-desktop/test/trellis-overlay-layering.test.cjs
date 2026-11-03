@@ -89,6 +89,8 @@ test("graph overlay plugins share a dialog-safe layer contract", () => {
         "Garden_Beds.js",
         "Garden_Structures.js", // NEW
         "Garden_Dashboard.js",
+        "Garden_Quickstart.js", // CHANGE: Quickstart uses the same dialog-safe control layer.
+        "Trellis_Syncthing.js", // CHANGE: expanded activity details use the dialog-safe top-control layer.
         "Garden_Task_Manager.js",
         "Garden_Irrigation_Planner.js",
         "Garden_Scale.js",

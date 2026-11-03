@@ -10,7 +10,8 @@ const profile = path.join(app.getPath('temp'), 'trellis-growth-preview-' + proce
 app.whenReady().then(async () => { // NEW
     const win = new BrowserWindow({ show: false, width: 1200, height: 800, webPreferences: { sandbox: false, backgroundThrottling: false } }); // NEW
     try { // NEW
-        await win.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><body style="margin:0;background:#f8fafc"><div id="graph" style="position:relative;width:1180px;height:760px;overflow:auto"></div></body>')); // NEW
+        await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<!doctype html><body style="margin:0;background:#f8fafc"><div class="geToolbarContainer" style="display:flex;height:42px;border-bottom:1px solid #ddd;padding:0 12px;box-sizing:border-box"><div id="main-toolbar" class="geToolbar"><button class="geButton" aria-label="View">View</button><input class="geButton geZoomInput" value="100%" aria-label="Zoom"></div><div class="geToolbarEnd" style="display:flex;flex-shrink:0;align-items:center;gap:8px"><button class="geButton">Benny</button><button class="geButton">Diagram 87.4 KiB · History 117.5 KiB</button><button class="geButton">History</button></div></div><div id="graph" style="position:relative;width:1180px;height:760px;overflow:auto"></div></body>')); // CHANGE: exercise canvas controls beside native zoom and existing right-hand actions.
+        await win.webContents.insertCSS(fs.readFileSync(path.join(webapp, 'styles/grapheditor.css'), 'utf8')); // NEW: inspect actual toolbar sizing, including at narrow widths.
         await win.webContents.executeJavaScript('window.mxLoadResources=false;window.mxLoadStylesheets=false;'); // NEW
         await win.webContents.executeJavaScript(fs.readFileSync(path.join(webapp, 'mxgraph/mxClient.js'), 'utf8')); // NEW
         await win.webContents.executeJavaScript(` // NEW
@@ -19,10 +20,11 @@ app.whenReady().then(async () => { // NEW
             graph.convertValueToString=cell=>cell.value?.getAttribute?.('label')||''; // NEW
             window.undoManager=new mxUndoManager(); graph.model.addListener(mxEvent.UNDO,(_,event)=>undoManager.undoableEditHappened(event.getProperty('edit'))); // NEW
             window.ui={editor:Object.assign(new mxEventSource(),{graph,undoManager}),actions:{get:()=>null},getXmlFileData:()=>new mxCodec().encode(graph.model),getCurrentFile:()=>({getId:()=> 'growth-preview'}),hideDialog(){}}; // CHANGE: exercise production local-view and file-encoding hooks.
+            ui.toolbar={container:document.getElementById('main-toolbar')}; // NEW: view checkboxes now belong to the zoom toolbar.
             window.Draw={loadPlugin:callback=>callback(ui)}; void 0; // NEW
         `); // NEW
         await win.webContents.executeJavaScript(fs.readFileSync(path.join(webapp, 'js/trellis-local-view.js'), 'utf8')); // NEW
-        for (const file of ['Garden_Scheduler_Shared_Core.js', 'Planting_Group.js', 'Garden_Dashboard.js']) await win.webContents.executeJavaScript(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins', file), 'utf8')); // NEW
+        for (const file of ['Garden_Scheduler_Shared_Core.js', 'Planting_Group.js', 'Garden_Dashboard.js', 'Vertex_Linking_Standalone.js']) await win.webContents.executeJavaScript(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins', file), 'utf8')); // CHANGE: load the real link-visibility owner too.
         const result = await win.webContents.executeJavaScript(` // NEW
             (async()=>{ // NEW
                 const xml=attrs=>{const node=mxUtils.createXmlDocument().createElement('object');for(const [key,value] of Object.entries(attrs))node.setAttribute(key,value);return node;}; // NEW
@@ -101,6 +103,15 @@ app.whenReady().then(async () => { // NEW
         await win.webContents.executeJavaScript('graph.setSelectionCell(graph.model.getCell("rotated"));graph.__trellisPlantingGroup.overlay.syncSelection();graph.__trellisPlantingGroup.growth.refresh();new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 150))))'); // CHANGE: capture both upright controls on the rotated planting.
         const screenshot = await win.webContents.capturePage(); // NEW
         fs.mkdirSync(path.join(root, 'test-results'), { recursive: true }); fs.writeFileSync(path.join(root, 'test-results/plant-growth-verified.png'), screenshot.toPNG()); // NEW
+        const toolbarLayout = async () => win.webContents.executeJavaScript(`(()=>{const toolbar=document.querySelector('.geToolbar'),zoom=toolbar.querySelector('.geZoomInput'),wrap=toolbar.querySelector('[data-trellis-canvas-view-controls]'),end=document.querySelector('.geToolbarEnd');const a=zoom.getBoundingClientRect(),b=wrap.getBoundingClientRect(),c=end.getBoundingClientRect();return{afterZoom:zoom.nextSibling===wrap,checkboxes:wrap.querySelectorAll('input[type=checkbox]').length,zoomWidth:a.width,controlsWidth:b.width,noOverlap:b.right<=c.left+1,withinWindow:c.right<=innerWidth};})()`); // NEW
+        const wideLayout = await toolbarLayout(); assert.equal(wideLayout.afterZoom, true); assert.equal(wideLayout.checkboxes, 2); assert.equal(wideLayout.noOverlap, true, JSON.stringify(wideLayout)); // NEW
+        win.setContentSize(800, 800); await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); // NEW
+        const narrowLayout = await toolbarLayout(); assert.equal(narrowLayout.noOverlap, true, JSON.stringify(narrowLayout)); assert.equal(narrowLayout.withinWindow, true); assert.ok(narrowLayout.zoomWidth > 30 && narrowLayout.controlsWidth > 0); // NEW
+        fs.writeFileSync(path.join(root, 'test-results/canvas-view-controls-narrow.png'), (await win.webContents.capturePage()).toPNG()); // NEW
+        win.setContentSize(560, 800); await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); // NEW
+        const crowdedLayout = await toolbarLayout(); assert.equal(crowdedLayout.noOverlap, true, JSON.stringify(crowdedLayout)); assert.equal(crowdedLayout.withinWindow, true); // NEW
+        const reachable = await win.webContents.executeJavaScript(`(()=>{const input=document.querySelector('[data-trellis-show-links]');input.focus();const a=input.getBoundingClientRect(),b=input.closest('[data-trellis-canvas-view-controls]').getBoundingClientRect();return a.left>=b.left&&a.right<=b.right;})()`); assert.equal(reachable, true, 'keyboard focus must scroll a clipped checkbox into view'); // NEW
+        win.setContentSize(1200, 800); console.log('CANVAS_VIEW_RESULT: ' + JSON.stringify({ wideLayout, narrowLayout, crowdedLayout })); // NEW
         const drawing = await win.webContents.executeJavaScript(`(()=>{const before=mxUtils.getXml(ui.getXmlFileData());USL.tiler.setPlantingGroupDetail(graph.model.getCell('growing'),false);return{canonical:mxUtils.getXml(ui.getXmlFileData()),before,projection:graph.getExportVariables().__trellisPlantingProjection};})()`); // NEW
         assert.equal(drawing.canonical, drawing.before, 'folding before export cannot change editable diagram data'); // NEW
         const exportWindow = new BrowserWindow({ show: false, width: 1200, height: 1000, webPreferences: { sandbox: false, backgroundThrottling: false } }); // NEW

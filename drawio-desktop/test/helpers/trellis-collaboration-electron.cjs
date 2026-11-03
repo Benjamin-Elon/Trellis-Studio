@@ -32,6 +32,7 @@ app.whenReady().then(async () => { // NEW
             window.ui={editor:{graph,setStatus(){},addListener(){}},getCurrentFile:()=>file,getFileData:()=>xml,watchFile:async()=>{},menus:{get:()=>null},actions:{addAction:()=>({})}};
             window.Draw={loadPlugin:fn=>fn(window.ui)};
             ${cleanup.slice(0, cleanup.indexOf('Draw.loadPlugin'))}
+            window.setInterval=()=>0; // CHANGE: this status fixture supplies observations explicitly; later navigations restore native polling.
             ${baselinePlugin}
             window.Trellis.sharing.showSharingDialog(); return null; } catch (error) { return error.stack; } })()
         `); if (setupResult) throw new Error(setupResult); // NEW
@@ -48,10 +49,66 @@ app.whenReady().then(async () => { // NEW
         fs.writeFileSync(path.join(output, 'approval.png'), (await win.webContents.capturePage()).toPNG()); // NEW
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); await new Promise(resolve => setTimeout(resolve, 50)); // NEW
         assert.equal(await win.webContents.executeJavaScript("!!document.querySelector('.trellis-collaboration-dialog')"), false); // NEW
+        const badgeStyle = await win.webContents.executeJavaScript("(()=>{const b=document.querySelector('[data-object-key]');b.dispatchEvent(new MouseEvent('mouseenter'));b.focus();const s=getComputedStyle(b);return{background:s.backgroundColor,opacity:s.opacity,color:s.color,border:s.borderTopColor,title:b.hasAttribute('title'),open:!!document.querySelector('[aria-label=\"Activity for Planting A\"]')}})()"); // CHANGE
+        assert.deepEqual(badgeStyle, { background: 'rgba(255, 255, 255, 0.5)', opacity: '1', color: 'rgb(29, 78, 216)', border: 'rgb(37, 99, 235)', title: false, open: false }); // CHANGE
+        for (const keyCode of ['Enter', 'Space']) { // CHANGE: verify actual Chromium button activation, including Space's character event.
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode }); // CHANGE
+            win.webContents.sendInputEvent({ type: 'char', keyCode: keyCode === 'Enter' ? '\r' : ' ' }); // CHANGE
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode }); await new Promise(resolve => setTimeout(resolve, 50)); // CHANGE
+            assert.equal(await win.webContents.executeJavaScript("document.activeElement.textContent"), 'Request release'); // CHANGE
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); await new Promise(resolve => setTimeout(resolve, 50)); // CHANGE
+            assert.equal(await win.webContents.executeJavaScript("document.activeElement===document.querySelector('[data-object-key]')&&!document.querySelector('[aria-label=\"Activity for Planting A\"]')"), true); // CHANGE
+            assert.equal(await win.webContents.executeJavaScript("getComputedStyle(document.activeElement).outlineStyle"), 'solid', 'Keyboard focus remains visible'); // CHANGE
+        } // CHANGE
+        await click(win, 'Alice · editing'); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript("getComputedStyle(document.querySelector('[aria-label=\"Activity for Planting A\"]')).zIndex"), '10030', 'First badge click opens top-layer details'); // CHANGE
+        await click(win, 'Alice · editing'); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript("!!document.querySelector('[aria-label=\"Activity for Planting A\"]')"), false, 'A second badge click closes details'); // CHANGE
+        await click(win, 'Alice · editing'); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript("getComputedStyle(document.querySelector('[aria-label=\"Activity for Planting A\"]')).zIndex"), '10030', 'Third badge click reopens details'); // CHANGE
+        const layerPoint = await win.webContents.executeJavaScript(`(() => { // CHANGE: append a later ordinary control so DOM order alone cannot make details win.
+            window.layerPanel=document.querySelector('[aria-label="Activity for Planting A"]'); // CHANGE
+            const bounds=layerPanel.getBoundingClientRect();window.layerProbe=document.createElement('div'); // CHANGE
+            layerProbe.style.cssText='position:fixed;left:'+bounds.left+'px;top:'+bounds.top+'px;width:'+bounds.width+'px;height:'+bounds.height+'px;background:white;z-index:10020'; // CHANGE
+            window.layerProbeClicks=0;layerProbe.onclick=()=>layerProbeClicks++;document.body.appendChild(layerProbe); // CHANGE
+            return {x:Math.round(bounds.left+20),y:Math.round(bounds.top+20)}; // CHANGE
+        })()`); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript(`layerPanel.contains(document.elementFromPoint(${layerPoint.x},${layerPoint.y}))`), true, 'Details cover ordinary controls'); // CHANGE
+        win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...layerPoint }); win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...layerPoint }); // CHANGE
+        await new Promise(resolve => setTimeout(resolve, 50)); // CHANGE
+        assert.deepEqual(await win.webContents.executeJavaScript('({open:layerPanel.isConnected,clicks:layerProbeClicks})'), { open: true, clicks: 0 }); // CHANGE
+        await win.webContents.executeJavaScript("layerProbe.style.zIndex='2000000000';void 0;"); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript(`document.elementFromPoint(${layerPoint.x},${layerPoint.y})===layerProbe`), true, 'Modal backdrops cover details'); // CHANGE
+        win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...layerPoint }); win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...layerPoint }); // CHANGE
+        await new Promise(resolve => setTimeout(resolve, 50)); // CHANGE
+        assert.deepEqual(await win.webContents.executeJavaScript('({open:layerPanel.isConnected,clicks:layerProbeClicks})'), { open: false, clicks: 1 }, 'Outside modal clicks keep their normal delivery and dismissal'); // CHANGE
+        await win.webContents.executeJavaScript('layerProbe.remove();void 0;'); // CHANGE
+        await click(win, 'Alice · editing'); await click(win, 'Close'); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript("document.activeElement===document.querySelector('[data-object-key]')"), true, 'Close restores the badge'); // CHANGE
+        await win.webContents.executeJavaScript(`(async()=>{ // CHANGE: place a second badge clear of the first panel for native switching.
+            window.switchState=(await trellisShare.getStatus()).canvases[0]; // CHANGE
+            window.originalActivityModel=ui.editor.graph.getModel;window.originalActivityView=ui.editor.graph.view.getState; // CHANGE
+            ui.editor.graph.getModel=()=>({...originalActivityModel(),getCell:id=>id==='other'?{id,getAttribute:name=>name==='label'?'Planting B':null}:originalActivityModel().getCell(id)}); // CHANGE
+            ui.editor.graph.view.getState=cell=>cell.id==='other'?{x:700,y:50,width:100,height:80}:originalActivityView(cell); // CHANGE
+            switchState.collaboration.holds.push({key:JSON.stringify(['','other']),userId:'bob',name:'Bob',sessionId:'other-remote'});fireStatus([switchState]); // CHANGE
+        })()`); // CHANGE
+        await click(win, 'Alice · editing'); await click(win, 'Bob · editing'); // CHANGE
+        assert.deepEqual(await win.webContents.executeJavaScript("({first:!!document.querySelector('[aria-label=\"Activity for Planting A\"]'),second:!!document.querySelector('[aria-label=\"Activity for Planting B\"]')})"), { first: false, second: true }, 'Another badge switches directly to its details'); // CHANGE
+        await click(win, 'Close'); // CHANGE
+        await win.webContents.executeJavaScript("switchState.collaboration.holds=switchState.collaboration.holds.filter(hold=>hold.sessionId!=='other-remote');ui.editor.graph.getModel=originalActivityModel;ui.editor.graph.view.getState=originalActivityView;fireStatus([switchState]);void 0;"); // CHANGE
+        await win.webContents.executeJavaScript("window.outsideClicks=0;document.getElementById('graph').addEventListener('click',()=>window.outsideClicks++);void 0;"); // CHANGE
+        await click(win, 'Alice · editing'); // CHANGE
+        win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: 900, y: 700 }); win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: 900, y: 700 }); await new Promise(resolve => setTimeout(resolve, 50)); // CHANGE
+        assert.deepEqual(await win.webContents.executeJavaScript("({clicks:outsideClicks,open:!!document.querySelector('[aria-label=\"Activity for Planting A\"]'),focus:document.activeElement.id})"), { clicks: 1, open: false, focus: 'graph' }, 'Outside clicks dismiss details and still reach the graph'); // CHANGE
+        for (const background of ['grid', 'bed', 'glyphs']) { // CHANGE: capture representative busy canvas backgrounds without changing production assets.
+            await win.webContents.executeJavaScript(`(()=>{const graph=document.getElementById('graph');graph.style.backgroundColor=${JSON.stringify(background === 'grid' ? '#ffffff' : '#b8dca2')};graph.style.backgroundImage=${JSON.stringify(background === 'glyphs' ? "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Ccircle cx='14' cy='14' r='13' fill='%23cedc99' stroke='%23374125'/%3E%3Ctext x='4' y='18' font-size='11'%3EDILL%3C/text%3E%3C/svg%3E\")" : 'linear-gradient(#0001 1px,transparent 1px),linear-gradient(90deg,#0001 1px,transparent 1px)')};graph.style.backgroundSize=${JSON.stringify(background === 'glyphs' ? '28px 28px' : '12px 12px')};document.activeElement.blur();return new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()`); // CHANGE
+            fs.writeFileSync(path.join(output, 'badge-' + background + '.png'), (await win.webContents.capturePage({ x: 270, y: 60, width: 330, height: 120 })).toPNG()); // CHANGE
+        } // CHANGE
+        await win.webContents.executeJavaScript("document.getElementById('graph').style.background='';void 0;"); // CHANGE
         await click(win, 'Alice · editing'); // NEW
-        assert.equal(await win.webContents.executeJavaScript("document.activeElement.textContent"), 'Request release', 'Pinning gives keyboard access to coordination actions'); // NEW
+        assert.equal(await win.webContents.executeJavaScript("document.activeElement.textContent"), 'Request release', 'Clicking gives keyboard access to coordination actions'); // CHANGE
         win.webContents.sendInputEvent({ type: 'mouseMove', x: 900, y: 700 }); await new Promise(resolve => setTimeout(resolve, 150)); // NEW
-        assert.equal(await win.webContents.executeJavaScript("!!document.querySelector('[aria-label=\"Activity for Planting A\"]')"), true, 'Pinned popovers survive pointer departure'); // NEW
+        assert.equal(await win.webContents.executeJavaScript("!!document.querySelector('[aria-label=\"Activity for Planting A\"]')"), true, 'Click-open details survive pointer departure'); // CHANGE
         await win.webContents.executeJavaScript("(async()=>{ui.editor.graph.view.getState=()=>({x:80,y:90,width:300,height:200});window.fireStatus((await window.trellisShare.getStatus()).canvases);})()"); // NEW
         assert.equal(await win.webContents.executeJavaScript("document.querySelector('[data-object-key]').style.left"), '384px', 'Badges follow graph view geometry'); // NEW
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); await new Promise(resolve => setTimeout(resolve, 50)); // NEW
@@ -59,25 +116,32 @@ app.whenReady().then(async () => { // NEW
         await win.webContents.executeJavaScript(`(async()=>{ // CHANGE
             window.statusFixture=(await trellisShare.getStatus()).canvases[0];window.statusRevision=0;window.statusCalls=[];statusFixture.connectedCollaborators=0; // CHANGE
             window.pendingStatus=[{userId:'alice',name:'Alice',deviceId:'peer',sessionId:'old-session',online:false,saveState:'pending',targets:[JSON.stringify(['','planting'])]}]; // CHANGE
-            window.statusSnapshot=()=>({sessionId:'native-local',actorUserId:'admin',observationRevision:++statusRevision,holds:[],presence:[],reservations:[],pendingChanges:pendingStatus}); // CHANGE
+            window.viewingStatus=[];window.statusSnapshot=()=>({sessionId:'native-local',actorUserId:'admin',observationRevision:++statusRevision,holds:[],presence:viewingStatus,reservations:[],pendingChanges:pendingStatus}); // CHANGE: drive fresh/expired presence through the same native activity path as pending-work notifications.
             trellisShare.activityAction=async input=>{statusCalls.push(input);return{ok:true,collaboration:statusSnapshot()}};statusFixture.collaboration=statusSnapshot();fireStatus([statusFixture]); // CHANGE
         })()`); // CHANGE
         await click(win, 'Alice · changed · pending project save · offline · status unconfirmed'); // CHANGE
         const pendingStatus = await win.webContents.executeJavaScript(`(()=>{const p=document.querySelector('[aria-label="Activity for Planting A"]');return{text:p.textContent,buttons:[...p.querySelectorAll('button')].filter(b=>!b.hidden).map(b=>b.textContent),focused:document.activeElement.textContent}})()`); // CHANGE
         assert.match(pendingStatus.text, /current save status is unknown/); assert.match(pendingStatus.text, /this notice does not block editing/); assert.match(pendingStatus.text, /Working locally\. No other computers are connected/); // CHANGE
-        assert.deepEqual(pendingStatus.buttons, ['Refresh status', 'Close']); assert.equal(pendingStatus.focused, 'Refresh status'); // CHANGE
+        assert.deepEqual(pendingStatus.buttons, ['Close']); assert.equal(pendingStatus.focused, 'Close'); // CHANGE: automatic activity updates replace the manual refresh control.
         await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); // CHANGE: capture the committed pending-status frame in the hidden window.
         fs.writeFileSync(path.join(output, 'pending-without-hold.png'), (await win.webContents.capturePage()).toPNG()); // CHANGE
         await win.webContents.executeJavaScript('window.eventsBeforeStatus=editorEvents;window.focusedStatusControl=document.activeElement;window.statusPanel=document.querySelector(\'[aria-label="Activity for Planting A"]\');void 0;'); // CHANGE
-        await click(win, 'Refresh status'); assert.deepEqual(await win.webContents.executeJavaScript('statusCalls.map(call=>call.kind)'), ['snapshot']); // CHANGE
-        assert.equal(await win.webContents.executeJavaScript('editorEvents===eventsBeforeStatus'), true, 'Status actions do not reach graph shortcuts'); // CHANGE
         await win.webContents.executeJavaScript('pendingStatus=[];statusFixture.collaboration=statusSnapshot();fireStatus([statusFixture]);void 0;'); // CHANGE
+        assert.deepEqual(await win.webContents.executeJavaScript('statusCalls.map(call=>call.kind)'), []); assert.equal(await win.webContents.executeJavaScript('editorEvents===eventsBeforeStatus'), true, 'Automatic updates do not reach graph shortcuts'); // CHANGE
         assert.equal(await win.webContents.executeJavaScript('document.activeElement===focusedStatusControl'), true, 'Live completion keeps keyboard focus'); // CHANGE
-        assert.match(await win.webContents.executeJavaScript('statusPanel.textContent'), /No pending changes or editing hold/); // CHANGE
+        assert.match(await win.webContents.executeJavaScript('statusPanel.textContent'), /No viewing activity, pending changes, or editing holds are currently reported for this object\./); // CHANGE
         await win.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); // CHANGE: wait for resolved-status paint before visual QA.
         fs.writeFileSync(path.join(output, 'resolved-pending-status.png'), (await win.webContents.capturePage()).toPNG()); // CHANGE
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' }); await new Promise(resolve => setTimeout(resolve, 50)); // CHANGE
         assert.equal(await win.webContents.executeJavaScript('statusPanel.isConnected'), false, 'Escape closes the pinned status dialog'); // CHANGE
+        await win.webContents.executeJavaScript(`viewingStatus=[{userId:'bob',name:'Bob',deviceId:'peer',sessionId:'viewer',online:true,targets:[JSON.stringify(['','planting'])]}];statusFixture.collaboration=statusSnapshot();fireStatus([statusFixture]);void 0;`); // CHANGE
+        await click(win, 'Bob · viewing'); // CHANGE
+        await win.webContents.executeJavaScript('window.viewingPanel=document.querySelector(\'[aria-label="Activity for Planting A"]\');window.viewingClose=document.activeElement;viewingStatus=[];statusFixture.collaboration=statusSnapshot();fireStatus([statusFixture]);void 0;'); // CHANGE
+        assert.deepEqual(await win.webContents.executeJavaScript('({open:viewingPanel.isConnected,badge:!!document.querySelector("[data-object-key]"),focused:document.activeElement===viewingClose})'), { open: true, badge: false, focused: true }, 'Automatic viewing expiry removes the badge and retains open details and keyboard focus'); // CHANGE
+        assert.match(await win.webContents.executeJavaScript('viewingPanel.textContent'), /No viewing activity, pending changes, or editing holds/); // CHANGE
+        await win.webContents.executeJavaScript(`viewingStatus=[{userId:'bob',name:'Bob',deviceId:'peer',sessionId:'viewer',online:true,targets:[JSON.stringify(['','planting'])]}];statusFixture.collaboration=statusSnapshot();fireStatus([statusFixture]);void 0;`); // CHANGE
+        assert.match(await win.webContents.executeJavaScript('viewingPanel.textContent'), /Bob is viewing/); await click(win, 'Close'); // CHANGE
+        assert.equal(await win.webContents.executeJavaScript('document.activeElement===document.querySelector("[data-object-key]")'), true, 'Close restores the reconnected viewing badge'); // CHANGE
         await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<!doctype html><div id="graph" style="position:relative;width:800px;height:600px"></div>')); // NEW
         await win.webContents.executeJavaScript(fs.readFileSync(path.join(project, 'drawio/src/main/webapp/js/trellis-sync-contract.js'), 'utf8')); // CHANGE: navigation creates a fresh renderer global.
         await win.webContents.executeJavaScript('window.mxLoadResources=false;window.mxLoadStylesheets=false;'); // NEW
