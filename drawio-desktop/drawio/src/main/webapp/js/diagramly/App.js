@@ -3954,6 +3954,7 @@ App.prototype.filterDrafts = function(filePath, guid, callback)
  */
 App.prototype.checkDrafts = function()
 {
+	var startupFile = this.getCurrentFile(), startupDialog = this.dialog, startupDiscovery = {}; this.__trellisDraftDiscovery = startupDiscovery; // CHANGE: asynchronous discovery must not replace a later user-owned view.
 	try
 	{
 		// Triggers storage event for other windows to mark active drafts
@@ -3966,6 +3967,8 @@ App.prototype.checkDrafts = function()
 
 			this.filterDrafts(null, guid, mxUtils.bind(this, function(drafts)
 			{
+				if (this.__trellisDraftDiscovery !== startupDiscovery) return; // CHANGE: a newer discovery owns its own completion and busy state.
+				if (this.getCurrentFile() !== startupFile || this.dialog !== startupDialog) { this.__trellisCheckingDrafts = false; return; } // CHANGE: opening Home, another dialog, or a document retires this startup callback without deleting drafts.
 				if (drafts.length == 1)
 				{
 					this.loadDraft(drafts[0].data, mxUtils.bind(this, function()

@@ -1504,6 +1504,7 @@ Draw.loadPlugin(function (ui) {
         if (previous) for (const change of [...(changes || [])].reverse()) { // NEW
             const cell = cellFromChange(change); if (!cell) continue; // NEW
             const key = permissionCellKey(cell), fact = cells.get(key) || extras.get(key), name = change.constructor?.name; if (!fact) continue; // NEW
+            if (absent.has(key) && name !== 'mxChildChange') continue; // CHANGE: earlier detached initialization cannot resurrect an object before its insertion.
             const old = { ...fact, attributes: { ...fact.attributes } }; // NEW
             if (name === 'mxChildChange') { // NEW
                 if (!change.previous) { cells.delete(key); absent.add(key); continue; } // CHANGE

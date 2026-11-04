@@ -58,13 +58,22 @@ test('scoped native incoming patches preserve unrelated edits, selection and edi
     undo.undo(); assert.equal(a.value, 'A1'); assert.equal(b.value, 'B1');
 });
 
-test('rejected holds close only the matching details and discard their private comment draft', async t => {
+test('lost holds freeze matching details and preserve comments until explicit discard', async t => { // CHANGE
     const h = setup(t), a = h.vertex('a', 'Details'), b = h.vertex('b', 'Other');
+    h.w.eval(fs.readFileSync(path.join(webapp, 'js/trellis-editing-holds.js'), 'utf8')); // CHANGE
+    const holds = h.w.TrellisEditingHolds.create(h.ui, { isCollaborative: () => true, status() {}, claim: async () => ({ ok: true }), release: async () => {} }); // CHANGE
+    h.w.Trellis.sharing = { registerEditor: config => holds.register(config) }; // CHANGE
+    t.after(() => holds.reset()); // CHANGE
     h.controller.open(a); h.controller.open(b);
     const panel = [...h.w.document.querySelectorAll('.trellis-object-details')].find(node => node.dataset.collaborationObjectId === a.id);
     panel.querySelector('[data-details-tab="comments"]').click();
     const composer = panel.querySelector('.trellis-comment-editor'); composer.innerHTML = '<p>Unapplied draft</p>'; composer.dispatchEvent(new h.w.InputEvent('input', { bubbles: true }));
-    h.controller.rejectHolds([JSON.stringify(['page-a', 'a'])]);
+    const targets = [JSON.stringify(['page-a', 'a'])]; holds.freeze(targets, 'Editing hold ended'); // CHANGE
+    assert.equal(panel.isConnected, true); assert.equal(panel.hasAttribute('data-trellis-frozen'), true); // CHANGE
+    assert.match(JSON.stringify(holds.capture(targets)), /Unapplied draft/); // CHANGE
+    const other = [...h.w.document.querySelectorAll('.trellis-object-details')].find(node => node.dataset.collaborationObjectId === b.id); // CHANGE
+    assert.equal(other.hasAttribute('data-trellis-frozen'), false); // CHANGE
+    holds.discard(targets); // CHANGE: only an explicit action may delete the retained draft.
     assert.equal(panel.isConnected, false);
     assert.equal([...h.w.document.querySelectorAll('.trellis-object-details')].some(node => node.dataset.collaborationObjectId === b.id), true);
     assert.equal([...Array(h.w.localStorage.length).keys()].some(i => (h.w.localStorage.getItem(h.w.localStorage.key(i)) || '').includes('Unapplied draft')), false);

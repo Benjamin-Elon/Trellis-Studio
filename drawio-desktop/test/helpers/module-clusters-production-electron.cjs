@@ -70,7 +70,8 @@ app.whenReady().then(async () => { // NEW
     await until(async () => !!win, 'application window'); // NEW
     const run = script => win.webContents.executeJavaScript(script); // NEW
     await until(() => run('!!window.Draw?.loadPlugin && !!window.TrellisGardenHome').catch(() => false), 'plugin loader'); // NEW
-    await run('new Promise(resolve=>Draw.loadPlugin(ui=>{window.smokeUi=ui;resolve();}));'); // NEW
+    await run('new Promise(resolve=>Draw.loadPlugin(ui=>{window.smokeUi=ui;const loaded=ui.fileLoaded;ui.fileLoaded=function(){const result=loaded.apply(this,arguments);Promise.resolve(result).then(()=>{window.clusterInitialFileLoaded=true});return result;};resolve();}));'); // CHANGE // NEW
+    await until(() => run('!!window.clusterInitialFileLoaded && !smokeUi.openingFile'), 'initial file load'); // CHANGE: plugin installation precedes asynchronous startup; do not request a garden while the editor is busy.
     await run(`localStorage.setItem('trellis.licenseWizard.v2',JSON.stringify({version:'2',path:'personal',contactGuidance:false,oathCompletedAt:new Date().toISOString(),name:'Cluster Test',signature:'Cluster Test',email:'test@example.test'}));smokeUi.hideDialog();`); // NEW
     stage='test identity';console.log('PRODUCTION_STAGE:',stage); // NEW
     await run(`trellisIdentity.create({username:'Cluster benchmark',password:'local-test-password'})`); // NEW
@@ -78,7 +79,7 @@ app.whenReady().then(async () => { // NEW
     stage='test garden creation';console.log('PRODUCTION_STAGE:',stage); // NEW
     await run(`(async()=>{window.sample=await trellisGardenLibrary.create({name:'Cluster benchmark'});})()`); // NEW
     stage='test garden opening';console.log('PRODUCTION_STAGE:',stage); // NEW
-    await run(`TrellisGardenHome.openPath(smokeUi,sample.path)`); // NEW
+    await run(`TrellisGardenHome.openPath(smokeUi,sample.path).then(opened=>{if(!opened)throw Error('Fixture garden open refused: '+JSON.stringify({opening:smokeUi.openingFile,creating:smokeUi.__trellisGardenCreating,openingGarden:smokeUi.__trellisGardenOpening}));return true;})`); // CHANGE // NEW
     await until(() => run('!!smokeUi.editor.graph.__trellisModules?.clusters && !!smokeUi.getCurrentFile()'), 'opened test garden'); // NEW
     await run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); // NEW
     if (rendererErrors.length) throw Error('Production plugin startup failed: ' + rendererErrors.join('\n')); // NEW: a broken plugin set cannot provide an acceptance benchmark.

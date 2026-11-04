@@ -131,23 +131,41 @@ async function run() {
     const field = await window.webContents.executeJavaScript(`(async () => { // NEW: real renderer commands, preview pixels, durable save, and acknowledgment publication.
         const graph = smokeUi.editor.graph, worker = Trellis.users.getCurrentUser();
         const value = attributes => { const node = mxUtils.createXmlDocument().createElement('object'); for (const [name, text] of Object.entries(attributes)) node.setAttribute(name, text); return node; };
-        const garden = graph.insertVertex(null, 'smoke-garden', value({ garden_module: '1', label: 'Field preview' }), 400, 300, 600, 400, 'module=1;'); // CHANGE: exercise the real garden-module discovery path.
-        if (graph.model.getCell(garden.id) !== garden) throw new Error('Initial garden insertion failed: ' + JSON.stringify({ id: garden.id, parent: garden.parent?.id, modelCells: Object.keys(graph.model.cells), attrs: garden.value?.outerHTML, root: graph.model.root?.id, defaultParent: graph.getDefaultParent()?.id, admin: Trellis.users.isAdmin(), sharing: Trellis.sharing.context(), status: smokeUi.editor.status })); // CHANGE
-        graph.__trellisModules.clusters.revealCell(garden); graph.foldCells(false, false, [garden]); // CHANGE: insert children against the full authored container before testing folded rendering.
-        const bed = graph.insertVertex(garden, 'smoke-bed', value({ garden_bed: '1', label: 'Blue bed' }), 40, 50, 120, 90, 'fillColor=#0000ff;strokeColor=none;'); // CHANGE
-        const planting = graph.insertVertex(bed, 'smoke-planting-group', value({ tiler_group: '1', label: 'Blue planting group', plant_name: 'Lettuce', linkedTo: 'smoke-task' }), 10, 10, 90, 60, 'fillColor=#0000ff;strokeColor=none;'); // CHANGE: production task/group links are reciprocal.
-        graph.insertVertex(garden, 'smoke-plant', value({ plant_tiler: '1', label: 'Red plant' }), 350, 210, 45, 45, 'fillColor=#ff0000;strokeColor=none;'); // CHANGE
-        const unrelated = graph.insertVertex(garden, 'smoke-unrelated', value({ trellis_role_user_id: worker.id, label: 'Unrelated private role' }), 170, 50, 100, 90, 'fillColor=#00ff00;role_card=1;'); // CHANGE: a valid private role avoids an orphan task's perpetual board reparenting.
-        const denied = graph.insertVertex(garden, 'smoke-denied', value({ label: 'Denied preview secret' }), 250, 50, 50, 50, 'fillColor=#00ff00;'); // CHANGE
-        graph.insertVertex(denied, 'smoke-denied-child', value({ label: 'Denied descendant secret' }), 0, 0, 20, 20); // CHANGE
-        const allowedDescendant = graph.insertVertex(denied, 'smoke-allowed-child', value({ label: 'Allowed descendant' }), 25, 25, 20, 20, 'fillColor=#ff0000;'); // CHANGE: explicit child access survives a denied ancestor without revealing that ancestor's label or shape.
-        graph.insertEdge(garden, 'smoke-denied-edge', value({ label: 'Denied endpoint secret' }), bed, denied); // CHANGE
-        const role = graph.insertVertex(null, 'smoke-role', value({ trellis_role_user_id: worker.id }), 10, 300, 100, 60);
-        const taskModule = graph.insertVertex(null, 'smoke-task-module', value({ task_module: '1', label: 'Field work' }), 10, 10, 600, 250); // CHANGE
-        const template = graph.__trellisTaskManager.ensureMainBoardInTaskModule(taskModule), board = template.board, lane = template.lanes.TODO; // CHANGE: use the production template and every real workflow lane.
-        const task = graph.insertVertex(lane, 'smoke-task', value({ kanban_card: '1', title: 'Water lettuce group', workflow_state: 'TODO', task_assignee_role_ids_json: JSON.stringify([role.id]), linkedTo: planting.id, start: '2026-10-01', end: '2026-10-01', assigned_day: '2026-10-01' }), 10, 10, 160, 100); // CHANGE
-        graph.setSelectionCell(task);
-        if (graph.model.getCell(garden.id) !== garden) throw new Error('Garden fixture was not inserted into the live model: ' + JSON.stringify({ id: garden.id, parent: garden.parent?.id, modelCells: Object.keys(graph.model.cells), attrs: garden.value?.outerHTML })); // CHANGE
+        window.smokeRejected = []; graph.model.addListener(mxEvent.CHANGE, (_sender, event) => { const edit = event.getProperty('edit'); if (edit?.__trellisUsersRejected && smokeRejected.length < 8) smokeRejected.push({ reason: edit.__trellisUsersRejectedReason, changes: edit.changes.slice(0, 16).map(change => ({ type: change.constructor?.name, id: change.cell?.id || change.child?.id, attribute: change.attribute })) }); }); // CHANGE: bounded fixture-only permission evidence.
+        const { garden, bed } = graph.__trellisEditContext.apply({ cells: [] }, () => { // CHANGE: the linked fixture is one valid native creation action and claim.
+            const garden = graph.__trellisModules.createModuleAtPoint({ x: 400, y: 300 }, 'garden'); // CHANGE: exercise the real garden-module discovery path.
+            if (graph.model.getCell(garden.id) !== garden) throw new Error('Initial garden insertion failed: ' + JSON.stringify({ id: garden.id, parent: garden.parent?.id, modelCells: Object.keys(graph.model.cells), attrs: garden.value?.outerHTML, root: graph.model.root?.id, defaultParent: graph.getDefaultParent()?.id, admin: Trellis.users.isAdmin(), sharing: Trellis.sharing.context(), status: smokeUi.editor.status })); // CHANGE
+            graph.__trellisModules.clusters.revealCell(garden); graph.foldCells(false, false, [garden]); const gardenGeometry = garden.geometry.clone(); gardenGeometry.width = 600; gardenGeometry.height = 400; graph.model.setGeometry(garden, gardenGeometry); // CHANGE: insert children against the full authored container before testing folded rendering.
+            const bed = graph.insertVertex(garden, 'smoke-bed', value({ garden_bed: '1', label: 'Blue bed' }), 40, 50, 120, 90, 'fillColor=#0000ff;strokeColor=none;'); // CHANGE
+            return { garden, bed }; // CHANGE
+        }); // CHANGE
+            await new Promise((resolve, reject) => smokeUi.getCurrentFile().save(false, resolve, reject)); // CHANGE: planting creation requires an accepted bed scope.
+            const fixture = graph.__trellisEditContext.apply({ cells: [bed] }, () => { // CHANGE
+            const proposal = USL.tiler.proposePlantingGeometry({ bedCell: bed, fillAvailableBed: true, spacingXCm: 30, spacingYCm: 30, vegDiameterCm: 15, allowedOverhangPct: 0, offsetXCm: 0, offsetYCm: 0 }); // CHANGE
+            const planting = graph.__trellisEditContext.scope('generated-content', () => USL.tiler.createPlantingFromProposal({ moduleCell: garden, proposal, attributes: { label: 'Blue planting group', plant_name: 'Lettuce', plant_abbr: 'LET' } }, { select: false, insideUpdate: true })); // CHANGE
+            for (const cell of [planting, ...graph.model.getChildren(planting)]) graph.model.setStyle(cell, (cell.style || '') + ';fillColor=#0000ff;strokeColor=none;'); // CHANGE: use fixed fixture colors for the existing pixel-alignment assertion.
+            graph.insertVertex(garden, 'smoke-marker', value({ label: 'Red marker' }), 550, 350, 45, 45, 'fillColor=#ff0000;strokeColor=none;'); // CHANGE
+            const unrelated = graph.insertVertex(garden, 'smoke-unrelated', value({ trellis_role_user_id: worker.id, label: 'Unrelated private role' }), 170, 50, 100, 90, 'fillColor=#00ff00;role_card=1;'); // CHANGE: a valid private role avoids an orphan task's perpetual board reparenting.
+            const denied = graph.insertVertex(garden, 'smoke-denied', value({ label: 'Denied preview secret' }), 250, 50, 50, 50, 'fillColor=#00ff00;'); // CHANGE
+            graph.insertVertex(denied, 'smoke-denied-child', value({ label: 'Denied descendant secret' }), 0, 0, 20, 20); // CHANGE
+            const allowedDescendant = graph.insertVertex(denied, 'smoke-allowed-child', value({ label: 'Allowed descendant' }), 25, 25, 20, 20, 'fillColor=#ff0000;'); // CHANGE: explicit child access survives a denied ancestor without revealing that ancestor's label or shape.
+            // CHANGE: create the connector after its endpoint scopes are accepted.
+            const role = graph.insertVertex(null, 'smoke-role', value({ trellis_role_user_id: worker.id }), 10, 300, 100, 60);
+            const taskModule = graph.model.getCell(garden.getAttribute('trellis_task_module_id')); // CHANGE
+            const template = graph.__trellisTaskManager.ensureMainBoardInTaskModule(taskModule), board = template.board, lane = template.lanes.TODO; // CHANGE: use the production template and every real workflow lane.
+            // CHANGE: create the linked task after accepting its planting and role.
+            if (graph.model.getCell(garden.id) !== garden) throw new Error('Garden fixture was not inserted into the live model: ' + JSON.stringify({ id: garden.id, parent: garden.parent?.id, modelCells: Object.keys(graph.model.cells), attrs: garden.value?.outerHTML })); // CHANGE
+            return { garden, bed, planting, unrelated, denied, allowedDescendant, role, taskModule, template, board, lane }; // CHANGE
+        }); // CHANGE
+        const { planting, unrelated, denied, allowedDescendant, role, taskModule, template, board, lane } = fixture; // CHANGE
+        await new Promise((resolve, reject) => smokeUi.getCurrentFile().save(false, resolve, reject)); // CHANGE: establish confirmed creation before collecting read-only preview invariants.
+        const created = USL.tasks.applySchedulerTaskReplacement({ mode: 'replace', targetGroupId: planting.id, tasks: [{ title: 'Water lettuce group', startISO: '2026-10-01', endISO: '2026-10-01' }] }, { focusCreated: false }); // CHANGE
+        const task = graph.model.getCell(created[0]?.cellId); window.smokeTaskId = task.id; // CHANGE
+        Trellis.taskCommands.commitCardPatch(task, { workflow_state: 'TODO', assigned_day: '2026-10-01', task_assignee_role_ids_json: JSON.stringify([role.id]) }, { reflow: false }); // CHANGE
+        await new Promise((resolve, reject) => smokeUi.getCurrentFile().save(false, resolve, reject)); // CHANGE
+        graph.setSelectionCell(task); // CHANGE
+        graph.__trellisEditContext.apply({ cells: [garden] }, () => { const edge = new mxCell(value({ label: 'Denied endpoint secret' }), new mxGeometry(), 'edgeStyle=orthogonalEdgeStyle;'); edge.id = 'smoke-denied-edge'; edge.setEdge(true); edge.geometry.relative = true; edge.setTerminal(bed, true); edge.setTerminal(denied, false); graph.addCell(edge, garden); }); // CHANGE
+        await new Promise((resolve, reject) => smokeUi.getCurrentFile().save(false, resolve, reject)); // CHANGE
         const originalUsers = graph.__trellisUsers; graph.__trellisUsers = Object.assign(Object.create(originalUsers || Trellis.users), { isAdmin: () => false, getAccessSummary: cell => ({ effectiveOpen: cell !== denied && cell.id !== 'smoke-denied-child' }) }); // CHANGE: exercise per-cell permissions and a connector with a denied endpoint.
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); // CHANGE: settle scheduled module/board normalization before observing rendering-only invariants.
         if (graph.model.getCell(garden.id) !== garden) throw new Error('Garden fixture replaced during scheduled normalization.'); // CHANGE
@@ -172,9 +190,12 @@ async function run() {
             if (preview.regions.some(region => /Denied/.test(region.label))) throw new Error('Preview leaked denied cells or connector endpoints.'); // CHANGE
             if (/Denied|Unrelated|smoke-denied-edge|smoke-denied-child/.test(window.smokePreviewSvg)) throw new Error('Preview SVG leaked private subtree or endpoint content.'); // CHANGE
             if (!preview.regions.some(region => region.id === allowedDescendant.getAttribute('trellis_field_object_id'))) throw new Error('Preview lost an explicitly readable descendant of a denied container.'); // CHANGE
-            if (preview.width < 600 || preview.height < 400) throw new Error('Preview cropped the whole garden to a linked object.'); // NEW
+            if (preview.width < 600 || preview.height < 400) throw new Error('Preview cropped the whole garden to a linked object: ' + JSON.stringify({ width: preview.width, height: preview.height, geometry: garden.geometry })); // NEW
             const region = preview.regions.find(item => item.id === planting.value.getAttribute('trellis_field_object_id')); // CHANGE
-            if (region?.kind !== 'planting-group' || work.tasks.find(item=>item.title==='Water lettuce group').locations.join() !== region.id) throw new Error('Task highlights its bed instead of the linked planting group.'); // NEW
+            if (!region) throw new Error('Missing planting-group preview region: ' + JSON.stringify({ regions: preview.regions.map(item => ({id:item.id,kind:item.kind})), plantingId: planting.id, fieldId: planting.getAttribute('trellis_field_object_id') })); // CHANGE: distinguish missing geometry from an incorrect task target.
+            if (region.kind !== 'planting-group') throw new Error('Incorrect planting preview kind: ' + region.kind); // CHANGE
+            const fieldTask = work.tasks.find(item => item.title === 'Water lettuce group'); // CHANGE
+            if (!fieldTask || fieldTask.locations.join() !== region.id) throw new Error('Task location does not match its planting group: ' + JSON.stringify({ task: fieldTask, linkedTo: task.getAttribute('linkedTo'), group: region.id })); // CHANGE
             const image = await new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = preview.png; });
             const canvas = document.createElement('canvas'); canvas.width = preview.width; canvas.height = preview.height; const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
             const pixel = [...context.getImageData(Math.floor(region.x + region.width * 0.25), Math.floor(region.y + region.height * 0.25), 1, 1).data];
@@ -227,7 +248,7 @@ async function run() {
     const workDirectory = path.join(app.getPath('userData'), 'trellis-identities', identitySession.identityId, 'metadata', 'field', field.diagramId, field.workerId, 'work'); // NEW
     await until(async () => fs.readdirSync(workDirectory).map(name => JSON.parse(fs.readFileSync(path.join(workDirectory, name), 'utf8'))).some(record => record.payload.work.tasks.find(task => task.title === 'Water lettuce group')?.annotation === 'Automatic saved desktop edit'), 'automatic saved field publication', 15000); // CHANGE: cover three background polls and report a bounded operation failure.
     const publishedFiles = fs.readdirSync(workDirectory); // NEW: inspect the actual signed outbox, not a renderer return value.
-    await window.webContents.executeJavaScript(`(async()=>{Trellis.taskCommands.commitCardPatch(smokeUi.editor.graph.model.getCell('smoke-task'),{card_note:'Unpublished draft'},{reflow:false});await Trellis.field.processIncoming();})()`); // NEW
+    await window.webContents.executeJavaScript(`(async()=>{Trellis.taskCommands.commitCardPatch(smokeUi.editor.graph.model.getCell(window.smokeTaskId),{card_note:'Unpublished draft'},{reflow:false});await Trellis.field.processIncoming();})()`); // NEW
     assert.equal(fs.readdirSync(workDirectory).length, publishedFiles.length, 'A draft cannot trigger background field publication.'); // NEW
     await window.webContents.executeJavaScript(`(async()=>{smokeUi.editor.undoManager.undo();await new Promise((resolve,reject)=>smokeUi.getCurrentFile().save(false,resolve,reject));await Trellis.field.processIncoming();})()`); // NEW
     const stableCount = fs.readdirSync(workDirectory).length; await window.webContents.executeJavaScript('Trellis.field.processIncoming()'); // NEW
@@ -275,7 +296,7 @@ async function runSectionFoldSmoke() { // NEW
 async function preparePhysicalDesktop(seed = true) { // CHANGE
     const http = require('node:http'), crypto = require('node:crypto'); // NEW
     await window.webContents.executeJavaScript(`(async () => {
-        const graph=smokeUi.editor.graph, role=graph.model.getCell('smoke-role'), board=graph.model.getCell('smoke-task')?.parent?.parent, lane=graph.model.getCell('smoke-lane')||Object.values(graph.model.cells).find(cell=>cell.parent===board&&cell.value?.getAttribute?.('lane_key')==='TODO'); // CHANGE: resumed legacy fixtures and newly created production templates share the same task lane.
+        const graph=smokeUi.editor.graph, role=graph.model.getCell('smoke-role'), board=graph.model.getCell(window.smokeTaskId || 'smoke-task')?.parent?.parent, lane=graph.model.getCell('smoke-lane')||Object.values(graph.model.cells).find(cell=>cell.parent===board&&cell.value?.getAttribute?.('lane_key')==='TODO'); // CHANGE: resumed legacy fixtures and newly created production templates share the same task lane.
         const today=new Date(), day=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
         for(const [id,title] of ${JSON.stringify(seed ? [['phone-progress','Phone watering test'],['phone-note','Phone annotation test']] : [])}) { // CHANGE: resumed tests preserve existing tasks and pending operations.
             const value=mxUtils.createXmlDocument().createElement('object');
@@ -329,7 +350,7 @@ async function preparePhysicalDesktop(seed = true) { // CHANGE
 } // NEW
 run().catch(async error => { // CHANGE: preserve public fixture pixels and vector data before the shared owned-resource cleanup.
     console.error(error); // CHANGE
-    try { const state = await Promise.race([window?.webContents.executeJavaScript('({status:smokeUi.editor.status,modified:smokeUi.getCurrentFile()?.isModified(),saving:smokeUi.getCurrentFile()?.savingFile,editable:smokeUi.getCurrentFile()?.isEditable?.(),loggedIn:Trellis.users?.isLoggedIn(),liveTaskNote:smokeUi.editor.graph.model.getCell("smoke-task")?.getAttribute("card_note"),projectPath:smokeUi.getCurrentFile()?.fileObject?.path,projectStatus:smokeUi.__trellisGardenHome?.projectsStatus?.textContent,creationError:document.querySelector(".trellis-home-open")?.textContent,diagnostics:TrellisContentPolicy?.diagnostics()})'), new Promise(resolve => setTimeout(resolve, 2000))]); console.error('PRODUCTION_FAILURE_STATE:', JSON.stringify(state)); } catch (_) {} // CHANGE: operation diagnostics omit credentials and user document content.
+    try { const state = await Promise.race([window?.webContents.executeJavaScript('({rejected:window.smokeRejected,status:smokeUi.editor.status,modified:smokeUi.getCurrentFile()?.isModified(),saving:smokeUi.getCurrentFile()?.savingFile,editable:smokeUi.getCurrentFile()?.isEditable?.(),loggedIn:Trellis.users?.isLoggedIn(),liveTaskNote:smokeUi.editor.graph.model.getCell(window.smokeTaskId)?.getAttribute("card_note"),projectPath:smokeUi.getCurrentFile()?.fileObject?.path,projectStatus:smokeUi.__trellisGardenHome?.projectsStatus?.textContent,creationError:document.querySelector(".trellis-home-open")?.textContent,diagnostics:TrellisContentPolicy?.diagnostics()})'), new Promise(resolve => setTimeout(resolve, 2000))]); console.error('PRODUCTION_FAILURE_STATE:', JSON.stringify(state)); } catch (_) {} // CHANGE: operation diagnostics omit credentials and user document content.
     try { const preview = await Promise.race([window?.webContents.executeJavaScript('({svg:window.smokePreviewSvg,png:window.smokePreviewPng})'), new Promise(resolve => setTimeout(resolve, 2000))]); if (preview?.svg) fs.writeFileSync(path.join(output, 'failed-preview.svg'), preview.svg); if (preview?.png) fs.writeFileSync(path.join(output, 'failed-preview.png'), Buffer.from(preview.png.split(',')[1], 'base64')); } catch (_) {} // CHANGE
     if (diagnosticMode) { clearTimeout(timeout); setTimeout(() => { void cleanup(1); }, 180000).unref(); } else void cleanup(1); // CHANGE
 }); // CHANGE

@@ -1802,7 +1802,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (typeof body !== 'function') return undefined;
             const insideUpdate = !!options.insideUpdate;
             const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
-            if (!insideUpdate && !model.updateLevel && context?.apply && !context.committing()) return context.apply({ cells: options.cells || [], includeAncestors: false }, () => runModelUpdate({ ...options, insideUpdate: true }, body)); // CHANGE
+            if (!insideUpdate && !model.updateLevel && context?.apply && !context.committing()) return context.apply({ kind: options.kind || context.current()?.kind || 'manual', cells: options.cells || [], includeAncestors: false }, () => runModelUpdate({ ...options, insideUpdate: true }, body)); // CHANGE: deferred generation retains its provenance instead of requesting a second manual claim.
             if (!insideUpdate) model.beginUpdate();
             try {
                 return body();
@@ -8776,8 +8776,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const createMainBoard = !!(evt && typeof evt.getProperty === "function" && evt.getProperty("createMainBoard"));
             if (!createMainBoard) return;
             if (!taskModule || !model.isVertex(taskModule) || !isTaskModule(taskModule)) return;
+            const documentRoot = model.getRoot(), page = ui.currentPage, actor = graph.__trellisUsers?.getCurrentUser?.()?.id; // CHANGE: a timer belongs to the document and actor that created its module.
             setTimeout(function () { // CHANGE: enter provenance at the deferred mutation boundary, preserving explicit board-command behavior.
-                if (model.getCell(taskModule.id) !== taskModule) return; // NEW: a cancelled/undone cluster cannot be rebuilt by a stale initialization timer.
+                if (model.getRoot() !== documentRoot || ui.currentPage !== page || graph.__trellisUsers?.getCurrentUser?.()?.id !== actor || model.getCell(taskModule.id) !== taskModule) return; // CHANGE: removed modules and obsolete page/actor callbacks cannot publish initialization.
                 const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // NEW
                 if (context) context.scope('generated-content', () => taskCommands.ensureBoardTemplateInUpdate(taskModule)); // NEW
                 else taskCommands.ensureBoardTemplateInUpdate(taskModule); // NEW

@@ -29,7 +29,7 @@ async function until(expression, label) { // NEW
         if (result) return result; // NEW
         await new Promise(resolve => setTimeout(resolve, 200)); // NEW
     } // NEW
-    console.error('Login UI state:', await window.webContents.executeJavaScript("({mode:loginTestUi.__trellisGardenHome.mode,version:loginTestUi.__trellisGardenHome.renderVersion,panel:loginTestUi.__trellisGardenHome.panel?.textContent,connected:loginTestUi.__trellisGardenHome.panel?.isConnected,dialogCount:loginTestUi.dialogs?.length})")); // NEW
+    console.error('Login UI state:', await window.webContents.executeJavaScript("({mode:loginTestUi.__trellisGardenHome.mode,version:loginTestUi.__trellisGardenHome.renderVersion,panel:loginTestUi.__trellisGardenHome.panel?.textContent,connected:loginTestUi.__trellisGardenHome.panel?.isConnected,dialogCount:loginTestUi.dialogs?.length,closes:window.loginTestDialogTrace,dialogTypes:loginTestUi.dialogs?.map(dialog=>dialog.container?.firstChild?.className)})")); // NEW
     throw new Error('Timed out waiting for ' + label); // NEW
 } // NEW
 async function run() { // NEW
@@ -39,7 +39,7 @@ async function run() { // NEW
     await import(pathToFileURL(path.join(project, 'src/main/electron.js'))); // NEW
     await app.whenReady(); // NEW
     await until('!!window.Draw?.loadPlugin && !!window.TrellisGardenHome && !!window.trellisIdentity', 'Home and preload'); // NEW
-    stage = 'editor plugin callback'; await window.webContents.executeJavaScript("new Promise(resolve => Draw.loadPlugin(ui => { window.loginTestUi = ui; resolve(); }));"); // NEW
+    stage = 'editor plugin callback'; await window.webContents.executeJavaScript("new Promise(resolve => Draw.loadPlugin(ui => { window.loginTestUi = ui; window.loginTestDialogTrace=[]; const hide=ui.hideDialog; ui.hideDialog=function(){if(loginTestDialogTrace.length<12)loginTestDialogTrace.push({stack:new Error('Dialog close').stack,home:!!ui.__trellisGardenHome?.panel?.isConnected});return hide.apply(this,arguments);}; resolve(); }));"); // NEW
     await window.webContents.executeJavaScript("localStorage.setItem('trellis.licenseWizard.v2', JSON.stringify({ version:'2', path:'personal', contactGuidance:false, oathCompletedAt:new Date().toISOString(), name:'Login Test', signature:'Login Test', email:'login@example.test' })); loginTestUi.hideDialog(); loginTestUi.showSplash(true);"); // NEW
     await until("(()=>{const root=loginTestUi.dialog?.container?.querySelector('.trellis-splash-root');return !!root?.querySelector('.trellis-splash-login-status')&&root.querySelector('.trellis-splash-actions')?.style.display!=='none';})()", 'splash launch readiness'); // NEW: enter through the same revealed launcher as a user, after startup completes.
     await window.webContents.executeJavaScript("loginTestUi.dialog.container.querySelector('[data-project-launcher=open]').click()"); // NEW

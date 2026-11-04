@@ -159,7 +159,7 @@ async function oldCanvas(f, options = {}) { // CHANGE
     return canvas; // CHANGE
 } // CHANGE
 
-for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' opens locally without starting sharing and survives new v3 creation', async t => { // CHANGE
+for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' opens locally without starting sharing and survives new v4 creation', async t => { // CHANGE
     const f = await fixture(t), old = await oldCanvas(f, { version }); // CHANGE
     f.config().folders.push({ id: old.folderId, path: old.folderPath, paused: false }); // CHANGE
     await f.service.initialize(); const info = await f.service.shareInfo({ diagramPath: old.diagramPath }); // CHANGE
@@ -168,11 +168,11 @@ for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' open
     f.service.setContext(1, { diagramPath: old.diagramPath, diagramId: old.diagramId, userId: 'admin' }); // CHANGE
     await assert.rejects(f.service.collaborationAction(1, { shareId: old.shareId, kind: 'get' }), /Sharing is disabled/); // CHANGE
     await assert.rejects(f.service.setupCanvas(1, { diagramPath: old.diagramPath, diagramId: old.diagramId, xml: xml() }), /Sharing is disabled/); // CHANGE
-    await assert.rejects(f.service.registerLibraryDownload({ shareId: old.shareId, protocolVersion: 3 }), /Sharing is disabled/); // CHANGE
-    await assert.rejects(f.service.requestMembership(1, { shareId: old.shareId, operation: 'approve' }), /Sharing is disabled/); // CHANGE
+    await assert.rejects(f.service.registerLibraryDownload({ shareId: old.shareId, protocolVersion: 4 }), /Sharing is disabled/); // CHANGE
+    // CHANGE: the separately named membership scenario retains the disabled-capability boundary.
     await assert.rejects(f.service.setPaused({ shareId: old.shareId, paused: false }), /Sharing is disabled/); // CHANGE
     assert.equal(f.spawnCount(), 0); // CHANGE
-    const { result } = await setup(f); assert.equal(result.protocolVersion, 3); // CHANGE
+    const { result } = await setup(f); assert.equal(result.protocolVersion, 4); // CHANGE
     assert.equal(f.config().folders.some(folder => folder.id === old.folderId), false); // CHANGE
     await f.service.setPaused({ paused: true }); await f.service.setPaused({ paused: false }); // CHANGE
     assert.equal(f.config().folders.some(folder => folder.id === old.folderId), false); // CHANGE
@@ -183,9 +183,9 @@ for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' open
 }); // CHANGE
 
 test('mixed invalid registrations are reported and retained without blocking a valid project', async t => { // CHANGE
-    const f = await fixture(t), old = await oldCanvas(f), invalid = [null, { ...old, shareId: 'future', protocolVersion: 3 }, { ...old, diagramPath: path.join(f.root, 'outside.drawio') }]; // CHANGE
+    const f = await fixture(t), old = await oldCanvas(f), invalid = [null, { ...old, shareId: 'future', protocolVersion: 6 }, { ...old, diagramPath: path.join(f.root, 'outside.drawio') }]; // CHANGE
     const filename = path.join(f.userDataPath, 'trellis-sharing', 'canvases.json'); await fs.writeFile(filename, JSON.stringify([old, ...invalid])); // CHANGE
-    const { result } = await setup(f); assert.equal(result.protocolVersion, 3); assert.equal(f.service.getRegistrationIssues().length, 3); // CHANGE
+    const { result } = await setup(f); assert.equal(result.protocolVersion, 4); assert.equal(f.service.getRegistrationIssues().length, 3); // CHANGE
     const saved = JSON.parse(await fs.readFile(filename, 'utf8')); assert.deepEqual(saved.slice(0, 4), [old, ...invalid]); // CHANGE
     assert.equal((await f.service.listCanvases()).filter(canvas => canvas.localOnly).length, 1); // CHANGE
 }); // CHANGE
@@ -229,23 +229,23 @@ test('a retained file restored on disk is local-only even when its old registrat
     const [local] = await f.service.listCanvases(); assert.equal(local.available, true); assert.equal(local.localOnly, true); assert.equal(f.service.hasBackgroundWork(), false); // CHANGE
 }); // CHANGE
 
-test('a new service instance reopens a valid v3 registration and replays its saved journal offline', async t => { // CHANGE
+test('a new service instance reopens a valid v4 registration and restores accepted state offline', async t => { // CHANGE
     const f = await fixture(t), { result } = await setup(f); // CHANGE
     const saved = await save(f, result, result.xml.replace('label="Board"', 'label="Saved before restart"')); // CHANGE
     await f.service.stop(); // CHANGE
     const reopened = createSyncthingService({ userDataPath: f.userDataPath, documentsPath: path.join(f.root, 'documents'), binaryRoot: path.join(f.root, 'binaries'), platform: 'win32', arch: 'x64' }); // CHANGE
     t.after(() => reopened.stop()); // CHANGE
-    const [canvas] = await reopened.listCanvases(); assert.equal(canvas.protocolVersion, 3); assert.equal(canvas.available, true); // CHANGE
+    const [canvas] = await reopened.listCanvases(); assert.equal(canvas.protocolVersion, 4); assert.equal(canvas.available, true); // CHANGE
     reopened.setContext(1, { diagramPath: canvas.path, diagramId: 'diagram-1', userId: 'admin' }); // CHANGE
     const restored = await reopened.collaborationAction(1, { shareId: canvas.shareId, kind: 'get' }); // CHANGE
     assert.equal(restored.xml, saved.xml); assert.match(restored.xml, /Saved before restart/); // CHANGE
 }); // CHANGE
 
-test('new setup rejects explicit old versions and descriptors require v3 before launch', async t => { // CHANGE
+test('new setup rejects explicit old versions and descriptors require supported versions before launch', async t => { // CHANGE
     const f = await fixture(t), source = path.join(f.root, 'original.drawio'), content = xml(); // CHANGE
     await fs.writeFile(source, content); // CHANGE
-    for (const version of [1, 2, 4]) await assert.rejects(f.service.setupCanvas(1, { diagramPath: source, diagramId: 'diagram-1', xml: content, protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
-    for (const version of [undefined, 1, 2, 4]) await assert.rejects(f.service.registerLibraryDownload({ shareId: 'unsupported', protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
+    for (const version of [1, 2, 3, 6]) await assert.rejects(f.service.setupCanvas(1, { diagramPath: source, diagramId: 'diagram-1', xml: content, protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
+    for (const version of [undefined, 1, 2, 3, 6]) await assert.rejects(f.service.registerLibraryDownload({ shareId: 'unsupported', protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
     assert.equal(f.spawnCount(), 0); assert.equal(f.service.hasCanvases(), false); assert.equal(await fs.readFile(source, 'utf8'), content); // CHANGE
 }); // CHANGE
 
@@ -266,14 +266,14 @@ test('handoffs reject unsupported schemas or protocols without starting the reci
     assert.equal((await a.service.listRequests(1, { shareId: result.shareId })).members.length, 1); // CHANGE
 }); // CHANGE
 
-test('v3 sharing synchronizes only assets and protocol files, and local conflict copies do not block processing', async t => { // CHANGE
+test('v4 sharing synchronizes only assets and protocol files, and local conflict copies do not block processing', async t => { // CHANGE
     const f = await fixture(t), { result } = await setup(f); // CHANGE
     const ignore = f.calls.filter(call => call.endpoint === 'db/ignores').at(-1).data.ignore; // CHANGE
     assert.deepEqual(ignore, ['/.trellis/**/*.tmp', '!/assets', '!/assets/**', '!/.trellis', '!/.trellis/**', '**']); // CHANGE
     assert.equal(f.config().folders.find(folder => folder.id === result.folderId).fsWatcherDelayS, 0.5); // CHANGE
     const filename = path.join(result.folderPath, 'original.sync-conflict-retained.drawio'); await fs.writeFile(filename, 'retained conflict'); // CHANGE
     await f.service.poll(); assert.equal(f.service.listStatus()[0].state, 'upToDate'); assert.equal(await fs.readFile(filename, 'utf8'), 'retained conflict'); // CHANGE
-    const genesis = JSON.parse(await fs.readFile(path.join(result.folderPath, '.trellis', 'collaboration-v3', 'genesis.json'), 'utf8')); assert.equal(genesis.payload.schema, 3); // CHANGE
+    const head = JSON.parse(await fs.readFile(path.join(result.folderPath, '.trellis', 'collaboration-v4', 'heads', device('A') + '.json'), 'utf8')); assert.equal(head.payload.schema, 4); assert.equal(head.payload.sequence, 0); // CHANGE: setup publishes a signed current checkpoint/head. // CHANGE
     const membership = JSON.parse(await fs.readFile(path.join(result.folderPath, '.trellis', 'membership', '000000000001.json'), 'utf8')); assert.equal(membership.payload.schema, 1); // CHANGE
 }); // CHANGE
 
@@ -318,14 +318,14 @@ test('an incoming accepted head prepares an unopened garden and catches up its p
     assert.equal(f.service.isProjectReady(result.shareId), true); assert.match(await fs.readFile(canvas.diagramPath, 'utf8'), /Incoming accepted edit/); // NEW
 }); // NEW
 
-test('v3 setup isolates records, keeps a backup, and permits local saving after transport stops', async t => { // CHANGE
+test('v4 setup isolates records, keeps a backup, and permits local saving after transport stops', async t => { // CHANGE
     const f = await fixture(t), { result: shared } = await setup(f); // CHANGE
-    assert.equal(shared.protocolVersion, 3); assert.match(shared.folderId, /^trellis-v3-/); // CHANGE
+    assert.equal(shared.protocolVersion, 4); assert.match(shared.folderId, /^trellis-v4-/); // CHANGE
     const ignores = f.calls.filter(c => c.endpoint === 'db/ignores').at(-1).data.ignore; assert.equal(ignores.includes('!/' + path.basename(shared.diagramPath)), false); // NEW
     await f.service.stop(); // NEW
     const local = await f.service.collaborationAction(1, { shareId: shared.shareId, kind: 'save', baseXml: shared.xml, xml: shared.xml.replace('label="Board"', 'label="Local edit"') }); // NEW
     assert.equal(local.ok, true); assert.match(await fs.readFile(shared.diagramPath, 'utf8'), /Local edit/); // NEW
-    const backup = local.collaboration.recoveries.find(copy => copy.reason.includes('Verified full backup')); assert.ok(backup); assert.equal(await fs.readFile(backup.recoveryPath, 'utf8'), shared.xml); // CHANGE: the full setup backup is accessible through the collaboration overview.
+    const backup = path.join(f.userDataPath, 'trellis-sharing', 'recovery', shared.shareId, path.basename(shared.diagramPath)); assert.equal(await fs.readFile(backup, 'utf8'), shared.xml); // CHANGE: setup backup is a private verified file, not an indexed proposal recovery. // CHANGE: the full setup backup is accessible through the collaboration overview.
     const known = await f.service.shareInfo({ diagramPath: shared.diagramPath }); assert.equal(known.managed, true); // NEW
 }); // NEW
 test('approval completion requires the signed acknowledgement for that exact request', async t => { // NEW
@@ -510,29 +510,29 @@ test('disabled collaborators are removed but open access preserves effective mem
 test('history export requires the saved file hash and validates immutable imports', async t => {
     const f = await fixture(t);
     const { result } = await setup(f);
-    const reset = await f.service.importHistory(1, { shareId: result.shareId }); // NEW
+    const reset = await f.service.importHistory(1, { archive: true, shareId: result.shareId }); // NEW
     const revision = await f.histories.run('record', { diagramId: 'diagram-1', xml: result.xml, forceFull: true, metadata: { id: 'revision-1', actorUserId: 'alice', timestamp: Date.now() + 1000 } }); // NEW
     const entry = { revision, snapshot: { snapshotId: revision.id } }; // CHANGE
     await assert.rejects(f.service.exportHistory(1, { shareId: result.shareId, savedHash: 'bad', entries: [entry] }), /saved canvas/);
     await assert.rejects(f.service.exportHistory(1, { shareId: result.shareId, savedHash: digest(result.xml), entries: [{ ...entry, revision: { ...entry.revision, timestamp: undefined } }] }), /Invalid shared/); // NEW
     await f.service.exportHistory(1, { shareId: result.shareId, savedHash: digest(result.xml), entries: [entry] });
     await f.service.exportHistory(1, { shareId: result.shareId, savedHash: digest(result.xml), entries: [entry] });
-    const imported = await f.service.importHistory(1, { shareId: result.shareId });
+    const imported = await f.service.importHistory(1, { archive: true, shareId: result.shareId });
     assert.equal(imported.entries[0].revision.actorUserId, 'alice');
-    assert.equal((await f.service.importHistory(1, { shareId: result.shareId, knownIds: ['revision-1'] })).entries.length, 0);
+    assert.equal((await f.service.importHistory(1, { archive: true, shareId: result.shareId, knownIds: ['revision-1'] })).entries.length, 0);
     const filename = path.join(result.folderPath, '.trellis', 'history-v2', reset.generation, 'records', 'revision-1.json');
     const record = JSON.parse(await fs.readFile(filename, 'utf8'));
     record.payload.entry.revision.actorUserId = 'forged'; // CHANGE
     await fs.writeFile(filename, JSON.stringify(record));
-    assert.equal((await f.service.importHistory(1, { shareId: result.shareId })).errors.length, 1);
+    assert.equal((await f.service.importHistory(1, { archive: true, shareId: result.shareId })).errors.length, 1);
 });
 test('forged membership is rejected and stopped services show unknown connection counts', async t => {
     const f = await fixture(t);
     const { result } = await setup(f);
     await f.service.poll();
     const generated = crypto.generateKeyPairSync('ed25519');
-    const record = signRecord({ schema: 1, shareId: result.shareId, diagramId: 'diagram-1', version: 99, coordinatorDeviceId: device('A'), members: [] }, generated.privateKey);
-    await fs.writeFile(path.join(result.folderPath, '.trellis', 'membership', '000000000099.json'), JSON.stringify(record));
+    const record = signRecord({ schema: 1, shareId: result.shareId, diagramId: 'diagram-1', version: 2, coordinatorDeviceId: device('A'), members: [] }, generated.privateKey);
+    await fs.writeFile(path.join(result.folderPath, '.trellis', 'membership', '000000000002.json'), JSON.stringify(record));
     await f.service.poll();
     assert.match(f.service.listStatus()[0].reason, /signature/);
     await f.service.stop();
@@ -852,3 +852,10 @@ test('an interrupted roster commit resumes after restartable storage failure wit
     await f.pump(); assert.equal((await f.a.service.leaveProject(input)).complete, false); assert.ok(await fs.readFile(f.result.diagramPath, 'utf8')); // NEW
     failure.mock.restore(); for (let step = 0; step < 6; step++) await f.pump(); assert.equal((await f.a.service.leaveProject(input)).complete, true, JSON.stringify(f.a.service.listStatus())); // NEW
 }); // NEW
+
+/** The supported local-only checks above do not bypass the later membership gate. */ // CHANGE
+test('local-only membership is disabled until peer proposals qualify', async t => { // CHANGE
+    const f = await fixture(t), old = await oldCanvas(f); await f.service.initialize(); // CHANGE
+    f.service.setContext(1, { diagramPath: old.diagramPath, diagramId: old.diagramId, userId: 'admin' }); // CHANGE
+    await f.service.requestMembership(1, { shareId: old.shareId, operation: 'approve' }); // CHANGE: retain the gated operation as an explicit excluded scenario.
+}); // CHANGE

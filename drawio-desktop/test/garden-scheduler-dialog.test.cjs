@@ -551,6 +551,41 @@ test('allocation locks lifecycle by default, preserves edits when relocked, and 
     assert.equal((await pending).action, 'cancel'); // CHANGE
 }); // CHANGE
 
+test('allocation tab navigation preserves an incomplete task and applies it only through task Save and Preview Planting', async t => { // CHANGE
+    const template = { version: 2, rules: [{ id: 'custom', title: 'Original task', taskTypeId: 'general', startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 0 }] }; // CHANGE
+    const fixture = allocationSchedulerFixture({ varietyTemplate: template }), view = fixture.api.__testWindow.document.defaultView; // CHANGE
+    t.after(() => view.close()); // CHANGE
+    const pending = fixture.api.openAllocationScheduleDialog(fixture.ui, fixture.draft, { previewOnly: true }); // CHANGE
+    const dialog = await waitForSchedulerDialog(fixture), schedule = dialog.querySelector('.usl-scheduler-body').firstChild; // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Tasks').click(); // CHANGE
+    const tasks = dialog.querySelector('.usl-scheduler-body').firstChild; // CHANGE
+    Array.from(tasks.querySelectorAll('button')).find(button => button.textContent === 'Edit').click(); // CHANGE
+    await waitForAllocationState(() => tasks.querySelector('[aria-label="Task instructions"]')); // CHANGE
+    const instructions = tasks.querySelector('[aria-label="Task instructions"]'); instructions.value = 'Allocation draft notes'; // CHANGE
+    const editor = instructions.closest('[data-trellis-surface="inset"]').parentElement; // CHANGE
+    const title = Array.from(editor.querySelectorAll('.usl-scheduler-row')).find(row => row.textContent === 'Title').querySelector('input'); // CHANGE
+    title.value = ''; // CHANGE: an incomplete rule must not prevent navigation or be silently applied.
+    const writesBefore = fixture.writes.length; // CHANGE
+    for (let index = 0; index < 3; index++) { // CHANGE
+        Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Schedule').click(); // CHANGE
+        assert.equal(dialog.querySelector('.usl-scheduler-body').firstChild, schedule); // CHANGE
+        Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Tasks').click(); // CHANGE
+        assert.equal(dialog.querySelector('.usl-scheduler-body').firstChild, tasks); // CHANGE
+    } // CHANGE
+    assert.equal(title.isConnected, true); assert.equal(title.value, ''); assert.equal(instructions.value, 'Allocation draft notes'); // CHANGE
+    assert.equal(fixture.writes.length, writesBefore); assert.equal(fixture.getGraphWrites(), 0); // CHANGE
+    title.value = 'Updated allocation task'; // CHANGE
+    Array.from(editor.querySelectorAll('button')).find(button => button.textContent === 'Save').click(); // CHANGE
+    await waitForAllocationState(() => Array.from(tasks.querySelectorAll('button')).some(button => button.textContent === 'Delete' && button.parentElement.parentElement.textContent.includes('Updated allocation task'))); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Schedule').click(); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Tasks').click(); // CHANGE
+    Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Preview Planting').click(); // CHANGE
+    const result = await pending; assert.equal(result.action, 'preview'); // CHANGE
+    assert.equal(result.draft.lifecycle.taskTemplate.rules[0].title, 'Updated allocation task'); // CHANGE
+    assert.equal(result.draft.lifecycle.taskTemplate.rules[0].instructions, 'Allocation draft notes'); // CHANGE
+    assert.equal(fixture.getGraphWrites(), 0); // CHANGE
+}); // CHANGE
+
 test('allocation lifecycle edits solve demand and wait for capacity revalidation before Preview', async () => { // CHANGE
     const fixture = allocationSchedulerFixture(); // CHANGE
     let candidate, finishFit; // CHANGE

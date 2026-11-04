@@ -3,7 +3,7 @@ const test = require('node:test'), assert = require('node:assert/strict'), fs = 
 const holdsSource = fs.readFileSync(path.join(__dirname, '../drawio/src/main/webapp/js/trellis-editing-holds.js'), 'utf8'); // CHANGE
 const { createSchedulerOverlapFixture, waitFor } = require('./helpers/scheduler-overlap-fixture.cjs'); // CHANGE
 
-test('dirty scheduler tabs require Commit, Discard or Stay, and Commit keeps the dialog open', async t => { // CHANGE
+test('scheduler tabs preserve one draft and leaving the editor requires Commit, Discard or Stay', async t => { // CHANGE
     const h = createSchedulerOverlapFixture(t), w = h.api.__testWindow.document.defaultView; // CHANGE
     vm.runInNewContext(holdsSource, { window: w }); // CHANGE
     let choice = 'stay', prompts = 0; // CHANGE
@@ -12,10 +12,11 @@ test('dirty scheduler tabs require Commit, Discard or Stay, and Commit keeps the
     h.api.__testWindow.Trellis = { sharing }; h.graph.__trellisSharing = sharing; h.graph.removeCells([h.basil]); // CHANGE
     await h.open(); const dialog = h.getDialog(), date = dialog.querySelector('input[type="date"]'); assert.ok(date); const initial = date.value; // CHANGE
     date.value = '2026-10-18'; h.dispatch(date, 'input'); h.dispatch(date, 'change'); // CHANGE
-    h.button('Tasks').click(); await waitFor(() => prompts === 1); assert.equal(dialog.querySelector('.usl-scheduler-tab[data-active="true"]').textContent, 'Schedule'); assert.equal(date.value, '2026-10-18'); await new Promise(resolve => setImmediate(resolve)); // CHANGE
-    choice = 'discard'; h.button('Tasks').click(); await waitFor(() => dialog.querySelector('.usl-scheduler-tab[data-active="true"]').textContent === 'Tasks'); assert.equal(date.value, initial); assert.equal(h.state.taskCalls, 0); // CHANGE
+    h.button('Tasks').click(); await waitFor(() => dialog.querySelector('.usl-scheduler-tab[data-active="true"]').textContent === 'Tasks'); assert.equal(prompts, 0); assert.equal(date.value, '2026-10-18'); assert.equal(h.state.taskCalls, 0); // CHANGE
+    assert.equal(await sharing.transitionEditor(() => true), false); assert.equal(prompts, 1); assert.equal(date.value, '2026-10-18'); // CHANGE
+    choice = 'discard'; assert.equal(await sharing.transitionEditor(() => true), true); assert.equal(date.value, initial); assert.equal(h.state.taskCalls, 0); // CHANGE
     h.button('Schedule').click(); await waitFor(() => dialog.querySelector('.usl-scheduler-tab[data-active="true"]').textContent === 'Schedule'); await new Promise(resolve => setImmediate(resolve)); // CHANGE
-    date.value = '2026-10-19'; h.dispatch(date, 'input'); h.dispatch(date, 'change'); choice = 'commit'; h.button('Tasks').click(); // CHANGE
+    date.value = '2026-10-19'; h.dispatch(date, 'input'); h.dispatch(date, 'change'); choice = 'commit'; h.button('Tasks').click(); await waitFor(() => dialog.querySelector('.usl-scheduler-tab[data-active="true"]').textContent === 'Tasks'); assert.equal(h.state.taskCalls, 0); await sharing.transitionEditor(() => true); // CHANGE
     await waitFor(() => h.state.taskCalls === 1 || [...dialog.querySelectorAll('div')].some(node => node.textContent.startsWith('Scheduling error:'))); assert.equal(h.state.taskCalls, 1, dialog.textContent); await waitFor(() => dialog.querySelector('.usl-scheduler-tab[data-active="true"]').textContent === 'Tasks'); // CHANGE
     assert.equal(dialog.isConnected, true); assert.equal(h.crop.getAttribute('sow_date'), '2026-10-19'); assert.deepEqual(Array.from(registry.pinnedTargets()), []); // CHANGE
 }); // CHANGE

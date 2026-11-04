@@ -4,6 +4,7 @@ const fs = require('node:fs'); // NEW
 const os = require('node:os'); // NEW
 const path = require('node:path'); // NEW
 const { app, BrowserWindow } = require('electron'); // NEW
+const { pathToFileURL } = require('node:url'); // CHANGE: evaluated scripts in a data document need an explicit local asset base.
 const project = path.resolve(__dirname, '../..'), webapp = path.join(project, 'drawio/src/main/webapp'); // NEW
 const output = path.join(project, '.test-artifacts/layered-surfaces'); // NEW
 const plugins = path.join(webapp, 'plugins/garden_planner_plugins'); // NEW
@@ -55,6 +56,7 @@ app.whenReady().then(async () => { // NEW
         await run(fs.readFileSync(path.join(webapp, 'mxgraph/mxClient.js'), 'utf8')); // NEW
         await run('window.Draw={loadPlugin(){}};' + fs.readFileSync(path.join(plugins, 'Trellis_UI_Cleanup.js'), 'utf8')); // NEW
         await run(`window.graph=new mxGraph(document.getElementById('graph'));graph.isSpecialColor=()=>false;const actions=new Map();window.ui=Object.assign(new mxEventSource(),{editor:Object.assign(new mxEventSource(),{graph}),actions:{addAction(id,fn){const action={funct:fn};actions.set(id,action);return action;},get:id=>actions.get(id)},menus:{get(){return null;}},getCurrentFile:()=>({getTitle:()=> 'Layered surfaces'}),handleError(error){throw error;}});window.Draw={loadPlugin:fn=>fn(ui)};window.Editor={moveImage:''};window.TrellisContextMenu={install(){},register(){}};const value=mxUtils.createXmlDocument().createElement('object');for(const [key,val]of Object.entries({garden_module:'1',label:'Market garden',garden_name:'Market garden',city_id:'1',unit_system:'metric',default_bed_width_cm:'80',default_bed_length_cm:'300'}))value.setAttribute(key,val);window.garden=graph.insertVertex(graph.getDefaultParent(),'garden',value,300,100,600,550);graph.setSelectionCell(garden);void 0;`); // NEW
+        await run('window.TrellisNarrationAssetBase=' + JSON.stringify(pathToFileURL(path.join(webapp, 'audio/narration/')).href) + ';void 0;'); // CHANGE
         for (const name of ['trellis-narration-catalog.js', 'trellis-narration.js']) await run(fs.readFileSync(path.join(webapp, 'js', name), 'utf8')); // NEW
         await run(fs.readFileSync(path.join(plugins, 'Garden_Quickstart.js'), 'utf8')); // NEW
         await run('graph.__trellisQuickstart.show();void 0;'); // NEW

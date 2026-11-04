@@ -32,9 +32,10 @@
         function editMetadata(operation, recordHistory = false) { // CHANGE
             const undoManager = ui.editor.undoManager, registerEdit = undoManager?.undoableEditHappened; // CHANGE: use the same registration boundary as existing Trellis undo suppression.
             if (!recordHistory && registerEdit) undoManager.undoableEditHappened = () => {}; // CHANGE: IDs, versions, and immutable receipts cannot create or trim command history.
-            applying = true; graph.__trellisFieldMetadataChange = true; model.beginUpdate();
-            try { return operation(); } finally { // CHANGE
-                try { model.endUpdate(); } finally { if (registerEdit) undoManager.undoableEditHappened = registerEdit; graph.__trellisFieldMetadataChange = false; applying = false; } // CHANGE: preserve existing Trellis suppression hooks and restore them after observer failures.
+            const context = recordHistory && graph.__trellisEditContext; // CHANGE: task commands join the same native commit owner instead of entering an already open raw transaction.
+            applying = true; graph.__trellisFieldMetadataChange = true; if (!context?.apply) model.beginUpdate(); // CHANGE
+            try { return context?.apply ? context.apply({ cells: [] }, operation) : operation(); } finally { // CHANGE
+                try { if (!context?.apply) model.endUpdate(); } finally { if (registerEdit) undoManager.undoableEditHappened = registerEdit; graph.__trellisFieldMetadataChange = false; applying = false; } // CHANGE: preserve existing Trellis suppression hooks and restore them after observer failures.
             } // NEW
         }
         /** Clone identity must never match a deleted source's pending mobile work. */

@@ -65,7 +65,7 @@ test('mixed profiles disable preconfigured legacy folders and retain local files
     assert.equal(await fs.readFile(old.diagramPath, 'utf8'), xml); assert.deepEqual(JSON.parse(await fs.readFile(registryFile, 'utf8')).find(canvas => canvas.shareId === old.shareId), old); // CHANGE
 }); // CHANGE
 
-test('v3 peers exchange object records and preserve independent autosaves with the coordinator offline', { skip: process.env.TRELLIS_SYNCTHING_RUNTIME_TEST !== '1', timeout: 180000 }, async t => { // CHANGE
+test('gated peers exchange object records and preserve independent autosaves with the coordinator offline', { skip: process.env.TRELLIS_SYNCTHING_RUNTIME_TEST !== '1', timeout: 180000 }, async t => { // CHANGE
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-collaboration-mesh-')); // NEW
     const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), addresses = new Map(); // NEW
     const services = ['coordinator', 'alice', 'bob'].map(name => createSyncthingService({ userDataPath: path.join(root, name, 'profile'), documentsPath: path.join(root, name, 'documents'), binaryRoot: path.join(project, 'vendor', 'syncthing'), setStartup: async () => {}, onListening: ({ deviceId, port }) => addresses.set(deviceId, ['tcp://127.0.0.1:' + port]), deviceAddresses: id => addresses.get(id) || ['dynamic'] })); // NEW
@@ -74,7 +74,7 @@ test('v3 peers exchange object records and preserve independent autosaves with t
     const users = ['admin', 'alice', 'bob'].map(id => ({ id, name: id, email: id + '@example.org', admin: true })); // NEW
     const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="mesh-v2" trellis_users_json="' + JSON.stringify({ usersEnabled: true, users, invites: [] }).replace(/"/g, '&quot;') + '"><mxCell parent="0"/></object><object id="bed-a" label="Bed A" trellis_owner_user_id="alice"><mxCell vertex="1" parent="1"/></object><object id="bed-b" label="Bed B" trellis_owner_user_id="bob"><mxCell vertex="1" parent="1"/></object></root></mxGraphModel>'; // NEW
     const source = path.join(root, 'Community.drawio'); await fs.writeFile(source, xml); a.setContext(1, { diagramPath: source, diagramId: 'mesh-v2', userId: 'admin' }); // NEW
-    const shared = await a.setupCanvas(1, { diagramPath: source, diagramId: 'mesh-v2', xml, protocolVersion: 3 }); // NEW
+    const shared = await a.setupCanvas(1, { diagramPath: source, diagramId: 'mesh-v2', xml, protocolVersion: 4 }); // NEW
     const invitedB = await a.createDeviceInvite(1, { shareId: shared.shareId, userId: 'alice' }), joinedB = await b.joinCanvas({ block: invitedB.block }); // NEW
     const invitedC = await a.createDeviceInvite(1, { shareId: shared.shareId, userId: 'bob' }), joinedC = await c.joinCanvas({ block: invitedC.block }); // NEW
     await a.requestMembership(1, { shareId: shared.shareId, operation: 'approve', reply: joinedB.reply }); await a.requestMembership(1, { shareId: shared.shareId, operation: 'approve', reply: joinedC.reply }); // NEW
@@ -96,14 +96,14 @@ test('v3 peers exchange object records and preserve independent autosaves with t
 }); // NEW
 
 /** Native transport must deliver departure receipts before severing the departing peer. */ // NEW
-test('project lifecycle v3 hands coordination to a real connected peer and admits a later device', { skip: process.env.TRELLIS_SYNCTHING_RUNTIME_TEST !== '1', timeout: 180000 }, async t => { // CHANGE
+test('gated project lifecycle hands coordination to a real connected peer and admits a later device', { skip: process.env.TRELLIS_SYNCTHING_RUNTIME_TEST !== '1', timeout: 180000 }, async t => { // CHANGE
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-project-lifecycle-runtime-')), project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), addresses = new Map(); // NEW
     const services = ['owner', 'successor', 'later'].map(name => createSyncthingService({ userDataPath: path.join(root, name, 'profile'), documentsPath: path.join(root, name, 'documents'), binaryRoot: path.join(project, 'vendor/syncthing'), setStartup: async () => {}, onListening: ({ deviceId, port }) => addresses.set(deviceId, ['tcp://127.0.0.1:' + port]), deviceAddresses: id => addresses.get(id) || ['dynamic'] })); // NEW
     t.after(() => cleanupRuntimeServices(services, root)); // CHANGE
     const [a, b, c] = services; await a.start(); await b.start(); await c.start(); // NEW
     const users = [{ id: 'owner', name: 'Owner', email: 'owner@example.test', admin: true, portableIdentityId: 'owner-identity' }, { id: 'successor', name: 'Successor', email: 'successor@example.test', admin: false, portableIdentityId: 'successor-identity' }]; // NEW
     const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="lifecycle-runtime" trellis_users_json="' + JSON.stringify({ usersEnabled: true, users, invites: [] }).replace(/"/g, '&quot;') + '"><mxCell parent="0"/></object><object id="bed" label="Retained bed" trellis_access_user_ids_json="[&quot;successor&quot;]" trellis_owner_user_id="owner"><mxCell vertex="1" parent="1"/></object></root></mxGraphModel>'; // NEW
-    a.setContext(1, { diagramId: 'lifecycle-runtime', userId: 'owner' }); const created = await a.setupCanvas(1, { diagramId: 'lifecycle-runtime', xml, protocolVersion: 3 }); // CHANGE
+    a.setContext(1, { diagramId: 'lifecycle-runtime', userId: 'owner' }); const created = await a.setupCanvas(1, { diagramId: 'lifecycle-runtime', xml, protocolVersion: 4 }); // CHANGE
     const invite = await a.createDeviceInvite(1, { shareId: created.shareId, userId: 'successor' }), joined = await b.joinCanvas({ block: invite.block }); // NEW
     await a.requestMembership(1, { shareId: created.shareId, operation: 'approve', reply: joined.reply }); // NEW
     const leaving = { shareId: created.shareId, userId: 'owner', identityId: 'owner-identity', successorUserId: 'successor' }; // NEW

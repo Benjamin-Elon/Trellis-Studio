@@ -207,3 +207,75 @@ test('newer editing during an older save retains its hold and failed persistence
     const next = cell.value.cloneNode(true); next.setAttribute('label', 'Later edit'); h.graph.model.setValue(cell, next); await settle(); h.failSave(true); void editor.complete(); await assert.rejects(h.save(), /Temporary save failure/); assert.equal(h.held.has(h.key(cell)), true); // CHANGE
     h.failSave(false); await h.save(); await settle(); assert.equal(h.held.has(h.key(cell)), false, JSON.stringify({ holds: h.w.Trellis.sharing.automationHolds(), modified: h.file.isModified(), editorDirty: editor.dirty(), calls: h.activityCalls.slice(-8) })); // CHANGE
 }); // CHANGE
+
+/** Deferred initialization belongs to its original model, page, author and exact module. */ // CHANGE
+for (const stale of ['none', 'undo', 'document', 'page', 'actor', 'deleted']) test('deferred task initialization rejects stale ' + stale + ' ownership', async t => { // CHANGE
+    const h = await fixture(t), task = h.create('task'); await settle(); // CHANGE
+    const timers = [], schedule = h.w.setTimeout; h.w.setTimeout = (callback, delay, ...args) => delay === 0 ? timers.push(() => callback(...args)) : schedule(callback, delay, ...args); // CHANGE
+    h.graph.fireEvent(new h.w.mxEventObject('usl:taskModuleReady', 'taskModule', task, 'createMainBoard', true)); h.w.setTimeout = schedule; assert.ok(timers.length); // CHANGE
+    if (stale === 'undo') h.undo.undo(); // CHANGE
+    if (stale === 'document') h.graph.model.setRoot(new h.w.mxGraphModel().getRoot()); // CHANGE
+    if (stale === 'page') h.ui.currentPage = {}; // CHANGE
+    if (stale === 'actor') h.users.logout(); // CHANGE
+    if (stale === 'deleted') h.graph.model.remove(task); // CHANGE
+    const before = h.ui.getFileData(); for (const callback of timers) callback(); await settle(); // CHANGE
+    if (stale === 'none') assert.ok(h.graph.model.getChildren(task).some(cell => !!cell.getAttribute('board_key')), 'initialization finishes without another click or save'); // CHANGE
+    else assert.equal(h.ui.getFileData(), before, 'an obsolete callback cannot change the replacement view'); // CHANGE
+    assert.deepEqual(h.errors, []); // CHANGE
+}); // CHANGE
+
+/** Hold arrival cannot reclassify generated board work or absorb unrelated manual edits. */ // CHANGE
+for (const denied of [false, true]) test('task initialization joins a delayed ' + (denied ? 'denied' : 'accepted') + ' creation claim', async t => { // CHANGE
+    const h = await fixture(t), unrelated = h.create('regular'); await settle(); await h.save(); // CHANGE
+    const request = h.bridge.activityAction; let release; const blocked = new Promise(resolve => { release = resolve; }); // CHANGE
+    h.bridge.activityAction = async input => { if (input.kind === 'claim') { await blocked; if (denied) return { ok: false, reason: 'Controlled claim denial' }; } return request(input); }; // CHANGE
+    const garden = h.create('garden'); await settle(); const task = h.graph.model.getCell(garden.getAttribute('trellis_task_module_id')); // CHANGE
+    assert.ok(h.graph.model.getChildren(task).some(cell => !!cell.getAttribute('board_key')), 'board finishes while the creation claim is pending'); // CHANGE
+    const before = unrelated.value.cloneNode(true).outerHTML; h.graph.labelChanged(unrelated, 'Unrelated manual edit'); await settle(); assert.equal(unrelated.value.outerHTML, before, 'pending generation does not authorize unrelated manual edits'); // CHANGE
+    release(); await h.w.Trellis.sharing.whenEditingReady(); await settle(); // CHANGE
+    assert.equal(h.graph.model.getCell(garden.id) === garden, !denied); assert.equal(h.graph.model.getCell(task.id) === task, !denied); // CHANGE
+    if (!denied) { await h.save(); h.undo.undo(); h.undo.redo(); assert.equal(h.graph.model.getCell(task.id), task); } // CHANGE
+    assert.deepEqual(h.errors, []); // CHANGE
+}); // CHANGE
+
+test('task transactions inherit generated provenance and preserve an explicit manual override', async t => { // CHANGE
+    const h = await fixture(t), task = h.create('task'); await settle(); await h.save(); // CHANGE
+    const source = fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Garden_Task_Manager.js'), 'utf8'), start = source.indexOf('    function createTaskTransactionRunner('), end = source.indexOf('    const taskTransactions =', start); // CHANGE
+    const create = new h.w.Function('graph', 'ui', source.slice(start, end) + '; return createTaskTransactionRunner;')(h.graph, h.ui), runner = create({ model: h.graph.model }), context = h.graph.__trellisEditContext, changes = []; // CHANGE
+    h.graph.model.addListener(h.w.mxEvent.CHANGE, (_sender, event) => changes.push(...event.getProperty('edit').changes.filter(change => change.constructor.name === 'mxStyleChange'))); // CHANGE
+    const change = suffix => h.graph.model.setStyle(task, task.style + ';fixture=' + suffix); // CHANGE
+    context.scope('generated-content', () => runner.runModelUpdate(() => change('inherited'))); // CHANGE
+    context.scope('generated-content', () => runner.runModelUpdate({ kind: 'manual' }, () => change('explicit'))); // CHANGE
+    runner.runModelUpdate(() => change('default')); // CHANGE
+    assert.deepEqual(changes.map(change => context.kindOf(change)), ['generated-content', 'manual', 'manual']); assert.deepEqual(h.errors, []); // CHANGE
+}); // CHANGE
+
+test('new connector initialization retains prior absence across attribution and terminal changes', async t => { // CHANGE
+    const h = await fixture(t), garden = h.create('garden'); await settle(); await h.save(); // CHANGE
+    const left = h.graph.insertVertex(garden, null, 'Left', 10, 10, 20, 20), right = h.graph.insertVertex(garden, null, 'Right', 100, 10, 20, 20); await settle(); await h.save(); // CHANGE
+    const edge = h.graph.__trellisEditContext.apply({ cells: [garden] }, () => { const edge = new h.w.mxCell('Private endpoint connector', new h.w.mxGeometry()); edge.id = 'new-edge'; edge.setEdge(true); h.users.stampCreatedOwner(edge); edge.setTerminal(left, true); edge.setTerminal(right, false); h.graph.addCell(edge, garden); h.graph.model.setStyle(edge, 'edgeStyle=orthogonalEdgeStyle;'); return edge; }); // CHANGE
+    await settle(); assert.equal(h.graph.model.getCell(edge.id), edge); assert.equal(edge.source, left); assert.equal(edge.target, right); await h.save(); assert.deepEqual(h.errors, []); // CHANGE
+}); // CHANGE
+
+for (const stale of ['undo', 'document', 'actor']) test('late creation claim cannot revive work after ' + stale, async t => { // CHANGE
+    const h = await fixture(t), initial = h.ui.getFileData(), request = h.bridge.activityAction; let release; const pending = new Promise(resolve => { release = resolve; }); // CHANGE
+    h.bridge.activityAction = async input => { if (input.kind === 'claim') await pending; return request(input); }; // CHANGE
+    const garden = h.create('garden'); await settle(); // CHANGE
+    if (stale === 'undo') h.undo.undo(); if (stale === 'document') h.ui.setFileData(initial); if (stale === 'actor') h.users.logout(); await settle(); // CHANGE
+    const before = h.ui.getFileData(); release(); await settle(); await settle(); // CHANGE
+    assert.equal(h.ui.getFileData(), before, 'late activity cannot change the current document or author'); // CHANGE
+    if (stale !== 'actor') assert.equal(h.graph.model.getCell(garden.id), undefined); assert.deepEqual(h.errors, []); // CHANGE
+}); // CHANGE
+
+test('field task batches use one native commit, retain receipts across Undo and compensate failed commands', async t => { // CHANGE
+    const h = await fixture(t), taskModule = h.create('task'); await settle(); const { board } = h.graph.__trellisTaskManager.ensureMainBoardInTaskModule(taskModule); await settle(); await h.save(); // CHANGE
+    const task = h.graph.__trellisTaskManager.createRoadmapTaskInBoard(board, { title: 'Field update', startISO: '2026-10-01', endISO: '2026-10-01', workflowState: 'TODO', assigneeRoleIds: [] }); await settle(); await h.save(); // CHANGE
+    const source = fs.readFileSync(path.join(webapp, 'js/trellis-field-runtime.js'), 'utf8'), start = source.indexOf('        function editMetadata('), end = source.indexOf('        /** Clone identity', start); // CHANGE
+    const edit = new h.w.Function('ui', 'graph', 'model', 'let applying = false;' + source.slice(start, end) + '; return editMetadata;')(h.ui, h.graph, h.graph.model); h.undo.clear(); // CHANGE
+    edit(() => h.w.Trellis.taskCommands.commitCardPatch(task, { workflow_state: 'DONE', completed: '2026-09-30' }, { reflow: true }), true); // CHANGE
+    assert.equal(task.getAttribute('workflow_state'), 'DONE'); assert.equal(h.undo.history.length, 1); // CHANGE
+    edit(() => h.graph.model.execute(new h.w.mxCellAttributeChange(h.graph.getDefaultParent(), 'trellis_field_acknowledgments_json', '["receipt"]'))); // CHANGE
+    h.undo.undo(); assert.equal(task.getAttribute('workflow_state'), 'TODO'); assert.equal(h.graph.getDefaultParent().getAttribute('trellis_field_acknowledgments_json'), '["receipt"]'); assert.equal(h.undo.canRedo(), true); h.undo.redo(); assert.equal(task.getAttribute('workflow_state'), 'DONE'); // CHANGE
+    assert.throws(() => edit(() => { h.w.Trellis.taskCommands.commitCardPatch(task, { card_note: 'Must roll back' }, { reflow: false }); throw new Error('Controlled command failure'); }, true), /Controlled command failure/); // CHANGE
+    assert.notEqual(task.getAttribute('card_note'), 'Must roll back'); assert.equal(h.graph.__trellisFieldMetadataChange, false); assert.equal(h.graph.model.updateLevel, 0); assert.deepEqual(h.errors, []); // CHANGE
+}); // CHANGE

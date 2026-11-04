@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
+const { parse } = require('@babel/parser'), traverse = require('@babel/traverse').default; // CHANGE: metadata values are semantic literals, independent of source quote style.
 
 const projectRoot = path.resolve(__dirname, "..");
 const pluginPath = path.join(projectRoot, "drawio/src/main/webapp/plugins/garden_planner_plugins/Created_Change_Map.js");
@@ -576,7 +577,9 @@ test("domain plugins declare semantic history transactions and restore listeners
     const taskManager = fs.readFileSync(path.join(pluginDir, "Garden_Task_Manager.js"), "utf8");
     const irrigation = fs.readFileSync(path.join(pluginDir, "Garden_Irrigation_Planner.js"), "utf8");
     const linking = fs.readFileSync(path.join(pluginDir, "Vertex_Linking_Standalone.js"), "utf8");
-    assert.match(scheduler, /category:\s*"Garden scheduling"[\s\S]*action:\s*"saveSchedule"/);
+    const metadata = []; // CHANGE
+    traverse(parse(scheduler), { ObjectExpression({ node }) { const values = Object.fromEntries(node.properties.filter(property => property.type === 'ObjectProperty' && property.value.type === 'StringLiteral').map(property => [property.key.name || property.key.value, property.value.value])); if (values.category && values.action) metadata.push(values); } }); // CHANGE
+    assert.ok(metadata.some(value => value.category === 'Garden scheduling' && value.action === 'saveSchedule')); // CHANGE
     assert.match(taskManager, /category:\s*"Assignments"[\s\S]*action:\s*"assign"/);
     assert.match(taskManager, /category:\s*replacement\.mode === 'sync' \? "Garden scheduling" : "Tasks"/);
     assert.match(irrigation, /category:\s*"Irrigation"[\s\S]*action:\s*label/);

@@ -8,7 +8,7 @@ import crypto from 'node:crypto'; // NEW
 import { createCollaborationStore } from '../src/main/trellis-collaboration-store.js'; // NEW
 import { createCurrentStateStore, applyCurrentEvent, expireCurrentState, CHECKPOINT_BYTES } from '../src/main/trellis-current-state.js'; // CHANGE
 import { objects, diffObjects, REQUEST_GRACE_MS, HANDOFF_MS } from '../src/main/trellis-collaboration-protocol.js'; // CHANGE
-import { signRecord, digest, canonical } from '../src/main/trellis-share-protocol.js'; // NEW
+import { signRecord, digest, canonical, inspectDiagram } from '../src/main/trellis-share-protocol.js'; // NEW
 
 const key = '["","a"]'; // NEW
 function diagram(label = 'Initial', extra = '') { // NEW
@@ -424,3 +424,21 @@ test('shutdown during an immutable checkpoint write cannot publish a late head',
     const headFile = path.join(core.directory, 'heads', 'A.json'), head = JSON.parse(await fs.readFile(headFile, 'utf8')).payload; assert.equal(head.sequence, 1); assert.equal(head.checkpointSequence, 0); // NEW
     await core.read(); await core.maintenance(); assert.equal(JSON.parse(await fs.readFile(headFile, 'utf8')).payload.checkpointSequence, 1); // NEW
 }); // NEW
+
+/** Policy intent is carried by the signed mutation; authority comes from accepted policy. */ // CHANGE
+test('authorized coordinator policy changes pass while policy intent cannot authorize ownership, grants or roster changes', async t => { // CHANGE
+    const f = await fixture(t), before = await f.store.snapshot(), created = diagram('Initial', '<object id="policy-garden" garden_module="1" trellis_owner_user_id="admin"><mxCell parent="1" vertex="1"/></object>'); // CHANGE
+    assert.equal((await f.store.action(1, 'admin', { kind: 'save', baseXml: before.xml, xml: created })).ok, true); // CHANGE
+    const state = inspectDiagram(created), module = state.cells.find(cell => cell.id === 'policy-garden'); // CHANGE
+    module.node.setAttribute('garden_module', '1'); module.node.setAttribute('trellis_owner_user_id', 'admin'); module.node.setAttribute('trellis_access_user_ids_json', JSON.stringify(['visitor'])); // CHANGE
+    const accepted = state.document.serialize(), saved = await f.store.action(1, 'admin', { kind: 'save', baseXml: created, xml: accepted, usersPolicyAction: true }); // CHANGE
+    assert.equal(saved.ok, true, saved.reason); await f.store.action(1, 'admin', { kind: 'release' }); // CHANGE
+    for (const change of ['ownership', 'grants', 'roster']) { // CHANGE
+        const draft = inspectDiagram(accepted), cell = draft.cells.find(item => item.id === 'policy-garden'); // CHANGE
+        if (change === 'ownership') cell.node.setAttribute('trellis_owner_user_id', 'visitor'); // CHANGE
+        if (change === 'grants') cell.node.setAttribute('trellis_access_user_ids_json', JSON.stringify(['visitor', 'stranger'])); // CHANGE
+        if (change === 'roster') { draft.store.users.find(user => user.id === 'visitor').admin = true; draft.cells.find(item => item.node.hasAttribute('trellis_users_json')).node.setAttribute('trellis_users_json', JSON.stringify(draft.store)); } // CHANGE
+        const xml = draft.document.serialize(), result = await f.store.action(2, 'visitor', { kind: 'save', baseXml: accepted, xml, usersPolicyAction: true }); // CHANGE
+        assert.equal(result.ok, false, change); assert.equal(result.code, 'PERMISSION_DENIED', change); assert.equal(await fs.readFile(result.recoveryPath, 'utf8'), xml); assert.equal((await f.store.snapshot()).xml, accepted); // CHANGE
+    } // CHANGE
+}); // CHANGE

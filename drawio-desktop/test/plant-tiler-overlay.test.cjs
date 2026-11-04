@@ -71,8 +71,10 @@ test('Garden Settings entry points route through the overlay-suppressed opener',
     assert.match(source, /if \(hasGardenSettingsSet\(moduleCell\)\) \{ if \(focusAfterSettingsClose\) selectAndZoomToGarden\(moduleCell\); return; \}[\s\S]*openGardenSettingsDialogWithOverlaySuppressed\(moduleCell, handleSettingsClose\);/); // CHANGE
     assert.match(source, /await openGardenSettingsDialogWithOverlaySuppressed\(targetMod\);/);
 
-    const directDialogReferences = source.match(/showGardenSettingsDialog\(ui, graph,/g) || [];
-    assert.equal(directDialogReferences.length, 5); // CHANGE: includes the guarded continuation after resolving an unfinished editor.
+    const opener = sourceSlice(source, 'openGardenSettingsDialogWithOverlaySuppressed = async function', 'function getSingleSelectedGardenModule'); // CHANGE: validate the opener contract, independent of form reopen callbacks.
+    assert.match(opener, /gardenSettingsOverlaySuppressed = true;[\s\S]*hideToolbar\(\)/); // CHANGE
+    assert.match(opener, /await showGardenSettingsDialog\(ui, graph, moduleCell, clearSuppressionAndNotify\)/); // CHANGE
+    assert.match(opener, /catch \(e\)[\s\S]*clearSuppressionAndNotify\(\);[\s\S]*throw e/); // CHANGE
 });
 
 test('planting geometry ranks bed-first overlap candidates by relationship severity', () => {

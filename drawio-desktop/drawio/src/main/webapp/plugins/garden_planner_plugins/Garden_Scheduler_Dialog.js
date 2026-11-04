@@ -11532,11 +11532,10 @@ function createScheduler(ui, referenceScope = null) { // NEW
                 return;
             }
             if (!milestone?.hasTaskRule || !milestone.taskStage) return;
-            if (await switchSchedulerTab(tasksTabBtn, tasksTab, async () => { await refreshTaskTemplateFromSelection(); await refreshTasksTabUI(); }) === false) return; // CHANGE
+            if (await switchSchedulerTab(tasksTabBtn, tasksTab) === false) return; // CHANGE: timeline navigation shares the draft-preserving tab path.
             const match = findFirstLifecycleTimelineTaskRule(taskRules, milestone.taskStage, generatedPreviewTasks);
             if (!match) return;
-            const taskRowIndex = buildTaskRuleDisplayOrder(taskRules, generatedPreviewTasks).findIndex(entry => entry.originalIndex === match.originalIndex);
-            const taskRowEl = taskRowIndex >= 0 ? tasksListDiv.children[taskRowIndex] : null;
+            const taskRowEl = tasksListDiv.querySelector(`[data-scheduler-task-rule-index="${match.originalIndex}"]`); // CHANGE: retained rows need not match the newly refreshed preview's chronological order.
             await openTaskEditor(match.rule, match.originalIndex, taskRowEl);
         }
 
@@ -12543,6 +12542,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
 
             buildTaskRuleDisplayOrder(taskRules, generatedPreviewTasks).forEach(({ rule, originalIndex }) => {
                 const wrap = document.createElement("div");
+                wrap.dataset.schedulerTaskRuleIndex = String(originalIndex); // CHANGE: lifecycle links locate the retained task row by rule identity.
                 wrap.style.border = "1px solid #ddd";
                 wrap.style.margin = "6px 0";
                 wrap.style.padding = "6px";
@@ -13653,11 +13653,20 @@ function createScheduler(ui, referenceScope = null) { // NEW
         }
 
         let schedulerControlSequence = 0; // CHANGE: controls retain identity when task rows are inserted or rebuilt.
-        const schedulerDraftControls = () => [div, tasksTab, btns].flatMap(element => [...element.querySelectorAll('input,textarea,select')]); // CHANGE: detached sections belong to the same baseline.
-        async function switchSchedulerTab(button, element, prepare) { // CHANGE
+        let schedulerTabVersion = 0; // CHANGE: leaving and returning to a tab invalidates its older pending timeline actions.
+        const schedulerDraftControls = () => [div, tasksTab, btns].flatMap(element => [...element.querySelectorAll('input,textarea,select')]).filter(field => !taskPreviewSection.contains(field)); // CHANGE: detached editors share one baseline; regenerated preview filters are presentation state, not planting edits.
+        /** Tabs share one editor draft; navigation never commits or resets its baseline. */ // CHANGE
+        async function switchSchedulerTab(button, element) { // CHANGE
+            if (allocationDialogClosed || !tabsContainer.isConnected) return false; // CHANGE: a closed editor cannot be navigated by a delayed action.
             if (button.dataset.active === 'true') return true; // CHANGE
-            const change = async () => { if (prepare && !collaborationEditor?.frozen?.()) await prepare(); if (allocationDialogClosed || !tabsContainer.isConnected) return false; tabsBody.replaceChildren(element); setActiveTabButton(button); collaborationEditor?.checkpoint?.(); return true; }; // CHANGE
-            return collaborationEditor?.transition ? collaborationEditor.transition(change) : change(); // CHANGE
+            const tabVersion = ++schedulerTabVersion; // CHANGE
+            tabsBody.replaceChildren(element); // CHANGE: retain task editors and all controls, including incomplete input.
+            setActiveTabButton(button); // CHANGE: show the chosen tab before any asynchronous preview work.
+            if (element === tasksTab && !collaborationEditor?.frozen?.()) { // CHANGE: preview refresh must not reload templates or rebuild editable controls.
+                await updateTaskPreview(); // CHANGE
+                if (!allocationDialogClosed && tabsContainer.isConnected) updateTimeline(); // CHANGE: retain lifecycle task links without rebuilding task inputs.
+            } // CHANGE
+            return !allocationDialogClosed && tabsContainer.isConnected && tabVersion === schedulerTabVersion; // CHANGE: an older timeline action cannot continue after navigation or closure.
         } // CHANGE
         function makeTabButton(label, targetEl) {
             const b = mxUtils.button(label, () => {
@@ -13673,7 +13682,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const scheduleTabBtn = makeTabButton("Schedule", div);
 
         const tasksTabBtn = mxUtils.button("Tasks", async () => {
-            await switchSchedulerTab(tasksTabBtn, tasksTab, async () => { await refreshTaskTemplateFromSelection(); await refreshTasksTabUI(); }); // CHANGE
+            await switchSchedulerTab(tasksTabBtn, tasksTab); // CHANGE: switching views preserves the entire unsaved draft.
         });
         tasksTabBtn.className = "usl-scheduler-tab";
         tasksTabBtn.dataset.trellisReviewAllow = ''; // CHANGE

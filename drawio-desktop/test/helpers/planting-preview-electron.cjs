@@ -99,7 +99,7 @@ app.whenReady().then(async () => { // CHANGE
         const panelChecks = await win.webContents.executeJavaScript(` // CHANGE
             (async () => { // CHANGE
                 const body = document.createElement('div'); // CHANGE
-                USL.scheduler = {layoutTools:{validateSpacingDraft:()=>({ok:true,errors:[]})}}; // CHANGE: domain validation is covered by integration tests; this fixture measures the production editor layout.
+                USL.scheduler = {layoutTools:{validateSpacingDraft:()=>({ok:true,errors:[]}),normalizeSpacingCm:(value,fallback=30)=>Math.max(1,Math.round(Number(value)||Number(fallback)||30))}}; // CHANGE: supply the editor's whole-centimetre normalization contract in this layout-only fixture.
                 let offsetDraft; const originalSlots=JSON.stringify(previewFixtureState.draft.geometry.slots); // CHANGE: rendering controls cannot modify existing plant positions.
                 graph.__trellisPlantingSpacingEditor.render(body, {selectedId:'proposal',rows:[{cellId:'proposal',proposed:true,enabled:true,label:'Radish',spacingXCm:20,spacingYCm:30,offsetXCm:1/3,offsetYCm:-1/3}]}, {live:true,proposed:true,fitToDemand:true,onChange:rows=>{offsetDraft=rows;}}); // CHANGE: exercise rounded displays in Chromium with exact callback values.
                 const bed = graph.getModel().getCell('bed'), fields = body.querySelectorAll('input[type=number]'), checks=[]; // CHANGE
