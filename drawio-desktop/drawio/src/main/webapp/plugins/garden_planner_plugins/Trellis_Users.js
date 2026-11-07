@@ -3718,10 +3718,11 @@ Draw.loadPlugin(function (ui) {
         getDiagramLoginKey(true); // NEW: imported legacy diagrams need a stable preference/document identity.
         return { ok: true, user: publicUser(user), diagramId: getDiagramLoginKey(false) }; // NEW
     } // NEW
+    let loginRestoration = Promise.resolve(); // NEW: opening waits for the normal login gate without requiring authentication.
     function handleDiagramOpened() {
         currentUserId = ""; authenticatedUserId = ""; // CHANGE: file changes clear both session and linking proof.
         const finish = function () { if (!isLoggedIn()) restoreRememberedLogin(); updateToolbarButton(); applyAuthGateIfNeeded(); }; // NEW
-        if (window.trellisIdentity) { restorePortableLogin().then(finish, finish); } // NEW
+        if (window.trellisIdentity) { loginRestoration = restorePortableLogin().then(finish, finish); } // CHANGE
         else finish(); // CHANGE: preserve synchronous legacy/test behavior.
     }
 
@@ -5290,6 +5291,7 @@ Draw.loadPlugin(function (ui) {
         login,
         logout,
         getDiagramKey, // NEW: public non-test access to the diagram-scoped local preference key.
+        whenLoginRestored: () => loginRestoration, // NEW
         restorePortableLogin, linkPortableIdentity, finishIdentityJoin, // CHANGE: guided joins reuse Users validation and authentication proof.
         showAuthDialog,
         openAccessRequestDialog, // CHANGE: blocked editor notices reuse the existing scoped request dialog.

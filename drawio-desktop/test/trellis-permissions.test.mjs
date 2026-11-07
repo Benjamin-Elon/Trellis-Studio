@@ -28,7 +28,7 @@ function fixture(options = {}) { // NEW
         cell('role', 'team', { trellis_role_user_id: 'visitor', ...(options.inactive ? { trellis_role_inactive: '1' } : {}) }, 'role_card=1;') + '</root></mxGraphModel>'; // NEW
 } // NEW
 function transact(before, after, actor) { // NEW
-    const delta = diffObjects(before, after), base = { schema: 4, userId: actor, sessionId: 'session', deviceId: 'device', at: 1000 }; // NEW
+    const delta = diffObjects(before, after), base = { schema: 5, userId: actor, sessionId: 'session', deviceId: 'device', at: 1000 }; // CHANGE
     const claim = { ...base, id: 'claim', kind: 'claim', targets: delta.targets, clock: 1, parents: [] }; // NEW
     const edit = { ...base, ...delta, id: 'edit', kind: 'edit', at: 1001, clock: 2, parents: ['claim'], claimIds: ['claim'] }; // NEW
     return transactCurrent(before, [claim, edit], 2000); // NEW

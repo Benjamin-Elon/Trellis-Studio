@@ -74,7 +74,7 @@ test('gated peers exchange object records and preserve independent autosaves wit
     const users = ['admin', 'alice', 'bob'].map(id => ({ id, name: id, email: id + '@example.org', admin: true })); // NEW
     const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="mesh-v2" trellis_users_json="' + JSON.stringify({ usersEnabled: true, users, invites: [] }).replace(/"/g, '&quot;') + '"><mxCell parent="0"/></object><object id="bed-a" label="Bed A" trellis_owner_user_id="alice"><mxCell vertex="1" parent="1"/></object><object id="bed-b" label="Bed B" trellis_owner_user_id="bob"><mxCell vertex="1" parent="1"/></object></root></mxGraphModel>'; // NEW
     const source = path.join(root, 'Community.drawio'); await fs.writeFile(source, xml); a.setContext(1, { diagramPath: source, diagramId: 'mesh-v2', userId: 'admin' }); // NEW
-    const shared = await a.setupCanvas(1, { diagramPath: source, diagramId: 'mesh-v2', xml, protocolVersion: 4 }); // NEW
+    const shared = await a.setupCanvas(1, { diagramPath: source, diagramId: 'mesh-v2', xml, protocolVersion: 5 }); // CHANGE
     const invitedB = await a.createDeviceInvite(1, { shareId: shared.shareId, userId: 'alice' }), joinedB = await b.joinCanvas({ block: invitedB.block }); // NEW
     const invitedC = await a.createDeviceInvite(1, { shareId: shared.shareId, userId: 'bob' }), joinedC = await c.joinCanvas({ block: invitedC.block }); // NEW
     await a.requestMembership(1, { shareId: shared.shareId, operation: 'approve', reply: joinedB.reply }); await a.requestMembership(1, { shareId: shared.shareId, operation: 'approve', reply: joinedC.reply }); // NEW
@@ -103,7 +103,7 @@ test('gated project lifecycle hands coordination to a real connected peer and ad
     const [a, b, c] = services; await a.start(); await b.start(); await c.start(); // NEW
     const users = [{ id: 'owner', name: 'Owner', email: 'owner@example.test', admin: true, portableIdentityId: 'owner-identity' }, { id: 'successor', name: 'Successor', email: 'successor@example.test', admin: false, portableIdentityId: 'successor-identity' }]; // NEW
     const xml = '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_history_id="lifecycle-runtime" trellis_users_json="' + JSON.stringify({ usersEnabled: true, users, invites: [] }).replace(/"/g, '&quot;') + '"><mxCell parent="0"/></object><object id="bed" label="Retained bed" trellis_access_user_ids_json="[&quot;successor&quot;]" trellis_owner_user_id="owner"><mxCell vertex="1" parent="1"/></object></root></mxGraphModel>'; // NEW
-    a.setContext(1, { diagramId: 'lifecycle-runtime', userId: 'owner' }); const created = await a.setupCanvas(1, { diagramId: 'lifecycle-runtime', xml, protocolVersion: 4 }); // CHANGE
+    a.setContext(1, { diagramId: 'lifecycle-runtime', userId: 'owner' }); const created = await a.setupCanvas(1, { diagramId: 'lifecycle-runtime', xml, protocolVersion: 5 }); // CHANGE
     const invite = await a.createDeviceInvite(1, { shareId: created.shareId, userId: 'successor' }), joined = await b.joinCanvas({ block: invite.block }); // NEW
     await a.requestMembership(1, { shareId: created.shareId, operation: 'approve', reply: joined.reply }); // NEW
     const leaving = { shareId: created.shareId, userId: 'owner', identityId: 'owner-identity', successorUserId: 'successor' }; // NEW

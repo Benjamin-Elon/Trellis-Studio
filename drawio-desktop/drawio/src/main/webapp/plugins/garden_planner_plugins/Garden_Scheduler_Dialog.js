@@ -3070,7 +3070,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
     function scoreCropFromCachedWindows(plant, windows, selectedSowISO) {
         const lifecycle = getCropLifecycle(plant);
         const label = cropPickerBaseLabel(plant);
-        return { lifecycle, label, ...scoreSowingWindowsForDate(windows, selectedSowISO) };
+        return { lifecycle, label, sowingSeasons: windows, ...scoreSowingWindowsForDate(windows, selectedSowISO) }; // CHANGE: initialization compares every cached season, not only the nearest one.
     }
 
     async function scoreCropSuitability(plant, context = {}) {
@@ -3449,6 +3449,29 @@ function createScheduler(ui, referenceScope = null) { // NEW
         }
         return makeCropPickerOptions(plants, scoreByPlantId, context.metadataByPlantId || new Map());
     }
+
+    /** Choose an open, next, or last window using displayed planting dates; crop names break ties. */ // CHANGE
+    function pickDefaultCropSowingWindow(pickerOptions, todayISO) { // CHANGE
+        if (!parseISODateUTCValue(todayISO)) return null; // CHANGE
+        const candidates = []; // CHANGE
+        for (const option of (pickerOptions || [])) { // CHANGE
+            const method = resolveCandidateMethodSelection(option.plant); // CHANGE
+            if (!method) continue; // CHANGE
+            const windows = projectSowingSeasonsForPrimaryDate(option.score?.sowingSeasons, method.methodId, plantDefaultTransplantDays(option.plant)); // CHANGE
+            for (const window of windows) { // CHANGE
+                const rank = sowDateInWindow(todayISO, window) ? 0 : (window.startISO > todayISO ? 1 : 2); // CHANGE
+                candidates.push({ plant: option.plant, window, rank, label: option.label || cropPickerBaseLabel(option.plant) }); // CHANGE
+            } // CHANGE
+        } // CHANGE
+        candidates.sort((left, right) => { // CHANGE
+            if (left.rank !== right.rank) return left.rank - right.rank; // CHANGE
+            const boundaryOrder = left.rank === 1 ? left.window.startISO.localeCompare(right.window.startISO) // CHANGE
+                : left.rank === 2 ? right.window.endISO.localeCompare(left.window.endISO) : 0; // CHANGE
+            return boundaryOrder || left.label.localeCompare(right.label); // CHANGE
+        }); // CHANGE
+        const winner = candidates[0]; // CHANGE
+        return winner ? { plant: winner.plant, window: winner.window } : null; // CHANGE
+    } // CHANGE
 
 
 
@@ -8563,6 +8586,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
             dailyClimate: initialDailyClimate = null,
             dailyClimateKey: initialDailyClimateKey = '',
             initialTransplantDaysOverrideValue = null,
+            initialSowingSeasonId = '', // CHANGE: a new planting opens the window that determined its default crop.
             derivedContext = null,
             bedCreationContext = null,
             allocationDraftContext = null // CHANGE: optional in-memory target; submission returns a draft instead of writing graph cells.
@@ -9454,7 +9478,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
             harvestWindowDays: (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value)),
             minYieldMultiplier: Number(minYieldMultInput.value || 0),
             sowingSeasons: [],
-            activeSowingSeasonId: '',
+            activeSowingSeasonId: initialSowingSeasonId, // CHANGE: the initial recompute retains this window; subsequent year changes use existing behavior.
             windowFeasible: mode.perennial || !!initialWindowFeasible,
             firstHarvestISO: null,
             lastHarvestISO: mode.perennial ? null : initialSelectedHarvestEndISO,
@@ -16422,6 +16446,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         const cityInit = await CityClimate.resolveUniqueNameFallback({ cityId: initialCityId, cityName: initialCityName });
         if (!cityInit) throw new Error(`City not found: ${initialCityName || initialCityId}. Select a valid city in Garden Settings before scheduling.`); // CHANGE: opening never writes the resolved city to the crop.
 
+        let defaultCropWindow = null; // CHANGE: explicit and specialized crop selections bypass automatic defaults.
         if (openOptions?.derivedMode) {
             derivedContext = await prepareDerivedScheduleContext(openOptions.derivedMode, cell, sourcePlantForDerived, plants, {
                 graph,
@@ -16441,6 +16466,14 @@ function createScheduler(ui, referenceScope = null) { // NEW
         }
         else {
             derivedContext = null; // CHANGE: legacy companion cells edit as ordinary plantings; old metadata remains inert.
+            if (plantIdAttr == null && !plantNameAttr && !hasPersistedSchedule) { // CHANGE
+                const pickerOptions = await scoreCropPickerOptions(plants, { // CHANGE
+                    city: cityInit, cityName: initialCityName, primaryDateISO: todayISO, seasonStartYear: year, // CHANGE
+                    climateModelModuleCell, bedProfile: scheduleBedContext.profile, bedProfileSource: scheduleBedContext.source // CHANGE
+                }); // CHANGE
+                defaultCropWindow = pickDefaultCropSowingWindow(pickerOptions, todayISO); // CHANGE
+                if (defaultCropWindow) selectedPlant = defaultCropWindow.plant; // CHANGE: retain the original first crop when no computed window is available.
+            } // CHANGE
         }
 
         const initialMethodSelection = await resolveInitialMethodSelection(cell, selectedPlant);
@@ -16489,7 +16522,9 @@ function createScheduler(ui, referenceScope = null) { // NEW
         if (!selectedIsPerennial && Number.isFinite(HW_DAYS)) {
             requireEffectiveTransplantDays(initialMethodId, initialTransplantDaysConfig.effectiveDays);
             const env = selectedPlantForSchedule.cropTempEnvelope();
-            const dailyClimate = await cityInit.loadDailyClimateModel({ scanStart, scanEndHard, climatePolicy: initialClimatePolicy });
+            const dailyClimate = defaultCropWindow // CHANGE: reuse climate from default selection while explicit crops retain their normal loading path.
+                ? await loadSuitabilityDailyClimate(cityInit, scanStart, scanEndHard, initialClimatePolicy, makeCropSuitabilityCache()) // CHANGE
+                : await cityInit.loadDailyClimateModel({ scanStart, scanEndHard, climatePolicy: initialClimatePolicy }); // CHANGE
             initialDailyClimate = dailyClimate;
             const dailyRates = cityInit.dailyRates(env.Tbase, year, initialClimatePolicy);
             const monthlyAvgTemp = cityInit.monthlyMeans(); // CHANGED: physical temperatures stay unshifted; GDD scaling is in daily climate rates.
@@ -16528,12 +16563,13 @@ function createScheduler(ui, referenceScope = null) { // NEW
 
         // no stray reassignments like: earliestFeasibleSowDate = a; selectedHarvestEndDate = b;  <-- remove these
 
+        const initialSowingSeasonId = initialSowingSeasons.find(window => window.id === defaultCropWindow?.window.id)?.id || ''; // CHANGE: retain only a window confirmed by the chosen crop's initial calculation.
         let previewStart = resolveInitialPreviewStartForScheduleDialog({
             storedSowDate,
             earliestFeasibleSowDate,
             selectedIsPerennial,
             initialWindowFeasible,
-            sowingSeasons: initialSowingSeasons,
+            sowingSeasons: initialSowingSeasonId ? initialSowingSeasons.filter(window => window.id === initialSowingSeasonId) : initialSowingSeasons, // CHANGE: dates and selected season describe the same winning window.
             todayISO,
             methodId: initialMethodId,
             effectiveTransplantDays: initialTransplantDaysConfig.effectiveDays
@@ -16585,6 +16621,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
         // Always open the dialog (even when HW_DAYS is null/perennial)
         await buildScheduleDialog(ui, cell, dialogPlants, cities, async (_form) => { /* handled inside builder */ }, {
             selectedPlant,
+            initialSowingSeasonId, // CHANGE
             earliestFeasibleSowDate: previewStart,
             lastHarvestDate: selectedHarvestEndDate, // CHANGED: retained for older builder call sites.
             latestHarvestEndDate,
@@ -18708,6 +18745,7 @@ function createScheduler(ui, referenceScope = null) { // NEW
             formatScheduleQualityDiagnosticRanges,
             buildSowingSeasonSelectorState,
             pickDefaultSowingSeasonId,
+            pickDefaultCropSowingWindow, // CHANGE: exercise initialization ranking independently of asynchronous climate loading.
             defaultPrimaryStartForSowingSeasons,
             defaultStartForActiveSowingSeason,
             resolveInitialPreviewStartForScheduleDialog,

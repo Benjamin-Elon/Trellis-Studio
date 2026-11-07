@@ -2890,8 +2890,17 @@ function unwatchFile(filePath, win) {
 	fileWatchRegistry.unwatch(filePath, win);
 }
 
+/** Progress subscriptions are scoped to the requesting renderer and never own verification. */ // NEW
+const gardenOpenProgress = new Map(); // NEW
+ipcMain.on('trellisGardenOpenProgressCancel', (event, requestId) => { // NEW
+    if (validateSender(event.senderFrame) && typeof requestId === 'string') gardenOpenProgress.get(event.sender.id + ':' + requestId)?.abort(); // NEW
+}); // NEW
 ipcMain.on("rendererReq", async (event, args) => {
 	if (!validateSender(event.senderFrame)) return null;
+    const requestId = args.action === 'trellisGardenLibrary' && args.method === 'prepareOpen' ? args.payload?.requestId : null; // NEW
+    const progressKey = typeof requestId === 'string' && requestId.length <= 128 ? event.sender.id + ':' + requestId : null; // NEW
+    const progressController = progressKey ? new AbortController() : null, stopProgress = () => progressController?.abort(); // NEW
+    if (progressKey) { gardenOpenProgress.get(progressKey)?.abort(); gardenOpenProgress.set(progressKey, progressController); event.sender.once('destroyed', stopProgress); } // NEW
 
 	try {
 		assertTrellisRunning(); // NEW: late renderer commands cannot acquire resources after shutdown commits.
@@ -3057,7 +3066,10 @@ ipcMain.on("rendererReq", async (event, args) => {
 					await assertSharingFileAccess(payload.path, path.join(app.getPath('userData'), 'trellis-identities'));
 				}
 				if (!['prepareOpen', 'referenceTemplates', 'sendReferenceProposal', 'list', 'create', 'completeStarter', 'importCurrent', 'rename', 'setSuffix', 'duplicate', 'download', 'setOffline', 'removeLocal', 'listLocal', 'cities', 'getReferenceCity', 'setReferenceCity', 'actions', 'trash', 'restore', 'purge', 'leave', 'listTrash'].includes(args.method)) throw new Error('Unsupported Garden library operation.'); // CHANGE
-				ret = await gardenLibraryService[args.method](payload, event.sender.id); // CHANGE: naming can identify the originating view without trusting renderer actor fields.
+                const observation = progressController ? { signal: progressController.signal, onProgress: sample => { // NEW
+                    if (!progressController.signal.aborted && !event.sender.isDestroyed()) event.sender.send('trellisGardenOpenProgress', { requestId, stage: 'check', completed: sample.completed, total: sample.total, batch: sample.batch, message: sample.message }); // NEW
+                } } : {}; // NEW
+				ret = await gardenLibraryService[args.method](payload, event.sender.id, observation); // CHANGE: progress stays bound to the originating window.
 				for (const project of [...(ret?.gardens || []), ret?.entry].filter(Boolean)) if (project.summary?.members) { const { members, ...summary } = project.summary; project.summary = summary; } // NEW: private portable rosters never cross the renderer bridge, including creation and Trash responses.
 				break;
 			}
@@ -3190,5 +3202,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 	}
 	catch (e) {
 		replyToLiveFrame(event, 'mainResp', { error: true, msg: e.message, e: e, reqId: args.reqId }); // CHANGE
-	}
+	} finally { // CHANGE
+        if (progressKey) { stopProgress(); event.sender.removeListener('destroyed', stopProgress); if (gardenOpenProgress.get(progressKey) === progressController) gardenOpenProgress.delete(progressKey); } // NEW
+    } // NEW
 });

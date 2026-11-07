@@ -5,11 +5,14 @@ const path = require('node:path'); // NEW
 const { app, BrowserWindow } = require('electron'); // NEW
 const { PDFDocument, rgb } = require('@cantoo/pdf-lib'); // NEW
 const { runtimeScripts, historyScripts, editorFocusSource, read } = require('./garden-structures-harness.cjs'); // CHANGE
+const { canvasViewControlsSource } = require('./canvas-view-controls-harness.cjs'); // NEW
 app.commandLine.appendSwitch('disable-gpu'); app.commandLine.appendSwitch('in-process-gpu'); app.disableHardwareAcceleration(); // NEW
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-structures-electron-'))); // NEW
+console.log('Chromium structures: starting hidden editor'); // NEW: retain a startup checkpoint when a host cannot initialize Chromium.
 
 /** Real pointer events exercise native custom handles, dialogs, draft preservation, SVG, and PDF output. */ // NEW
 app.whenReady().then(async () => { // NEW
+    console.log('Chromium structures: application ready'); // NEW
     const win = new BrowserWindow({ show: false, width: 1200, height: 900, webPreferences: { sandbox: false, backgroundThrottling: false } }); // NEW
     win.webContents.on('console-message', event => { if (event.level === 'error') console.error('Renderer error: ' + event.message); }); // CHANGE: include the actual renderer exception when a native scenario fails.
     try { // NEW
@@ -33,6 +36,7 @@ app.whenReady().then(async () => { // NEW
         `); // NEW
         await run('window.keys=ui.createKeyHandler(ui.editor);void 0;'); // NEW
         for (const name of ['Planting_Group.js', 'Garden_Scale.js', 'Garden_Structures.js']) await run(read('plugins/garden_planner_plugins/' + name)); // NEW
+        console.log('Chromium structures: production plugins ready'); // NEW
         await run(`window.garden=graph.insertVertex(null,'garden',value({garden_module:'1',label:'Garden'}),30,30,1050,750,'module=1;');graph.setSelectionCell(garden);frames()`); // NEW
         assert.equal(await run(`[...document.querySelectorAll('button')].some(b=>b.textContent==='Add Structure'&&!b.disabled)`), true, await run('JSON.stringify({buttons:[...document.querySelectorAll("button")].map(b=>[b.textContent,b.disabled]),overlay:graph.__plantTilerGardenModuleOverlayInstalled,selection:graph.getSelectionCell()?.id})')); // NEW
         await run(`[...document.querySelectorAll('button')].find(b=>b.textContent==='Add Structure').click();window.cell=graph.getSelectionCell();window.api=graph.__trellisStructures;frames()`); // NEW
@@ -43,6 +47,7 @@ app.whenReady().then(async () => { // NEW
         const clickAt = async point => { mouse('mouseDown', point); mouse('mouseUp', point); await run('frames()'); }; // NEW
         const panelVisible = () => run('getComputedStyle(document.querySelector(".trellis-structure-overlay")).display===\'flex\''); // NEW
         const nameSelector = '[aria-label="Structure name"]'; // NEW
+        if (!process.argv.includes('--view-options-only')) { // NEW: allow focused visual verification without replaying the unrelated history/snapping scenarios.
         win.webContents.focus(); assert.equal(await run('document.hasFocus()'), true); // NEW: hidden windows need native web focus for real focus/blur delivery.
         await clickAt(await position(nameSelector)); key('A', ['control']); await run('frames()'); await win.webContents.insertText('Tool shed'); await run('frames()'); // CHANGE
         assert.deepEqual(await run('({focus:document.activeElement.matches(\'[aria-label="Structure name"]\'),value:document.activeElement.value})'), { focus: true, value: 'Tool shed' }); // NEW
@@ -65,7 +70,13 @@ app.whenReady().then(async () => { // NEW
         const originalPoints = await run('JSON.stringify(api.getDraft().points)'); // NEW
         const original = await run('mxUtils.getXml(new mxCodec().encode(graph.getModel()))'); // NEW
         const handles = await run('document.querySelectorAll("[data-structure-handle]").length'); assert.equal(handles, 8); // NEW
-        const drag = async (selector, dx, dy) => { const p = await position(selector); mouse('mouseDown', p); mouse('mouseMove', { x: p.x + dx, y: p.y + dy }); await run('frames()'); mouse('mouseUp', { x: p.x + dx, y: p.y + dy }); await run('frames()'); }; // NEW
+        const drag = async (selector, dx, dy) => { // CHANGE
+            const p = await position(selector), before = await run('[...document.querySelectorAll("[data-trellis-structure-length]")].map(n=>n.textContent)'); // NEW
+            mouse('mouseDown', p); mouse('mouseMove', { x: p.x + dx, y: p.y + dy }); await run('frames()'); // NEW
+            assert.equal(await run('[...document.querySelectorAll("[data-trellis-structure-length]")].every(n=>getComputedStyle(n).display!=="none")'), true); // NEW
+            assert.notDeepEqual(await run('[...document.querySelectorAll("[data-trellis-structure-length]")].map(n=>n.textContent)'), before); // NEW
+            mouse('mouseUp', { x: p.x + dx, y: p.y + dy }); await run('frames()'); // NEW
+        }; // CHANGE
         await drag('[data-structure-handle="corner-0"]', 30, 20); // NEW
         assert.notEqual(await run('JSON.stringify(api.getDraft().points)'), originalPoints); // NEW
         assert.equal(await run('mxUtils.getXml(new mxCodec().encode(graph.getModel()))'), original); // NEW
@@ -153,7 +164,32 @@ app.whenReady().then(async () => { // NEW
                 assert.equal(await run('undoManager.history.length'), 1); // CHANGE
             } // CHANGE
         } // CHANGE
-        console.log('Chromium structures: native focus/typing, click toggles, guarded Undo/Redo, corner/midpoint drags, overlay restoration, rotated path snapping and SVG/PDF projections passed'); // CHANGE
+        } // NEW
+        await run(` // NEW
+            graph.panGraph(0,0);graph.view.scaleAndTranslate(1,0,0);graph.removeCells(graph.getChildVertices(garden)); // NEW
+            window.cell=api.create(garden);graph.model.setGeometry(cell,new mxGeometry(300,180,250,230)); // NEW
+            garden.value.setAttribute('label','Measurement preview');cell.value.setAttribute('label','Barn'); // NEW
+            const toolbar=document.createElement('div');toolbar.style.cssText='position:fixed;left:20px;top:8px;z-index:20000;background:#f4f4f4;padding:6px;'; // NEW
+            const zoom=document.createElement('button');zoom.className='geZoomInput';zoom.textContent='100%';toolbar.appendChild(zoom);document.body.appendChild(toolbar);ui.toolbar={container:toolbar}; // NEW
+            void 0; // NEW
+        `); // NEW
+        await run(canvasViewControlsSource()); await run('frames()'); // NEW
+        await clickAt(await position('button.trellis-canvas-view-options')); // NEW
+        assert.equal(await run('document.querySelector("[role=dialog].trellis-canvas-view-options").hidden'), false); // NEW
+        await clickAt(await position('[data-trellis-show-structure-lengths]')); // NEW
+        assert.equal(await run('api.getShowSideLengths()'), true); assert.equal(await run('document.querySelectorAll("[data-trellis-structure-length]").length'), 4); // NEW
+        key('Escape'); await run('frames()'); assert.equal(await run('document.activeElement.matches("button.trellis-canvas-view-options")'), true); // NEW
+        await run('api.editFootprint(cell)'); await run('api.insertCorner(1,[cell.geometry.x+150,cell.geometry.y+90]);frames()'); // NEW
+        assert.equal(await run('document.querySelectorAll("[data-trellis-structure-length]").length'), 5); // NEW
+        assert.equal(await run(`(()=>{const chip=document.querySelector('[data-trellis-dimensions]').getBoundingClientRect(),label=document.querySelector('[data-trellis-structure-length][data-edge="3"]').getBoundingClientRect();return label.top>chip.bottom+3})()`), true); // NEW: the bottom edge's measurement must not cover the existing width/height chip.
+        assert.equal(await run(`(()=>{const labels=[...document.querySelectorAll('[data-trellis-structure-length]')];return [...document.querySelectorAll('[data-structure-handle]')].every(n=>{const r=n.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;return labels.every(label=>{const b=label.getBoundingClientRect(),angle=Number(label.style.transform.match(/rotate\\(([-\\d.e]+)rad\\)/)[1]),dx=x-b.left-b.width/2,dy=y-b.top-b.height/2;return Math.abs(dx*Math.cos(angle)+dy*Math.sin(angle))>label.offsetWidth/2+4||Math.abs(-dx*Math.sin(angle)+dy*Math.cos(angle))>label.offsetHeight/2+4})})})()`), true); // CHANGE: test the actual rotated label rectangle, rather than its larger axis-aligned bounding box.
+        await clickAt(await position('button.trellis-canvas-view-options')); // NEW
+        const previewPath = path.join(os.tmpdir(), 'trellis-structure-lengths-preview.png'); fs.writeFileSync(previewPath, (await win.webContents.capturePage()).toPNG()); // NEW
+        win.webContents.debugger.attach('1.3'); await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { media: 'print' }); // NEW
+        assert.equal(await run('[...document.querySelectorAll("[data-trellis-structure-length]")].every(n=>getComputedStyle(n).display==="none")'), true); // NEW
+        await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { media: '' }); win.webContents.debugger.detach(); // NEW
+        console.log('Structure lengths preview: ' + previewPath); await run('canvasControlsTest.dispose();void 0;'); // NEW
+        console.log(process.argv.includes('--view-options-only') ? 'Chromium structures: view dropdown, side lengths, handle spacing and print-media passed' : 'Chromium structures: native focus/typing, click toggles, guarded Undo/Redo, live side lengths, view dropdown, corner/midpoint drags, overlay restoration, rotated path snapping and SVG/PDF projections passed'); // CHANGE
     } finally { win.destroy(); } // NEW
     app.quit(); // NEW
 }).catch(error => { console.error(error.stack || error); app.exit(1); }); // NEW

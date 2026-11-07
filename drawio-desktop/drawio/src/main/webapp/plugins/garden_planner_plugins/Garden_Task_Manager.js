@@ -8203,6 +8203,56 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         let assignmentPicker = null;
         let assignmentPickerSignature = '';
+        let manuallyHiddenCard = null; // NEW: dismissal belongs to this single selection, independently of drag suppression.
+        let pendingCardToggle = null; // NEW
+
+        function singleSelectedCard() { // NEW
+            const cells = getSelectionCellsList(); // NEW
+            return cells.length === 1 && isKanbanCard(cells[0]) ? cells[0] : null; // NEW
+        } // NEW
+
+        function isPlainCardClick(evt) { // NEW
+            return !!evt && (evt.button == null || evt.button === 0) && !evt.ctrlKey && !evt.metaKey && !evt.shiftKey && !evt.altKey && Number(evt.detail || 1) <= 1; // NEW
+        } // NEW
+
+        /** Capture before native selection so the first click opens rather than dismisses a card. */ // NEW
+        function captureCardToggle(_sender, event) { // NEW
+            if (event.getProperty('eventName') !== mxEvent.MOUSE_DOWN) return; // NEW
+            pendingCardToggle = null; // NEW
+            const me = event.getProperty('event'), evt = me && me.getEvent(); // NEW
+            const card = singleSelectedCard(); // NEW
+            if (!card || !isPlainCardClick(evt) || isTeamPermissionModeActiveForTaskOverlay() || assignmentPicker) return; // NEW
+            if (!graph.container.contains(evt.target) || overlay.contains(evt.target)) return; // NEW
+            if (evt.target.closest?.('input, select, textarea, button, [contenteditable="true"]')) return; // NEW
+            if (taskOverlayMouseEventCell(me) !== card || graph.__trellisOverlayVisibility?.isSuppressed()) return; // NEW
+            pendingCardToggle = { card, x: evt.clientX, y: evt.clientY }; // NEW
+        } // NEW
+
+        function cancelCardToggle() { pendingCardToggle = null; } // NEW
+
+        /** Latch movement: moving away and returning to the press is still a drag. */ // NEW
+        function trackCardToggleMovement(evt) { // NEW
+            if (pendingCardToggle && Math.hypot(evt.clientX - pendingCardToggle.x, evt.clientY - pendingCardToggle.y) >= 4) cancelCardToggle(); // NEW
+        } // NEW
+
+        function finishCardToggle(_sender, me) { // NEW
+            const evt = me && me.getEvent(); // NEW
+            if (!evt) { cancelCardToggle(); return; } // NEW
+            trackCardToggleMovement(evt); // NEW
+            const pending = pendingCardToggle; // NEW
+            cancelCardToggle(); // NEW: duplicate or cancelled releases cannot toggle again.
+            if (!pending || !isPlainCardClick(evt) || singleSelectedCard() !== pending.card || taskOverlayMouseEventCell(me) !== pending.card) return; // NEW
+            if (!graph.container.contains(evt.target) || overlay.contains(evt.target) || isTeamPermissionModeActiveForTaskOverlay() || graph.__trellisOverlayVisibility?.isSuppressed()) return; // NEW
+            manuallyHiddenCard = manuallyHiddenCard === pending.card ? null : pending.card; // NEW
+            refresh(); // NEW: commit immediately; deferred refreshes must observe the same dismissal.
+        } // NEW
+
+        function refreshCardSelection() { // NEW
+            const card = singleSelectedCard(); // NEW
+            if (manuallyHiddenCard !== card) manuallyHiddenCard = null; // NEW: reset synchronously, including leave-and-return before a deferred refresh.
+            if (pendingCardToggle && pendingCardToggle.card !== card) cancelCardToggle(); // NEW
+            requestRefresh(); // NEW
+        } // NEW
 
         function closeAssignmentPicker(restoreActions) {
             if (assignmentPicker && assignmentPicker.parentNode) assignmentPicker.parentNode.removeChild(assignmentPicker);
@@ -8581,6 +8631,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const assignmentContext = getAssignmentSelectionContext(cards);
             if (assignmentPicker && assignmentContextSignature(assignmentContext) !== assignmentPickerSignature) closeAssignmentPicker(false);
             if (!cards.length) { closeAssignmentPicker(false); renderPlanningControls(null); overlay.style.display = 'none'; return; } // CHANGE
+            if (manuallyHiddenCard && singleSelectedCard() === manuallyHiddenCard) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; } // NEW
             renderPlanningControls(cards.length === 1 ? cards[0] : null); // NEW
             const bounds = getCellStateBounds(cards, overlay.parentNode);
             if (!bounds) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; }
@@ -8623,7 +8674,16 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         }
 
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh);
-        graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh);
+        graph.getSelectionModel().addListener(mxEvent.CHANGE, refreshCardSelection); // CHANGE
+        graph.addListener(mxEvent.FIRE_MOUSE_EVENT, captureCardToggle); // NEW
+        graph.addMouseListener({ mouseDown() {}, mouseMove(_sender, me) { trackCardToggleMovement(me.getEvent()); }, mouseUp: finishCardToggle }); // NEW
+        [mxEvent.CELLS_MOVED, mxEvent.CELLS_RESIZED, mxEvent.ESCAPE].forEach(name => graph.addListener(name, cancelCardToggle)); // NEW
+        graph.addListener('trellisOverlayVisibilityChanged', (_sender, event) => { if (event.getProperty('suppressed')) cancelCardToggle(); }); // NEW
+        if (graph.panningHandler?.addListener) graph.panningHandler.addListener(mxEvent.PAN_START, cancelCardToggle); // NEW
+        ['pointercancel', 'touchcancel'].forEach(name => document.addEventListener(name, cancelCardToggle, true)); // NEW
+        ['mouseup', 'pointerup'].forEach(name => document.addEventListener(name, evt => { if (!graph.container.contains(evt.target)) cancelCardToggle(); }, true)); // NEW
+        document.addEventListener('keydown', evt => { if (evt.key === 'Escape' || evt.keyCode === 27) cancelCardToggle(); }, true); // NEW
+        window.addEventListener('blur', cancelCardToggle); // NEW
         bindTeamPermissionModeOverlayRefresh(requestRefresh); // NEW
         addGraphViewRefreshListener(requestRefresh);
         ['trellisEquipmentPluginReady', 'trellisEquipmentChanged', 'trellisTaskTypesChanged', 'trellisEquipmentCapabilitiesChanged', 'trellisWorkloadAssumptionsChanged'].forEach(name => document.addEventListener(name, requestRefresh)); // CHANGE

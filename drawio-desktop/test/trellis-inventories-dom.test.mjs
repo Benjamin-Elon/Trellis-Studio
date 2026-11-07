@@ -4,6 +4,16 @@ import fs from 'node:fs/promises'; // NEW
 import { JSDOM } from 'jsdom'; // NEW
 import { referenceCore as R } from '../src/main/trellis-reference-database.js'; // NEW
 const directory = new URL('../drawio/src/main/webapp/plugins/garden_planner_plugins/', import.meta.url); // NEW
+/** Supply layout and identity notifications while executing the actual shared Exchange controller. */ // NEW
+async function exchangeHarness(t, options = {}) { // NEW
+    const h = await harness(t), anchor = h.document.querySelector('#anchor'), statusListeners = new Set(), lockListeners = new Set(); // NEW
+    let session = options.signedOut ? null : { identityId: 'alice', generation: 1 }, status = options.status || { qualified: false, reason: 'The Exchange service is not ready.' }, reads = 0; // NEW
+    anchor.textContent = 'The Grand Exchange'; anchor.title = 'Open community seed trading and CSA'; anchor.getClientRects = () => anchor.isConnected && !anchor.hidden ? [{}] : []; // NEW
+    h.window.trellisIdentity = { getSession: async () => session, onStatus(fn) { statusListeners.add(fn); return () => statusListeners.delete(fn); }, onLocked(fn) { lockListeners.add(fn); return () => lockListeners.delete(fn); } }; // NEW
+    h.window.trellisExchange = { async status() { reads++; if (status instanceof Error) throw status; return typeof status === 'function' ? status() : status; } }; // NEW
+    const control = h.window.TrellisInventories.bindExchangeButton(anchor, options.getOptions); t.after(() => control.dispose()); // NEW
+    return { ...h, anchor, control, statusListeners, lockListeners, get reads() { return reads; }, setStatus(value) { status = value; }, changeIdentity(value, locked = false) { session = value; for (const fn of locked ? lockListeners : statusListeners) fn({ session }); } }; // NEW
+} // NEW
 async function harness(t, options = {}) { // NEW
     const dom = new JSDOM('<!doctype html><body><button id="anchor">Inventories ▾</button><input id="underlying" value="Unsaved plan draft"></body>', { runScripts: 'outside-only' }); t.after(() => dom.window.close()); // NEW
     const window = dom.window, document = window.document, alerts = [], saves = []; // NEW
@@ -23,6 +33,59 @@ test('inventory dropdown exposes Equipment and Seeds and Escape returns focus to
     const h = await harness(t), anchor = h.document.querySelector('#anchor'); // NEW
     h.window.TrellisInventories.showMenu(anchor); assert.deepEqual([...h.document.querySelector('[role="menu"]').children].map(node => node.textContent), ['Equipment', 'Seeds']); // NEW
     h.button('Seeds').dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); assert.equal(h.document.querySelector('[role="menu"]'), null); assert.equal(h.document.activeElement, anchor); // NEW
+}); // NEW
+test('unavailable Exchange remains focusable and explains sign-in on focus, hover, and click without opening', async t => { // NEW
+    const h = await exchangeHarness(t, { signedOut: true }); // NEW
+    assert.equal(h.anchor.getAttribute('aria-disabled'), 'true'); assert.equal(h.anchor.disabled, false); await h.control.refresh(); assert.equal(h.reads, 0); // NEW
+    h.anchor.focus(); let tooltip = h.document.querySelector('[role="tooltip"]'); assert.match(tooltip.textContent, /Log in/); assert.equal(h.anchor.getAttribute('aria-describedby'), tooltip.id); // NEW
+    h.anchor.dispatchEvent(new h.window.MouseEvent('mouseleave')); await new Promise(resolve => setTimeout(resolve, 140)); assert.ok(tooltip.isConnected, 'Keyboard focus keeps the explanation visible'); // NEW
+    const escape = new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); h.anchor.dispatchEvent(escape); assert.equal(escape.defaultPrevented, true); assert.equal(tooltip.isConnected, false); assert.equal(h.document.activeElement, h.anchor); // NEW
+    h.anchor.blur(); h.anchor.dispatchEvent(new h.window.MouseEvent('mouseenter')); assert.ok(tooltip.isConnected); // NEW
+    h.anchor.dispatchEvent(new h.window.MouseEvent('mouseleave')); tooltip.dispatchEvent(new h.window.MouseEvent('mouseenter')); await new Promise(resolve => setTimeout(resolve, 140)); assert.ok(tooltip.isConnected, 'The explanation is hoverable across the gap'); // NEW
+    tooltip.dispatchEvent(new h.window.MouseEvent('mouseleave')); await new Promise(resolve => setTimeout(resolve, 140)); assert.equal(tooltip.isConnected, false); // NEW
+    h.anchor.click(); await h.settle(); assert.ok(tooltip.isConnected); assert.equal(h.document.querySelector('[role="dialog"]'), null); // NEW
+    h.document.querySelector('#underlying').dispatchEvent(new h.window.Event('pointerdown', { bubbles: true })); assert.equal(tooltip.isConnected, false); assert.equal(h.anchor.hasAttribute('aria-describedby'), false); // NEW
+}); // NEW
+test('ready Exchange opens once with current options without requiring a city or garden setup', async t => { // NEW
+    const resolved = []; let garden = { id: 'first' }; // NEW
+    const h = await exchangeHarness(t, { status: { qualified: true, currency: '' }, getOptions: () => { resolved.push(garden); return { garden }; } }); await h.control.refresh(); // NEW
+    assert.equal(h.anchor.getAttribute('aria-disabled'), 'false'); garden = { id: 'second' }; h.anchor.click(); h.anchor.click(); await h.settle(); // NEW
+    assert.deepEqual(resolved, [garden]); assert.equal(h.document.querySelectorAll('[role="dialog"]').length, 1); assert.match(h.document.querySelector('[role="dialog"]').textContent, /Choose your city/); // NEW
+    assert.equal(h.document.querySelector('[role="tooltip"]'), null); assert.equal(h.anchor.title, 'Open community seed trading and CSA'); // NEW
+}); // NEW
+test('activation rechecks readiness and status failures remain grey and recover on window focus', async t => { // NEW
+    const h = await exchangeHarness(t, { status: { qualified: true } }); await h.control.refresh(); // NEW
+    h.setStatus({ qualified: false, reason: '<img src=x onerror=alert(1)> Service is unavailable.' }); h.anchor.click(); await h.settle(); // NEW
+    assert.equal(h.document.querySelector('[role="dialog"]'), null); assert.match(h.document.querySelector('[role="tooltip"]').textContent, /<img/); assert.equal(h.document.querySelector('img'), null); // NEW
+    h.setStatus(new Error('Connection lost. Try again.')); await h.control.refresh(); assert.match(h.document.querySelector('[role="tooltip"]').textContent, /Unable to check.*Connection lost/); // NEW
+    h.setStatus({ qualified: true }); h.window.dispatchEvent(new h.window.Event('focus')); await h.settle(); assert.equal(h.anchor.getAttribute('aria-disabled'), 'false'); assert.equal(h.document.querySelector('[role="tooltip"]'), null); // NEW
+}); // NEW
+test('a newly unavailable focus check explains itself, and dismissal survives its pending result', async t => { // NEW
+    const h = await exchangeHarness(t, { status: { qualified: true } }); await h.control.refresh(); h.setStatus({ qualified: false, reason: 'Service is offline.' }); h.anchor.focus(); await h.settle(); // NEW
+    assert.match(h.document.querySelector('[role="tooltip"]').textContent, /offline/); // NEW
+    let finish; h.setStatus(() => new Promise(resolve => { finish = resolve; })); h.anchor.dispatchEvent(new h.window.MouseEvent('mouseenter')); await h.settle(); // NEW
+    h.anchor.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); finish({ qualified: false, reason: 'Still offline.' }); await h.settle(); assert.equal(h.document.querySelector('[role="tooltip"]'), null); // NEW
+    h.setStatus({ qualified: false, reason: 'Service is offline.' }); h.anchor.click(); await h.settle(); h.document.querySelector('#underlying').focus(); h.anchor.dispatchEvent(new h.window.MouseEvent('mouseleave')); await new Promise(resolve => setTimeout(resolve, 140)); assert.equal(h.document.querySelector('[role="tooltip"]'), null, 'Tabbing away releases a click-opened explanation'); // NEW
+}); // NEW
+test('missing bridges and unfinished qualification explain availability without exposing internal prerequisites', async t => { // NEW
+    const h = await exchangeHarness(t); delete h.window.trellisExchange; await h.control.refresh(); h.anchor.click(); await h.settle(); assert.match(h.document.querySelector('[role="tooltip"]').textContent, /unavailable in this build/); // NEW
+    h.window.trellisExchange = { status: async () => ({ qualified: false, reason: 'The Grand Exchange is awaiting qualified coordinator peer and community synchronization, garden authorization, and durable inventory reservation receipts.' }) }; // NEW
+    await h.control.refresh(); assert.match(h.document.querySelector('[role="tooltip"]').textContent, /app update/); assert.doesNotMatch(h.document.querySelector('[role="tooltip"]').textContent, /coordinator|receipts/); // NEW
+}); // NEW
+test('identity invalidation cancels an in-flight activation and discards late readiness results', async t => { // NEW
+    let finish; const h = await exchangeHarness(t, { status: () => new Promise(resolve => { finish = resolve; }) }); await h.settle(); // NEW
+    h.anchor.focus(); h.anchor.click(); const reads = h.reads; h.anchor.dispatchEvent(new h.window.MouseEvent('mouseenter')); assert.equal(h.reads, reads, 'Interaction reads are coalesced'); // NEW
+    h.changeIdentity(null, true); await h.settle(); finish({ qualified: true }); await h.settle(); // NEW
+    assert.equal(h.anchor.getAttribute('aria-disabled'), 'true'); assert.equal(h.document.querySelector('[role="dialog"]'), null); // NEW
+    assert.match(h.document.querySelector('[role="tooltip"]').textContent, /Log in/, 'Identity invalidation updates the focused explanation'); // NEW
+    h.setStatus({ qualified: true }); h.changeIdentity({ identityId: 'bob', generation: 2 }); await h.settle(); assert.equal(h.anchor.getAttribute('aria-disabled'), 'false'); // NEW
+}); // NEW
+test('hiding or disposing Exchange removes explanations and prevents detached pending activations', async t => { // NEW
+    const h = await exchangeHarness(t); await h.control.refresh(); h.anchor.setAttribute('aria-describedby', 'existing-help'); h.anchor.focus(); assert.match(h.anchor.getAttribute('aria-describedby'), /existing-help trellis-exchange/); // NEW
+    h.control.dismiss(); assert.equal(h.anchor.getAttribute('aria-describedby'), 'existing-help'); assert.equal(h.document.querySelector('[role="tooltip"]'), null); // NEW
+    let finish; h.setStatus(() => new Promise(resolve => { finish = resolve; })); h.anchor.click(); await h.settle(); h.anchor.hidden = true; h.control.dismiss(); h.anchor.hidden = false; finish({ qualified: true }); await h.settle(); assert.equal(h.document.querySelector('[role="dialog"]'), null, 'An immediate reopen cannot revive a hidden surface activation'); // NEW
+    h.anchor.hidden = false; h.control.dispose(); h.control.dispose(); assert.equal(h.statusListeners.size, 0); assert.equal(h.lockListeners.size, 0); h.anchor.click(); h.anchor.focus(); await h.settle(); assert.equal(h.document.querySelector('[role="tooltip"]'), null); // NEW
+    const other = await exchangeHarness(t, { status: () => new Promise(resolve => { finish = resolve; }) }); await other.settle(); other.anchor.click(); other.control.dispose(); finish({ qualified: true }); await other.settle(); assert.equal(other.document.querySelector('[role="dialog"]'), null); assert.equal(other.anchor.getAttribute('aria-disabled'), 'true'); // NEW
 }); // NEW
 test('seed edits preserve the underlying plan, save current stock, and update the base for subsequent saves', async t => { // NEW
     const h = await harness(t); h.document.querySelector('#underlying').focus(); // NEW

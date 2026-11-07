@@ -77,9 +77,27 @@ function harness(t, options = {}) {
         const create = window.TrellisBackgroundSaving.create; options.background.controllers = []; options.background.observers = []; // NEW
         window.TrellisBackgroundSaving = { ...window.TrellisBackgroundSaving, create(settings) { options.background.observers.push(settings.onStatusChange); const controller = create({ ...settings, ...options.background.options }); options.background.controllers.push(controller); return controller; } }; // NEW
     } // NEW
+    options.configure?.({ users, bridge, history, graph, ui, info }); // NEW: readiness checks control real asynchronous classification boundaries.
     vm.runInNewContext(fs.readFileSync(plugin, 'utf8'), { window, document: window.document, Draw: { loadPlugin: callback => callback(ui) }, mxEventObject: function (name) { this.name = name; }, URL, TextEncoder, setTimeout, clearTimeout, console, Promise, Set, Map }, { filename: plugin }); // CHANGE
     return { window, calls, current, graph, ui, bridge, users, history, actions, state, editorListeners, sharing: window.Trellis.sharing, setXml(value) { xml = value; }, setRead(callback) { read = callback; }, originalSaves: () => originalSaves, fireStatus: () => statusListener([state]), fireActivity: collaboration => activityListener({ diagramPath: info.diagramPath, shareId: info.shareId, collaboration }) }; // CHANGE
 }
+
+test('managed starter saves require confirmation and normal autosave returns after completion', async t => { // CHANGE
+    const h = harness(t, { configure: ({ info }) => { info.protocolVersion = 5; } }); // CHANGE
+    h.window.TrellisObjectTransactions = { create: () => ({ transaction: () => null }) }; // CHANGE: this fixture exercises save authorization with the full-XML transport fallback.
+    await settle(); // CHANGE
+    assert.equal(h.current.isAutosave(), true); // CHANGE
+    const setup = h.current.__trellisStarterSetup = { isCurrent: () => true }; // CHANGE
+    h.current.setModified(true); // CHANGE
+    assert.equal(h.current.isAutosave(), false); // CHANGE
+    await assert.rejects(new Promise((resolve, reject) => h.current.save(false, resolve, reject)), { message: /Finish Garden Settings/ }); // CHANGE
+    assert.equal(h.calls.filter(call => call.collaboration?.kind === 'save').length, 0); // CHANGE
+    await new Promise((resolve, reject) => h.current.save(false, resolve, reject, undefined, undefined, undefined, undefined, setup)); // CHANGE
+    assert.equal(h.calls.filter(call => call.collaboration?.kind === 'save').length, 1); // CHANGE
+    assert.equal(h.originalSaves(), 0); // CHANGE
+    delete h.current.__trellisStarterSetup; // CHANGE
+    assert.equal(h.current.isAutosave(), true); // CHANGE
+}); // CHANGE
 
 /** Exercise the independent IPC lane, rather than only the older content-action fixture. */ // CHANGE
 const observation = (revision, holds = [], extra = {}) => ({ observationRevision: revision, actorUserId: 'alice', sessionId: 'local', holds, presence: [], reservations: [], ...extra }); // CHANGE
@@ -887,6 +905,45 @@ test('explicit object forms wait for collaborative durability and receive save r
     h.bridge.collaborationAction = async () => { throw new Error('Comment save rejected'); }; // CHANGE
     await assert.rejects(h.sharing.settleObjectEdits(), /Comment save rejected/); // CHANGE
 }); // CHANGE
+
+test('managed comment settlement promotes a waiting autosave and exposes discussion from the completed save', async t => { // NEW
+    const completed = [], background = {}; let revision = 0; // NEW
+    const h = harness(t, { background, explicitRefresh: true, activity: async () => ({ ok: true, collaboration: observation(++revision) }), recovery: async () => ({ ok: true }), configure({ graph, info }) { // NEW
+        const window = graph.container.ownerDocument.defaultView; // NEW
+        info.protocolVersion = window.TrellisSyncContract.garden; // NEW
+        window.mxUtils = { parseXml: xml => new window.DOMParser().parseFromString(xml, 'text/xml') }; // NEW
+        window.Editor = { parseDiagramNode: node => node.firstElementChild }; // NEW
+        window.TrellisObjectTransactions = { create: () => ({ transaction: () => null }) }; // NEW: structural saves use the same completion path with full XML.
+        graph.fireEvent = event => completed.push(event.name); // NEW
+    } }); // NEW
+    t.after(() => { for (const controller of background.controllers) controller.dispose(); }); // NEW
+    await settle(); assert.notEqual(h.sharing.commentSaveContext(), null); // NEW
+    const raw = '{"version":2,"comments":[]}'; // NEW
+    const xml = '<mxfile><diagram id="page-a"><mxGraphModel><root><object id="shape" label="Committed" trellis_comments_json=\'' + raw + '\'><mxCell/></object></root></mxGraphModel></diagram><diagram id="page-b"><mxGraphModel><root><mxCell id="shape"/></root></mxGraphModel></diagram></mxfile>'; // NEW
+    h.setXml(xml); h.current.fileChanged(); background.controllers.at(-1).changed(); // NEW
+    h.current.__trellisAutomaticRequest = true; // NEW
+    const automatic = new Promise((resolve, reject) => h.current.save(false, resolve, reject)); // NEW
+    await settle(); assert.equal(h.calls.filter(call => call.collaboration?.kind === 'save').length, 0); // NEW
+    await h.sharing.settleObjectEdits(); await automatic; // NEW
+    const saves = h.calls.filter(call => call.collaboration?.kind === 'save'); // NEW
+    assert.equal(saves.length, 1); assert.equal(saves[0].collaboration.xml, xml); // NEW
+    assert.equal(h.sharing.savedDiscussion('page-a', 'shape'), raw); // NEW
+    assert.equal(h.sharing.savedDiscussion('page-b', 'shape'), ''); // NEW
+    assert.equal(h.sharing.savedDiscussion('page-a', 'missing'), null); // NEW
+    assert.deepEqual(completed, ['trellisManagedSaveCompleted']); // NEW
+
+    const requests = []; // NEW
+    h.bridge.collaborationAction = input => new Promise(resolve => requests.push({ input, resolve })); // NEW
+    const previousSave = h.sharing.settleObjectEdits(); await settle(); assert.equal(requests.length, 1); // NEW
+    const nextRaw = raw.replace('"version":2', '"version":1'), nextXml = xml.replace(raw, nextRaw); // NEW
+    h.setXml(nextXml); h.current.fileChanged(); // NEW
+    const commentSave = h.sharing.settleObjectEdits(); await settle(); assert.equal(requests.length, 1); // NEW
+    requests[0].resolve({ ok: true, xml, collaboration: observation(++revision) }); await previousSave; await settle(); // NEW
+    assert.equal(requests.length, 2); assert.equal(requests[1].input.xml, nextXml); // NEW
+    requests[1].resolve({ ok: true, resolution: { baseXml: xml, remainingXml: nextXml, remaining: ['["page-a","shape"]'], review: { groups: [] } }, collaboration: observation(++revision) }); // NEW
+    await commentSave; // NEW
+    assert.equal(h.ui.getFileData(), nextXml); assert.equal(h.sharing.savedDiscussion('page-a', 'shape'), raw); // NEW: partial acceptance leaves the staged discussion outside the saved baseline.
+}); // NEW
 test('guided approval forms retain typing and focus during live status updates', async t => { // NEW
     const h = harness(t); await settle(); h.window.Trellis.users.isAdmin = () => true; await h.sharing.showSharingDialog(); // NEW
     const buttons = () => [...h.window.document.querySelectorAll('button')]; buttons().find(b => b.textContent === 'Approve a computer').click(); await settle(); // NEW
@@ -1160,4 +1217,24 @@ test('native synchronization text gets a keyboard control whose callback expires
     const h = harness(t, { localOnly: true }); await settle(); const warning = 'The file has been modified. Click here to synchronize.'; h.window.mxResources = { get: () => warning }; // NEW
     h.ui.editor.setStatus(warning); const control = h.ui.statusContainer.querySelector('button'); assert.ok(control); control.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); // NEW
     assert.equal(h.calls.filter(call => call.nativeSynchronize).length, 1); h.ui.getCurrentFile = () => ({}); control.click(); assert.equal(h.calls.filter(call => call.nativeSynchronize).length, 1); // NEW
+}); // NEW
+
+test('opening readiness waits for login restoration but permits an unauthenticated managed garden', async t => { // NEW
+    let classify, restore; // NEW
+    const h = harness(t, { configure({ users, bridge, info }) { // NEW
+        info.protocolVersion = 5; users.getCurrentUser = () => null; // NEW
+        users.whenLoginRestored = () => new Promise(resolve => { restore = resolve; }); // NEW
+        bridge.getStatus = () => new Promise(resolve => { classify = resolve; }); // NEW
+    } }); // NEW
+    await settle(); let finished = false; const opening = h.sharing.whenOpenReady().then(() => { finished = true; }); // NEW
+    await settle(); assert.equal(finished, false); restore(); await settle(); assert.equal(finished, false); // NEW
+    classify({ canvases: [h.state] }); await opening; assert.equal(finished, true); // NEW
+    assert.equal(h.calls.some(call => call.collaboration), false); // NEW
+}); // NEW
+test('opening readiness reports classification errors and cancels obsolete document waiters', async t => { // NEW
+    const h = harness(t, { configure({ bridge }) { bridge.getStatus = async () => { throw new Error('Access setup failed'); }; } }); // NEW
+    await settle(); await assert.rejects(h.sharing.whenOpenReady(), /Access setup failed/); // NEW
+    let classify; h.bridge.getStatus = () => new Promise(resolve => { classify = resolve; }); // NEW
+    const opening = h.sharing.whenOpenReady(); const rejected = assert.rejects(opening, /changed during opening/); // NEW
+    await settle(); h.editorListeners.get('fileLoaded')(); await rejected; classify({ canvases: [] }); await settle(); // NEW
 }); // NEW

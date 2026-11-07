@@ -77,50 +77,186 @@
         document.querySelector('.trellis-editor-open-notice')?.remove(); // NEW
         if (options.create) { showProjects(ui, { focus: 'create' }); return true; } // NEW
         if (!options.path) return false; // NEW
-        return openPath(ui, options.path); // NEW
+        return openPath(ui, options.path, { resumeStarter: true }); // CHANGE
     } // NEW
-    /** The argument loader creates blank files on ENOENT; never use it here. */
-    async function openPath(ui, filename, options = {}) { // CHANGE
-        if (options.isActive && !options.isActive()) return false; // NEW
-        if (editorBusy(ui, options.creating)) { showEditorBusy(); return false; } // NEW
-        ui.__trellisGardenOpening = true; // NEW: keep one prompt/read/replace operation in flight.
-        try { // NEW
-            if (options.approval) validateReplacement(ui, options.approval); // NEW
-            else if (!await mayReplace(ui)) return false; // CHANGE
-            const snapshot = options.approval || replacementSnapshot(ui); // NEW
-            if (root.trellisGardenLibrary?.prepareOpen) { // NEW: the library stays mounted during worker verification.
-                const status = ui.__trellisGardenHome?.projectsStatus; // NEW
-                if (status?.isConnected) status.textContent = 'Checking garden…'; // NEW
-                const prepared = await root.trellisGardenLibrary.prepareOpen({ path: filename }); // NEW
-                if (options.isActive && !options.isActive()) return false; // NEW
-                validateReplacement(ui, snapshot); // NEW
-                if (status?.isConnected) status.textContent = ''; // NEW
-                if (prepared?.path) filename = prepared.path; // NEW: naming may complete during the serialized preparation.
+    const OPEN_CANCELED = Symbol('garden opening canceled'); // NEW
+    let openSequence = 0; // NEW
+    /** Own one navigation's presentation and cancellation, independently of shared verification. */ // NEW
+    function openingOperation(ui, options) { // NEW
+        const previousFocus = document.activeElement, baseDialog = ui.dialog, blocked = new Map(), frames = new Set(); // CHANGE
+        const overlay = element('div', null, 'trellis-garden-loading'), card = element('section', null, 'trellis-home-panel'); // NEW
+        const title = element('h2', 'Opening garden'), stages = element('ol'), status = element('p', '', 'trellis-home-muted'), bar = element('progress'), slow = element('p', '', 'trellis-home-muted'); // NEW
+        const labels = { download: 'Download garden', check: 'Check garden', read: 'Read project', validate: 'Validate project', open: 'Open editor', prepare: 'Prepare garden' }; // NEW
+        const rows = new Map(Object.entries(labels).map(([key, label]) => { const row = element('li', label); row.dataset.openStage = key; stages.append(row); return [key, row]; })); // NEW
+        let closed = false, canceled = false, switching = false, suspended = false, paused = false, currentStage, timer, cancelWait, paintedStage, lastPaint = 0, yieldTimer; // CHANGE
+        const cancellation = new Promise(resolve => { cancelWait = resolve; }); // NEW
+        const cancel = button('Cancel opening', () => operation.cancel(), 'close'); // NEW
+        const requestId = 'garden-open-' + Date.now() + '-' + (++openSequence); // NEW
+        title.id = requestId; card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true'); card.setAttribute('aria-labelledby', title.id); card.tabIndex = -1; // NEW
+        status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); slow.setAttribute('role', 'status'); bar.max = 1; bar.setAttribute('aria-label', 'Current loading stage'); // NEW
+        card.append(title, stages, status, bar, slow, cancel); overlay.append(card); // NEW
+        if (!options.creating) document.body.append(overlay); // NEW: creation retains its existing presentation.
+        function releaseControls() { for (const [node, value] of blocked) node.inert = value; blocked.clear(); } // NEW
+        function syncPrompts() { // NEW
+            if (closed || options.creating) return; // NEW
+            const next = paused || !!(ui.dialog && ui.dialog !== baseDialog) || !!document.querySelector('.trellis-users-auth-overlay'); // NEW
+            overlay.hidden = next; // NEW
+            if (next) releaseControls(); // NEW
+            else { // NEW
+                for (const node of document.body.children) if (node !== overlay && !blocked.has(node)) { blocked.set(node, node.inert); node.inert = true; } // NEW
+                if (suspended || !overlay.contains(document.activeElement)) (switching ? card : cancel).focus({ preventScroll: true }); // NEW
             } // NEW
-            let opened = false; // NEW
-            await new Promise((resolve, reject) => ui.readGraphFile((entry, data, stat, name, modified) => {
-                if (options.isActive && !options.isActive()) { resolve(); return; } // NEW: a closed/replaced browser cannot navigate on a late read result.
-                try {
-                    validateReplacement(ui, snapshot); // NEW
-                    if (!data) throw new Error('The garden file is empty.');
-                    const parsed = mxUtils.parseXml(data);
-                    if (!parsed.documentElement || !['mxfile', 'mxGraphModel'].includes(parsed.documentElement.nodeName) || parsed.getElementsByTagName('parsererror').length) throw new Error('The garden file is not valid diagram XML.');
-                    const pages = parsed.documentElement.nodeName === 'mxfile' ? Array.from(parsed.getElementsByTagName('diagram')) : [parsed.documentElement]; // NEW
-                    if (!pages.length) throw new Error('The garden has no diagram pages.'); // NEW
-                    for (const page of pages) { // NEW: validate every compressed page before the current document is closed.
-                        const model = page.nodeName === 'diagram' ? root.Editor?.parseDiagramNode(page, true) : page; // NEW
-                        if (!model || model.nodeName !== 'mxGraphModel' || !model.getElementsByTagName('root').length) throw new Error('The garden contains an invalid diagram page.'); // NEW
-                        if (root.mxCodec && root.mxGraphModel) new root.mxCodec(model.ownerDocument).decode(model, new root.mxGraphModel()); // NEW
-                    } // NEW
-                    const file = new LocalFile(ui, data, name || filename.replace(/^.*[\\/]/, ''));
-                    file.fileObject = entry; file.stat = stat; file.setModified(!!modified);
-                    ui.hideDialog();
-                    Promise.resolve(ui.fileLoaded(file)).then(() => { opened = true; resolve(); }, reject); // CHANGE
-                } catch (error) { reject(error); }
-            }, error => { if (options.isActive && !options.isActive()) resolve(); else reject(error); }, filename)); // CHANGE
-            return opened; // CHANGE
-        } finally { ui.__trellisGardenOpening = false; } // NEW: canceled prompts and failed reads also release navigation.
-    }
+            suspended = next; // NEW
+        } // NEW
+        const observer = new root.MutationObserver(syncPrompts); observer.observe(document.body, { childList: true, subtree: true }); // NEW
+        function keydown(event) { // NEW
+            if (closed || suspended || options.creating) return; // NEW
+            if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); if (!switching) operation.cancel(); } // CHANGE
+            else if (event.key === 'Tab' || !overlay.contains(event.target)) { event.preventDefault(); event.stopImmediatePropagation(); (switching ? card : cancel).focus({ preventScroll: true }); } // NEW
+            else event.stopImmediatePropagation(); // NEW: editor shortcuts cannot operate behind the active card; button defaults remain available.
+        } // NEW
+        document.addEventListener('keydown', keydown, true); // NEW
+        const unsubscribe = root.trellisGardenLibrary?.onOpenProgress?.(value => { // NEW
+            if (!closed && !canceled && value.requestId === requestId && currentStage === 'check') operation.stage('check', value); // NEW
+        }); // NEW
+        const unload = () => { operation.invalidate(); operation.dispose(); }; root.addEventListener('unload', unload); // NEW
+        const operation = { // NEW
+            requestId, // NEW
+            active: () => !closed && !canceled && (switching || !options.isActive || options.isActive()), // CHANGE: hiding the source dialog is part of a committed switch.
+            assertActive() { if (!this.active()) throw OPEN_CANCELED; }, // NEW
+            cancel() { if (!switching) this.invalidate(); }, // NEW
+            invalidate() { if (!closed) { canceled = true; cancelWait(OPEN_CANCELED); } }, // NEW
+            async wait(task) { try { const result = await Promise.race([task, cancellation]); this.assertActive(); return result; } catch (error) { this.assertActive(); throw error; } }, // CHANGE: obsolete reads cannot publish late failures.
+            async paint() { // NEW: a double animation frame gives Chromium a paint before synchronous work.
+                this.assertActive(); // NEW
+                if (!document.hidden && paintedStage === currentStage && root.performance.now() - lastPaint < 16) { // NEW: fast pages yield without forcing two display frames per page.
+                    await this.wait(root.scheduler?.yield ? root.scheduler.yield() : new Promise(resolve => { yieldTimer = root.setTimeout(resolve, 0); })); return; // NEW
+                } // NEW
+                if (root.requestAnimationFrame && !document.hidden) await this.wait(new Promise(resolve => { // CHANGE
+                    const schedule = callback => { const id = root.requestAnimationFrame(() => { frames.delete(id); callback(); }); frames.add(id); }; schedule(() => schedule(resolve)); // NEW
+                })); // NEW
+                paintedStage = currentStage; lastPaint = root.performance.now(); // NEW
+                this.assertActive(); // NEW
+            }, // NEW
+            async prompt(action) { paused = true; syncPrompts(); try { return await this.wait(action()); } finally { paused = false; syncPrompts(); } }, // NEW
+            skip(key) { rows.get(key).textContent = labels[key] + ' — Skipped'; rows.get(key).dataset.state = 'skipped'; }, // NEW
+            stage(key, progress = {}) { // NEW
+                if (!this.active()) return; // NEW
+                if (currentStage !== key) { // NEW
+                    if (currentStage) { const previous = rows.get(currentStage); if (previous.dataset.state !== 'skipped') { previous.dataset.state = 'complete'; previous.textContent = labels[currentStage] + ' — Done'; } previous.removeAttribute('aria-current'); } // CHANGE
+                    currentStage = key; root.clearTimeout(timer); slow.textContent = ''; // NEW
+                    timer = root.setTimeout(() => { if (this.active()) slow.textContent = 'This is taking longer than usual. Trellis is still waiting for this step to finish.'; }, 10000); // NEW
+                } // NEW
+                const row = rows.get(key); row.dataset.state = 'active'; row.setAttribute('aria-current', 'step'); // NEW
+                const measured = Number.isFinite(progress.total) && progress.total > 0 && Number.isFinite(progress.completed); // NEW
+                const detail = progress.message || labels[key] + '…'; // NEW
+                status.textContent = detail + (measured ? ' ' + progress.completed + ' of ' + progress.total + (key === 'validate' ? ' pages' : ' items') : ''); // NEW
+                bar.setAttribute('aria-label', labels[key]); // NEW
+                if (measured) { bar.max = progress.total; bar.value = Math.max(0, Math.min(progress.completed, progress.total)); } else bar.removeAttribute('value'); // NEW
+            }, // NEW
+            commit() { this.assertActive(); switching = true; cancel.hidden = true; card.focus({ preventScroll: true }); }, // NEW
+            dispose() { // NEW
+                if (closed) return; closed = true; root.clearTimeout(timer); root.clearTimeout(yieldTimer); observer.disconnect(); unsubscribe?.(); root.trellisGardenLibrary?.detachOpenProgress?.(requestId); // CHANGE
+                root.removeEventListener('unload', unload); document.removeEventListener('keydown', keydown, true); this.cleanupTools?.(); this.cleanupDraft?.(); for (const id of frames) root.cancelAnimationFrame(id); frames.clear(); releaseControls(); overlay.remove(); // CHANGE
+                if (ui.__trellisOpenOperation === this) { ui.__trellisOpenOperation = null; ui.__trellisGardenOpening = false; } // NEW
+                const target = switching ? ui.diagramContainer : previousFocus; // NEW
+                if (!ui.dialog && !document.querySelector('.trellis-users-auth-overlay') && target?.isConnected) target.focus({ preventScroll: true }); // NEW
+                else if (!switching && previousFocus?.isConnected && (!ui.dialog || ui.dialog === baseDialog)) previousFocus.focus({ preventScroll: true }); // NEW
+            } // NEW
+        }; // NEW
+        ui.__trellisOpenOperation = operation; ui.__trellisGardenOpening = true; // NEW
+        if (!options.download) operation.skip('download'); operation.stage(options.download ? 'download' : 'check'); syncPrompts(); // NEW
+        return operation; // NEW
+    } // NEW
+    /** The argument loader creates blank files on ENOENT; never use it here. */ // CHANGE
+    async function openPath(ui, filename, options = {}) { // CHANGE
+        if (options.isActive && !options.isActive()) return false; // CHANGE
+        if (editorBusy(ui, options.creating)) { showEditorBusy(); return false; } // CHANGE
+        const operation = openingOperation(ui, options); // CHANGE
+        let resumeStarter = false; // CHANGE: open required settings after the loading overlay releases focus.
+        try { // CHANGE
+            if (options.approval) validateReplacement(ui, options.approval); // CHANGE
+            else if (!await operation.prompt(() => mayReplace(ui))) return false; // CHANGE
+            operation.assertActive(); // CHANGE
+            const snapshot = options.approval || replacementSnapshot(ui); // CHANGE
+            let starterPending = !!options.starterPending; // CHANGE
+            if (options.download) { // CHANGE
+                operation.stage('download', { message: 'Waiting for an approved peer to deliver this garden…' }); // CHANGE
+                await operation.wait(root.trellisGardenLibrary.download({ diagramId: options.download })); // CHANGE
+                for (;;) { // CHANGE
+                    const result = await operation.wait(root.trellisGardenLibrary.list()); // CHANGE
+                    const selected = result.gardens.find(garden => garden.diagramId === options.download); // CHANGE
+                    if (!selected) throw new Error('This garden is no longer in the active library.'); // CHANGE
+                    if (selected.available) { filename = selected.path; starterPending = !!selected.starterPending; break; } // CHANGE
+                    operation.stage('download', { message: selected.reason || 'Waiting for an approved peer to deliver this garden…' }); // CHANGE
+                    await operation.wait(new Promise(resolve => { // CHANGE
+                        const timer = root.setTimeout(resolve, 2000); // CHANGE
+                        operation.downloadTimer = timer; // CHANGE
+                    })); // CHANGE
+                } // CHANGE
+            } // CHANGE
+            operation.stage('check'); await operation.paint(); // CHANGE
+            if (root.trellisGardenLibrary?.prepareOpen) { // CHANGE
+                const prepared = await operation.wait(root.trellisGardenLibrary.prepareOpen({ path: filename, requestId: operation.requestId })); // CHANGE
+                validateReplacement(ui, snapshot); // CHANGE
+                if (prepared?.path) filename = prepared.path; // CHANGE
+                if ((options.resumeStarter || options.starterPending !== undefined || options.download) && typeof prepared?.starterPending === 'boolean') starterPending = prepared.starterPending; // CHANGE
+            } else operation.skip('check'); // CHANGE
+            operation.stage('read'); await operation.paint(); // CHANGE
+            const input = await operation.wait(new Promise((resolve, reject) => { // CHANGE
+                ui.readGraphFile((entry, data, stat, name, modified) => resolve({ entry, data, stat, name, modified }), reject, filename, true, { prepared: true }); // CHANGE
+            })); // CHANGE
+            if (ui.chooseGardenDraft && !options.creating) Object.assign(input, await operation.wait(ui.chooseGardenDraft(input, operation))); // CHANGE
+            operation.assertActive(); validateReplacement(ui, snapshot); // CHANGE
+            operation.stage('validate'); await operation.paint(); // CHANGE
+            if (!input.data) throw new Error('The garden file is empty.'); // CHANGE
+            const parsed = mxUtils.parseXml(input.data); // CHANGE
+            if (!parsed.documentElement || !['mxfile', 'mxGraphModel'].includes(parsed.documentElement.nodeName) || parsed.getElementsByTagName('parsererror').length) throw new Error('The garden file is not valid diagram XML.'); // CHANGE
+            const pages = parsed.documentElement.nodeName === 'mxfile' ? Array.from(parsed.getElementsByTagName('diagram')) : [parsed.documentElement]; // CHANGE
+            if (!pages.length) throw new Error('The garden has no diagram pages.'); // CHANGE
+            for (let index = 0; index < pages.length; index++) { // CHANGE
+                operation.stage('validate', { completed: index, total: pages.length }); await operation.paint(); // CHANGE
+                const page = pages[index], model = page.nodeName === 'diagram' ? root.Editor?.parseDiagramNode(page, true) : page; // CHANGE
+                if (!model || model.nodeName !== 'mxGraphModel' || !model.getElementsByTagName('root').length) throw new Error('The garden contains an invalid diagram page.'); // CHANGE
+                if (root.mxCodec && root.mxGraphModel) new root.mxCodec(model.ownerDocument).decode(model, new root.mxGraphModel()); // CHANGE
+                operation.stage('validate', { completed: index + 1, total: pages.length }); // CHANGE
+            } // CHANGE
+            await operation.paint(); validateReplacement(ui, snapshot); // CHANGE
+            const file = new LocalFile(ui, input.data, input.name || filename.replace(/^.*[\\/]/, '')); // CHANGE
+            file.fileObject = input.entry; file.stat = input.stat; file.setModified(!!input.modified); // CHANGE
+            if (starterPending || options.creating) file.__trellisStarterSetup = { restoredDraft: !!input.modified }; // CHANGE: guard before loading the model.
+            operation.stage('open'); await operation.paint(); validateReplacement(ui, snapshot); operation.commit(); // CHANGE
+            ui.hideDialog(); // CHANGE
+            await operation.wait(Promise.resolve(ui.fileLoaded(file))); // CHANGE
+            if (ui.fileLoadedError) throw ui.fileLoadedError; // CHANGE
+            if (ui.getCurrentFile() !== file) throw new Error('The garden could not be opened.'); // CHANGE
+            operation.stage('prepare'); await operation.paint(); // CHANGE
+            if (!options.creating) { // CHANGE
+                await operation.wait(waitForOpeningTools(ui, file, operation)); // CHANGE
+                await operation.wait(root.Trellis?.users?.whenLoginRestored?.()); // CHANGE
+                await operation.wait(root.Trellis?.sharing?.whenOpenReady?.()); // CHANGE
+                resumeStarter = starterPending; // CHANGE
+            } // CHANGE
+            if (ui.getCurrentFile() !== file) throw new Error('The garden changed during opening.'); // CHANGE
+            await operation.paint(); // CHANGE
+            if (input.draftPath) await request({ action: 'deleteFile', file: input.draftPath }); // CHANGE
+        } catch (error) { // CHANGE
+            if (error === OPEN_CANCELED) return false; // CHANGE
+            throw error; // CHANGE
+        } finally { root.clearTimeout(operation.downloadTimer); operation.dispose(); } // CHANGE
+        return resumeStarter ? initializeProject(ui, false) : true; // CHANGE
+    } // CHANGE
+    /** Wait for the shipped tools on production editors, using their installation event rather than polling. */ // CHANGE
+    async function waitForOpeningTools(ui, file, operation) { // CHANGE
+        if (!ui.editor?.graph || !root.Draw?.loadPlugin || !root.trellisShare) return; // CHANGE
+        const ready = () => root.Trellis?.users && root.Trellis?.sharing; // CHANGE
+        if (ready()) return; // CHANGE
+        await new Promise((resolve, reject) => { // CHANGE
+            const cleanup = () => { root.removeEventListener('trellisGardenToolsReady', check); ui.editor.removeListener?.(check); }; operation.cleanupTools = cleanup; // CHANGE
+            const check = () => { if (ui.getCurrentFile() !== file) { cleanup(); reject(new Error('The garden changed during opening.')); } else if (ready()) { cleanup(); resolve(); } }; // CHANGE
+            root.addEventListener('trellisGardenToolsReady', check); ui.editor.addListener?.('fileLoaded', check); check(); // CHANGE
+        }); // CHANGE
+    } // CHANGE
     function install(ui) {
         if (ui.__trellisGardenHome || !root.trellisIdentity) return ui.__trellisGardenHome;
         const state = ui.__trellisGardenHome = { panel: null, session: null, mode: 'idle', opening: false, search: '', reminder: null, persistenceWarning: null, renderVersion: 0, splashStatuses: new Set(), projectsVersion: 0, referenceVersion: 0, focus: 'open' }; // CHANGE
@@ -157,6 +293,7 @@
         }
         root.trellisIdentity.onStatus(async value => { // CHANGE: identity invalidation switches snapshots without refreshing cached metadata.
             const changed = JSON.stringify(value.session) !== JSON.stringify(state.session); // NEW
+            if (changed) ui.__trellisOpenOperation?.invalidate(); // CHANGE: obsolete identity work must release the card and never navigate.
             if (!value.session) state.persistenceWarning = null; // NEW: a new session must not inherit an old persistence notice.
             if (state.session && !value.session && root.Trellis?.users?.getCurrentUser()?.portableIdentityId === state.session.identityId) root.Trellis.users.logout(); // NEW: background revocation ends the linked session while preserving the editor's unsaved document.
             if (changed && !value.session) { state.mode = 'idle'; state.reminder = null; } // CHANGE
@@ -285,32 +422,16 @@
     }
     async function importGarden(ui) {
         const paths = await request({ action: 'showOpenDialog', properties: ['openFile'], filters: [{ name: 'Garden diagram', extensions: ['drawio'] }] });
-        if (!paths?.length || !await openPath(ui, paths[0])) return;
+        if (!paths?.length || !await openPath(ui, paths[0], { resumeStarter: true })) return; // CHANGE
         // Plugin loading and portable-session restoration can finish after fileLoaded.
         for (let i = 0; i < 40 && !root.Trellis?.users; i++) await new Promise(resolve => setTimeout(resolve, 100));
         await importCurrent(ui);
     }
     /** Wait for a selected download without replacing the editor until a local file exists. */ // NEW
-    async function downloadAndOpen(ui, diagramId, state) { // NEW
-        ui.hideDialog(); // CHANGE: replace the library rather than leaving it underneath a successful download.
-        let canceled = false; // NEW
-        const panel = element('div', null, 'trellis-home-open'), status = element('p', 'Waiting for an approved peer to deliver this garden.'); // NEW
-        panel.append(element('h3', 'Download garden project'), status, button('Cancel', () => ui.hideDialog(true), 'close')); // CHANGE
-        ui.showDialog(panel, 520, 200, true, true, cancel => { canceled = true; state.opening = false; if (cancel) root.setTimeout(() => showProjects(ui), 0); }); state.opening = true; // CHANGE
-        try { // NEW
-            await root.trellisGardenLibrary.download({ diagramId }); // NEW
-            while (!canceled) { // NEW
-                const selected = (await root.trellisGardenLibrary.list()).gardens.find(garden => garden.diagramId === diagramId); // NEW
-                if (!selected) throw new Error('This garden is no longer in the active library.'); // NEW
-                if (canceled) return; // NEW
-                if (selected.available) { if (await openPath(ui, selected.path, { isActive: () => !canceled })) { if (selected.starterPending) await initializeProject(ui, false); return; } if (canceled) return; canceled = true; state.opening = false; ui.hideDialog(); showProjects(ui); return; } // CHANGE: canceled downloads cannot navigate on a late file read.
-                status.textContent = selected.reason || 'Waiting for an approved peer. You may cancel and open it later.'; // NEW
-                await new Promise(resolve => setTimeout(resolve, 2000)); // NEW
-            } // NEW
-        } catch (error) { // NEW
-            if (!canceled) { status.textContent = error.message; panel.append(button('Retry', () => downloadAndOpen(ui, diagramId, state), 'neutral')); } // CHANGE
-        } // NEW
-    } // NEW
+    async function downloadAndOpen(ui, diagramId, state) { // CHANGE
+        const browser = state.projectsRoot, identityId = state.session?.identityId; // CHANGE
+        return openPath(ui, null, { download: diagramId, isActive: () => browser.isConnected && identityId === state.session?.identityId }); // CHANGE
+    } // CHANGE
     /** Load identity-local folds and apply search overrides without changing saved preferences. */ // NEW
     function updateProjectSections(state) { // NEW
         const scope = state.session?.identityId ? 'identity:' + state.session.identityId : 'signed-out'; // NEW
@@ -569,7 +690,8 @@
         panel.classList.add('trellis-surfaces'); panel.style.setProperty('--trellis-surface-base', '#fffdf6'); // NEW: shared surface hierarchy.
         const header = element('header', null, 'trellis-projects-header'), top = element('div', null, 'trellis-projects-top'), heading = element('h2', 'Garden Projects'), account = element('div', null, 'trellis-projects-account'), body = element('div', null, 'trellis-projects-body'); // CHANGE
         body.dataset.trellisSurface = 'canvas'; // NEW: shared surface hierarchy.
-        top.append(heading, button('Inventories ▾', event => root.TrellisInventories?.showMenu(event.currentTarget, { ui }), 'open'), button('The Grand Exchange', () => root.TrellisInventories?.openExchange({ ui }), 'open'), account); // CHANGE
+        const exchangeButton = button('The Grand Exchange', null, 'neutral'); exchangeButton.disabled = true; exchangeButton.title = 'The Grand Exchange is loading.'; let exchangeControl; // CHANGE: fail closed until the shared controller is mounted.
+        top.append(heading, button('Inventories ▾', event => root.TrellisInventories?.showMenu(event.currentTarget, { ui }), 'open'), exchangeButton, account); // CHANGE: availability owns Exchange activation.
          header.append(top); panel.append(header, body); state.projectsBody = body; state.accountHost = account; // CHANGE
         const identity = element('section', null, 'trellis-home-panel'); identity.setAttribute('aria-label', 'Identity'); identity.hidden = true; identity.addEventListener('click', () => { identity.hidden = false; }, true); // CHANGE
         const reference = element('div', null, 'trellis-projects-reference'); // NEW
@@ -615,6 +737,7 @@
         panel.dataset.quickstartSurface = 'projects'; // NEW
         body.append(folder, footer); const removePopoverListeners = installProjectPopovers(panel); // CHANGE
         ui.showDialog(panel, Math.max(240, Math.min(760, (root.innerWidth || 1000) - 40)), Math.max(180, Math.min(710, (root.innerHeight || 900) - 70)), true, true, cancel => { // NEW
+            exchangeControl?.dispose(); // CHANGE: release the detached explanation, identity subscriptions, and pending reads.
             state.accountPopover?.dispose(); // CHANGE: pending account results cannot update a closed or reopened library.
             state.confirmation?.invalidate(); // CHANGE: late membership callbacks cannot outlive the library.
             state.quickstartHighlight = null; // NEW: highlight intent cannot leak to a later dialog.
@@ -622,6 +745,7 @@
             if (state.panel === identity) state.panel = null; // NEW
             if (cancel && fromSplash) root.setTimeout(() => { if (!ui.getCurrentFile()) ui.showSplash(true); }, 0); // CHANGE: library cancellation must not close a document opened before the deferred return.
         }, true); // NEW
+        exchangeButton.title = 'Open community seed trading and CSA'; exchangeControl = root.TrellisInventories?.bindExchangeButton(exchangeButton, () => ({ ui })); // CHANGE: resolve entry availability after mounting.
         applyProjectHighlight(state, options); // NEW
         ui.dialog?.container?.classList.add('trellis-projects-dialog'); // NEW
         search.control.addEventListener('input', () => { state.search = search.control.value; drawProjects(ui, state); }); // NEW
@@ -641,7 +765,7 @@
         const library = state.projectsRoot; // NEW: a later library must not inherit this operation's focus callback.
         try { // NEW
             const paths = await request({ action: 'showOpenDialog', properties: ['openFile'], filters: [{ name: 'Garden project', extensions: ['drawio'] }] }); // NEW
-            if (paths?.length) await openPath(ui, paths[0]); // NEW
+            if (paths?.length) await openPath(ui, paths[0], { resumeStarter: true }); // CHANGE
         } catch (error) { // CHANGE
             const failure = typeof error?.message === 'string' && error.message.trim() ? error : new Error(typeof error === 'string' && error.trim() ? error : 'The file could not be opened. Try again or choose another file.'); // NEW: IPC failures may contain only a string or no useful message.
             ui.handleError(failure, 'Couldn’t open this file', () => root.setTimeout(() => { // NEW: reuse the existing stacked error dialog for every Browse failure.
@@ -651,6 +775,23 @@
     } // NEW
     /** Seed only this newly created project, through the same module mechanics as New Diagram. */ // NEW
     const starterInitializations = new WeakMap(); // NEW: concurrent submissions share this exact file's initializer.
+    /** Retry preparation or saved-project bookkeeping without dismissing required setup. */ // CHANGE
+    async function retryStarterStep(ui, setup, step) { // CHANGE
+        for (;;) { // CHANGE
+            setup.assertCurrent(); // CHANGE
+            try { return await step(); } catch (error) { // CHANGE
+                setup.assertCurrent(); // CHANGE
+                await new Promise(resolve => { // CHANGE
+                    const panel = element('section', null, 'trellis-home-panel'); // CHANGE
+                    let retrying = false; // CHANGE
+                    const retry = button('Retry', () => { retrying = true; ui.hideDialog(); resolve(); }, 'open'); // CHANGE
+                    panel.append(element('h3', 'Finish garden setup'), element('p', error.message), retry); // CHANGE
+                    ui.showDialog(panel, 460, 180, true, false, () => { if (!retrying && setup.isCurrent()) return false; resolve(); }, false, false, null, true); // CHANGE
+                    retry.focus(); // CHANGE
+                }); // CHANGE
+            } // CHANGE
+        } // CHANGE
+    } // CHANGE
     function initializeProject(ui, shared) { // CHANGE
         const file = ui.getCurrentFile(); if (!file) return Promise.reject(new Error('Open the created project before initializing its garden.')); // NEW
         if (starterInitializations.has(file)) return starterInitializations.get(file); // NEW
@@ -659,7 +800,7 @@
     } // NEW
     async function initializeStarter(ui, shared) { // NEW
         const graph = ui.editor.graph, file = ui.getCurrentFile(); // CHANGE
-        const ready = () => graph.__trellisModules && graph.__trellisTaskManager && graph.__trellisRoadmapManager && root.Trellis?.users && (!root.trellisShare || root.Trellis?.sharing) && (!shared || ui.actions.get('trellisShareGardenProject')); // CHANGE
+        const ready = () => graph.__trellisStarterSettings && graph.__trellisModules && graph.__trellisTaskManager && graph.__trellisRoadmapManager && root.Trellis?.users && (!root.trellisShare || root.Trellis?.sharing) && (!shared || ui.actions.get('trellisShareGardenProject')); // CHANGE
         if (!ready()) await new Promise((resolve, reject) => { // CHANGE: react to real plugin installation instead of polling startup timing.
             const finish = error => { root.clearTimeout(timer); root.removeEventListener('trellisGardenToolsReady', check); ui.editor.removeListener?.(check); error ? reject(error) : resolve(); }; // NEW
             const check = () => { if (file !== ui.getCurrentFile()) finish(new Error('The document changed during garden initialization.')); else if (ready()) finish(); }; // NEW
@@ -671,22 +812,43 @@
         if (root.Trellis?.sharing?.whenDocumentReady) await root.Trellis.sharing.whenDocumentReady(); else await root.Trellis?.sharing?.refresh?.(); // CHANGE: share policy and remembered-view setup with history and watching.
         if (file !== ui.getCurrentFile()) return false; // NEW
         if (!ready() || !users?.isLoggedIn()) throw new Error('The project was created. Retry after the garden tools finish loading.'); // CHANGE
+        const setup = file.__trellisStarterSetup ||= {}; // CHANGE
+        const actor = users.getCurrentUser?.()?.id, login = projectLoginKey(ui.__trellisGardenHome?.session); // CHANGE
+        setup.isCurrent = () => file === ui.getCurrentFile() && users.isLoggedIn() && actor === users.getCurrentUser?.()?.id && login === projectLoginKey(ui.__trellisGardenHome?.session); // CHANGE
+        setup.assertCurrent = () => { if (!setup.isCurrent() || root.__trellisClosing) throw new Error('The project or signed-in user changed during garden setup. Reopen the project to continue.'); }; // CHANGE
+        file.clearAutosave?.(); // CHANGE
         const parent = graph.getDefaultParent(), children = graph.model.getChildren(parent) || []; // NEW
         const existingGarden = children.find(cell => cell.value?.getAttribute?.('garden_module') === '1'); // NEW
+        const settings = graph.__trellisStarterSettings; // CHANGE
+        let saved = !!existingGarden && !setup.restoredDraft && settings.isConfigured(existingGarden); // CHANGE
         const garden = existingGarden || (!children.length ? graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, 'garden') : null); // CHANGE
         if (!garden) throw new Error('The project was created, but its starter garden could not be initialized.'); // NEW
         const modules = graph.__trellisModules; // NEW
-        if (existingGarden && modules.ensureGardenTeamModule && modules.ensureGardenTaskModule && modules.ensureGardenRoadmapModule) { // NEW: retry repairs only missing companions through their existing idempotent mechanics.
+        if (!saved && existingGarden && modules.ensureGardenTeamModule && modules.ensureGardenTaskModule && modules.ensureGardenRoadmapModule) { // CHANGE
             const command = graph.__trellisRoadmapManager.runModelCommand; // NEW
             const ensure = () => { modules.ensureGardenTeamModule(garden, { insideUpdate: true }); modules.ensureGardenTaskModule(garden, { insideUpdate: true, createMainBoard: true }); modules.ensureGardenRoadmapModule(garden); }; // NEW
             if (command) command(ensure, { throwOnRejection: true }); else ensure(); // NEW
         } // NEW
         graph.setSelectionCell(garden); // NEW
-        await new Promise((resolve, reject) => file.save(false, resolve, reject)); // CHANGE
-        if (file !== ui.getCurrentFile()) return false; // NEW
-        try { await root.trellisGardenLibrary.completeStarter({ path: file.fileObject.path }); } // NEW: commit completion before later intentional deletion can make the diagram empty again.
-        catch (error) { if (file !== ui.getCurrentFile()) return false; throw error; } // NEW
-        if (file !== ui.getCurrentFile()) return false; // NEW
+        setup.finish = async () => { // CHANGE: retry the library update independently of diagram persistence.
+            setup.assertCurrent(); // CHANGE
+            if (!saved) { // CHANGE
+                await new Promise((resolve, reject) => file.save(false, resolve, reject, undefined, undefined, undefined, undefined, setup)); // CHANGE: the active setup authorizes this save.
+                saved = true; // CHANGE
+                setup.assertCurrent(); // CHANGE
+            } // CHANGE
+            await root.trellisGardenLibrary.completeStarter({ path: file.fileObject.path }); // CHANGE
+            setup.assertCurrent(); // CHANGE
+            delete file.__trellisStarterSetup; // CHANGE
+        }; // CHANGE
+        if (saved) await retryStarterStep(ui, setup, setup.finish); // CHANGE
+        else { // CHANGE
+            let finish; // CHANGE
+            const completed = new Promise(resolve => { finish = resolve; }); // CHANGE
+            await retryStarterStep(ui, setup, () => settings.open(garden, setup, finish)); // CHANGE
+            if (!await completed) return false; // CHANGE
+        } // CHANGE
+        if (!setup.isCurrent()) return false; // CHANGE
         if (shared) { // NEW
             const action = ui.actions.get('trellisShareGardenProject'); // NEW
             if (!action) throw new Error('The project was created. Use the garden Share button to invite collaborators.'); // NEW
@@ -1014,8 +1176,7 @@
             if (diagramId === '__new') { // NEW
                 if (!newName.control.value.trim()) throw new Error('Enter a name for the first garden.'); // NEW
                 if (!created) { created = await root.trellisGardenLibrary.create({ name: newName.control.value.trim() }); draft.created = created; } // CHANGE
-                if (!await openPath(ui, created.path)) throw new Error('Open the new garden to finish its starter setup.'); // NEW
-                if (!await initializeProject(ui, false)) throw new Error('Finish the new garden setup before creating its community.'); // NEW
+                if (!await openPath(ui, created.path, { starterPending: true })) throw new Error('Finish the new garden setup before creating its community.'); // CHANGE
                 diagramId = created.entry.diagramId; // NEW
             } // NEW
             const result = await root.trellisGardenCommunities.create({ name: name.control.value, description: description.control.value, gardenDescription: gardenDescription.control.value, diagramId });
@@ -1303,8 +1464,8 @@
             open.disabled = true; // NEW: repeated activation shares the selected garden's operation.
             try { // NEW
                 if (project.available) { // CHANGE
-                    if (await openPath(ui, project.path, { isActive: () => browser.isConnected && identityId === state.session?.identityId })) { // NEW
-                        if (project.starterPending) await initializeProject(ui, false); // NEW
+                    if (await openPath(ui, project.path, { starterPending: project.starterPending, isActive: () => browser.isConnected && identityId === state.session?.identityId })) { // NEW
+                        // Starter recovery completes inside the opening operation. // CHANGE
                     } // NEW
                 } // NEW
                 else await downloadAndOpen(ui, project.diagramId, state); // NEW

@@ -2201,8 +2201,8 @@ Draw.loadPlugin(function (ui) {
 
 
     // garden settings dialog (city + units + garden dimensions + default bed dimensions) // CHANGE
-    async function showGardenSettingsDialog(ui, graph, moduleCell, onClose, transitionResolved = false) {
-        if (!transitionResolved && graph.__trellisSharing?.transitionEditor) return graph.__trellisSharing.transitionEditor(() => showGardenSettingsDialog(ui, graph, moduleCell, onClose, true)); // CHANGE
+    async function showGardenSettingsDialog(ui, graph, moduleCell, onClose, transitionResolved = false, starter = null) { // CHANGE
+        if (!transitionResolved && graph.__trellisSharing?.transitionEditor) return graph.__trellisSharing.transitionEditor(() => showGardenSettingsDialog(ui, graph, moduleCell, onClose, true, starter)); // CHANGE
         const model = graph.getModel();
         const references = graph.__trellisReferences, creating = getXmlAttr(moduleCell, 'trellis_reference_pending', '') === '1'; // NEW
         if ((creating || getXmlAttr(moduleCell, 'trellis_references_json', '')) && !references) throw new Error('Garden references are still loading. Reopen Garden Settings.'); // CHANGE
@@ -2223,19 +2223,23 @@ Draw.loadPlugin(function (ui) {
         let activePathDisplayUnits = curUnits || ""; // NEW
         let bedDimensionsEdited = false;
         let pathWidthsEdited = false; // NEW
-        let closeNotified = false, settingsHold = null; // CHANGE
+        let closeNotified = false, settingsHold = null, starterApplied = false, starterComplete = false; // CHANGE
 
         function notifyClose() {
+            if (starter && !starterComplete && starter.isCurrent()) return false; // CHANGE: Escape and implicit dismissal cannot cancel required setup.
             if (closeNotified) return;
             closeNotified = true; settingsHold?.dispose(true); // CHANGE
             settingsReferenceContext?.release().catch(() => {}); // NEW
-            if (typeof onClose === "function") onClose();
+            if (typeof onClose === "function") onClose(starterComplete); // CHANGE
         }
 
         let cities = [];
         try {
             cities = await loadCities(settingsReferenceContext); // CHANGE
+            starter?.assertCurrent(); // CHANGE
+            if (starter && !cities.length) throw new Error('No cities are available for Garden Settings.'); // CHANGE
         } catch (e) {
+            if (starter) { await settingsReferenceContext?.release().catch(() => {}); throw e; } // CHANGE: setup displays its required retry dialog.
             mxUtils.alert("Error loading cities: " + e.message);
             notifyClose();
             return;
@@ -2614,7 +2618,25 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.marginTop = "12px";
 
         const cancelBtn = tilerButton("Cancel", () => ui.hideDialog(), "close"); // CHANGE: garden settings cancellation uses the red outline.
+        /** Keep the applied form visible while retrying the first save or library update. */ // CHANGE
+        async function finishStarterSettings() { // CHANGE
+            okBtn.disabled = true; // CHANGE
+            try { // CHANGE
+                await starter.finish(); // CHANGE
+                starterComplete = true; // CHANGE
+                settingsHold?.complete?.(); // CHANGE
+                ui.hideDialog(false, false, div); // CHANGE
+                return true; // CHANGE
+            } catch (error) { // CHANGE
+                showError(error.message || String(error)); // CHANGE
+                okBtn.textContent = "Retry"; // CHANGE
+                return false; // CHANGE
+            } finally { okBtn.disabled = false; } // CHANGE
+        } // CHANGE
         async function commitGardenSettings(saveOptions = {}) { // CHANGE
+            if (starter && saveOptions.confirmStarter !== starter) return false; // CHANGE: editor transitions cannot authorize the first save.
+            starter?.assertCurrent(); // CHANGE
+            if (starterApplied) return finishStarterSettings(); // CHANGE
             if (templateLoading) { showError('Wait for the selected template to finish loading.'); return false; } // NEW
             if (templateError) { showError('Choose an available template before saving. ' + templateError); return false; } // NEW
             if (!creating && settingsReferenceContext && references.read(moduleCell).current !== settingsReferenceContext.manifestId) { showError('Accepted definitions changed. Reopen Garden Settings.'); return false; } // NEW
@@ -2680,18 +2702,24 @@ Draw.loadPlugin(function (ui) {
             }; // CHANGE
             const context = graph.__trellisEditContext || window.TrellisEditContext?.install(ui); // CHANGE
             try { if (context?.apply) context.apply({ cells: [moduleCell], manualSources: [moduleCell], includeAncestors: false, editor: settingsHold, finalize: () => graph.refresh(moduleCell) }, apply); else { apply(); graph.refresh(moduleCell); } } catch (error) { showError(error.message); return false; } // CHANGE
+            if (starter) { // CHANGE
+                starterApplied = true; // CHANGE
+                for (const control of div.querySelectorAll("input,select,button")) if (control !== okBtn) control.disabled = true; // CHANGE
+                return finishStarterSettings(); // CHANGE
+            } // CHANGE
             settingsHold?.complete?.(); // CHANGE
             if (saveOptions.closeAfter !== false) ui.hideDialog(); return true; // CHANGE
         } // CHANGE
-        const okBtn = tilerButton("OK", () => { if (settingsHold) void settingsHold.commit(); else void commitGardenSettings(); }, "add", { title: "Save these settings to the selected garden module." }); // CHANGE // CHANGE: explicit action tooltip.
+        const okBtn = tilerButton("OK", () => { const options = starter ? { confirmStarter: starter } : undefined; if (settingsHold) void settingsHold.commit(options); else void commitGardenSettings(options).catch(error => showError(error.message)); }, "add", { title: "Save these settings to the selected garden module." }); // CHANGE
 
-        btnRow.appendChild(cancelBtn);
+        if (!starter) btnRow.appendChild(cancelBtn); // CHANGE
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
 
         const pageId = ui.currentPage?.getId?.() || ui.currentPage?.node?.getAttribute('id') || ''; // CHANGE
-        settingsHold = window.Trellis?.sharing?.registerObjectForm?.({ resume() {}, reopen: cell => showGardenSettingsDialog(ui, graph, cell, onClose, true), title: 'Garden settings', element: div, targets: [JSON.stringify([pageId, String(moduleCell.id)])], save: commitGardenSettings, discard: () => ui.hideDialog() }); // CHANGE
-        ui.showDialog(div, 460, 640, true, true, notifyClose); // CHANGE: allow space for the two circle-budget fields.
+        starter?.assertCurrent(); // CHANGE: reference and template loading cannot publish a form for a stale document or account.
+        settingsHold = window.Trellis?.sharing?.registerObjectForm?.({ resume() {}, reopen: cell => showGardenSettingsDialog(ui, graph, cell, onClose, true, starter), title: 'Garden settings', element: div, targets: [JSON.stringify([pageId, String(moduleCell.id)])], save: commitGardenSettings, discard: () => ui.hideDialog() }); // CHANGE
+        ui.showDialog(div, 460, 640, true, !starter, notifyClose); // CHANGE
         elevateTrellisDialog();
         div.dataset.quickstartSurface = 'settings'; div.dataset.quickstartGarden = String(moduleCell.id); // NEW
         for (const [key, node] of Object.entries({ 'settings-source': templateSelect, 'settings-name': gardenNameInput, 'settings-city': citySel, 'settings-units': unitsSel, 'settings-width': gardenWidthInput, 'settings-length': gardenLengthInput, 'settings-bed-width': bedWidthInput, 'settings-bed-length': bedLengthInput, 'settings-save': okBtn })) if (node) node.setAttribute('data-trellis-quickstart', key); // NEW
@@ -3042,7 +3070,9 @@ Draw.loadPlugin(function (ui) {
             const target = getSingleSelectedOverlayTarget(); // CHANGE
             if (!target || target.mode !== "bed" || !isPlainPrimaryMouseEvent(evt)) return; // CHANGE
             if (gardenSettingsOverlaySuppressed || isIrrigationModeActiveForOverlay() || isTeamPermissionModeActiveForOverlay()) return; // CHANGE
-            if (mouseEventCell(me, evt) === target.bedCell) pendingSelectedBedToggle = target.bedCell; // CHANGE
+            const point = mxUtils.convertPoint(graph.container, mxEvent.getClientX(evt), mxEvent.getClientY(evt)); // CHANGE: match click-through selection's container coordinates, including zoom and scroll.
+            const hit = (graph.getCellAt && graph.getCellAt(point.x, point.y)) || mouseEventCell(me, evt); // CHANGE: transparent planting frames can be the raw DOM target even when selection resolves to the bed.
+            if (hit === target.bedCell) pendingSelectedBedToggle = target.bedCell; // CHANGE
         } // CHANGE
 
         function toggleHiddenBedAfterSimpleClick(evt) { // CHANGE
@@ -3121,23 +3151,23 @@ Draw.loadPlugin(function (ui) {
             try { window.dispatchEvent(new CustomEvent(ALLOCATE_PLAN_EVENT, { detail: { moduleCellId: moduleCellId, year: getCurrentGardenYear(moduleCell) } })); } catch (_) { } // NEW
         } // NEW
 
-        openGardenSettingsDialogWithOverlaySuppressed = async function (moduleCell, onClose) {
+        openGardenSettingsDialogWithOverlaySuppressed = async function (moduleCell, onClose, starter) { // CHANGE
             gardenSettingsOverlaySuppressed = true;
             hideToolbar();
             let closeHandled = false;
 
-            function clearSuppressionAndNotify() {
+            function clearSuppressionAndNotify(completed) { // CHANGE
                 if (closeHandled) return;
                 closeHandled = true;
                 gardenSettingsOverlaySuppressed = false;
-                if (typeof onClose === "function") onClose();
+                if (typeof onClose === "function") onClose(completed); // CHANGE
                 scheduleRefresh();
             }
 
             try {
-                await showGardenSettingsDialog(ui, graph, moduleCell, clearSuppressionAndNotify);
+                return await showGardenSettingsDialog(ui, graph, moduleCell, clearSuppressionAndNotify, !!starter, starter); // CHANGE: required setup owns this newly loaded editor and reports preparation errors directly.
             } catch (e) {
-                clearSuppressionAndNotify();
+                if (starter) { gardenSettingsOverlaySuppressed = false; scheduleRefresh(); } else clearSuppressionAndNotify(); // CHANGE: a preparation failure is retryable.
                 throw e;
             }
         };
@@ -3404,6 +3434,15 @@ Draw.loadPlugin(function (ui) {
 
 
     // Listen for garden-module settings requests emitted by the module plugin               
+    graph.__trellisStarterSettings = { // CHANGE: the library initializer owns the starter dialog and its completion.
+        isConfigured: cell => getXmlAttr(cell, 'trellis_reference_pending', '') !== '1' && hasGardenSettingsSet(cell), // CHANGE
+        open: async (cell, setup, onClose) => { // CHANGE
+            const close = completed => { if (completed) selectAndZoomToGarden(graph.getModel().getCell(cell.id)); onClose(completed); }; // CHANGE
+            if (openGardenSettingsDialogWithOverlaySuppressed) return openGardenSettingsDialogWithOverlaySuppressed(cell, close, setup); // CHANGE
+            return showGardenSettingsDialog(ui, graph, cell, close, true, setup); // CHANGE
+        } // CHANGE
+    }; // CHANGE
+    if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent('trellisGardenToolsReady')); // CHANGE
     if (!graph.__uslGardenSettingsListenerInstalled) {
         graph.__uslGardenSettingsListenerInstalled = true;
 
@@ -3420,6 +3459,7 @@ Draw.loadPlugin(function (ui) {
 
             // Defer dialog until after current paint/update completes                        
             setTimeout(() => {
+                if (ui.getCurrentFile?.()?.__trellisStarterSetup) return; // CHANGE: the initializer opens the required dialog exactly once.
                 // Re-check in case settings were set during the delay                         
                 if (hasGardenSettingsSet(moduleCell)) { if (focusAfterSettingsClose) selectAndZoomToGarden(moduleCell); return; } // CHANGE
                 if (openGardenSettingsDialogWithOverlaySuppressed) {

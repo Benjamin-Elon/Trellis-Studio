@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 function createElement() {
     return {
         style: {},
+        dataset: {}, // NEW: dimension chips expose their owning object for overlay inspection.
         textContent: "",
         innerHTML: "",
         clientWidth: 80,
@@ -62,7 +63,8 @@ function installPlugin(cells, parents, selection) {
         getSelectionCells() { return selection.cells; },
         getSelectionModel() { return { addListener() { listeners.push(arguments); } }; },
         getCellStyle(cell) { return cell.attrs.style || {}; },
-        addListener() { listeners.push(arguments); }
+        addListener() { listeners.push(arguments); }, // CHANGE
+        fireEvent(event) { this.lastEvent = event; } // NEW: production readiness notifications.
     };
 
     global.window = {
@@ -71,6 +73,7 @@ function installPlugin(cells, parents, selection) {
     global.document = { createElement };
     global.Draw = { loadPlugin(fn) { callbacks.push(fn); } };
     global.mxConstants = { STYLE_ROTATION: "rotation" };
+    global.mxEventObject = function (name) { this.name = name; }; // NEW
     global.mxEvent = {
         CHANGE: "change",
         SCALE: "scale",
@@ -129,6 +132,9 @@ function run() {
 
     assert.strictEqual(api.formatMetricLengthCm(99.94), "99.9 cm");
     assert.strictEqual(api.formatMetricLengthCm(100), "1.00 m");
+    assert.strictEqual(graph.__gardenScaleController.formatLengthFromUnits(cmToUnits(200), group), "2.00 m"); // NEW
+    assert.strictEqual(graph.__gardenScaleController.formatLengthFromUnits(cmToUnits(121.92), bed), "4 ft 0 in"); // NEW
+    assert.strictEqual(graph.lastEvent.name, 'trellisGardenScaleReady'); // NEW
     assert.strictEqual(api.formatImperialLengthCm(121.92), "4 ft 0 in");
     assert.strictEqual(api.formatImperialLengthCm(47.6 * 2.54), "4 ft 0 in");
     assert.strictEqual(api.resolveUnitSystem(bed), "imperial");
@@ -183,16 +189,21 @@ function run() {
 
     assert.strictEqual(container.children.length, 1);
     assert.strictEqual(container.children[0].textContent, "4 ft 0 in x 8 ft 0 in");
+    assert.strictEqual(container.children[0].dataset.trellisDimensions, "bed"); // NEW
+    assert.strictEqual(graph.__gardenScaleController.getOverlayPlacement(bed).bottom, parseFloat(container.children[0].style.top) + 22); // NEW
     global.window.TrellisGardenScale._test.markResizeTarget({ state: { cell: bed } }, true);
     assert.strictEqual(api.activeResizeCellIds.has("bed"), true);
     assert.strictEqual(container.children[0].style.display, "none");
+    assert.strictEqual(graph.__gardenScaleController.getOverlayPlacement(bed), null); // NEW: hidden chips reserve no attribution row.
     global.window.TrellisGardenScale._test.markResizeTarget({ state: { cell: bed } }, false);
     assert.strictEqual(api.activeResizeCellIds.has("bed"), false);
     assert.strictEqual(container.children[0].style.display, "");
+    assert.ok(graph.__gardenScaleController.getOverlayPlacement(bed)); // NEW
     selection.cells = [moduleMetric]; // CHANGE
     fireListeners(listeners, "change"); // CHANGE
     assert.strictEqual(container.children.length, 1); // CHANGE
     assert.strictEqual(container.children[0].textContent, "4.00 m x 3.00 m"); // CHANGE
+    assert.strictEqual(graph.__gardenScaleController.getOverlayPlacement(bed), null); // NEW: deselected chips reserve no attribution row.
     global.window.TrellisGardenScale._test.markResizeTarget({ state: { cell: moduleMetric } }, true); // CHANGE
     assert.strictEqual(api.activeResizeCellIds.has("moduleMetric"), true); // CHANGE
     assert.strictEqual(container.children[0].style.display, "none"); // CHANGE

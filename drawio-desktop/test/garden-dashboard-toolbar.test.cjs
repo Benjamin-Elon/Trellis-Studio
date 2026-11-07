@@ -4,6 +4,8 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm"); // NEW
 const { parse } = require("@babel/parser"); // NEW: extract production declarations without duplicating their implementation.
+const { JSDOM } = require('jsdom'); // NEW
+const { exchangeDashboardSource } = require('./helpers/exchange-dashboard-harness.cjs'); // NEW
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 const DASHBOARD_PATH = path.join(PROJECT_ROOT, "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins", "Garden_Dashboard.js");
@@ -11,6 +13,24 @@ const DASHBOARD_PATH = path.join(PROJECT_ROOT, "drawio", "src", "main", "webapp"
 function source() {
     return fs.readFileSync(DASHBOARD_PATH, "utf8");
 }
+test('Grand Exchange toolbar resolves current garden, dismisses on hide, and disposes pending activation with its graph', async t => { // NEW
+    const dom = new JSDOM('<!doctype html><body><div id="dashboard-host"></div></body>', { runScripts: 'outside-only' }); t.after(() => dom.window.close()); // NEW
+    const { window } = dom, listeners = new Set(); let qualified = false, finish; // NEW
+    window.Draw = { loadPlugin() {} }; window.ui = { editor: { graph: { destroy() {}, removeListener() {} }, removeListener() {} } }; // NEW
+    window.mxEvent = { addListener: (node, event, handler) => node.addEventListener(event, handler), consume(event) { event.preventDefault(); event.stopPropagation(); } }; // NEW
+    window.trellisIdentity = { getSession: async () => ({ identityId: 'alice' }), onStatus(fn) { listeners.add(fn); return () => listeners.delete(fn); }, onLocked() {} }; // NEW
+    window.trellisExchange = { status: async () => finish === null ? new Promise(resolve => { finish = resolve; }) : { qualified, reason: 'Exchange is not ready.' } }; // NEW
+    for (const name of ['Trellis_UI_Cleanup.js', 'Trellis_Inventories.js']) window.eval(fs.readFileSync(path.join(PROJECT_ROOT, 'drawio/src/main/webapp/plugins/garden_planner_plugins', name), 'utf8')); // NEW
+    const original = window.TrellisInventories, opened = []; window.TrellisInventories = { ...original, bindExchangeButton(button, getOptions) { return original.bindExchangeButton(button, () => { const options = getOptions(); opened.push(options); return options; }); } }; // NEW
+    window.eval(exchangeDashboardSource()); const toolbar = window.exchangeDashboard.mount(), button = [...toolbar.wrap.querySelectorAll('button')].find(node => node.textContent === 'The Grand Exchange'); // NEW
+    button.getClientRects = () => toolbar.wrap.style.display === 'none' ? [] : [{}]; await toolbar.exchangeControl.refresh(); button.focus(); assert.match(window.document.querySelector('[role="tooltip"]').textContent, /not ready/); // NEW
+    window.exchangeDashboard.hide(); assert.equal(window.document.querySelector('[role="tooltip"]'), null); window.exchangeDashboard.mount(); qualified = true; await toolbar.exchangeControl.refresh(); // NEW
+    window.exchangeDashboard.setGarden({ id: 'earlier' }); finish = null; button.click(); await new Promise(resolve => setTimeout(resolve, 0)); window.exchangeDashboard.setGarden({ id: 'current' }); // NEW
+    finish({ qualified: true }); await new Promise(resolve => setTimeout(resolve, 0)); assert.equal(opened[0].garden.id, 'current'); assert.ok(window.document.querySelector('[role="dialog"]')); // NEW
+    [...window.document.querySelectorAll('[role="dialog"] button')].find(node => node.textContent === 'Close').click(); finish = null; button.click(); await new Promise(resolve => setTimeout(resolve, 0)); // NEW
+    // Closing the graph while its entry check is pending cannot open a detached Exchange. // NEW
+    window.exchangeDashboard.destroy(); finish({ qualified: true }); await new Promise(resolve => setTimeout(resolve, 0)); assert.equal(window.document.querySelector('[role="dialog"]'), null); assert.equal(listeners.size, 0); // NEW
+}); // NEW
 
 // Execute production context/search functions against a replaceable current-page model. // NEW
 function dashboardContextHarness() {
@@ -284,7 +304,8 @@ test("garden dashboard toolbar is mounted to the graph viewport and sized from t
     assert.match(text, /entry\.wrap\.style\.left = Math\.round\(rect\.left \|\| 0\) \+ "px";/);
     assert.match(text, /entry\.wrap\.style\.top = Math\.round\(rect\.top \|\| 0\) \+ "px";/);
     assert.match(text, /entry\.wrap\.style\.width = Math\.max\(0, Math\.round\(viewportToolbarWidth\(host\)\)\) \+ "px";/);
-    assert.doesNotMatch(text, /innerWidth/);
+    const widthFunction = parse(fullSource).program.body[0].expression.arguments[0].body.body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'viewportToolbarWidth'); // NEW
+    assert.doesNotMatch(fullSource.slice(widthFunction.start, widthFunction.end), /innerWidth/); // CHANGE: the independent view-options popover is bounded by the window.
 });
 
 test("garden dashboard toolbar width follows a narrowed graph container rect", () => {

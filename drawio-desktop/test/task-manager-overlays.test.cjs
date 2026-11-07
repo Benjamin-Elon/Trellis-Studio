@@ -545,13 +545,16 @@ function makeHarness(options = {}) {
             SCALE_AND_TRANSLATE: "scaleAndTranslate",
             REPAINT: "repaint",
             CLICK: "click",
+            FIRE_MOUSE_EVENT: "fireMouseEvent", // NEW
+            MOUSE_DOWN: "mouseDown", // NEW
+            ESCAPE: "escape", // NEW
             CELLS_MOVED: "cellsMoved",
             CELLS_RESIZED: "cellsResized",
             addListener(node, event, listener) { node.addEventListener(event, listener); },
             consume(evt) { if (evt && evt.preventDefault) evt.preventDefault(); },
-            isControlDown() { return false; },
-            isMetaDown() { return false; },
-            isShiftDown() { return false; },
+            isControlDown(evt) { return !!evt.ctrlKey; }, // CHANGE
+            isMetaDown(evt) { return !!evt.metaKey; }, // CHANGE
+            isShiftDown(evt) { return !!evt.shiftKey; }, // CHANGE
             isPopupTrigger() { return false; }
         },
         mxCell: class extends TestCell { // CHANGE: plugin code calls mxCell(value, geometry, style)
@@ -617,6 +620,21 @@ function makeHarness(options = {}) {
         vm.runInContext(fs.readFileSync(linkerPath, 'utf8'), context, { filename: linkerPath }); // NEW
     } // NEW
 
+    /** Preserve production ordering: pre-mouse event, native selection, then plugin mouse listeners. */ // NEW
+    function dispatchMouse(type, cell, opts) { // NEW
+        const event = new dom.window.MouseEvent(type.toLowerCase(), { bubbles: true, button: 0, detail: 1, clientX: 100, clientY: 120, ...opts }); // NEW
+        Object.defineProperty(event, "target", { value: opts.target || container }); // NEW
+        for (const axis of ["X", "Y"]) { // NEW
+            Object.defineProperty(event, `graph${axis}`, { value: opts[`graph${axis}`] ?? event[`client${axis}`] }); // NEW
+            Object.defineProperty(event, `model${axis}`, { value: opts[`model${axis}`] }); // NEW
+        } // NEW
+        const me = { getCell: () => cell, getEvent: () => event, getGraphX: () => event.graphX, getGraphY: () => event.graphY }; // NEW
+        const properties = { eventName: type, event: me }; // NEW
+        (graphListeners.get("fireMouseEvent") || []).forEach(listener => listener(graph, { getProperty: key => properties[key] })); // NEW
+        if (type === "mouseDown" && opts.selectOnDown) graph.setSelectionCell(cell); // NEW
+        mouseListeners.forEach(listener => { if (listener[type]) listener[type](graph, me); }); // NEW
+    } // NEW
+
     return {
         loadGuide, // CHANGE
         loadEquipment, // NEW
@@ -679,22 +697,11 @@ function makeHarness(options = {}) {
             modelListeners.filter(entry => entry.event === "change").forEach(entry => entry.listener(null, evt));
         },
         mouseDown(cell = null, opts = {}) {
-            const event = new dom.window.MouseEvent("mousedown", { bubbles: true, button: opts.button || 0, detail: opts.detail == null ? 1 : opts.detail, clientX: opts.clientX == null ? 100 : opts.clientX, clientY: opts.clientY == null ? 120 : opts.clientY });
-            Object.defineProperty(event, "graphX", { value: opts.graphX == null ? event.clientX : opts.graphX });
-            Object.defineProperty(event, "graphY", { value: opts.graphY == null ? event.clientY : opts.graphY });
-            Object.defineProperty(event, "modelX", { value: opts.modelX == null ? undefined : opts.modelX }); // CHANGE
-            Object.defineProperty(event, "modelY", { value: opts.modelY == null ? undefined : opts.modelY }); // CHANGE
-            const me = { getCell() { return cell; }, getEvent() { return event; }, getGraphX() { return event.graphX; }, getGraphY() { return event.graphY; } };
-            mouseListeners.forEach(listener => { if (listener.mouseDown) listener.mouseDown(graph, me); });
+            dispatchMouse("mouseDown", cell, opts); // CHANGE
         },
+        mouseMove(cell = null, opts = {}) { dispatchMouse("mouseMove", cell, opts); }, // NEW
         mouseUp(cell = null, opts = {}) {
-            const event = new dom.window.MouseEvent("mouseup", { bubbles: true, button: opts.button || 0, detail: opts.detail == null ? 1 : opts.detail, clientX: opts.clientX == null ? 100 : opts.clientX, clientY: opts.clientY == null ? 120 : opts.clientY });
-            Object.defineProperty(event, "graphX", { value: opts.graphX == null ? event.clientX : opts.graphX });
-            Object.defineProperty(event, "graphY", { value: opts.graphY == null ? event.clientY : opts.graphY });
-            Object.defineProperty(event, "modelX", { value: opts.modelX == null ? undefined : opts.modelX }); // CHANGE
-            Object.defineProperty(event, "modelY", { value: opts.modelY == null ? undefined : opts.modelY }); // CHANGE
-            const me = { getCell() { return cell; }, getEvent() { return event; }, getGraphX() { return event.graphX; }, getGraphY() { return event.graphY; } };
-            mouseListeners.forEach(listener => { if (listener.mouseUp) listener.mouseUp(graph, me); });
+            dispatchMouse("mouseUp", cell, opts); // CHANGE
         },
         resetCounters() { geometrySetCount = 0; labelSetCount = 0; modelBeginUpdateCount = 0; scrollCellToVisibleCalls = 0; lastScrollCell = null; refreshCalls.length = 0; taskHooks.resetTaskReflowTestCounters(); }
     };
@@ -1400,6 +1407,92 @@ test("task manager DOM overlays avoid SVG overlayPane hosts", async () => {
     assert.equal(boardOverlay.parentNode.parentNode.id, "graph");
 });
 
+for (const mode of ['FULL', 'WEEK']) { // NEW
+    test(`single task card toggles in ${mode} view and stays hidden across refreshes`, async () => { // NEW
+        const h = makeHarness(); // NEW
+        setAttr(h.board, 'task_view_mode', mode); // NEW
+        const card = mode === 'FULL' ? h.card1 : h.weekTueCard; // NEW
+        h.setState(card, { x: 30, y: 60, width: 120, height: 60 }); // NEW
+        const overlay = h.document.querySelector('.trellis-task-selected-card-actions'); // NEW
+        h.mouseDown(card, { selectOnDown: true }); // NEW
+        await nextTick(); // NEW: selection can render before release.
+        h.mouseUp(card); // NEW
+        await nextTick(); // NEW
+        assert.equal(overlay.style.display, 'flex'); // NEW
+        const position = [overlay.style.left, overlay.style.top]; // NEW
+        h.resetCounters(); // NEW
+        h.mouseDown(card); h.mouseUp(card); // NEW
+        assert.equal(overlay.style.display, 'none'); // NEW
+        h.fireViewEvent(); h.fireViewEvent('scale'); h.fireModelChange(); // NEW
+        h.fireGraphEvent('cellsMoved', { cells: [card] }); // NEW
+        await nextTick(); // NEW
+        assert.equal(overlay.style.display, 'none'); // NEW
+        assert.equal(h.selectedCell, card); // NEW
+        assert.equal(h.modelBeginUpdateCount, 0, 'toggling is not a model edit'); // NEW
+        h.mouseDown(card); h.mouseMove(card, { clientX: 110 }); h.mouseUp(card); await nextTick(); // NEW
+        assert.equal(overlay.style.display, 'none', 'drag completion must preserve dismissal'); // NEW
+        h.mouseDown(card); h.mouseUp(card); // NEW
+        await nextTick(); // NEW
+        assert.equal(overlay.style.display, 'flex'); // NEW
+        assert.deepEqual([overlay.style.left, overlay.style.top], position); // NEW
+    }); // NEW
+} // NEW
+
+test('card dismissal resets synchronously on deselection, card changes, and multi-selection', async () => { // NEW
+    const h = makeHarness(), card = h.weekTueCard; // NEW
+    h.setState(card, { x: 30, y: 60, width: 120, height: 60 }); // NEW
+    h.setState(h.weekTueCard2, { x: 30, y: 140, width: 120, height: 60 }); // NEW
+    const overlay = h.document.querySelector('.trellis-task-selected-card-actions'); // NEW
+    h.graph.setSelectionCell(card); await nextTick(); // NEW
+    for (const cells of [[], [h.weekTueCard2], [card, h.weekTueCard2], [card, h.board]]) { // NEW
+        h.mouseDown(card); h.mouseUp(card); await nextTick(); // NEW
+        assert.equal(overlay.style.display, 'none'); // NEW
+        h.graph.setSelectionCells(cells); h.graph.setSelectionCell(card); // NEW: leave and return before deferred rendering.
+        await nextTick(); assert.equal(overlay.style.display, 'flex'); // NEW
+    } // NEW
+    h.graph.setSelectionCells([card, h.weekTueCard2]); await nextTick(); // NEW
+    h.mouseDown(card); h.mouseUp(card); await nextTick(); // NEW
+    assert.equal(overlay.style.display, 'flex'); // NEW
+    assert.equal(h.selectedCells.length, 2); // NEW
+}); // NEW
+
+test('card toggles ignore special clicks, controls, movement, cancellation, and changed selections', async () => { // NEW
+    const h = makeHarness(), card = h.weekTueCard; // NEW
+    h.setState(card, { x: 30, y: 60, width: 120, height: 60 }); // NEW
+    h.graph.setSelectionCell(card); await nextTick(); // NEW
+    const overlay = h.document.querySelector('.trellis-task-selected-card-actions'); // NEW
+    const control = h.document.createElement('input'); h.graph.container.appendChild(control); // NEW
+    for (const opts of [{ button: 1 }, { button: 2 }, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { detail: 2 }, { target: control }, { target: overlay.querySelector('button') }]) { // NEW
+        h.mouseDown(card, opts); h.mouseUp(card, opts); await nextTick(); // NEW
+        assert.equal(overlay.style.display, 'flex', JSON.stringify({ ...opts, target: !!opts.target })); // NEW
+    } // NEW
+    const cancellations = [ // NEW
+        () => h.mouseMove(card, { clientX: 104 }), // NEW: exact threshold, then return to origin.
+        () => h.fireGraphEvent('cellsMoved', { cells: [card] }), // NEW
+        () => h.fireGraphEvent('cellsResized', { cells: [card] }), // NEW
+        () => h.fireGraphEvent('escape'), // NEW
+        () => h.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' })), // NEW
+        () => h.document.dispatchEvent(new h.window.Event('pointercancel')), // NEW
+        () => h.document.dispatchEvent(new h.window.Event('touchcancel')), // NEW
+        () => h.window.dispatchEvent(new h.window.Event('blur')), // NEW
+        () => h.document.body.dispatchEvent(new h.window.MouseEvent('mouseup', { bubbles: true })), // NEW
+        () => { h.graph.setSelectionCell(h.board); h.graph.setSelectionCell(card); }, // NEW
+        () => h.fireGraphEvent('trellisOverlayVisibilityChanged', { suppressed: true }), // NEW
+    ]; // NEW
+    for (const cancel of cancellations) { // NEW
+        h.mouseDown(card); cancel(); h.mouseUp(card); await nextTick(); // NEW
+        assert.equal(overlay.style.display, 'flex', cancel.toString()); // NEW
+    } // NEW
+    h.mouseDown(card); h.mouseUp(card, { clientX: 104 }); await nextTick(); // NEW: moved release without a move event.
+    assert.equal(overlay.style.display, 'flex'); // NEW
+    h.mouseDown(card); h.mouseUp(card, { target: h.document.body }); await nextTick(); // NEW
+    assert.equal(overlay.style.display, 'flex'); // NEW
+    h.mouseDown(card); h.mouseUp(card); h.mouseUp(card); await nextTick(); // NEW
+    assert.equal(overlay.style.display, 'none', 'duplicate release cannot reopen'); // NEW
+    h.mouseDown(card); h.mouseUp(card, { detail: 2 }); await nextTick(); // NEW
+    assert.equal(overlay.style.display, 'none', 'second double-click press leaves visibility unchanged'); // NEW
+}); // NEW
+
 test("task manager hides task overlays during week card drag and refreshes once after mouseup", async () => {
     const h = makeHarness();
     const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls");
@@ -1417,6 +1510,7 @@ test("task manager hides task overlays during week card drag and refreshes once 
     assert.equal(boardOverlay.style.display, "none");
     assert.equal(cardOverlay.style.display, "none");
 
+    h.mouseMove(h.weekTueCard, { clientX: 170, clientY: 150 }); // NEW: a drag must move rather than resemble a repeated click.
     h.setState(h.weekTueCard, { x: 760, y: 90, width: 120, height: 60 });
     h.fireViewEvent("repaint");
     h.fireModelChange();
@@ -1442,6 +1536,7 @@ test("task manager hides task overlays during full-mode card drag", async () => 
     assert.equal(cardOverlay.style.display, "flex");
     h.mouseDown(h.card1);
     assert.equal(cardOverlay.style.display, "none");
+    h.mouseMove(h.card1, { clientX: 130 }); // NEW
     h.mouseUp(h.card1);
     await nextTick();
     assert.equal(cardOverlay.style.display, "flex");

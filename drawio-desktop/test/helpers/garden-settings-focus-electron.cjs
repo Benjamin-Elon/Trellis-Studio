@@ -69,19 +69,27 @@ async function initialize() { // NEW
     await until('!!window.focusInitialFileLoaded && !focusUi.openingFile', 'initial file load'); // CHANGE: plugin installation precedes asynchronous startup loading.
     await run(`localStorage.setItem('trellis.licenseWizard.v2',JSON.stringify({version:'2',path:'personal',contactGuidance:false,oathCompletedAt:new Date().toISOString(),name:'Focus Test',signature:'Focus Test',email:'focus@example.test'}));focusUi.hideDialog();focusUi.showSplash(true);`); // NEW
     await run(`trellisIdentity.create({username:'Focus Test',password:'focus-test-password'}).then(()=>true)`, 'create identity'); // CHANGE
-    await run(`trellisGardenLibrary.create({name:'Focus test'}).then(garden=>{window.focusGarden=garden;return true;})`, 'create library garden'); // CHANGE
-    await run(`TrellisGardenHome.openPath(focusUi,focusGarden.path).then(()=>true)`, 'open library garden'); // CHANGE
+    const starterPath = await run(`trellisGardenLibrary.create({name:'Focus test'}).then(garden=>{window.focusGarden=garden;return garden.path;})`, 'create library garden'); // CHANGE
+    const blankProject = fs.readFileSync(starterPath, 'utf8'); // CHANGE
+    await run(`window.starterState='opening';window.starterOpening=TrellisGardenHome.openPath(focusUi,focusGarden.path,{starterPending:true}).then(result=>{starterState='completed '+result;return result},error=>{starterState=error.stack;throw error});void 0;`, 'open library garden'); // CHANGE
     await until('!!focusUi.editor.graph.__trellisModules && !!focusUi.editor.graph.__trellisTaskManager && !!focusUi.editor.graph.__trellisRoadmapManager && !!focusUi.getCurrentFile()', 'companion plugins'); // NEW
-    await run('Trellis.sharing.refresh()', 'initial collaboration base'); // CHANGE: settle the opened file's remembered view before authoring fixture cells.
     await run(`window.graph=focusUi.editor.graph;window.focusRejected=[];window.focusErrors=[];addEventListener('unhandledrejection',event=>{if(focusErrors.length<8)focusErrors.push(String(event.reason?.message||event.reason));});graph.model.addListener(mxEvent.CHANGE,(_sender,event)=>{const edit=event.getProperty('edit');if(edit?.__trellisUsersRejected&&focusRejected.length<8)focusRejected.push({reason:edit.__trellisUsersRejectedReason,changes:edit.changes.slice(0,8).map(change=>({type:change.constructor?.name,id:change.cell?.id||change.child?.id,attribute:change.attribute}))});});window.focusFrames=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));window.gardenSearch=()=>document.querySelector('input[placeholder="Search city, country, or region"]');window.clusterCounts=()=>['garden_module','team_module','task_module','roadmap_module'].map(attr=>Object.values(graph.model.cells).filter(cell=>cell.getAttribute?.(attr)==='1').length);void 0;`); // NEW
-    await run(`window.firstGarden=graph.__trellisModules.createModuleAtPoint({x:100,y:100},'garden');void 0;`, 'create initial cluster'); // CHANGE
-    await run(`new Promise((resolve,reject)=>focusUi.getCurrentFile().save(false,()=>resolve(true),reject)).then(()=>{firstGarden=graph.model.getCell(firstGarden.id);return true;})`, 'save initial cluster'); // NEW: match project creation's accepted save boundary before configuring reference definitions.
-    await until('!!gardenSearch() || [...document.querySelectorAll("button")].some(node=>node.textContent==="Set Garden Settings" && node.offsetWidth>0)', 'initial settings action'); // CHANGE: automatic settings may already be open after cluster creation.
-    if (!await run('!!gardenSearch()')) await run(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Set Garden Settings' && button.offsetWidth>0).click();void 0;`, 'open initial garden settings'); // CHANGE
-    await until('!!gardenSearch()', 'initial garden settings'); // CHANGE
+    await until('!!gardenSearch()', 'required initial garden settings'); // CHANGE
+    assert.deepEqual(await run('clusterCounts()'), [1, 1, 1, 1]); // CHANGE
+    assert.equal(await run(`focusUi.hideDialog(true,true);!!gardenSearch()&&![...focusUi.dialog.container.querySelectorAll('button')].some(button=>button.textContent==='Cancel')`), true); // CHANGE
+    assert.match(await run(`new Promise(resolve=>focusUi.getCurrentFile().save(false,()=>resolve('saved'),error=>resolve(error.message)))`), /Finish Garden Settings/); // CHANGE
+    await run(`[...focusUi.dialog.container.querySelectorAll('button')].find(button=>button.textContent==='OK').click();void 0;`, 'submit invalid settings'); // CHANGE
+    await until('focusUi.dialog?.container.textContent.includes("Units are required.")', 'required units validation'); // CHANGE
+    await delay(await run('TrellisBackgroundSaving.QUIET_PERIOD_MS + 300')); // CHANGE: exceed the normal content autosave delay with settings still open.
+    assert.equal(fs.readFileSync(starterPath, 'utf8'), blankProject); // CHANGE
     await run(`gardenSearch().value='Buenos';gardenSearch().dispatchEvent(new Event('input'));gardenSearch().dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));const units=[...focusUi.dialog.container.querySelectorAll('select')].find(node=>node.querySelector('option[value=metric]'));units.value='metric';units.dispatchEvent(new Event('change',{bubbles:true}));[...focusUi.dialog.container.querySelectorAll('button')].find(button=>button.textContent==='OK').click();void 0;`, 'accept initial garden settings'); // CHANGE: select the real city key and finalize its reference manifest instead of assuming city ID 1.
-    await until('firstGarden.getAttribute("trellis_reference_pending","")!=="1" && focusUi.dialogs.length===0', 'initial garden references accepted'); // CHANGE
-    await run(`new Promise((resolve,reject)=>focusUi.getCurrentFile().save(false,()=>resolve(true),reject))`, 'save configured module'); // CHANGE
+    await until('!focusUi.getCurrentFile().__trellisStarterSetup && focusUi.dialogs.length===0', 'configured starter saved'); // CHANGE
+    assert.equal(await run('starterOpening'), true); // CHANGE
+    await run('window.firstGarden=Object.values(graph.model.cells).find(cell=>cell.getAttribute?.("garden_module")==="1");void 0;'); // CHANGE
+    const { inspectDiagram } = await import(pathToFileURL(path.join(project, 'src/main/trellis-share-protocol.js'))); // CHANGE
+    const accepted = inspectDiagram(fs.readFileSync(starterPath, 'utf8')).cells.map(cell => cell.node); // CHANGE
+    assert.deepEqual(['garden_module', 'team_module', 'task_module', 'roadmap_module'].map(attr => accepted.filter(cell => cell.getAttribute(attr) === '1').length), [1, 1, 1, 1]); // CHANGE
+    assert.equal(accepted.find(cell => cell.getAttribute('garden_module') === '1').getAttribute('unit_system'), 'metric'); // CHANGE
     await run('focusFrames()'); // NEW
     assert.deepEqual(await run('clusterCounts()'), [1, 1, 1, 1]); // NEW
     if (process.env.TRELLIS_SETTINGS_FOCUS_TRACE === '1') await run(fs.readFileSync(path.join(__dirname, 'garden-settings-focus-trace.js'), 'utf8')); // NEW: normal regressions must not depend on instrumented focus functions.
@@ -190,7 +198,7 @@ async function finish(code) { // NEW
         if (win && !win.isDestroyed()) { // NEW
             fs.mkdirSync(output, { recursive: true }); // NEW
             const trace = await run('window.trellisGardenFocusTrace?.stop()'); // NEW
-            const state = await run('({dialogText:window.focusUi?.dialog?.container?.textContent.slice(0,300),modules:window.clusterCounts?.(),rejected:window.focusRejected,errors:window.focusErrors,activeTag:document.activeElement.tagName,activeType:document.activeElement.type,documentFocus:document.hasFocus(),insideDialog:!!window.focusUi?.dialog?.container.contains(document.activeElement),editing:window.graph?.isEditing(),mouseDown:window.graph?.isMouseDown})'); // CHANGE: startup failures precede graph initialization and still need diagnostics.
+            const state = await run('({starterState:window.starterState,setup:!!window.focusUi?.getCurrentFile()?.__trellisStarterSetup,setupBound:!!window.focusUi?.getCurrentFile()?.__trellisStarterSetup?.finish,settingsReady:!!window.graph?.__trellisStarterSettings,referenceReady:!!window.graph?.__trellisReferences,bodyText:document.body.innerText.slice(-1200),dialogText:window.focusUi?.dialog?.container?.textContent.slice(0,300),modules:window.clusterCounts?.(),rejected:window.focusRejected,errors:window.focusErrors,activeTag:document.activeElement.tagName,activeType:document.activeElement.type,documentFocus:document.hasFocus(),insideDialog:!!window.focusUi?.dialog?.container.contains(document.activeElement),editing:window.graph?.isEditing(),mouseDown:window.graph?.isMouseDown})'); // CHANGE: retain startup and setup diagnostics without serializing reference data.
             fs.writeFileSync(path.join(output, 'trace.json'), JSON.stringify({ stage, windowFocus: win.isFocused(), webFocus: win.webContents.isFocused(), state, databaseEvents, collaborationEvents, trace }, null, 2)); // CHANGE
             if (code) fs.writeFileSync(path.join(output, 'failure.png'), (await win.webContents.capturePage()).toPNG()); // NEW
         } // NEW

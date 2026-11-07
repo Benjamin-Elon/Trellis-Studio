@@ -213,7 +213,7 @@ export function createSyncthingService(options) {
                 if (typeof canvas.filename !== 'string' || path.basename(canvas.filename) !== canvas.filename || !/\.drawio$/i.test(canvas.filename)) throw new Error('Invalid diagram filename.'); // CHANGE
                 const current = SYNC_PROTOCOL.supportedGardens.includes(canvas.protocolVersion) && canvas.folderId === SYNC_PROTOCOL.gardenFolder(canvas.shareId, canvas.protocolVersion); // CHANGE
                 const local = (canvas.protocolVersion === undefined || canvas.protocolVersion === 1) && canvas.folderId === 'trellis-' + canvas.shareId || canvas.protocolVersion === 2 && canvas.folderId === 'trellis-v2-' + canvas.shareId || canvas.protocolVersion === 3 && canvas.folderId === 'trellis-v3-' + canvas.shareId; // CHANGE: old projects retain only local-file access. // CHANGE
-                if (!current && !local) throw new Error('Unsupported sharing registration.'); // CHANGE
+                if (!current && !local) throw new Error('Unsupported sharing registration. Only protocol 5 is supported.'); // CHANGE
                 if (current) { // CHANGE
                     if (!Array.isArray(canvas.members) || registry.some(entry => entry.shareId === canvas.shareId || samePath(entry.diagramPath, canvas.diagramPath))) throw new Error('Invalid or duplicate current registration.'); // CHANGE
                     registry.push(canvas); // CHANGE
@@ -262,7 +262,7 @@ export function createSyncthingService(options) {
         const session = authorizeCanvas(actor.callerId, canvas); if (session.userId !== actor.userId) throw new Error('The document author changed during preparation.'); // NEW
     } // NEW
     function collaborationStore(canvas) { // NEW
-        if (!collaborationStores.has(canvas.shareId)) collaborationStores.set(canvas.shareId, createCollaborationStore({ canvas, deviceId: deviceId || canvas.localDeviceId, keys, profile, now, writeAtomic, writeImmutable, acquireEditing: (actor, input) => resumeEditingClaim(canvas, actor, input), validateActor: actor => validateCollaborationActor(canvas, actor), onTiming: options.onCollaborationTiming, replayWorker: options.replayWorker, beforeCommit: (actor, targets) => activityService(canvas).snapshot(actor.sessionId).holds.filter(hold => (hold.sessionId !== actor.sessionId || hold.deviceId !== (deviceId || canvas.localDeviceId)) && targets.some(key => key === '*' || hold.key === '*' || key === hold.key)), onVerified: state => { if (verifiedPolicies.get(canvas.shareId)?.xml !== state.xml) { const parsed = inspectDiagram(state.xml), pageIds = new Map(parsed.document.pages.map(page => [page.doc, page.container?.getAttribute('id') || ''])); verifiedRosters.set(canvas.shareId, parsed.store); verifiedPolicies.set(canvas.shareId, { xml: state.xml, snapshot: permissionSnapshot(parsed), ranks: new Map(), storedUsers: new Set((parsed.store.users || []).map(user => user.id)), bootstrapKeys: new Set(parsed.cells.filter(cell => cell.node.hasAttribute('trellis_users_json')).map(cell => JSON.stringify([pageIds.get(cell.node.ownerDocument), cell.id]))) }); } }, beforeMaterialize: xml => projectionNaming.reconcile(canvas, xml), prepareXml: async xml => { const parsed = inspectDiagram(xml); await relocateAssets(parsed, canvas.folderPath, canvas.folderPath, options.privatePaths || [profile]); return parsed.document.serialize(); } })); // CHANGE
+        if (!collaborationStores.has(canvas.shareId)) collaborationStores.set(canvas.shareId, createCollaborationStore({ canvas, deviceId: deviceId || canvas.localDeviceId, keys, profile, now, writeAtomic, writeImmutable, acquireEditing: (actor, input) => resumeEditingClaim(canvas, actor, input), validateActor: actor => validateCollaborationActor(canvas, actor), onTiming: sample => { try { options.onCollaborationTiming?.(sample); } catch (_) {} if (sample.phase === 'verification-progress') publishPreparationProgress(canvas.shareId, sample); else if (sample.phase === 'read') publishPreparationProgress(canvas.shareId, { message: 'Preparing verified garden…' }); }, replayWorker: options.replayWorker, beforeCommit: (actor, targets) => activityService(canvas).snapshot(actor.sessionId).holds.filter(hold => (hold.sessionId !== actor.sessionId || hold.deviceId !== (deviceId || canvas.localDeviceId)) && targets.some(key => key === '*' || hold.key === '*' || key === hold.key)), onVerified: state => { if (verifiedPolicies.get(canvas.shareId)?.xml !== state.xml) { const parsed = inspectDiagram(state.xml), pageIds = new Map(parsed.document.pages.map(page => [page.doc, page.container?.getAttribute('id') || ''])); verifiedRosters.set(canvas.shareId, parsed.store); verifiedPolicies.set(canvas.shareId, { xml: state.xml, snapshot: permissionSnapshot(parsed), ranks: new Map(), storedUsers: new Set((parsed.store.users || []).map(user => user.id)), bootstrapKeys: new Set(parsed.cells.filter(cell => cell.node.hasAttribute('trellis_users_json')).map(cell => JSON.stringify([pageIds.get(cell.node.ownerDocument), cell.id]))) }); } }, beforeMaterialize: xml => projectionNaming.reconcile(canvas, xml), prepareXml: async xml => { const parsed = inspectDiagram(xml); await relocateAssets(parsed, canvas.folderPath, canvas.folderPath, options.privatePaths || [profile]); return parsed.document.serialize(); } })); // CHANGE
         return collaborationStores.get(canvas.shareId); // NEW
     } // NEW
     /** A new claim follows an accepted-baseline check; release names only the expired generation. */ // CHANGE
@@ -288,14 +288,26 @@ export function createSyncthingService(options) {
         if (canvas.projectRetired || canvas.projectFenced || canvas.localRemoved || canvas.revoked || canvas.pending) return Promise.reject(new Error('This garden is not available to open.')); // NEW
         const store = collaborationStore(canvas); // NEW
         if (priority === 'user') store.prioritizeVerification(); // NEW
-        if (preparations.has(canvas.shareId)) return preparations.get(canvas.shareId); // NEW
+        if (preparations.has(canvas.shareId)) return observePreparation(preparations.get(canvas.shareId), input); // CHANGE
         readiness.set(canvas.shareId, { state: 'checking' }); emit(); // NEW
         const generation = preparationGeneration; // CHANGE
         const task = store.refresh({ priority }).then(() => { // CHANGE: verified content reaches its serialized local projection before opening.
             if (generation !== preparationGeneration || canvas.projectRetired || canvas.projectFenced || canvas.localRemoved || canvas.revoked) throw Object.assign(new Error('Garden verification was canceled.'), { code: 'ABORT_ERR' }); // CHANGE
             readiness.set(canvas.shareId, { state: 'ready' }); emit(); return { ok: true, path: canvas.diagramPath }; // NEW
         }, error => { if (generation === preparationGeneration) { readiness.set(canvas.shareId, { state: 'failed', reason: error.message }); emit(); } throw error; }).finally(() => { if (preparations.get(canvas.shareId) === task) preparations.delete(canvas.shareId); }); // CHANGE
-        preparations.set(canvas.shareId, task); return task; // NEW
+        task.openObservers = new Set(); preparations.set(canvas.shareId, task); return observePreparation(task, input); // CHANGE
+    } // NEW
+    /** Progress observers attach to shared work without owning or canceling that work. */ // NEW
+    function publishPreparationProgress(shareId, progress) { // NEW
+        const task = preparations.get(shareId); if (!task) return; task.openProgress = progress; // NEW
+        for (const observer of [...task.openObservers]) if (task.openObservers.has(observer)) { try { observer(progress); } catch (_) {} } // CHANGE: an observer attached during delivery receives the latest sample exactly once.
+    } // NEW
+    function observePreparation(task, input) { // NEW
+        if (!input.onProgress || input.signal?.aborted) return task; // NEW
+        const observer = input.onProgress, detach = () => task.openObservers.delete(observer); task.openObservers.add(observer); // NEW
+        input.signal?.addEventListener('abort', detach, { once: true }); // NEW
+        if (task.openProgress) { try { observer(task.openProgress); } catch (_) {} } // NEW
+        return task.finally(() => { detach(); input.signal?.removeEventListener('abort', detach); }); // NEW
     } // NEW
     /** A signed unchanged head can remain unopened; this probe never authorizes a content edit. */ // NEW
     async function needsVerification(canvas) { // NEW
@@ -672,7 +684,7 @@ export function createSyncthingService(options) {
     }
     /** Register a download using a verified library descriptor, never a remote path. */ // NEW
     async function registerLibraryDownload(input) { // NEW
-        if (!SYNC_PROTOCOL.supportedGardens.includes(input.protocolVersion)) throw new Error('Unsupported Trellis sharing protocol. Only version 4 and 5 descriptors are supported.'); // CHANGE
+        if (!SYNC_PROTOCOL.supportedGardens.includes(input.protocolVersion)) throw new Error('Unsupported Trellis sharing protocol. Only protocol 5 descriptors are supported.'); // CHANGE
         await initialize(); // CHANGE
         if (localCanvases.some(canvas => canvas.shareId === input.shareId)) throw new Error(localOnlyReason); // CHANGE
         await start();
@@ -752,10 +764,10 @@ export function createSyncthingService(options) {
         }
         if (!canvas) return { ok: !startupReason, managed: false, deviceId, reason: startupReason || 'Set up a managed sharing folder for this canvas.' }; // CHANGE
         if (!runtimeReady && !startupReason) try { await start(); } catch (err) { startupReason = err.message; } // CHANGE: managed projects retain local editing during transport failure.
-        return { ok: true, managed: true, protocolVersion: canvas.protocolVersion || SYNC_PROTOCOL.garden, projectFormat: canvas.protocolVersion === 5 ? 2 : 1, capabilities: SYNC_PROTOCOL.capabilities, editingAvailability: { available: canvas.coordinatorDeviceId === (deviceId || canvas.localDeviceId) && !canvas.pending && !canvas.revoked, reason: canvas.coordinatorDeviceId === (deviceId || canvas.localDeviceId) ? '' : 'Peer proposal delivery awaits coordinator qualification.' }, deviceId: deviceId || canvas.localDeviceId, shareId: canvas.shareId, diagramId: canvas.diagramId, createdAt: canvas.createdAt, folderId: canvas.folderId, folderLabel: canvas.label, folderPath: canvas.folderPath, assetBaseUrl: pathToFileURL(canvas.folderPath + path.sep).href, diagramPath: canvas.diagramPath, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, membershipVersion: canvas.membershipVersion || 0, reason: startupReason }; // CHANGE
+        return { ok: true, managed: true, protocolVersion: canvas.protocolVersion || SYNC_PROTOCOL.garden, projectFormat: 2, capabilities: SYNC_PROTOCOL.capabilities, editingAvailability: { available: canvas.coordinatorDeviceId === (deviceId || canvas.localDeviceId) && !canvas.pending && !canvas.revoked, reason: canvas.coordinatorDeviceId === (deviceId || canvas.localDeviceId) ? '' : 'Peer proposal delivery awaits coordinator qualification.' }, deviceId: deviceId || canvas.localDeviceId, shareId: canvas.shareId, diagramId: canvas.diagramId, createdAt: canvas.createdAt, folderId: canvas.folderId, folderLabel: canvas.label, folderPath: canvas.folderPath, assetBaseUrl: pathToFileURL(canvas.folderPath + path.sep).href, diagramPath: canvas.diagramPath, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, membershipVersion: canvas.membershipVersion || 0, reason: startupReason }; // CHANGE
     }
     async function setupCanvas(callerId, input) {
-        if (input.protocolVersion !== undefined && !SYNC_PROTOCOL.supportedGardens.includes(input.protocolVersion)) throw new Error('Unsupported Trellis sharing protocol. Only version 4 and 5 shares can be created.'); // CHANGE
+        if (input.protocolVersion !== undefined && !SYNC_PROTOCOL.supportedGardens.includes(input.protocolVersion)) throw new Error('Unsupported Trellis sharing protocol. Only protocol 5 shares can be created.'); // CHANGE
         await initialize(); // CHANGE
         if (input.diagramPath && localCanvases.some(entry => samePath(entry.folderPath, path.dirname(path.resolve(input.diagramPath))))) throw new Error(localOnlyReason); // CHANGE
         await start();
@@ -774,7 +786,7 @@ export function createSyncthingService(options) {
         const filename = path.basename(input.filename || source || 'Garden.drawio');
         if (!/\.drawio$/i.test(filename)) throw new Error('Save this canvas as an XML .drawio file before sharing.');
         const diagramPath = path.join(folderPath, filename);
-        const canvas = { shareId, diagramId: safeId(input.diagramId), protocolVersion: input.protocolVersion || SYNC_PROTOCOL.garden, projectFormat: input.protocolVersion === 5 ? 2 : 1, replacesShareId: input.replacesShareId || null, localDeviceId: deviceId, folderId: SYNC_PROTOCOL.gardenFolder(shareId, input.protocolVersion || SYNC_PROTOCOL.garden), folderPath, diagramPath, filename, label: filename.replace(/\.drawio$/i, ''), coordinatorDeviceId: deviceId, coordinatorPublicKey: keys.publicKey, membershipVersion: 0, createdAt: now(), members: [{ deviceId, userId: session.userId, publicKey: keys.publicKey }], paused: false }; // CHANGE
+        const canvas = { shareId, diagramId: safeId(input.diagramId), protocolVersion: input.protocolVersion || SYNC_PROTOCOL.garden, projectFormat: 2, replacesShareId: input.replacesShareId || null, localDeviceId: deviceId, folderId: SYNC_PROTOCOL.gardenFolder(shareId, input.protocolVersion || SYNC_PROTOCOL.garden), folderPath, diagramPath, filename, label: filename.replace(/\.drawio$/i, ''), coordinatorDeviceId: deviceId, coordinatorPublicKey: keys.publicKey, membershipVersion: 0, createdAt: now(), members: [{ deviceId, userId: session.userId, publicKey: keys.publicKey }], paused: false }; // CHANGE
         let registered = false;
         try {
             await fs.mkdir(folderPath, { recursive: true });

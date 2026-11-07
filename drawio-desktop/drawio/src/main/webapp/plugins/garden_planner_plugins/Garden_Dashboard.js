@@ -1997,35 +1997,79 @@ Draw.loadPlugin(function (ui) {
     }
     if (ui.actions && typeof ui.actions.addAction === 'function') ui.actions.addAction('trellisShareGardenProject', openShareGardenCanvasDialog).label = 'Invite users to garden project'; // NEW: reuse the same scoped invitation UI after starter creation.
 
-    /** Keep personal canvas controls beside zoom; native text toolbars temporarily own this space. */ // NEW
-    function refreshCanvasViewControls() { // NEW
-        if (dashboardDisposed) return; // NEW
-        const container = ui.toolbar && ui.toolbar.container; // NEW
-        if (!container || !container.querySelector) return; // NEW
-        if (!canvasViewControls) { // NEW
-            const wrap = document.createElement('span'); // NEW
-            wrap.dataset.trellisCanvasViewControls = '1'; wrap.setAttribute('role', 'group'); wrap.setAttribute('aria-label', 'Canvas view options'); // NEW
-            wrap.style.cssText = 'display:inline-flex;align-items:center;gap:12px;margin-left:10px;padding-left:10px;border-left:1px solid #c0c0c0;font:12px Arial,sans-serif;min-width:0;flex:0 1 auto;overflow-x:auto;scrollbar-width:thin;'; // NEW
-            const harvestLabel = document.createElement('label'), linksLabel = document.createElement('label'); // NEW
-            [harvestLabel, linksLabel].forEach(label => { label.style.cssText = 'display:inline-flex;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0;'; }); // NEW
-            const harvestSizeInput = document.createElement('input'), linksInput = document.createElement('input'); // NEW
-            harvestSizeInput.type = linksInput.type = 'checkbox'; harvestSizeInput.dataset.trellisHarvestSize = '1'; linksInput.dataset.trellisShowLinks = '1'; // NEW
-            harvestLabel.append(harvestSizeInput, document.createTextNode('Show harvest size')); linksLabel.append(linksInput, document.createTextNode('Show links')); wrap.append(harvestLabel, linksLabel); // NEW
-            linksLabel.title = 'Show selection-link connector lines and labels throughout the editor. Linked-object highlights and roadmap dependency arrows remain visible.'; // NEW
-            harvestSizeInput.addEventListener('change', () => { if (activeToolbarModule) graph.__trellisPlantingGroup?.growth?.setShowHarvestSize(activeToolbarModule, harvestSizeInput.checked); }); // NEW
-            linksInput.addEventListener('change', () => graph.__trellisPlantingLinking?.setShowLinks(linksInput.checked)); // NEW
-            canvasViewControls = { wrap, harvestLabel, harvestSizeInput, linksInput }; // NEW
-            if (typeof MutationObserver !== 'undefined') { canvasToolbarObserver = new MutationObserver(refreshCanvasViewControls); canvasToolbarObserver.observe(container, { childList: true }); } // NEW
+    /** Dismiss the personal view popover without affecting the canvas selection or editor mode. */ // NEW
+    function closeCanvasViewOptions(returnFocus = false) { // NEW
+        if (!canvasViewControls) return; // NEW
+        const { popover, trigger } = canvasViewControls; popover.hidden = true; trigger.setAttribute('aria-expanded', 'false'); // NEW
+        if (returnFocus && trigger.isConnected) trigger.focus(); // NEW
+    } // NEW
+
+    /** Anchor to the viewport so the native toolbar cannot clip the checkbox list. */ // NEW
+    function positionCanvasViewOptions() { // NEW
+        if (!canvasViewControls || canvasViewControls.popover.hidden) return; // NEW
+        const { trigger, popover } = canvasViewControls, rect = trigger.getBoundingClientRect(); // NEW
+        const width = Math.min(310, Math.max(0, window.innerWidth - 16)); popover.style.width = width + 'px'; // CHANGE: measure height after constraining the text width.
+        const height = popover.offsetHeight; popover.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + 'px'; // NEW
+        popover.style.top = Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - height - 8)) + 'px'; // NEW
+        popover.style.maxHeight = Math.max(0, window.innerHeight - 16) + 'px'; // NEW
+    } // NEW
+
+    /** Build one reusable native checkbox group with isolated pointer and keyboard events. */ // NEW
+    function createCanvasViewControls(container) { // NEW
+        const wrap = document.createElement('span'), trigger = document.createElement('button'), popover = document.createElement('div'); // NEW
+        wrap.dataset.trellisCanvasViewControls = '1'; wrap.style.cssText = 'display:inline-flex;align-items:center;margin-left:10px;padding-left:10px;border-left:1px solid #c0c0c0;flex-shrink:0;'; // NEW
+        trigger.type = 'button'; trigger.textContent = 'View options ▾'; trigger.className = 'trellis-canvas-view-options'; // NEW
+        trigger.setAttribute('aria-haspopup', 'dialog'); trigger.setAttribute('aria-expanded', 'false'); // NEW
+        trigger.style.cssText = 'font:12px Arial,sans-serif;padding:4px 8px;border:1px solid #b8b8b8;border-radius:4px;background:transparent;color:inherit;cursor:pointer;'; // NEW
+        popover.className = 'trellis-canvas-view-options'; popover.hidden = true; popover.setAttribute('role', 'dialog'); popover.setAttribute('aria-label', 'Canvas view options'); // NEW
+        popover.style.cssText = 'position:fixed;box-sizing:border-box;z-index:10030;padding:10px;background:#fff;color:#111827;border:1px solid #c7c7cc;border-radius:6px;box-shadow:0 2px 10px #0003;font:12px Arial,sans-serif;overflow:auto;'; // NEW
+        const harvestLabel = document.createElement('label'), linksLabel = document.createElement('label'), lengthsLabel = document.createElement('label'); // NEW
+        const harvestSizeInput = document.createElement('input'), linksInput = document.createElement('input'), lengthsInput = document.createElement('input'); // NEW
+        for (const [label, input, text] of [[harvestLabel, harvestSizeInput, 'Show harvest size'], [linksLabel, linksInput, 'Show links'], [lengthsLabel, lengthsInput, 'Show structure side lengths']]) { // NEW
+            label.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 0;'; input.type = 'checkbox'; label.append(input, document.createTextNode(text)); popover.appendChild(label); // NEW
         } // NEW
-        const { wrap, harvestLabel, harvestSizeInput, linksInput } = canvasViewControls; // NEW
-        const growth = graph.__trellisPlantingGroup?.growth, linking = graph.__trellisPlantingLinking; // NEW
+        harvestSizeInput.dataset.trellisHarvestSize = '1'; linksInput.dataset.trellisShowLinks = '1'; lengthsInput.dataset.trellisShowStructureLengths = '1'; // NEW
+        linksLabel.title = 'Show selection-link connector lines and labels throughout the editor. Linked-object highlights and roadmap dependency arrows remain visible.'; // NEW
+        lengthsLabel.title = 'Show side lengths for every structure on the current page. This is your personal view preference.'; // NEW
+        const note = document.createElement('div'); note.textContent = 'Side lengths are always shown while editing a footprint.'; note.style.cssText = 'margin-top:6px;color:#4b5563;line-height:1.4;'; popover.appendChild(note); // NEW
+        harvestSizeInput.addEventListener('change', () => { if (activeToolbarModule) graph.__trellisPlantingGroup?.growth?.setShowHarvestSize(activeToolbarModule, harvestSizeInput.checked); }); // NEW
+        linksInput.addEventListener('change', () => graph.__trellisPlantingLinking?.setShowLinks(linksInput.checked)); // NEW
+        lengthsInput.addEventListener('change', () => graph.__trellisStructures?.setShowSideLengths(lengthsInput.checked)); // NEW
+        trigger.addEventListener('click', () => { // NEW
+            const opening = popover.hidden; refreshCanvasViewControls(); popover.hidden = !opening; trigger.setAttribute('aria-expanded', String(opening)); // NEW
+            if (opening) { positionCanvasViewOptions(); [harvestSizeInput, linksInput, lengthsInput].find(input => !input.disabled)?.focus(); } // NEW
+        }); // NEW
+        const isolate = event => event.stopPropagation(); // NEW
+        for (const node of [wrap, popover]) for (const type of ['pointerdown', 'mousedown', 'click', 'keydown', 'keyup']) node.addEventListener(type, isolate); // NEW
+        popover.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); closeCanvasViewOptions(true); } }); // NEW
+        trigger.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); closeCanvasViewOptions(true); } }); // NEW
+        const outside = event => { if (!wrap.contains(event.target) && !popover.contains(event.target)) closeCanvasViewOptions(); }; // NEW
+        document.addEventListener('pointerdown', outside, true); document.addEventListener('focusin', outside); window.addEventListener('resize', positionCanvasViewOptions); // CHANGE
+        wrap.appendChild(trigger); document.body.appendChild(popover); // NEW
+        if (typeof MutationObserver !== 'undefined') { canvasToolbarObserver = new MutationObserver(refreshCanvasViewControls); canvasToolbarObserver.observe(container, { childList: true }); } // NEW
+        return { wrap, trigger, popover, harvestLabel, harvestSizeInput, linksInput, lengthsInput, dispose() { // NEW
+            closeCanvasViewOptions(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('focusin', outside); window.removeEventListener('resize', positionCanvasViewOptions); wrap.remove(); popover.remove(); // CHANGE
+        } }; // NEW
+    } // NEW
+
+    /** Keep the popover values current while preserving the existing controllers' preference scopes. */ // CHANGE
+    function refreshCanvasViewControls() { // CHANGE
+        if (dashboardDisposed) return; // NEW
+        const container = ui.toolbar && ui.toolbar.container; if (!container?.querySelector) return; // CHANGE
+        if (!canvasViewControls) canvasViewControls = createCanvasViewControls(container); // CHANGE
+        const { wrap, harvestLabel, harvestSizeInput, linksInput, lengthsInput } = canvasViewControls; // CHANGE
+        const growth = graph.__trellisPlantingGroup?.growth, linking = graph.__trellisPlantingLinking, structures = graph.__trellisStructures; // CHANGE
         harvestSizeInput.checked = !!activeToolbarModule && growth?.getShowHarvestSize(activeToolbarModule) === true; // NEW
-        harvestSizeInput.disabled = !activeToolbarModule || !growth; // NEW: personal view options remain available in all linked workspaces and read-only diagrams.
+        harvestSizeInput.disabled = !activeToolbarModule || !growth; // NEW
         harvestLabel.title = activeToolbarModule ? 'Show dashed blue harvest-size outlines for ' + gardenLabel(activeToolbarModule) + '. Black circles estimate growth for today independently of the selected year.' : 'Select an active garden to show harvest-size outlines.'; // NEW
         linksInput.checked = linking?.getShowLinks() !== false; linksInput.disabled = !linking; // NEW
+        lengthsInput.checked = structures?.getShowSideLengths() === true; lengthsInput.disabled = !structures || !graph.__gardenScaleController?.formatLengthFromUnits; // NEW
         const zoom = container.querySelector('.geZoomInput'); // NEW
-        if (zoom && zoom.nextSibling !== wrap) { container.style.minWidth = '0'; zoom.style.flexShrink = '0'; container.insertBefore(wrap, zoom.nextSibling); } // NEW: reuse detached controls after toolbar rebuilding without duplicating listeners.
-    } // NEW
+        if (!zoom || !wrap.isConnected) closeCanvasViewOptions(); // NEW
+        if (zoom && zoom.nextSibling !== wrap) { container.style.minWidth = '0'; zoom.style.flexShrink = '0'; container.insertBefore(wrap, zoom.nextSibling); } // NEW
+        if (!zoom) wrap.remove(); // NEW: text-formatting toolbars temporarily own this space.
+        positionCanvasViewOptions(); // NEW
+    } // CHANGE
 
     function ensureViewportToolbar() {
         if (viewportToolbar) return viewportToolbar;
@@ -2167,7 +2211,7 @@ Draw.loadPlugin(function (ui) {
         leftControls.appendChild(allocateBtn);
         leftControls.appendChild(irrigationBtn);
         leftControls.appendChild(equipmentBtn);
-        const exchangeBtn = createToolbarButton("The Grand Exchange", "Open community seed trading and CSA", "open"); exchangeBtn.addEventListener("click", () => window.TrellisInventories?.openExchange({ ui, garden: activeToolbarModule })); leftControls.appendChild(exchangeBtn); // NEW
+        const exchangeBtn = createToolbarButton("The Grand Exchange", "Open community seed trading and CSA", "neutral"); exchangeBtn.disabled = true; leftControls.appendChild(exchangeBtn); // CHANGE: the shared availability controller owns activation.
         rightActions.appendChild(messagesBtn);
         rightActions.appendChild(exportBtn);
         rightActions.appendChild(shareBtn);
@@ -2182,6 +2226,7 @@ Draw.loadPlugin(function (ui) {
 
         for (const [key, node] of Object.entries({ 'create-garden': createGardenBtn, plan: planBtn, irrigation: irrigationBtn, allocation: allocateBtn, share: shareBtn, sync: syncBtn })) if (node) node.setAttribute('data-trellis-quickstart', key); // NEW
         viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, syncBtn, tableBtn, table }; // CHANGE: canvas view controls now belong to the native zoom toolbar.
+        viewportToolbar.exchangeControl = window.TrellisInventories?.bindExchangeButton(exchangeBtn, () => ({ ui, garden: activeToolbarModule })); // CHANGE: read the active garden when opening, rather than capturing the initial selection.
         refreshSharingCount(); // NEW
         [prev, next, planBtn, equipmentBtn, irrigationBtn, allocateBtn, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, messagesBtn, exportBtn, shareBtn, tableBtn, gardenPickerBtn, createGardenBtn].forEach(function (button) { // CHANGE
             button.__trellisDashboardDefaultTitle = button.title || "";
@@ -2391,6 +2436,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function hideViewportToolbar() {
+        viewportToolbar?.exchangeControl?.dismiss(); // CHANGE: no floating explanation can outlive a hidden toolbar.
         if (viewportToolbar) viewportToolbar.wrap.style.display = "none";
         activeToolbarModule = null;
         refreshCanvasViewControls(); // NEW
@@ -2471,14 +2517,19 @@ Draw.loadPlugin(function (ui) {
     window.addEventListener("trellisUsersStoreChanged", scheduleViewportToolbarRefresh);
     window.addEventListener("trellisUsersSessionChanged", scheduleViewportToolbarRefresh); // NEW: switch both personal checkbox values with the signed-in user.
     window.addEventListener("trellisPlantGrowthReady", scheduleViewportToolbarRefresh); // NEW
-    function handleCanvasPreferenceStorage(event) { if (event.key == null || event.key.startsWith('trellis.harvestSize.v1:') || event.key.startsWith('trellis.showLinks.v1:')) scheduleViewportToolbarRefresh(); } // NEW: another editor window can update this device's personal preferences.
+    function handleCanvasPreferenceStorage(event) { if (event.key == null || event.key.startsWith('trellis.harvestSize.v1:') || event.key.startsWith('trellis.showLinks.v1:') || event.key.startsWith('trellis.structureSideLengths.v1:')) scheduleViewportToolbarRefresh(); } // NEW: another editor window can update this device's personal preferences.
     window.addEventListener('storage', handleCanvasPreferenceStorage); // NEW
     graph.addListener('trellisPlantingLinkingReady', scheduleViewportToolbarRefresh); // NEW: plugin loading order must not leave Show links disabled.
+    for (const event of ['trellisStructuresReady', 'trellisGardenScaleReady', 'trellisStructureLengthsChanged']) graph.addListener(event, scheduleViewportToolbarRefresh); // NEW
+    function closeCanvasOptionsForNavigation() { closeCanvasViewOptions(); scheduleViewportToolbarRefresh(); } // NEW
+    for (const event of ['fileLoaded', 'pageSelected']) ui.editor?.addListener?.(event, closeCanvasOptionsForNavigation); // NEW
     const destroyDashboardGraph = graph.destroy; // NEW
     graph.destroy = function () { // NEW
-        dashboardDisposed = true; clearTimeout(toolbarRefreshTimer); canvasToolbarObserver?.disconnect(); canvasViewControls?.wrap.remove(); // NEW
+        viewportToolbar?.exchangeControl?.dispose(); // CHANGE: release Exchange listeners and reject late availability results.
+        dashboardDisposed = true; clearTimeout(toolbarRefreshTimer); canvasToolbarObserver?.disconnect(); canvasViewControls?.dispose(); // CHANGE: dispose the detached popover and document listeners too.
         window.removeEventListener('trellisUsersSessionChanged', scheduleViewportToolbarRefresh); window.removeEventListener('trellisPlantGrowthReady', scheduleViewportToolbarRefresh); // NEW
         window.removeEventListener('storage', handleCanvasPreferenceStorage); // NEW
+        graph.removeListener(scheduleViewportToolbarRefresh); ui.editor?.removeListener?.(closeCanvasOptionsForNavigation); // NEW
         return destroyDashboardGraph.apply(this, arguments); // NEW
     }; // NEW: release detached controls and prevent pending refreshes from recreating them.
     window.addEventListener("trellisTaskBoardSeenStateChanged", scheduleViewportToolbarRefresh);

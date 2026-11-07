@@ -24,7 +24,9 @@ Draw.loadPlugin(function (ui) {
     const CM_PER_INCH = 2.54;
 
     const MAX_OVERLAYS = 6; // cap to avoid clutter
-    const OVERLAY_PADDING = "3px 7px";
+    const OVERLAY_PADDING_Y = 3; // NEW: share the chip's fixed screen height with stacked attribution without measuring DOM layout.
+    const OVERLAY_LINE_HEIGHT = 16; // NEW
+    const OVERLAY_PADDING = `${OVERLAY_PADDING_Y}px 7px`; // CHANGE
     const OVERLAY_FONT = "12px";
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
     const OVERLAY_Z = GRAPH_OVERLAY_Z.ANNOTATION;
@@ -195,7 +197,7 @@ Draw.loadPlugin(function (ui) {
         div.style.background = "rgba(0,0,0,0.75)";
         div.style.color = "#fff";
         div.style.boxShadow = "0 1px 3px rgba(0,0,0,0.35)";
-        div.style.lineHeight = "16px";
+        div.style.lineHeight = `${OVERLAY_LINE_HEIGHT}px`; // CHANGE
         return div;
     }
 
@@ -216,12 +218,13 @@ Draw.loadPlugin(function (ui) {
     }
 
     function positionOverlayDiv(entry) {
+        entry.placement = null; // NEW: absent or hidden chips must not reserve an attribution row.
         const cell = entry.cell;
         const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null;
         if (!state) return false;
 
         const text = formatCellDimensions(cell);
-        if (!text) return true;
+        if (!text) { entry.div.style.display = "none"; return true; } // CHANGE: a chip without dimensions has no visible placement.
 
         const cellId = getCellId(cell);
         const hiddenForResize = cellId && activeResizeCellIds.has(cellId);
@@ -239,8 +242,15 @@ Draw.loadPlugin(function (ui) {
         const left = `${Math.round(bb.x + bb.width / 2)}px`, top = `${Math.round(bb.y + bb.height + CHIP_Y_OFFSET)}px`; // CHANGE
         if (entry.div.style.left !== left) entry.div.style.left = left; // CHANGE: unchanged view notifications must not dirty layout.
         if (entry.div.style.top !== top) entry.div.style.top = top; // CHANGE
+        entry.placement = { centerX: parseFloat(left), bottom: parseFloat(top) + OVERLAY_LINE_HEIGHT + 2 * OVERLAY_PADDING_Y }; // NEW: graph-container coordinates, matching the rendered chip.
         return true;
     }
+
+    /** Return placement only for this object's actual persistent chip, respecting selection limits and resize suppression. */ // NEW
+    function getOverlayPlacement(cell) { // NEW
+        const entry = overlaysByCellId.get(getCellId(cell)); // NEW
+        return entry && entry.cell === cell ? entry.placement : null; // NEW
+    } // NEW
 
     // -------------------- Overlay lifecycle --------------------
     function removeOverlayForCellId(cellId) {
@@ -285,14 +295,16 @@ Draw.loadPlugin(function (ui) {
             let entry = overlaysByCellId.get(id);
             if (!entry) {
                 entry = { div: createOverlayDiv(), cell };
+                entry.div.dataset.trellisDimensions = String(id); // NEW: identify the chip's owning object alongside attribution badges.
                 graph.container.appendChild(entry.div);
                 overlaysByCellId.set(id, entry);
             } else {
                 entry.cell = cell;
             }
 
-            positionOverlayDiv(entry);
+            if (!positionOverlayDiv(entry)) removeOverlayForCellId(id); // CHANGE: missing view states must not leave blank chips behind.
         }
+        graph.__trellisObjectAttribution?.render(); // NEW: finish selection synchronization before laying out attribution, regardless of listener order.
     }
 
     function refreshOverlayPositions() {
@@ -300,6 +312,7 @@ Draw.loadPlugin(function (ui) {
             const ok = positionOverlayDiv(entry);
             if (!ok) removeOverlayForCellId(cellId);
         }
+        graph.__trellisObjectAttribution?.render(); // NEW: refresh stacking after zoom, movement, resize suppression, and chip removal.
     }
 
     // -------------------- Resize hint integration --------------------
@@ -392,6 +405,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     graph.__gardenScaleController = {
+        formatLengthFromUnits: (length, cell) => formatLengthCm(unitsToCm(length), resolveUnitSystem(cell)), // NEW: share physical edge measurements with structure labels.
+        getOverlayPlacement, // NEW: attribution consumes the existing chip's placement rather than duplicating selection rules.
         getHandlerTargetCell,
         isResizeHandleIndex,
         markResizeTarget,
@@ -450,4 +465,5 @@ Draw.loadPlugin(function (ui) {
     });
 
     syncOverlaysToSelection();
+    graph.fireEvent(new mxEventObject('trellisGardenScaleReady')); // NEW: structures may load before the unit formatter.
 });

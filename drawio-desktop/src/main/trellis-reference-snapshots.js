@@ -50,7 +50,7 @@ export function createReferenceSnapshots({ canvas, writeImmutable, budget = 32 *
         for (const [hash] of Object.entries(snapshots)) if (!entries.has(hash)) { delete snapshots[hash]; for (const cell of state.cells) { const raw = cell.node.getAttribute(C.ATTR); if (raw && JSON.parse(raw).digest === hash) unavailable.set(cell.id, { digest: hash, reason: 'Reference memory budget reached. Open fewer gardens before editing this garden.' }); } } // CHANGE: response objects cannot retain definitions evicted from the bounded owner cache.
         return { snapshots, unavailable: Object.fromEntries(unavailable) }; // NEW
     } // NEW
-    /** Only newly managed format-2 projects use compact pointers; legacy sources remain unchanged. */ // NEW
+    /** All managed projects use compact pointers; standalone exports embed their definitions. */ // CHANGE
     async function compact(xml) { // NEW
         const state = inspectDiagram(xml); // NEW
         for (const cell of state.cells) { const raw = cell.node.getAttribute(C.ATTR); if (!raw) continue; let value = JSON.parse(raw); if (C.externalReference(value)) value = await load(value.digest); // NEW

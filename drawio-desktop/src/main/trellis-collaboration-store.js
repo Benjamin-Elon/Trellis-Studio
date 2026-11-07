@@ -22,7 +22,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
     const sessions = new Map(); // CHANGE
     const references = createReferenceSnapshots({ canvas, writeImmutable }); let referenceView = { snapshots: {}, unavailable: {} }; const referenceSent = new Map(); // NEW
     async function stageReferences(snapshots) { // NEW
-        if (canvas.protocolVersion !== 5 || !snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots)) throw new Error('Unsupported reference dependencies.'); // NEW
+        if (!snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots)) throw new Error('Unsupported reference dependencies.'); // CHANGE
         for (const [hash, value] of Object.entries(snapshots)) { if (references.resolve(hash)) continue; if (!/^[a-f0-9]{64}$/.test(hash) || digest(globalThis.TrellisReferenceCore.canonical(value)) !== hash) throw new Error('Reference snapshot failed content verification.'); await references.publish(value); } // CHANGE: ignored retransmissions cannot replace previously verified immutable bytes.
     } // NEW
     const current = createCurrentStateStore({ canvas, deviceId, keys, profile, writeAtomic, writeImmutable, references, now, onTiming: timing }); // CHANGE
@@ -49,7 +49,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
     function cancelVerification() { verificationGeneration++; latest = null; pendingRefresh = null; current.cancelVerification(); } // CHANGE
     let recoveryLoaded = false; // CHANGE
     /** Initialize one verified state; no historical collaboration records are consulted. */ // CHANGE
-    async function initialize(xml) { const captured = canvas.protocolVersion === 5 ? await references.compact(xml) : xml; const state = await current.initialize(captured); referenceView = await references.hydrate(state.xml); onVerified(state); return state; } // CHANGE
+    async function initialize(xml) { const captured = await references.compact(xml); const state = await current.initialize(captured); referenceView = await references.hydrate(state.xml); onVerified(state); return state; } // CHANGE
     /** Read a small signed head and only new accepted changes; load recovery metadata once. */ // CHANGE
     async function read(options) { // CHANGE
         const generation = verificationGeneration; // NEW
@@ -109,11 +109,11 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
         }
         const identify = value => ({ ...value, name: presentation.names.get(value.userId) || 'Unknown user', requesters: value.requesters?.map(requester => ({ ...requester, name: presentation.names.get(requester.userId) || 'Unknown user' })), objectLabel: value.key === '*' ? 'project structure' : presentation.labels.get(value.key), objects: value.targets?.map(key => ({ key, label: presentation.labels.get(key) })) }); // CHANGE
         const previousPolicy = deliveredPolicies.get(sessionId); let policy = sessionId && (forcePolicy || policySent.get(sessionId) !== policyHash) ? policySnapshot : undefined, policyDelta; // CHANGE
-        if (canvas.protocolVersion === 5 && policy && previousPolicy && forcePolicy !== 'reset') { const old = new Map(previousPolicy.cells.map(cell => [cell.key, cell])), cells = policySnapshot.cells.filter(cell => canonical(old.get(cell.key) || null) !== canonical(cell)), currentKeys = new Set(policySnapshot.cells.map(cell => cell.key)); policyDelta = { baseHash: policySent.get(sessionId), store: policySnapshot.store, teams: policySnapshot.teams, cells, removed: [...old.keys()].filter(key => !currentKeys.has(key)) }; policy = undefined; } // CHANGE: authority deltas remain bound to the exact installed policy hash.
+        if (policy && previousPolicy && forcePolicy !== 'reset') { const old = new Map(previousPolicy.cells.map(cell => [cell.key, cell])), cells = policySnapshot.cells.filter(cell => canonical(old.get(cell.key) || null) !== canonical(cell)), currentKeys = new Set(policySnapshot.cells.map(cell => cell.key)); policyDelta = { baseHash: policySent.get(sessionId), store: policySnapshot.store, teams: policySnapshot.teams, cells, removed: [...old.keys()].filter(key => !currentKeys.has(key)) }; policy = undefined; } // CHANGE: authority deltas remain bound to the exact installed policy hash.
         if (policy) policySent.set(sessionId, policyHash); // NEW
         if (policyDelta) policySent.set(sessionId, policyHash); if (policy || policyDelta) deliveredPolicies.set(sessionId, policySnapshot); // CHANGE
         const known = referenceSent.get(sessionId) || new Set(), snapshots = Object.fromEntries(Object.entries(referenceView.snapshots).filter(([hash]) => forcePolicy === 'reset' || !known.has(hash))); for (const hash of Object.keys(snapshots)) known.add(hash); referenceSent.set(sessionId, known); // CHANGE: reopening recovers a lost delivery; saves and heartbeats do not resend definitions.
-        return structuredClone({ protocolVersion: canvas.protocolVersion || COLLABORATION_VERSION, projectFormat: canvas.protocolVersion === 5 ? 2 : 1, references: { snapshots, unavailable: referenceView.unavailable }, sessionId, hash: presentation.hash, policyHash, policyRevision, policy, policyDelta, holds: state.holds.map(identify), reservations: state.reservations.map(identify), presence: state.presence.map(identify), pending: state.pending.length, errors: state.errors, rejected: state.rejected, recoveries: recoveryPaths }); // CHANGE
+        return structuredClone({ protocolVersion: canvas.protocolVersion || COLLABORATION_VERSION, projectFormat: 2, references: { snapshots, unavailable: referenceView.unavailable }, sessionId, hash: presentation.hash, policyHash, policyRevision, policy, policyDelta, holds: state.holds.map(identify), reservations: state.reservations.map(identify), presence: state.presence.map(identify), pending: state.pending.length, errors: state.errors, rejected: state.rejected, recoveries: recoveryPaths }); // CHANGE
     } // NEW
     /** A no-peer action still writes a signed durable proposal and succeeds locally. */ // NEW
     async function action(callerId, userId, input) { // NEW
@@ -128,7 +128,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
             assertActor(actor, generation); // NEW
             const wireRequestHash = input.transaction ? digest(canonical({ userId, transaction: input.transaction, usersPolicyAction: !!input.usersPolicyAction, explicitRefresh: !!input.explicitRefresh })) : null; // CHANGE: retry identity is independent of an already advanced view.
             if (input.transaction) { // CHANGE: only the coordinator chooses the remembered base and derives authority and dependency targets.
-                if (canvas.protocolVersion !== 5 || input.kind !== 'save' || input.transaction.version !== 1 || !Array.isArray(input.transaction.changes)) throw new Error('Unsupported object transaction.'); // CHANGE
+                if (input.kind !== 'save' || input.transaction.version !== 1 || !Array.isArray(input.transaction.changes)) throw new Error('Unsupported object transaction.'); // CHANGE
                 if (input.proposalId) { const receipt = await current.receipt(input.proposalId); if (receipt) { if (receipt.proposal.payload.userId !== userId || receipt.proposal.payload.clientRequestHash !== wireRequestHash) throw new Error('Proposal ID was reused with different contents.'); await materialize(state); if (input.explicitRefresh) await views.accepted(actor, receipt.proposal.payload.changes, state); checkpointRetries.delete(JSON.stringify([callerId, userId])); await current.acknowledge(input.proposalId); return { ok: true, duplicate: true, acceptedPosition: { epoch: receipt.epoch, sequence: receipt.sequence, hash: receipt.commitHash }, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId, 'reset') }; } } // CHANGE: completed transactions never reconstruct against a newer saved base.
                 const baseXml = views.get(actor)?.xml || state.xml; if (documentContentHash(baseXml) !== input.transaction.baseHash) throw new Error('The saved view changed before this transaction. Refresh its baseline and retry; the draft is retained.'); // CHANGE
                 input = { ...input, baseXml, xml: applyChanges(baseXml, input.transaction.changes) }; // CHANGE: per-object predecessor hashes and complete structure are validated here, then again at acceptance.
@@ -141,7 +141,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
                     await materialize(state); // NEW: an accepted retry may still need to finish its local projection write.
                     if (input.explicitRefresh && views.get(actor)) await views.accepted(actor, receipt.proposal.payload.changes, state, input.baseXml); checkpointRetries.delete(JSON.stringify([callerId, userId])); // CHANGE: accepted retries cannot regress newer remembered objects or pages.
                     await current.acknowledge(input.proposalId); // NEW
-                    return { ok: true, duplicate: true, acceptedPosition: { epoch: receipt.epoch, sequence: receipt.sequence, hash: receipt.commitHash }, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId, true) }; // CHANGE: retries also carry the complete policy covering the accepted creation.
+                    return { ok: true, duplicate: true, acceptedPosition: { epoch: receipt.epoch, sequence: receipt.sequence, hash: receipt.commitHash }, xml: input.explicitRefresh ? undefined : state.xml, objectViews: 1, collaboration: publicState(state, actor.sessionId, 'reset') }; // CHANGE: retries also carry the complete policy covering the accepted creation.
                 } // NEW
             } // NEW
             if (input.kind === 'checkpoint') { // NEW: main-process lifecycle callers checkpoint the same resident state used by production saves.
@@ -228,7 +228,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
                 if (input.kind === 'save') { const started = performance.now(); input = { ...input, xml: await prepareXml(input.xml) }; timing({ phase: 'assets', durationMs: performance.now() - started }); } // CHANGE
                 assertActor(actor, generation); // NEW
                 if (input.kind === 'save') input = { ...input, xml: prepareSeedTransaction(input.baseXml, input.xml) }; // NEW: derived seed effects join the signed, held transaction.
-                if (canvas.protocolVersion === 5 && input.xml) { // CHANGE
+                if (input.xml) { // CHANGE
                     const parsed = inspectDiagram(input.xml); // NEW
                     for (const cell of parsed.cells) { const raw = cell.node.getAttribute('trellis_references_json'); if (raw && !globalThis.TrellisReferenceCore.externalReference(JSON.parse(raw))) throw new Error('New-format projects require content-addressed reference snapshots.'); } // NEW
                     const previousReferences = await references.hydrate(input.baseXml); referenceView = await references.hydrate(input.xml); // NEW
@@ -244,7 +244,7 @@ export function createCollaborationStore({ canvas, deviceId, keys, profile, now 
 
                 let delta; // CHANGE: full-proposal diffing already constructs its own validated object indexes.
                 if (input.kind === 'claim' && !input.xml) { const index = objects(state.xml); delta = { changes: [{}], targets: [...new Set((input.targets || []).filter(k => index.has(k)).flatMap(k => targetsForObject(index, k)))] }; } // CHANGE
-                else delta = canvas.protocolVersion === 5 ? await analyzeDocument('diff', { before: input.baseXml, after: input.xml }) : diffObjects(input.baseXml, input.xml); // CHANGE: queued results remain bound to this serialized actor and accepted state.
+                else delta = await analyzeDocument('diff', { before: input.baseXml, after: input.xml }); // CHANGE: queued results remain bound to this serialized actor and accepted state.
                 assertActor(actor, generation); // NEW
                 if (input.kind === 'save' && delta.changes.length) { // NEW
                     const permission = validatePermissionChanges(input.baseXml, input.xml, userId, now(), { policy: permissionSnapshot(inspectDiagram(state.xml)) }); // NEW

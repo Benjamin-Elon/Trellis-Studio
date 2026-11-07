@@ -106,7 +106,7 @@ test('production receipt publication recovers after a partial temporary write wi
     try { await assert.rejects(f.service.collaborationAction(1, input), /Interrupted production receipt/); } finally { fs.writeFile = original; } // NEW
     assert.equal(interrupted, true); // NEW
     const retry = await f.service.collaborationAction(1, input); assert.equal(retry.ok, true); assert.equal(retry.duplicate, true); // NEW
-    const directory = path.join(path.dirname(result.diagramPath), '.trellis', 'collaboration-v4'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', device('A') + '.json'), 'utf8')).payload; // NEW
+    const directory = path.join(path.dirname(result.diagramPath), '.trellis', 'collaboration-v5'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', device('A') + '.json'), 'utf8')).payload; // CHANGE
     assert.equal(head.sequence, 1); assert.match(await fs.readFile(result.diagramPath, 'utf8'), /Accepted once/); // NEW
     assert.deepEqual(await fs.readdir(path.join(directory, 'receipts')), [input.proposalId + '.json']); // NEW
 }); // NEW
@@ -126,7 +126,7 @@ test('scoped activity and private recovery complete while a content commit is st
     const f = await fixture(t); // CHANGE: current-state saving does not invoke the retired replayWorker hook.
     const { result } = await setup(f), baseXml = await fs.readFile(result.diagramPath, 'utf8'), key = '["","board"]'; // NEW
     await f.service.activityAction(1, { shareId: result.shareId, kind: 'claim', targets: [key] }); // NEW
-    const originalWrite = fs.writeFile; fs.writeFile = async function (file, data, options) { if (block && String(file).includes(path.join('collaboration-v4', 'epochs')) && String(file).endsWith('.tmp')) { entered(); await gate; } return originalWrite(file, data, options); }; t.after(() => { fs.writeFile = originalWrite; }); // CHANGE: stall an actual accepted-decision write, without blocking independent private/activity files.
+    const originalWrite = fs.writeFile; fs.writeFile = async function (file, data, options) { if (block && String(file).includes(path.join('collaboration-v5', 'epochs')) && String(file).endsWith('.tmp')) { entered(); await gate; } return originalWrite(file, data, options); }; t.after(() => { fs.writeFile = originalWrite; }); // CHANGE: stall an actual accepted-decision write, without blocking independent private/activity files.
     block = true; let completed = false; const save = f.service.collaborationAction(1, { shareId: result.shareId, kind: 'save', baseXml, xml: baseXml.replace('label="Board"', 'label="Changed"') }).finally(() => { completed = true; }); // CHANGE
     await waiting; const activity = await f.service.activityAction(1, { shareId: result.shareId, kind: 'publish', expectedUserId: 'admin', revision: 1, pending: [key] }); // NEW
     assert.equal(activity.collaboration.pendingChanges[0].userId, 'admin'); assert.equal(completed, false); // NEW
@@ -159,7 +159,7 @@ async function oldCanvas(f, options = {}) { // CHANGE
     return canvas; // CHANGE
 } // CHANGE
 
-for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' opens locally without starting sharing and survives new v4 creation', async t => { // CHANGE
+for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' opens locally without starting sharing and survives new v5 creation', async t => { // CHANGE
     const f = await fixture(t), old = await oldCanvas(f, { version }); // CHANGE
     f.config().folders.push({ id: old.folderId, path: old.folderPath, paused: false }); // CHANGE
     await f.service.initialize(); const info = await f.service.shareInfo({ diagramPath: old.diagramPath }); // CHANGE
@@ -168,11 +168,11 @@ for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' open
     f.service.setContext(1, { diagramPath: old.diagramPath, diagramId: old.diagramId, userId: 'admin' }); // CHANGE
     await assert.rejects(f.service.collaborationAction(1, { shareId: old.shareId, kind: 'get' }), /Sharing is disabled/); // CHANGE
     await assert.rejects(f.service.setupCanvas(1, { diagramPath: old.diagramPath, diagramId: old.diagramId, xml: xml() }), /Sharing is disabled/); // CHANGE
-    await assert.rejects(f.service.registerLibraryDownload({ shareId: old.shareId, protocolVersion: 4 }), /Sharing is disabled/); // CHANGE
+    await assert.rejects(f.service.registerLibraryDownload({ shareId: old.shareId, protocolVersion: 5 }), /Sharing is disabled/); // CHANGE
     // CHANGE: the separately named membership scenario retains the disabled-capability boundary.
     await assert.rejects(f.service.setPaused({ shareId: old.shareId, paused: false }), /Sharing is disabled/); // CHANGE
     assert.equal(f.spawnCount(), 0); // CHANGE
-    const { result } = await setup(f); assert.equal(result.protocolVersion, 4); // CHANGE
+    const { result } = await setup(f); assert.equal(result.protocolVersion, 5); // CHANGE
     assert.equal(f.config().folders.some(folder => folder.id === old.folderId), false); // CHANGE
     await f.service.setPaused({ paused: true }); await f.service.setPaused({ paused: false }); // CHANGE
     assert.equal(f.config().folders.some(folder => folder.id === old.folderId), false); // CHANGE
@@ -185,7 +185,7 @@ for (const version of [undefined, 1, 2]) test('old protocol ' + version + ' open
 test('mixed invalid registrations are reported and retained without blocking a valid project', async t => { // CHANGE
     const f = await fixture(t), old = await oldCanvas(f), invalid = [null, { ...old, shareId: 'future', protocolVersion: 6 }, { ...old, diagramPath: path.join(f.root, 'outside.drawio') }]; // CHANGE
     const filename = path.join(f.userDataPath, 'trellis-sharing', 'canvases.json'); await fs.writeFile(filename, JSON.stringify([old, ...invalid])); // CHANGE
-    const { result } = await setup(f); assert.equal(result.protocolVersion, 4); assert.equal(f.service.getRegistrationIssues().length, 3); // CHANGE
+    const { result } = await setup(f); assert.equal(result.protocolVersion, 5); assert.equal(f.service.getRegistrationIssues().length, 3); // CHANGE
     const saved = JSON.parse(await fs.readFile(filename, 'utf8')); assert.deepEqual(saved.slice(0, 4), [old, ...invalid]); // CHANGE
     assert.equal((await f.service.listCanvases()).filter(canvas => canvas.localOnly).length, 1); // CHANGE
 }); // CHANGE
@@ -235,7 +235,7 @@ test('a new service instance reopens a valid v4 registration and restores accept
     await f.service.stop(); // CHANGE
     const reopened = createSyncthingService({ userDataPath: f.userDataPath, documentsPath: path.join(f.root, 'documents'), binaryRoot: path.join(f.root, 'binaries'), platform: 'win32', arch: 'x64' }); // CHANGE
     t.after(() => reopened.stop()); // CHANGE
-    const [canvas] = await reopened.listCanvases(); assert.equal(canvas.protocolVersion, 4); assert.equal(canvas.available, true); // CHANGE
+    const [canvas] = await reopened.listCanvases(); assert.equal(canvas.protocolVersion, 5); assert.equal(canvas.available, true); // CHANGE
     reopened.setContext(1, { diagramPath: canvas.path, diagramId: 'diagram-1', userId: 'admin' }); // CHANGE
     const restored = await reopened.collaborationAction(1, { shareId: canvas.shareId, kind: 'get' }); // CHANGE
     assert.equal(restored.xml, saved.xml); assert.match(restored.xml, /Saved before restart/); // CHANGE
@@ -245,7 +245,7 @@ test('new setup rejects explicit old versions and descriptors require supported 
     const f = await fixture(t), source = path.join(f.root, 'original.drawio'), content = xml(); // CHANGE
     await fs.writeFile(source, content); // CHANGE
     for (const version of [1, 2, 3, 6]) await assert.rejects(f.service.setupCanvas(1, { diagramPath: source, diagramId: 'diagram-1', xml: content, protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
-    for (const version of [undefined, 1, 2, 3, 6]) await assert.rejects(f.service.registerLibraryDownload({ shareId: 'unsupported', protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
+    for (const version of [undefined, 1, 2, 3, 4, 6]) await assert.rejects(f.service.registerLibraryDownload({ shareId: 'unsupported', protocolVersion: version }), /Unsupported.*protocol/); // CHANGE
     assert.equal(f.spawnCount(), 0); assert.equal(f.service.hasCanvases(), false); assert.equal(await fs.readFile(source, 'utf8'), content); // CHANGE
 }); // CHANGE
 
@@ -273,7 +273,7 @@ test('v4 sharing synchronizes only assets and protocol files, and local conflict
     assert.equal(f.config().folders.find(folder => folder.id === result.folderId).fsWatcherDelayS, 0.5); // CHANGE
     const filename = path.join(result.folderPath, 'original.sync-conflict-retained.drawio'); await fs.writeFile(filename, 'retained conflict'); // CHANGE
     await f.service.poll(); assert.equal(f.service.listStatus()[0].state, 'upToDate'); assert.equal(await fs.readFile(filename, 'utf8'), 'retained conflict'); // CHANGE
-    const head = JSON.parse(await fs.readFile(path.join(result.folderPath, '.trellis', 'collaboration-v4', 'heads', device('A') + '.json'), 'utf8')); assert.equal(head.payload.schema, 4); assert.equal(head.payload.sequence, 0); // CHANGE: setup publishes a signed current checkpoint/head. // CHANGE
+    const head = JSON.parse(await fs.readFile(path.join(result.folderPath, '.trellis', 'collaboration-v5', 'heads', device('A') + '.json'), 'utf8')); assert.equal(head.payload.schema, 5); assert.equal(head.payload.sequence, 0); // CHANGE: setup publishes a signed current checkpoint/head. // CHANGE
     const membership = JSON.parse(await fs.readFile(path.join(result.folderPath, '.trellis', 'membership', '000000000001.json'), 'utf8')); assert.equal(membership.payload.schema, 1); // CHANGE
 }); // CHANGE
 
@@ -320,7 +320,7 @@ test('an incoming accepted head prepares an unopened garden and catches up its p
 
 test('v4 setup isolates records, keeps a backup, and permits local saving after transport stops', async t => { // CHANGE
     const f = await fixture(t), { result: shared } = await setup(f); // CHANGE
-    assert.equal(shared.protocolVersion, 4); assert.match(shared.folderId, /^trellis-v4-/); // CHANGE
+    assert.equal(shared.protocolVersion, 5); assert.match(shared.folderId, /^trellis-v5-/); // CHANGE
     const ignores = f.calls.filter(c => c.endpoint === 'db/ignores').at(-1).data.ignore; assert.equal(ignores.includes('!/' + path.basename(shared.diagramPath)), false); // NEW
     await f.service.stop(); // NEW
     const local = await f.service.collaborationAction(1, { shareId: shared.shareId, kind: 'save', baseXml: shared.xml, xml: shared.xml.replace('label="Board"', 'label="Local edit"') }); // NEW

@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises'; // NEW
 import { watch } from 'node:fs'; // NEW
 import path from 'node:path'; // NEW
-import { digest, makeId, signRecord, verifyRecord, safeId } from './trellis-share-protocol.js'; // CHANGE
+import { SYNC_PROTOCOL, digest, makeId, signRecord, verifyRecord, safeId } from './trellis-share-protocol.js'; // CHANGE
 import { readBounded } from './trellis-input-policy.js'; // NEW
 
 export const HEARTBEAT_MS = 5000; // NEW
@@ -15,7 +15,8 @@ let observationRevision = 0; // CHANGE: process-wide IPC ordering survives activ
 
 /** Ownership is advisory coordination; content permissions and base hashes remain authoritative. */ // NEW
 export function createActivityService({ canvas, deviceId, keys, sessionFor, writeAtomic, authorize = () => true, canClaim = () => true, monotonic = () => performance.now(), now = Date.now, onChange = () => {} }) { // CHANGE
-    const directory = path.join(canvas.folderPath, '.trellis', 'activity-v' + (canvas.protocolVersion || 4)), entries = new Map(), local = new Map(), departing = new Set(); // CHANGE
+    if (canvas.protocolVersion !== undefined && canvas.protocolVersion !== SYNC_PROTOCOL.garden) throw new Error('Unsupported garden activity protocol. Only protocol 5 is supported.'); // CHANGE
+    const directory = path.join(canvas.folderPath, '.trellis', 'activity-v' + (SYNC_PROTOCOL.garden)), entries = new Map(), local = new Map(), departing = new Set(); // CHANGE
     const expired = new Map(), witnesses = new Map(), dirtyWitnesses = new Set(); // CHANGE: terminal claim generations and their signed maintenance snapshots are independent of human session heartbeats.
     let watcher, timer, scanTask, scanAgain = false, closed = false, fingerprint = '', notifyTimer, initializing, expiryTask, closing; // CHANGE
     const keyFor = value => value.deviceId + ':' + value.sessionId; // NEW
@@ -29,7 +30,7 @@ export function createActivityService({ canvas, deviceId, keys, sessionFor, writ
         }))].sort(); // NEW
     } // NEW
     function validate(value) { // NEW
-        if (value?.schema !== (canvas.protocolVersion || 4) || value.shareId !== canvas.shareId || value.diagramId !== canvas.diagramId || !Number.isSafeInteger(value.sequence) || value.sequence < 1 || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error('Invalid activity identity or revision.'); // NEW
+        if (value?.schema !== (SYNC_PROTOCOL.garden) || value.shareId !== canvas.shareId || value.diagramId !== canvas.diagramId || !Number.isSafeInteger(value.sequence) || value.sequence < 1 || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error('Invalid activity identity or revision.'); // CHANGE
         safeId(value.deviceId); safeId(value.sessionId); safeId(value.userId); // NEW
         for (const field of ['viewing', 'editing', 'pending']) targets(value[field]); // NEW
         if (!Array.isArray(value.claims) || value.claims.length !== value.editing.length || new Set(value.claims.map(claim => claim?.key)).size !== value.claims.length || value.claims.some(claim => !claim || !value.editing.includes(claim.key) || typeof claim.claimId !== 'string' || !/^[a-f0-9]{64}$/.test(claim.claimId))) throw new Error('Invalid activity claims.'); // CHANGE
@@ -77,7 +78,7 @@ export function createActivityService({ canvas, deviceId, keys, sessionFor, writ
         const full = witness && (witness.requests.length >= MAX_WITNESS_REQUESTS || Buffer.byteLength(JSON.stringify({ ...witness, pendingText: undefined, writeTask: undefined, requests: [...witness.requests, request] })) > MAX_BYTES - 1024); // CHANGE: reserve space for the envelope and signature, including unusually long object keys.
         if (!witness || full) { // CHANGE
             const page = witness ? expiryPage(witness) + 1 : 0, sessionId = 'expiry-' + digest(author) + (page ? '-' + page : ''); // CHANGE
-            witness = { schema: canvas.protocolVersion || 4, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId, userId: author, sessionId, sequence: 1, revision: 0, viewing: [], editing: [], claims: [], pending: [], requests: [], saveState: 'saved', online: true }; // CHANGE
+            witness = { schema: SYNC_PROTOCOL.garden, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId, userId: author, sessionId, sequence: 1, revision: 0, viewing: [], editing: [], claims: [], pending: [], requests: [], saveState: 'saved', online: true }; // CHANGE
         } // CHANGE
         witnesses.set(author, witness); return witness; // CHANGE
     } // CHANGE
@@ -139,7 +140,7 @@ export function createActivityService({ canvas, deviceId, keys, sessionFor, writ
             const offline = requestsFor({ key, claimId, deviceId, sessionId }).some(request => request.kind === 'offline-expiry'); // CHANGE
             losses.push({ key, claimId, code: accessChanged ? 'ACCESS_CHANGED' : offline ? 'SESSION_OFFLINE' : requested ? 'HANDOFF_EXPIRED' : 'CONCURRENT_EDITOR', reason: accessChanged ? 'Your access to this object changed.' : offline ? 'Editing hold released after 30 seconds offline.' : requested ? 'The requested editing handoff deadline ended.' : 'Another concurrent editor has priority for this object.' }); // CHANGE
         } // CHANGE
-        return { protocolVersion: canvas.protocolVersion || 4, observationRevision: ++observationRevision, actorUserId, sessionId, holds, losses, reservations: [], presence, pendingChanges, sessions }; // CHANGE
+        return { protocolVersion: SYNC_PROTOCOL.garden, observationRevision: ++observationRevision, actorUserId, sessionId, holds, losses, reservations: [], presence, pendingChanges, sessions }; // CHANGE
     } // NEW
     function announce() { // NEW
         if (closed) return; // NEW
@@ -196,7 +197,7 @@ export function createActivityService({ canvas, deviceId, keys, sessionFor, writ
         const sessionId = sessionFor(callerId, userId), key = String(callerId) + ':' + userId; // NEW
         if (input.kind === 'snapshot') return { ok: true, collaboration: snapshot(sessionId, userId) }; // CHANGE: reads must not create or replace a session's persisted ownership.
         let value = local.get(key); // NEW
-        if (!value) { const stored = entries.get(keyFor({ deviceId, sessionId }))?.value; value = stored ? structuredClone(stored) : { schema: canvas.protocolVersion || 4, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId, userId, sessionId, sequence: 1, revision: 0, viewing: [], editing: [], claims: [], pending: [], requests: [], saveState: 'saved', online: true }; local.set(key, value); } // CHANGE: resume the signed sequence and generation after an activity-service restart.
+        if (!value) { const stored = entries.get(keyFor({ deviceId, sessionId }))?.value; value = stored ? structuredClone(stored) : { schema: SYNC_PROTOCOL.garden, shareId: canvas.shareId, diagramId: canvas.diagramId, deviceId, userId, sessionId, sequence: 1, revision: 0, viewing: [], editing: [], claims: [], pending: [], requests: [], saveState: 'saved', online: true }; local.set(key, value); } // CHANGE: resume the signed sequence and generation after an activity-service restart.
         if (!value.online || value.userId !== userId) throw new Error('This editing session is closed.'); // CHANGE: delayed callbacks cannot reopen a completed session.
         if (!authorize(userId) || canvas.revoked || canvas.pending || canvas.projectRetired || canvas.projectFenced) throw new Error('Inactive activity author.'); // CHANGE
         const requested = input.targets === undefined ? undefined : targets(input.targets); // CHANGE

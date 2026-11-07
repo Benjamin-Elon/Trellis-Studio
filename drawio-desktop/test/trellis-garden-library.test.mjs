@@ -342,9 +342,12 @@ test('starter completion survives later empty saves and verifies the registered 
     await assert.rejects(f.library.completeStarter({ path: created.path }), /Save the starter garden/); // NEW
     const xml = await fs.readFile(created.path, 'utf8'); // NEW
     await saveProject(f, created, xml.replace('</root>', '<object id="garden" garden_module="1"><mxCell parent="1" vertex="1"/></object></root>')); // NEW
+    assert.equal((await f.library.list()).gardens[0].starterPending, true); // CHANGE: a saved starter still needs durable completion.
     const copy = path.join(f.root, 'copy.drawio'); await fs.copyFile(created.path, copy); // NEW
     await assert.rejects(f.library.completeStarter({ path: copy }), /registered garden project/); // NEW
     await f.library.completeStarter({ path: created.path }); assert.equal((await f.library.getEntry(created.entry.diagramId)).starterPending, false); // NEW
+    const stale = await f.identities.signAction('garden-record', { entry: created.entry }); // CHANGE: another metadata writer started with the original entry.
+    await fs.writeFile(path.join(f.identities.metadataRoot(created.entry.ownerIdentityId), 'catalog', stale.payload.id + '.json'), JSON.stringify(stale)); // CHANGE
     await saveProject(f, created, xml); assert.equal((await f.library.list()).gardens[0].starterPending, false); // NEW
     let folder = path.join(f.root, 'copies'); await fs.mkdir(folder); await fs.copyFile(created.path, path.join(folder, 'Copy.drawio')); // NEW
     const localLibrary = createGardenLibraryService({ identities: f.identities, legacyService: f.legacyService, getLocalFolder: () => folder }); // NEW
@@ -460,4 +463,16 @@ test('Home inventories use authenticated accepted saves, reject stale stock, and
     await saveProject(f, created, legacy.document.serialize()); const unknown = await service.read({ garden }); // NEW
     assert.equal(unknown.protectionKnown, false); assert.equal(unknown.availability[0].available, null); assert.equal(unknown.seeds.items[0].seeds, 30); // NEW
     assert.match(unknown.warnings[0], /protection is unavailable/); // NEW
+}); // NEW
+
+test('preparation observers share work, receive its latest progress, and detach independently', async t => { // NEW
+    const f = await fixture(t), garden = await f.library.create({ name: 'Progress garden' }), daemon = await f.identities.transport(f.identities.session().identityId); // NEW
+    const first = [], second = [], controller = new AbortController(); let b, c; // CHANGE
+    const a = daemon.prepareCanvas({ shareId: garden.entry.shareId, onProgress: value => { // CHANGE
+        first.push(value); controller.abort(); // CHANGE
+        b = daemon.prepareCanvas({ shareId: garden.entry.shareId, onProgress: item => second.push(item) }); // CHANGE
+        c = daemon.prepareCanvas({ shareId: garden.entry.shareId, onProgress() { throw new Error('Observer failure'); } }); // CHANGE
+    }, signal: controller.signal }); // CHANGE
+    await a; assert.equal(first.length, 1); assert.deepEqual(second[0], first[0]); // CHANGE
+    assert.equal((await b).path, garden.path); assert.equal((await c).path, garden.path); assert.ok(second.length > 1); // CHANGE
 }); // NEW

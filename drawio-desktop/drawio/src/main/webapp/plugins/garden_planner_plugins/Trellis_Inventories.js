@@ -163,10 +163,118 @@
         for (const [name, action] of [['Equipment', async () => { const source = await provider(options); await source?.equipment(); }], ['Seeds', () => openSeeds(options)]]) menu.append(button(name, () => { close(); anchor.focus(); Promise.resolve().then(action).catch(showError); })); // NEW
         menu.addEventListener('keydown', event => { if (event.key === 'Escape') { close(); anchor.focus(); } }); document.body.append(menu); document.addEventListener('pointerdown', outside, true); menu.firstChild.focus(); // NEW
     } // NEW
-    async function openExchange(options = {}) { // NEW
+    let exchangeTooltipId = 0; // NEW
+    /** Scope Exchange colors separately from the shared blue navigation buttons and inline host styles. */ // NEW
+    function ensureExchangeButtonStyles() { // NEW
+        if (document.getElementById('trellis-exchange-button-styles')) return; // NEW
+        const style = element('style'); style.id = 'trellis-exchange-button-styles'; // NEW
+        style.textContent = [ // NEW
+            '.trellis-exchange-button{background:#f5dc89!important;border:1px solid #d3ad45!important;color:#435322!important;font-weight:500!important;opacity:1!important}', // NEW
+            '.trellis-exchange-button:not([aria-disabled="true"]):hover{background:#efd072!important}', // NEW
+            '.trellis-exchange-button[aria-disabled="true"],.trellis-exchange-button[aria-disabled="true"]:hover{background:#e5e7eb!important;border-color:#9ca3af!important;color:#4b5563!important;cursor:not-allowed!important}', // NEW
+            '.trellis-exchange-button:focus-visible{outline:2px solid #2563eb;outline-offset:2px}', // NEW
+            '.trellis-exchange-explanation{position:fixed;z-index:2147483647;box-sizing:border-box;width:max-content;max-width:min(320px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;padding:10px 12px;border:1px solid #9ca3af;border-radius:6px;background:var(--ge-dialog-background,#fff);color:var(--ge-text-color,#222);box-shadow:0 4px 14px #0003;font:13px/1.5 system-ui,sans-serif;overflow-wrap:anywhere}' // NEW
+        ].join('\n'); document.head.append(style); // NEW
+    } // NEW
+    /** Bind one entry button; callers dismiss on hiding and dispose when their owning surface is destroyed. */ // NEW
+    function bindExchangeButton(anchor, getOptions = () => ({})) { // NEW
+        ensureExchangeButtonStyles(); // NEW
+        const tooltip = element('div'), disposers = [], originalTitle = anchor.title; // NEW
+        tooltip.id = 'trellis-exchange-explanation-' + ++exchangeTooltipId; tooltip.className = 'trellis-exchange-explanation'; tooltip.setAttribute('role', 'tooltip'); // NEW
+        let available = false, reason = 'Checking Exchange availability…', disposed = false, generation = 0, pending = null, activating = false, exchangeStatus = null; // NEW
+        let hovering = false, tooltipHovering = false, pinned = false, explanationRequested = false, leaveTimer = null; // NEW
+        anchor.classList.add('trellis-exchange-button'); anchor.disabled = false; // NEW: aria-disabled preserves focus and explanation activation.
+        function listen(target, name, callback, options) { // NEW
+            target.addEventListener(name, callback, options); disposers.push(() => target.removeEventListener(name, callback, options)); // NEW
+        } // NEW
+        function visible() { return !disposed && anchor.isConnected && anchor.getClientRects().length > 0; } // NEW
+        function dismiss() { // NEW
+            root.clearTimeout(leaveTimer); hovering = tooltipHovering = pinned = explanationRequested = false; tooltip.remove(); // NEW
+            const ids = (anchor.getAttribute('aria-describedby') || '').split(/\s+/).filter(id => id && id !== tooltip.id); // NEW
+            if (ids.length) anchor.setAttribute('aria-describedby', ids.join(' ')); else anchor.removeAttribute('aria-describedby'); // NEW
+        } // NEW
+        /** Body mounting avoids clipped toolbars; measured positioning also handles narrow windows and scrolling. */ // NEW
+        function position() { // NEW
+            if (!tooltip.isConnected) return; // NEW
+            if (!visible()) { dismiss(); return; } // NEW
+            const bounds = anchor.getBoundingClientRect(), width = tooltip.getBoundingClientRect().width, height = tooltip.getBoundingClientRect().height; // NEW
+            const top = bounds.bottom + 6 + height <= root.innerHeight - 8 ? bounds.bottom + 6 : bounds.top - height - 6; // NEW
+            tooltip.style.left = Math.max(8, Math.min(bounds.left, root.innerWidth - width - 8)) + 'px'; // NEW
+            tooltip.style.top = Math.max(8, Math.min(top, root.innerHeight - height - 8)) + 'px'; // NEW
+        } // NEW
+        function show() { // NEW
+            if (available || !visible()) return; // NEW
+            root.clearTimeout(leaveTimer); tooltip.textContent = reason; document.body.append(tooltip); // NEW
+            const ids = new Set((anchor.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)); ids.add(tooltip.id); anchor.setAttribute('aria-describedby', [...ids].join(' ')); position(); // NEW
+        } // NEW
+        function render() { // NEW
+            anchor.setAttribute('aria-disabled', String(!available)); anchor.title = available ? (originalTitle || 'Open community seed trading and CSA') : ''; // NEW
+            if (available || !visible()) dismiss(); else if (tooltip.isConnected) { tooltip.textContent = reason; position(); } // NEW
+        } // NEW
+        /** Coalesce interaction reads and reject late results from an obsolete identity or disposed surface. */ // NEW
+        function refresh() { // NEW
+            if (disposed) return Promise.resolve(false); // NEW
+            if (pending) return pending; // NEW
+            const token = ++generation; // NEW
+            const work = (async () => { // NEW
+                let nextAvailable = false, nextReason, nextStatus = null; // NEW
+                try { // NEW
+                    if (!root.trellisExchange?.status || !root.trellisIdentity?.getSession) nextReason = 'The Grand Exchange is unavailable in this build.'; // NEW
+                    else if (!await root.trellisIdentity.getSession()) nextReason = 'Log in to your Trellis identity to use The Grand Exchange.'; // NEW
+                    else if (token === generation && !disposed) { // NEW
+                        const status = nextStatus = await root.trellisExchange.status(); nextAvailable = status.qualified === true; // NEW
+                        nextReason = /^The Grand Exchange is awaiting qualified coordinator/.test(status.reason || '') // NEW
+                            ? 'The Grand Exchange is not available in this build yet. An app update is needed before you can use it.' // NEW
+                            : status.reason || 'The Grand Exchange service is not ready yet. Please try again later.'; // NEW
+                    } // NEW
+                } catch (error) { nextReason = 'Unable to check Exchange availability. ' + (error.message || String(error)); } // NEW
+                if (disposed || token !== generation) return false; // NEW
+                available = nextAvailable; reason = nextReason; exchangeStatus = nextStatus; render(); return available; // NEW
+            })(); // NEW
+            pending = work; void work.finally(() => { if (pending === work) pending = null; }); return work; // NEW
+        } // NEW
+        function invalidate() { // NEW
+            generation++; pending = null; available = false; reason = 'Checking Exchange availability…'; render(); void refresh(); // NEW: update an already-visible explanation without discarding its keyboard focus context.
+        } // NEW
+        function leave() { // NEW
+            root.clearTimeout(leaveTimer); leaveTimer = root.setTimeout(() => { if (!hovering && !tooltipHovering && !pinned && document.activeElement !== anchor) dismiss(); }, 120); // NEW
+        } // NEW
+        function explain() { // NEW
+            explanationRequested = true; show(); // NEW
+            void refresh().then(() => { if (explanationRequested && (hovering || document.activeElement === anchor)) show(); }); // NEW: newly unavailable results explain themselves without another hover, while dismissal stays respected.
+        } // NEW
+        async function activate(event) { // NEW
+            event.preventDefault(); event.stopPropagation(); // NEW
+            if (disposed || activating) return; // NEW
+            activating = true; if (!available) { pinned = true; show(); } // NEW
+            const check = refresh(), token = generation; // NEW
+            try { // NEW
+                const ready = await check; // NEW
+                if (disposed || token !== generation || !visible()) return; // NEW
+                if (!ready) { pinned = true; show(); return; } // NEW
+                dismiss(); await openExchange(getOptions(), exchangeStatus); // NEW: render from this activation's checked status without a second asynchronous opening race.
+            } catch (error) { // NEW
+                if (!disposed && token === generation) { available = false; reason = 'Unable to open The Grand Exchange. ' + (error.message || String(error)); render(); pinned = true; show(); } // NEW
+            } finally { activating = false; } // NEW
+        } // NEW
+        listen(anchor, 'mouseenter', () => { hovering = true; explain(); }); // NEW
+        listen(anchor, 'mouseleave', () => { hovering = false; leave(); }); // NEW
+        listen(anchor, 'focus', explain); listen(anchor, 'blur', () => { pinned = false; leave(); }); listen(anchor, 'click', activate); // NEW
+        for (const event of ['pointerdown', 'mousedown']) listen(anchor, event, event => event.stopPropagation()); // NEW: preserve native focus instead of allowing the dashboard wrapper to consume the press.
+        for (const event of ['keydown', 'keyup']) listen(anchor, event, event => { if (event.key === 'Enter' || event.key === ' ') event.stopPropagation(); }); // NEW: keep native activation keys out of graph shortcuts.
+        listen(tooltip, 'mouseenter', () => { tooltipHovering = true; root.clearTimeout(leaveTimer); }); // NEW
+        listen(tooltip, 'mouseleave', () => { tooltipHovering = false; leave(); }); // NEW
+        listen(document, 'pointerdown', event => { if (!anchor.contains(event.target) && !tooltip.contains(event.target)) dismiss(); }, true); // NEW
+        listen(document, 'keydown', event => { if (event.key === 'Escape' && tooltip.isConnected) { event.preventDefault(); event.stopPropagation(); dismiss(); } }, true); // NEW
+        listen(root, 'focus', () => { void refresh(); }); listen(root, 'resize', position); listen(document, 'scroll', position, true); // NEW
+        for (const event of ['onStatus', 'onLocked']) { const dispose = root.trellisIdentity?.[event]?.(invalidate); if (typeof dispose === 'function') disposers.push(dispose); } // NEW
+        render(); void refresh(); // NEW
+        return { refresh, dismiss() { generation++; pending = null; dismiss(); }, dispose() { if (disposed) return; disposed = true; generation++; dismiss(); disposers.forEach(dispose => dispose()); } }; // NEW: hiding a surface also cancels its pending activation even if it immediately reopens.
+    } // NEW
+    async function openExchange(options = {}, checkedStatus = null) { // CHANGE: entry controllers may reuse the status checked immediately before opening.
         const view = modal('The Grand Exchange'), tabs = element('div'), content = element('div'); view.body.append(tabs, content); // NEW
         if (!root.trellisExchange) { content.append(element('p', 'The Exchange service is unavailable in this build.')); return; } // NEW
-        const status = await root.trellisExchange.status(); // NEW
+        const status = checkedStatus || await root.trellisExchange.status(); // CHANGE: direct callers retain the existing status check.
         view.status.textContent = status.qualified ? '' : status.reason; // NEW
         content.append(element('p', status.currency ? 'Your display currency: ' + status.currency : 'Choose your city and confirm a currency before publishing priced records.')); // NEW
         for (const name of ['Seed Library', 'CSA', 'Activity']) tabs.append(button(name, () => view.run(async () => { // NEW
@@ -177,6 +285,6 @@
         }))); // NEW
         if (options.publishCsa) { content.append(element('p', 'CSA publication uses the saved yearly plan. Save your plan before publishing.')); } // NEW
     } // NEW
-    root.TrellisInventories = Object.freeze({ showMenu, openSeeds: options => openSeeds(options).catch(showError), openExchange: options => openExchange(options).catch(showError) }); // NEW
+    root.TrellisInventories = Object.freeze({ showMenu, bindExchangeButton, openSeeds: options => openSeeds(options).catch(showError), openExchange: options => openExchange(options).catch(showError) }); // CHANGE: both entry surfaces share availability, styling, and explanation behavior.
     if (root.Draw?.loadPlugin) root.Draw.loadPlugin(function () {}); // NEW: complete the startup reservation after registration.
 })(window); // NEW

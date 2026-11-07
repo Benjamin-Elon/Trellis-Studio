@@ -7,16 +7,17 @@ async function fixture(t, quietClock) { // CHANGE
     const h = require('./helpers/object-details-harness.cjs')(t), w = h.w, { graph, ui } = h, load = name => w.eval(fs.readFileSync(path.join(webapp, name), 'utf8')); // CHANGE
     ui.actions.addAction = () => ({}); ui.editor.setStatus = () => {}; ui.hideDialog = () => {}; ui.alert = () => {}; ui.watchFile = async () => {}; // CHANGE
     Object.defineProperty(w, 'crypto', { value: webcrypto }); // CHANGE
-    for (const name of ['js/trellis-edit-context.js', 'js/trellis-sync-contract.js', 'js/trellis-incoming-changes.js', 'js/trellis-background-saving.js', 'js/trellis-editing-holds.js', 'plugins/garden_planner_plugins/Trellis_Users.js']) load(name); // CHANGE
+    for (const name of ['js/trellis-reference-core.js', 'js/trellis-object-transactions.js', 'js/trellis-edit-context.js', 'js/trellis-sync-contract.js', 'js/trellis-incoming-changes.js', 'js/trellis-background-saving.js', 'js/trellis-editing-holds.js', 'plugins/garden_planner_plugins/Trellis_Users.js']) load(name); // CHANGE
     if (quietClock) { const create = w.TrellisBackgroundSaving.create; w.TrellisBackgroundSaving = { ...w.TrellisBackgroundSaving, create(options) { const controller = create({ ...options, ...quietClock.options }); quietClock.activity = () => controller.activity(); return controller; } }; } // CHANGE: control only quiet waits; native model/selection/permission events remain real.
     const users = w.Trellis.users; assert.equal(users.enableUsers('Admin', '1111').ok, true); const diagramId = users.getDiagramKey({ create: true }); // CHANGE: persist the document identity before taking the accepted fixture snapshot.
+    const { applyChanges } = await import('../src/main/trellis-collaboration-protocol.js'); // CHANGE: reconstruct native protocol-5 object transactions in the IPC fixture.
     const { inspectDiagram } = await import('../src/main/trellis-share-protocol.js'), { permissionSnapshot } = await import('../src/main/trellis-permission-policy.js'); // CHANGE
     let acceptedXml = ui.getFileData(), revision = 1, activityRevision = 0, onActivity, onStatus, gate = null, pendingSave = null, failure = false, published = [], saveState = 'saved'; const held = new Map(), errors = [], replies = [], activityCalls = [], recoveryCalls = []; // CHANGE: observe the real factory's activity and complete recovery snapshots.
     w.addEventListener('error', event => errors.push(event.error?.stack || event.message)); // CHANGE
     const file = { data: acceptedXml, fileObject: { path: 'C:/test/private.drawio' }, modified: false, isModified() { return this.modified; }, setModified(value) { this.modified = value; }, clearAutosave() {}, contentChanged() {}, saveDraft() {}, fileSaved(_data, _descriptor, done) { done(); }, save() { throw new Error('Managed creation must not use a native fallback save.'); } }; // CHANGE
     ui.getCurrentFile = () => file; ui.setFileData = xml => { const document = w.mxUtils.parseXml(xml); graph.model.setRoot(new w.mxCodec(document).decode(document.documentElement).getRoot()); }; // CHANGE
     w.electron = { request(_input, done) { done({ mtimeMs: 1 }); } }; // CHANGE
-    const info = { managed: true, protocolVersion: 4, shareId: 'private', diagramId, diagramPath: file.fileObject.path }; // CHANGE
+    const info = { managed: true, protocolVersion: 5, shareId: 'private', diagramId, diagramPath: file.fileObject.path }; // CHANGE
     const activity = extra => ({ sessionId: 'local', actorUserId: users.getCurrentUser()?.id, observationRevision: ++activityRevision, holds: [...held.values()], presence: [], reservations: [], pendingChanges: published.length ? [{ sessionId: 'local', userId: users.getCurrentUser()?.id, online: true, saveState, targets: published }] : [], ...extra }); // CHANGE
     const policy = () => { const snapshot = permissionSnapshot(inspectDiagram(acceptedXml)); return { store: snapshot.store, cells: Object.values(snapshot.cells), teams: {} }; }; // CHANGE
     const contentState = () => ({ ...activity(), policyRevision: revision, policy: policy(), hash: 'accepted-' + revision }); // CHANGE
@@ -26,7 +27,7 @@ async function fixture(t, quietClock) { // CHANGE
         async activityAction(input) { activityCalls.push(input); if (input.kind === 'claim') for (const key of input.targets || []) held.set(key, { key, claimId: key, sessionId: 'local', expiresAt: Date.now() + 30000 }); if (input.kind === 'release') for (const key of input.targets || [...held.keys()]) held.delete(key); if (input.kind === 'publish') { published = input.pending; saveState = input.saveState; } return { ok: true, collaboration: activity() }; }, // CHANGE
         async collaborationAction(input) { // CHANGE
             if (input.kind === 'save') { // CHANGE
-                if (failure) throw new Error('Temporary save failure'); acceptedXml = input.xml; revision++; const response = { ok: true, xml: acceptedXml, collaboration: contentState() }; replies.push(response); // CHANGE
+                if (failure) throw new Error('Temporary save failure'); acceptedXml = input.transaction ? applyChanges(acceptedXml, input.transaction.changes) : input.xml; revision++; const response = { ok: true, xml: acceptedXml, collaboration: contentState() }; replies.push(response); // CHANGE
                 if (gate) { pendingSave = response; await gate.promise; } return response; // CHANGE
             } // CHANGE
             return { ok: true, xml: acceptedXml, groups: [], collaboration: contentState() }; // CHANGE

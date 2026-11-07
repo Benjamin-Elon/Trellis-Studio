@@ -9,11 +9,11 @@ import { createCollaborationStore } from '../src/main/trellis-collaboration-stor
 import { diffObjects, applyChanges, objects } from '../src/main/trellis-collaboration-protocol.js'; // CHANGE
 import { signRecord, digest, canonical } from '../src/main/trellis-share-protocol.js'; // CHANGE
 
-for (const protocolVersion of [4, 5]) test('10,000 signed accepted decisions preserve current state across cold, warm and restarted reads: protocol ' + protocolVersion, { skip: process.env.TRELLIS_SAVE_STRESS_TEST !== '1', timeout: 240000 }, async t => { // CHANGE
+test('10,000 signed accepted decisions preserve current state across cold, warm and restarted reads: protocol 5', { skip: process.env.TRELLIS_SAVE_STRESS_TEST !== '1', timeout: 240000 }, async t => { // CHANGE
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-save-stress-')); // CHANGE
     t.after(() => fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })); // CHANGE
     const pair = crypto.generateKeyPairSync('ed25519'), keys = { publicKey: pair.publicKey.export({ type: 'spki', format: 'pem' }), privateKey: pair.privateKey }; // CHANGE
-    const canvas = { protocolVersion, membershipVersion: 1, shareId: 'stress', diagramId: 'diagram', folderPath: directory, diagramPath: path.join(directory, 'Garden.drawio'), coordinatorDeviceId: 'device', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'device', userId: 'admin', publicKey: keys.publicKey }] }; // CHANGE
+    const canvas = { protocolVersion: 5, membershipVersion: 1, shareId: 'stress', diagramId: 'diagram', folderPath: directory, diagramPath: path.join(directory, 'Garden.drawio'), coordinatorDeviceId: 'device', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'device', userId: 'admin', publicKey: keys.publicKey }] }; // CHANGE
     const writeAtomic = async (filename, text) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename + '.tmp', text); await fs.rename(filename + '.tmp', filename); }; // CHANGE
     const writeImmutable = async (filename, record) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename, JSON.stringify(record), { flag: 'wx' }); }; // CHANGE
     const users = JSON.stringify({ usersEnabled: true, users: [{ id: 'admin', admin: true }] }).replaceAll('"', '&quot;'); // CHANGE

@@ -56,16 +56,7 @@ app.whenReady().then(async () => { // NEW
     } // NEW
     session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_details, callback) => callback({ cancel: true })); // NEW
     responsiveness?.install(); // CHANGE: install source comparisons and main-process observers before importing production services.
-    let applicationEntry = responsiveness?.entry || path.join(project, 'src/main/electron.js'); // CHANGE
-    if (process.argv.includes('--saving-redesign') && process.env.TRELLIS_REDESIGN_PROTOCOL === '4') { // NEW: seed historical-format registrations using the same isolated-copy mechanics as responsiveness tests.
-        const main = path.join(project, 'src/main'), staged = path.join(project, '.test-artifacts/saving-redesign/legacy-application-' + process.pid, 'main'); fs.mkdirSync(staged, { recursive: true }); fs.cpSync(main, staged, { recursive: true }); // NEW
-        for (const name of fs.readdirSync(staged).filter(name => name.endsWith('.js'))) { // NEW
-            const filename = path.join(staged, name), source = fs.readFileSync(filename, 'utf8'); // NEW
-            fs.writeFileSync(filename, source.replace(/(['"])(\.\.\/\.\.\/drawio\/[^'"]+)\1/g, (_match, _quote, relative) => JSON.stringify(pathToFileURL(path.resolve(main, relative)).href))); // NEW
-        } // NEW
-        const library = path.join(staged, 'trellis-garden-library-service.js'); fs.writeFileSync(library, fs.readFileSync(library, 'utf8').replaceAll('protocolVersion: SYNC_PROTOCOL.newGarden', 'protocolVersion: SYNC_PROTOCOL.garden')); // NEW: only fixture creation chooses the historical format; edit/permission/save modules are exact copies.
-        applicationEntry = path.join(staged, 'electron.js'); fs.writeFileSync(applicationEntry, fs.readFileSync(applicationEntry, 'utf8').replace('const __dirname = path.dirname(url.fileURLToPath(import.meta.url));', 'const __dirname = ' + JSON.stringify(main) + ';').replace("'./trellis-asset-scheme.cjs'", JSON.stringify(pathToFileURL(path.join(main, 'trellis-asset-scheme.cjs')).href))); // NEW: native assets retain their production locations without replacing Electron's module loader.
-    } // NEW
+    const applicationEntry = responsiveness?.entry || path.join(project, 'src/main/electron.js'); // CHANGE
     await import(pathToFileURL(applicationEntry)); // CHANGE
     await until(async () => !!win, 'application window'); // NEW
     const run = script => win.webContents.executeJavaScript(script); // NEW

@@ -1,4 +1,4 @@
-/** Protocol 4 current-state persistence. Ordinary operations never enumerate an archive. */ // NEW
+/** Protocol 5 current-state persistence. Ordinary operations never enumerate an archive. */ // CHANGE
 import path from 'node:path'; // NEW
 import crypto from 'node:crypto'; // NEW
 import fs from 'node:fs/promises'; // NEW
@@ -110,7 +110,7 @@ function applyEvent(previous, proposal, context) { // CHANGE
             if (index.has(key)) objectVersions[key] = { version: (state.sequence || 0) + 1, hash: index.get(key).hash }; // NEW
         } // NEW
         state = { ...state, xml, attribution, objectVersions, lastEditId: proposal.id }; // CHANGE
-    } else throw new Error('Unsupported protocol 4 transaction.'); // NEW
+    } else throw new Error('Unsupported protocol 5 transaction.'); // CHANGE
     return expireState(state, proposal.at, context); // CHANGE: policy revocation ends holds at the accepted policy change, never at a later observer's clock.
 } // NEW
 
@@ -170,7 +170,8 @@ export function validateCurrentCheckpoint(saved, incoming, genesisHash, canvas) 
 /** Verify one immutable checkpoint/tail bundle using the same reducers as live acceptance. No writes or private keys. */ // NEW
 async function verifyEvidence(input, loadReference, onProgress, references) { // CHANGE
     const { canvas, incoming, deviceId } = input, protocol = canvas.protocolVersion || CURRENT_PROTOCOL; // NEW
-    const verify = (envelope, key) => { const value = envelope?.payload; if (value?.schema !== protocol || value.shareId !== canvas.shareId || value.diagramId !== canvas.diagramId || !verifyRecord(envelope, key)) throw new Error('Invalid protocol 4 scope or signature.'); return value; }; // NEW
+    if (protocol !== CURRENT_PROTOCOL) throw new Error('Unsupported garden storage protocol. Only protocol 5 is supported.'); // CHANGE
+    const verify = (envelope, key) => { const value = envelope?.payload; if (value?.schema !== protocol || value.shareId !== canvas.shareId || value.diagramId !== canvas.diagramId || !verifyRecord(envelope, key)) throw new Error('Invalid protocol 5 scope or signature.'); return value; }; // CHANGE
     const decode = raw => typeof raw === 'string' ? parseJson(raw, LIMITS.record) : raw; // NEW
     const attemptedReferences = new Set(), core = globalThis.TrellisReferenceCore; // CHANGE
     async function hydrate(xml) { // NEW
@@ -186,6 +187,8 @@ async function verifyEvidence(input, loadReference, onProgress, references) { //
             references.set(pointer.digest, core.freeze(core.validate(value))); // NEW
         } // NEW
     } // NEW
+    const total = (input.checkpoint ? 1 : 0) + input.commits.length + (input.orphan ? 1 : 0); let completed = 0; // CHANGE
+    const report = () => { try { onProgress({ phase: 'verification-progress', completed, total }); } catch (_) {} }; report(); // CHANGE
     let next = input.state; // NEW
     if (input.checkpoint) { // NEW
         const genesis = decode(input.genesis); verify(genesis, canvas.genesisCoordinatorPublicKey || canvas.coordinatorPublicKey); // NEW
@@ -193,7 +196,7 @@ async function verifyEvidence(input, loadReference, onProgress, references) { //
         const envelope = decode(input.checkpoint); // NEW
         if (digest(canonical(envelope)) !== incoming.checkpointId) throw new Error('The checkpoint failed verification.'); // NEW
         const saved = verify(envelope, canvas.coordinatorPublicKey); await hydrate(saved.state.xml); // NEW
-        next = validateCurrentCheckpoint(saved, incoming, genesis.payload.hash, canvas); // NEW
+        next = validateCurrentCheckpoint(saved, incoming, genesis.payload.hash, canvas); completed++; report(); // CHANGE
     } // NEW
     const apply = async (raw, sequence) => { // NEW
         const started = performance.now(); // NEW
@@ -205,7 +208,7 @@ async function verifyEvidence(input, loadReference, onProgress, references) { //
         const changed = applyCurrentEvent(next, { ...proposal, at: decision.acceptedAt, authoredAt: proposal.at }); // NEW
         if (digest(changed.xml) !== decision.contentHash) throw new Error('Accepted content hash mismatch.'); // NEW
         next = { ...changed, sequence, headHash: digest(canonical(envelope)) }; // NEW
-        onProgress({ phase: 'verification-commit', sequence, durationMs: performance.now() - started }); // NEW
+        onProgress({ phase: 'verification-commit', sequence, durationMs: performance.now() - started }); completed++; report(); // CHANGE
         return envelope; // NEW
     }; // NEW
     for (const raw of input.commits) await apply(raw, next.sequence + 1); // NEW
@@ -220,7 +223,7 @@ export function verifyCurrentEvidence(input, loadReference = async () => undefin
 /** Signed checkpoint plus a bounded tail is the restart boundary; archives are write-only here. */ // NEW
 export function createCurrentStateStore({ canvas, deviceId, keys, profile, writeAtomic, writeImmutable, references, now = Date.now, onTiming = () => {} }) { // CHANGE
     if (typeof profile !== 'string' || !profile) throw new Error('Private coordinator storage is required.'); // NEW
-    const CURRENT_PROTOCOL = canvas.protocolVersion || SYNC_PROTOCOL.garden; if (!SYNC_PROTOCOL.supportedGardens.includes(CURRENT_PROTOCOL)) throw new Error('Unsupported garden storage protocol.'); // CHANGE: one engine, scoped wire codecs.
+    const CURRENT_PROTOCOL = canvas.protocolVersion || SYNC_PROTOCOL.garden; if (!SYNC_PROTOCOL.supportedGardens.includes(CURRENT_PROTOCOL)) throw new Error('Unsupported garden storage protocol. Only protocol 5 is supported.'); // CHANGE: one engine, scoped wire codecs.
     const directory = path.join(canvas.folderPath, '.trellis', 'collaboration-v' + CURRENT_PROTOCOL); // CHANGE
     let state = null, head = null, checkpointDue = false, needsRecovery = false, queue = Promise.resolve(); // CHANGE
     let acceptedTailBytes = 0, checkpointBase = -1, checkpointTask = null, verificationGeneration = 0, activeGeneration = 0, controller = new AbortController(); // CHANGE
@@ -236,7 +239,7 @@ export function createCurrentStateStore({ canvas, deviceId, keys, profile, write
     const requestHash = proposal => digest(canonical(Object.fromEntries(Object.entries(proposal).filter(([key]) => !['at', 'sessionId'].includes(key))))); // CHANGE: reopening a local window may change its generated session/clock; the full signed payload and original session remain immutable in pending intent and receipts.
     const scope = payload => payload?.schema === CURRENT_PROTOCOL && payload.shareId === canvas.shareId && payload.diagramId === canvas.diagramId; // NEW
     function verify(envelope, key) { // NEW
-        if (!scope(envelope?.payload) || !verifyRecord(envelope, key)) throw new Error('Invalid protocol 4 scope or signature.'); // NEW
+        if (!scope(envelope?.payload) || !verifyRecord(envelope, key)) throw new Error('Invalid protocol 5 scope or signature.'); // CHANGE
         return envelope.payload; // NEW
     } // NEW
     /** A private signed high-water mark prevents rollback across process restarts. */ // NEW
@@ -341,9 +344,10 @@ export function createCurrentStateStore({ canvas, deviceId, keys, profile, write
     } // CHANGE
     /** Read small heads on the owner; all large evidence and domain replay are verified in a bounded worker. */ // CHANGE
     async function read(options = {}) { // CHANGE
-        const started = performance.now(), generation = verificationGeneration; let applied = 0; // CHANGE
+        const started = performance.now(), generation = verificationGeneration; let applied = 0, batch = 0; // CHANGE
         for (;;) { // CHANGE
-            assertActive(generation); // CHANGE
+            assertActive(generation); batch++; // CHANGE
+            onTiming({ phase: 'verification-progress', batch, message: batch > 1 ? 'Checking additional changes…' : 'Checking current garden state…' }); // CHANGE
             const envelope = await readJson(headFile(), LIMITS.metadata), incoming = verify(envelope, canvas.coordinatorPublicKey); // CHANGE
             if (incoming.epoch !== 'initial-' + safeId(canvas.coordinatorDeviceId)) throw new Error('The coordinator epoch has not been authorized.'); // CHANGE
             if (incoming.deviceId !== canvas.coordinatorDeviceId || !Number.isSafeInteger(incoming.sequence) || incoming.sequence < 0 || !Number.isSafeInteger(incoming.checkpointSequence) || incoming.checkpointSequence < 0 || incoming.checkpointSequence > incoming.sequence || incoming.sequence - incoming.checkpointSequence > CHECKPOINT_INTERVAL || !/^[a-f0-9]{64}$/.test(incoming.checkpointId)) throw new Error('Invalid current-state head.'); // CHANGE
@@ -358,7 +362,7 @@ export function createCurrentStateStore({ canvas, deviceId, keys, profile, write
             let result = { state, orphan: null }; // CHANGE
             if (cold || commits.length || orphan) { // CHANGE
                 const publicCanvas = structuredClone({ protocolVersion: CURRENT_PROTOCOL, shareId: canvas.shareId, diagramId: canvas.diagramId, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, genesisCoordinatorPublicKey: canvas.genesisCoordinatorPublicKey, members: canvas.members }), authority = canonical(publicCanvas), startingState = state; // CHANGE
-                result = await analyzeDocument('current-state', { canvas: publicCanvas, deviceId, publicKey: keys.publicKey, incoming, state: cold ? null : state, genesis, checkpoint: checkpointEnvelope, commits, orphan }, { signal: controller.signal, priority: options.priority, loadReference: hash => references?.readForVerification?.(hash), onProgress: onTiming }); // CHANGE
+                result = await analyzeDocument('current-state', { canvas: publicCanvas, deviceId, publicKey: keys.publicKey, incoming, state: cold ? null : state, genesis, checkpoint: checkpointEnvelope, commits, orphan }, { signal: controller.signal, priority: options.priority, loadReference: hash => references?.readForVerification?.(hash), onProgress: sample => onTiming({ ...sample, batch, ...(sample.phase === 'verification-progress' ? { message: batch > 1 ? 'Checking additional changes…' : 'Verifying garden…' } : {}) }) }); // CHANGE
                 assertActive(generation); // CHANGE
                 if (state !== startingState || authority !== canonical({ ...publicCanvas, protocolVersion: canvas.protocolVersion || SYNC_PROTOCOL.garden, shareId: canvas.shareId, diagramId: canvas.diagramId, coordinatorDeviceId: canvas.coordinatorDeviceId, coordinatorPublicKey: canvas.coordinatorPublicKey, genesisCoordinatorPublicKey: canvas.genesisCoordinatorPublicKey, members: canvas.members })) throw Object.assign(new Error('Garden authority changed during verification. Retry checking this garden.'), { code: 'STALE_VERIFICATION' }); // NEW
             } // CHANGE

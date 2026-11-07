@@ -8,14 +8,17 @@ import { canClaimCurrentActivity } from '../src/main/trellis-syncthing-service.j
 import { inspectDiagram } from '../src/main/trellis-share-protocol.js'; // NEW
 import { permissionSnapshot } from '../src/main/trellis-permission-policy.js'; // NEW
 
-test('new invitations use garden 4 and the v4 namespace; old invitations remain rejected', () => { // NEW
-    assert.equal(SYNC_PROTOCOL.garden, 4); assert.equal(SYNC_PROTOCOL.community, 2); // NEW
-    const invite = { schema: 2, protocolVersion: 4, deviceId: Array(8).fill('AAAAAAA').join('-'), shareId: 'garden', diagramId: 'diagram', folderId: 'trellis-v4-garden', inviteId: 'invite', pendingUserId: 'member', email: 'member@example.org', code: 'code', expiresAt: Date.now() + 60000, coordinatorPublicKey: 'key', filename: 'Garden.drawio' }; // NEW
-    assert.equal(parseGardenInvitation(encodeBlock('INVITE', invite)).folderId, 'trellis-v4-garden'); // NEW
-    assert.equal(parseGardenInvitation(encodeBlock('INVITE', { ...invite, protocolVersion: 5, folderId: 'trellis-v5-garden' })).protocolVersion, 5); // CHANGE: new projects use their own namespace without reclassifying legacy projects.
-    assert.throws(() => parseGardenInvitation(encodeBlock('INVITE', { ...invite, protocolVersion: 3, folderId: 'trellis-v3-garden' })), /Only version 4/); // NEW
-    assert.throws(() => parseGardenInvitation(encodeBlock('INVITE', { ...invite, folderId: 'trellis-v3-garden' })), /invalid project details/); // NEW
-}); // NEW
+test('only protocol 5 invitations and namespaces are supported', () => { // CHANGE
+    assert.equal(SYNC_PROTOCOL.garden, 5); assert.deepEqual(SYNC_PROTOCOL.supportedGardens, [5]); assert.equal(SYNC_PROTOCOL.community, 2); assert.equal('newGarden' in SYNC_PROTOCOL, false); // CHANGE
+    const invite = { schema: 2, protocolVersion: 5, deviceId: Array(8).fill('AAAAAAA').join('-'), shareId: 'garden', diagramId: 'diagram', folderId: 'trellis-v5-garden', inviteId: 'invite', pendingUserId: 'member', email: 'member@example.org', code: 'code', expiresAt: Date.now() + 60000, coordinatorPublicKey: 'key', filename: 'Garden.drawio' }; // CHANGE
+    assert.equal(SYNC_PROTOCOL.gardenFolder('garden'), 'trellis-v5-garden'); // CHANGE
+    assert.equal(parseGardenInvitation(encodeBlock('INVITE', invite)).folderId, 'trellis-v5-garden'); // CHANGE
+    for (const protocolVersion of [3, 4, 6]) { // CHANGE
+        assert.throws(() => SYNC_PROTOCOL.gardenFolder('garden', protocolVersion), /Only protocol 5/); // CHANGE
+        assert.throws(() => parseGardenInvitation(encodeBlock('INVITE', { ...invite, protocolVersion, folderId: 'trellis-v' + protocolVersion + '-garden' })), /Only protocol 5/); // CHANGE
+    } // CHANGE
+    assert.throws(() => parseGardenInvitation(encodeBlock('INVITE', { ...invite, folderId: 'trellis-v4-garden' })), /invalid project details/); // CHANGE
+}); // CHANGE
 
 test('unqualified community capability never starts transports or reads retained journals', async () => { // NEW
     const unexpected = () => { throw new Error('Retained community processing was invoked'); }; // NEW

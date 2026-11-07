@@ -58,9 +58,11 @@ export function createGardenLibraryService({ identities, legacyService, listLega
                 const localOnly = data.entry.protocolVersion === undefined || [1, 2, 3].includes(data.entry.protocolVersion); // CHANGE
                 if (!localOnly && !SYNC_PROTOCOL.supportedGardens.includes(data.entry.protocolVersion)) { // CHANGE
                     entries.delete(data.entry.diagramId); // CHANGE: a newer unsupported record cannot resurrect an older descriptor.
-                    errors?.push('Unsupported project metadata: ' + record.payload.id); continue; // CHANGE
+                    errors?.push('Unsupported project metadata: protocol ' + data.entry.protocolVersion + '. Only protocol 5 is supported; existing files and registrations are preserved.'); continue; // CHANGE
                 } // CHANGE
-                entries.set(data.entry.diagramId, localOnly ? { ...data.entry, localOnly: true } : data.entry); // CHANGE
+                const previous = entries.get(data.entry.diagramId); // CHANGE
+                const entry = localOnly ? { ...data.entry, localOnly: true } : data.entry; // CHANGE
+                entries.set(entry.diagramId, previous?.shareId === entry.shareId && previous.starterPending === false && entry.starterPending === true ? { ...entry, starterPending: false } : entry); // CHANGE: completion survives stale metadata publication.
             } catch (error) { if (!errors) throw error; errors.push('Unsupported project metadata: ' + record.payload.id); } // NEW
         }
         return [...entries.values()].filter(entry => includeLocalOnly || !entry.localOnly); // CHANGE
@@ -168,7 +170,7 @@ export function createGardenLibraryService({ identities, legacyService, listLega
             const members = summary?.members?.map(member => ({ ...member, devices: (descriptor?.members || []).filter(device => device.userId === member.userId) })); // CHANGE
             const people = projectPeople(members, session.identityId, transport?.memberConnections?.(), summary?.userCount ?? null); // CHANGE
             const { members: privateMembers, ...publicSummary } = summary || {}; // NEW
-            result.push({ ...entry, summary, people, classification, shared: classification === 'shared', starterPending: entry.starterPending === true && !summary?.gardenModuleCount, source: 'library', userCount: summary?.userCount ?? null, moduleCities: summary?.moduleCities || [], gardenModuleCount: summary?.gardenModuleCount ?? null, locationsComplete: summary?.locationsComplete === true, summaryUpdatedAt: summary?.updatedAt || null, metadataStale: stale, metadataError, distanceKm: nearestDistance(reference, summary?.moduleCities), seeds: local?.seeds ?? null, path: local?.path || null, folderPath: local?.folderPath || null, available: !!local?.available, state: local?.state || 'not-downloaded', reason: local?.reason || (!local?.available ? 'Download from another approved device.' : ''), keepOffline: !!source?.keepOffline }); // CHANGE
+            result.push({ ...entry, summary, people, classification, shared: classification === 'shared', starterPending: entry.starterPending === true, source: 'library', userCount: summary?.userCount ?? null, moduleCities: summary?.moduleCities || [], gardenModuleCount: summary?.gardenModuleCount ?? null, locationsComplete: summary?.locationsComplete === true, summaryUpdatedAt: summary?.updatedAt || null, metadataStale: stale, metadataError, distanceKm: nearestDistance(reference, summary?.moduleCities), seeds: local?.seeds ?? null, path: local?.path || null, folderPath: local?.folderPath || null, available: !!local?.available, state: local?.state || 'not-downloaded', reason: local?.reason || (!local?.available ? 'Download from another approved device.' : ''), keepOffline: !!source?.keepOffline }); // CHANGE
             result.at(-1).summary = summary ? publicSummary : null; result.at(-1).departing = !!source?.departing; // CHANGE
             Object.assign(result.at(-1), projectNaming.inspect(session.identityId, entry, local, diagram, suffixes.get(entry.diagramId))); // CHANGE
         }
@@ -177,18 +179,19 @@ export function createGardenLibraryService({ identities, legacyService, listLega
         return { ok: true, gardens: result, errors }; // CHANGE
     }
     /** Prepare a registered selected garden before the renderer reads its mutable local projection. */ // NEW
-    async function prepareOpen(input = {}) { // NEW
+    async function prepareOpen(input = {}, _callerId, observation = {}) { // NEW
         const session = identities.session(); if (!session) return { ok: true, path: input.path }; // CHANGE: standalone Browse remains available while signed out.
         const entries = await catalog(session.identityId, [], undefined, true); // NEW
         for (const legacy of [false, true]) { // NEW
             const daemon = legacy ? await legacyService() : await identities.transport(session.identityId); // NEW
             const local = (await daemon.listCanvases()).find(row => row.path && path.resolve(row.path) === path.resolve(String(input.path || ''))); // NEW
             if (!local || local.localOnly) continue; // NEW
-            if (!entries.some(entry => entry.shareId === local.shareId)) throw new Error('The garden is not in this identity library.'); // NEW
+            const entry = entries.find(item => item.shareId === local.shareId); // CHANGE
+            if (!entry) throw new Error('The garden is not in this identity library.'); // CHANGE
             await lifecycle.assertActive(session.identityId, local.diagramId); // NEW
-            const result = await daemon.prepareCanvas({ shareId: local.shareId }); // NEW
+            const result = await daemon.prepareCanvas({ shareId: local.shareId, onProgress: observation.onProgress, signal: observation.signal }); // CHANGE
             if (identities.session()?.generation !== session.generation || identities.session()?.identityId !== session.identityId) throw new Error('The active identity changed while checking this garden.'); // NEW
-            return result; // NEW
+            return { ...result, starterPending: entry.starterPending === true }; // CHANGE
         } // NEW
         return { ok: true, path: input.path }; // NEW
     } // NEW
@@ -218,7 +221,7 @@ export function createGardenLibraryService({ identities, legacyService, listLega
         else {
             daemon = await identities.transport(session.identityId);
             daemon.setContext(virtualCaller(session.identityId), { diagramPath: input.path, diagramId: input.diagramId, userId: user.id });
-            managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramPath: input.path, diagramId: input.diagramId, xml, protocolVersion: SYNC_PROTOCOL.newGarden }); // CHANGE: newly managed imports use the local-projection transport.
+            managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramPath: input.path, diagramId: input.diagramId, xml, protocolVersion: SYNC_PROTOCOL.garden }); // CHANGE: newly managed imports use the local-projection transport.
             descriptor = await daemon.libraryDescriptor(managed.shareId);
         }
         const entry = { ...descriptor, workerId: user.id, shared: !!existing, ownerIdentityId: session.identityId };
@@ -237,7 +240,7 @@ export function createGardenLibraryService({ identities, legacyService, listLega
         const daemon = await identities.transport(session.identityId);
         daemon.setContext(virtualCaller(session.identityId), { diagramId, userId: workerId });
         const namedXml = withProjectName(xml, name); // NEW
-        const managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramId, xml: namedXml, protocolVersion: SYNC_PROTOCOL.newGarden, filename: naming.filename(name) }); // CHANGE
+        const managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramId, xml: namedXml, protocolVersion: SYNC_PROTOCOL.garden, filename: naming.filename(name) }); // CHANGE
         const entry = { ...(await daemon.libraryDescriptor(managed.shareId)), name, projectName: name, workerId, shared: false, ownerIdentityId: session.identityId, starterPending: true, summary: projectSummary(namedXml, [], true) }; // CHANGE
         await publish(entry); await setLocalSource(session.identityId, diagramId, { keepOffline: true });
         return { ok: true, entry, path: managed.diagramPath };
@@ -290,7 +293,7 @@ export function createGardenLibraryService({ identities, legacyService, listLega
         const daemon = await identities.transport(session.identityId);
         daemon.setContext(virtualCaller(session.identityId), { diagramId, userId: entry.workerId });
         const copyName = naming.projectName(input.name || Array.from(local.projectName || entry.projectName || entry.name).slice(0, 115).join('') + ' copy'); // NEW
-        const managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramId, xml: withProjectName(initializeCopiedSeedInventories(document.serialize()), copyName), protocolVersion: SYNC_PROTOCOL.newGarden, assetBasePath: path.dirname(local.path), filename: naming.filename(copyName) }); // CHANGE
+        const managed = await daemon.setupCanvas(virtualCaller(session.identityId), { diagramId, xml: withProjectName(initializeCopiedSeedInventories(document.serialize()), copyName), protocolVersion: SYNC_PROTOCOL.garden, assetBasePath: path.dirname(local.path), filename: naming.filename(copyName) }); // CHANGE
         const copy = { ...(await daemon.libraryDescriptor(managed.shareId)), name: copyName, projectName: copyName, workerId: entry.workerId, shared: false, ownerIdentityId: session.identityId }; // CHANGE
         await publish(copy); await setLocalSource(session.identityId, diagramId, { keepOffline: true });
         return { ok: true, entry: copy, path: managed.diagramPath };
@@ -349,7 +352,7 @@ export function createGardenLibraryService({ identities, legacyService, listLega
         await projectNaming.reconcile(identityId, active, registries); // CHANGE: batch naming once, outside the listing path.
         if (identities.session()?.identityId === identityId) for (const entry of active) { // NEW
             const summary = summaries.get(identityId + ':' + entry.diagramId); // NEW
-            if (summary && JSON.stringify({ ...summary, updatedAt: 0 }) !== JSON.stringify({ ...entry.summary, updatedAt: 0 })) await publish({ ...entry, summary, shared: summary.classification === 'shared', starterPending: entry.starterPending === true && !summary.gardenModuleCount }); // NEW
+            if (summary && JSON.stringify({ ...summary, updatedAt: 0 }) !== JSON.stringify({ ...entry.summary, updatedAt: 0 })) await publish({ ...entry, summary, shared: summary.classification === 'shared' }); // CHANGE: summaries cannot finish starter setup.
         } // NEW
     }
     /** Internal community integration resolves only signed library entries. */ // NEW

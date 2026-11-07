@@ -247,6 +247,8 @@ contextBridge.exposeInMainWorld('trellisGardenCommunities', { // NEW
 	onStatus(listener) { const receive = () => listener(); ipcRenderer.on('trellisGardenCommunitiesStatus', receive); return () => ipcRenderer.removeListener('trellisGardenCommunitiesStatus', receive); } // NEW
 }); // NEW
 contextBridge.exposeInMainWorld('trellisGardenLibrary', {
+    onOpenProgress(listener) { const receive = (_event, value) => listener(value); ipcRenderer.on('trellisGardenOpenProgress', receive); return () => ipcRenderer.removeListener('trellisGardenOpenProgress', receive); }, // NEW
+    detachOpenProgress: requestId => ipcRenderer.send('trellisGardenOpenProgressCancel', requestId), // NEW
 	prepareOpen: payload => identityRequest('trellisGardenLibrary', 'prepareOpen', payload), // NEW: selected-garden verification retains account ownership. // NEW
     referenceTemplates: () => identityRequest('trellisGardenLibrary', 'referenceTemplates'), sendReferenceProposal: payload => identityRequest('trellisGardenLibrary', 'sendReferenceProposal', payload), // NEW
 	list: payload => identityRequest('trellisGardenLibrary', 'list', payload), // CHANGE: optional targeted read after an edit.

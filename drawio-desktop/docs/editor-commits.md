@@ -86,7 +86,7 @@ nested rollback, rendering failure, Undo/Redo, capture waiters, stale sources an
 drafts, permission rejection, blocked generation, failed compensation, independent
 defaults, retry identity and asynchronous-callback rejection. Existing scheduler,
 editor-lifecycle, domain, permission, reference and sync suites cover integration.
-Native Electron editing and protocol 4/5 saving regressions remain required;
+Native Electron editing and protocol-5 saving regressions remain required; <!-- CHANGE -->
 these tests do not qualify or enable currently gated sync capabilities.
 <!-- CHANGE -->
 

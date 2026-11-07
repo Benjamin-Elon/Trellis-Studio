@@ -1,3 +1,5 @@
+import { createReferenceSnapshots } from '../src/main/trellis-reference-snapshots.js'; // CHANGE
+import { writeImmutable } from '../src/main/trellis-syncthing-service.js'; // CHANGE
 import test from 'node:test'; // NEW
 import assert from 'node:assert/strict'; // NEW
 import fs from 'node:fs/promises'; // NEW
@@ -80,11 +82,10 @@ test('real signed saves retain seed effects across duplicate delivery and coordi
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-seed-effects-')); // NEW
     t.after(async () => { assert.equal(path.dirname(root), path.resolve(os.tmpdir())); assert.ok(path.basename(root).startsWith('trellis-seed-effects-')); await fs.rm(root, { recursive: true, force: true }); }); // NEW
     const pair = crypto.generateKeyPairSync('ed25519'), keys = { privateKey: pair.privateKey, publicKey: pair.publicKey.export({ type: 'spki', format: 'pem' }) }; // NEW
-    const canvas = { protocolVersion: 4, shareId: 'garden', diagramId: 'diagram', filename: 'Garden.drawio', folderPath: root, diagramPath: path.join(root, 'Garden.drawio'), coordinatorDeviceId: 'A', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'A', userId: 'owner', publicKey: keys.publicKey }] }; // NEW
+    const canvas = { protocolVersion: 5, shareId: 'garden', diagramId: 'diagram', filename: 'Garden.drawio', folderPath: root, diagramPath: path.join(root, 'Garden.drawio'), coordinatorDeviceId: 'A', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'A', userId: 'owner', publicKey: keys.publicKey }] }; // CHANGE
     const writeAtomic = async (filename, contents) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename + '.tmp', contents); await fs.rename(filename + '.tmp', filename); }; // NEW
-    const writeImmutable = async (filename, value) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename, JSON.stringify(value), { flag: 'wx' }); }; // NEW
     const create = () => createCollaborationStore({ canvas, keys, deviceId: 'A', profile: path.join(root, 'private'), writeAtomic, writeImmutable }); // NEW
-    const store = create(), before = diagram(), after = diagram({ completed: true }); await store.initialize(before); // NEW
+    const store = create(), references = createReferenceSnapshots({ canvas, writeImmutable }), before = (await store.initialize(diagram())).xml, after = await references.compact(diagram({ completed: true })); // CHANGE: proposals use the same compact snapshots as production protocol-5 projects.
     const request = { kind: 'save', proposalId: 'sowing-completion', baseXml: before, xml: after }; // NEW
     const result = await store.action('editor', 'worker', request); // NEW
     assert.equal(result.ok, true, result.reason); // NEW

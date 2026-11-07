@@ -89,7 +89,7 @@ export function createGardenCommunityService({ identities, library }) { // NEW
     } // NEW
     async function source(identityId, diagramId, admin = false) { // NEW
         const located = await library.communitySource(identityId, diagramId); if (!located) throw new Error('Choose a garden in your library.'); // NEW
-        if (located.entry.protocolVersion !== SYNC_PROTOCOL.garden) throw new Error('Unsupported Trellis sharing protocol. Only version 4 gardens are supported.'); // CHANGE
+        if (located.entry.protocolVersion !== SYNC_PROTOCOL.garden) throw new Error('Unsupported Trellis sharing protocol. Only protocol 5 gardens are supported.'); // CHANGE
         const daemon = await identities.transport(identityId); // NEW
         if (located.daemon !== daemon) throw new Error('Download the identity-managed garden copy before using communities.'); // NEW
         const info = await daemon.communities.garden({ shareId: located.entry.shareId, identityId }); // NEW

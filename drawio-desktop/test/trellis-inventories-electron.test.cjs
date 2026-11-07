@@ -8,3 +8,8 @@ test('desktop inventories preserve drafts and keyboard focus across editor and H
     const result = spawnSync(require('electron'), [path.join(__dirname, 'helpers/inventories-electron.cjs')], { env, windowsHide: true, encoding: 'utf8', timeout: 120000 }); // NEW
     assert.equal(result.error, undefined, result.stderr || result.stdout); assert.equal(result.status, 0, result.stderr || result.stdout); assert.match(result.stdout, /INVENTORIES_RESULT:/); // NEW
 }); // NEW
+test('Grand Exchange entry buttons match Support gold and explain unavailable states in Chromium', { timeout: 125000 }, () => { // NEW
+    const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; // NEW
+    const result = spawnSync(require('electron'), [path.join(__dirname, 'helpers/exchange-buttons-electron.cjs')], { env, windowsHide: true, encoding: 'utf8', timeout: 120000 }); // NEW
+    assert.equal(result.error, undefined, result.stderr || result.stdout); assert.equal(result.status, 0, result.stderr || result.stdout); assert.match(result.stdout, /EXCHANGE_BUTTON_RESULT:/); // NEW
+}); // NEW

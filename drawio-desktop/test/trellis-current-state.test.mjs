@@ -22,7 +22,7 @@ async function fixture(t, options = {}) { // NEW
         await fs.rm(root, { recursive: true, force: true }); // NEW
     }); // NEW
     const pair = crypto.generateKeyPairSync('ed25519'), keys = { publicKey: pair.publicKey.export({ type: 'spki', format: 'pem' }), privateKey: pair.privateKey }; // NEW
-    const canvas = { protocolVersion: 4, shareId: 'garden', diagramId: 'diagram', filename: 'Garden.drawio', folderPath: root, diagramPath: path.join(root, 'Garden.drawio'), coordinatorDeviceId: 'A', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'A', userId: 'admin', publicKey: keys.publicKey }] }; // NEW
+    const canvas = { protocolVersion: 5, shareId: 'garden', diagramId: 'diagram', filename: 'Garden.drawio', folderPath: root, diagramPath: path.join(root, 'Garden.drawio'), coordinatorDeviceId: 'A', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'A', userId: 'admin', publicKey: keys.publicKey }] }; // CHANGE
     const writeAtomic = async (filename, contents) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename + '.tmp', contents); await fs.rename(filename + '.tmp', filename); }; // NEW
     const writeImmutable = async (filename, value) => { await fs.mkdir(path.dirname(filename), { recursive: true }); await fs.writeFile(filename, JSON.stringify(value), { flag: 'wx' }); }; // NEW
     const timings = [], parameters = { canvas, keys, deviceId: 'A', profile: path.join(root, 'private'), writeAtomic, writeImmutable, onTiming: item => timings.push(item), ...options }; // NEW
@@ -31,10 +31,10 @@ async function fixture(t, options = {}) { // NEW
     return { root, canvas, keys, timings, store, create, parameters }; // NEW
 } // NEW
 
-test('save and initialization always return complete independently versioned accepted policy, including duplicate retries', async t => { // CHANGE
+test('initialization supplies full policy and protocol-5 saves supply versioned deltas with complete retry policy', async t => { // CHANGE
     const f = await fixture(t), opened = await f.store.action(1, 'admin', { kind: 'open-view', explicitRefresh: true }), first = opened.collaboration; assert.ok(first.policy); assert.ok(Number.isSafeInteger(first.policyRevision)); // CHANGE
     const get = await f.store.action(1, 'admin', { kind: 'get' }); assert.ok(get.collaboration.policy); assert.equal(get.collaboration.policyRevision, first.policyRevision); // CHANGE
-    const xml = diagram('Accepted'), input = { kind: 'save', proposalId: 'policy-save', baseXml: diagram(), xml, explicitRefresh: true }, saved = await f.store.action(1, 'admin', input); assert.equal(saved.ok, true); assert.ok(saved.collaboration.policy); assert.ok(saved.collaboration.policyRevision > first.policyRevision); // CHANGE
+    const xml = diagram('Accepted'), input = { kind: 'save', proposalId: 'policy-save', baseXml: diagram(), xml, explicitRefresh: true }, saved = await f.store.action(1, 'admin', input); assert.equal(saved.ok, true); assert.ok(saved.collaboration.policyDelta); assert.equal(saved.collaboration.policyDelta.baseHash, get.collaboration.policyHash); assert.ok(saved.collaboration.policyRevision > first.policyRevision); // CHANGE
     const retry = await f.store.action(1, 'admin', input); assert.equal(retry.duplicate, true); assert.ok(retry.collaboration.policy); assert.equal(retry.collaboration.policyRevision, saved.collaboration.policyRevision); // CHANGE
 }); // CHANGE
 test('ordinary production saves apply current transactions, preserve views, and restart without archives', async t => { // NEW
@@ -51,7 +51,7 @@ test('ordinary production saves apply current transactions, preserve views, and 
     const recoveryIndex = JSON.parse(await fs.readFile(path.join(f.parameters.profile, 'recovery', f.canvas.shareId, 'index.json'), 'utf8')); // NEW
     assert.deepEqual(recoveryIndex, [], 'Acknowledged saves do not accumulate full private staging snapshots.'); // NEW
     assert.ok(f.timings.filter(item => item.phase === 'read').every(item => item.replayCount === 0 && item.historicalRecordsRead === 0)); // NEW
-    const directory = path.join(f.root, '.trellis', 'collaboration-v4'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', 'A.json'), 'utf8')).payload; // NEW
+    const directory = path.join(f.root, '.trellis', 'collaboration-v5'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', 'A.json'), 'utf8')).payload; // CHANGE
     assert.ok(head.sequence - head.checkpointSequence <= 30); // NEW
     for (let sequence = 1; sequence <= head.checkpointSequence; sequence++) await fs.unlink(path.join(directory, 'epochs', head.epoch, String(sequence).padStart(12, '0') + '.json')); // NEW
     const restarted = f.create(); // NEW
@@ -88,10 +88,10 @@ test('checkpoint failure prevents acceptance beyond the bounded tail and permits
 }); // NEW
 
 test('signed but unauthorized follower decisions are rejected against current permissions', async t => { // NEW
-    const f = await fixture(t), directory = path.join(f.root, '.trellis', 'collaboration-v4'); // NEW
+    const f = await fixture(t), directory = path.join(f.root, '.trellis', 'collaboration-v5'); // CHANGE
     const headFile = path.join(directory, 'heads', 'A.json'), head = JSON.parse(await fs.readFile(headFile, 'utf8')).payload; // NEW
-    const claim = signRecord({ schema: 4, shareId: 'garden', diagramId: 'diagram', id: 'bad-claim', deviceId: 'A', userId: 'visitor', sessionId: 'bad-window', kind: 'claim', at: Date.now(), targets: [key] }, f.keys.privateKey); // NEW
-    const commit = signRecord({ schema: 4, shareId: 'garden', diagramId: 'diagram', kind: 'commit', epoch: head.epoch, sequence: 1, previous: head.hash, acceptedAt: claim.payload.at, proposal: claim, contentHash: digest(diagram()) }, f.keys.privateKey); // CHANGE
+    const claim = signRecord({ schema: 5, shareId: 'garden', diagramId: 'diagram', id: 'bad-claim', deviceId: 'A', userId: 'visitor', sessionId: 'bad-window', kind: 'claim', at: Date.now(), targets: [key] }, f.keys.privateKey); // CHANGE
+    const commit = signRecord({ schema: 5, shareId: 'garden', diagramId: 'diagram', kind: 'commit', epoch: head.epoch, sequence: 1, previous: head.hash, acceptedAt: claim.payload.at, proposal: claim, contentHash: digest(diagram()) }, f.keys.privateKey); // CHANGE
     await f.parameters.writeImmutable(path.join(directory, 'epochs', head.epoch, '000000000001.json'), commit); // NEW
     await f.parameters.writeAtomic(headFile, JSON.stringify(signRecord({ ...head, sequence: 1, hash: digest(canonical(commit)) }, f.keys.privateKey))); // NEW
     await assert.rejects(f.create().snapshot(), /access changed/); // NEW
@@ -119,7 +119,7 @@ test('lagging replicas load the current checkpoint without reading its archived 
     const f = await fixture(t), follower = f.create(); await follower.snapshot(); // NEW
     let xml = diagram(); // NEW
     for (let i = 0; i < 32; i++) { const next = diagram('Update-' + i); await f.store.action(1, 'admin', { kind: 'save', baseXml: xml, xml: next }); xml = next; } // CHANGE
-    const directory = path.join(f.root, '.trellis', 'collaboration-v4'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', 'A.json'), 'utf8')).payload; // NEW
+    const directory = path.join(f.root, '.trellis', 'collaboration-v5'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', 'A.json'), 'utf8')).payload; // CHANGE
     for (let sequence = 1; sequence <= head.checkpointSequence; sequence++) await fs.unlink(path.join(directory, 'epochs', head.epoch, String(sequence).padStart(12, '0') + '.json')); // NEW
     assert.equal(objects((await follower.snapshot()).xml).get(key).label, 'Update-31'); // CHANGE
 }); // NEW
@@ -136,7 +136,7 @@ test('callers cannot mutate accepted state, attribution, or active holds through
 }); // NEW
 
 test('malformed and tampered checkpoints fail without falling back to archive replay', async t => { // NEW
-    const f = await fixture(t), directory = path.join(f.root, '.trellis', 'collaboration-v4'); // NEW
+    const f = await fixture(t), directory = path.join(f.root, '.trellis', 'collaboration-v5'); // CHANGE
     const head = JSON.parse(await fs.readFile(path.join(directory, 'heads', 'A.json'), 'utf8')).payload; // NEW
     const checkpointFile = path.join(directory, 'checkpoints', head.checkpointId + '.json'); // NEW
     const original = await fs.readFile(checkpointFile, 'utf8'), checkpoint = JSON.parse(original); // NEW
@@ -150,7 +150,7 @@ test('malformed and tampered checkpoints fail without falling back to archive re
 test('a missing accepted predecessor remains retryable without advancing the projection', async t => { // NEW
     const f = await fixture(t); // NEW
     await f.store.action(1, 'admin', { kind: 'save', baseXml: diagram(), xml: diagram('Pending delivery') }); // NEW
-    const directory = path.join(f.root, '.trellis', 'collaboration-v4'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', 'A.json'), 'utf8')).payload; // NEW
+    const directory = path.join(f.root, '.trellis', 'collaboration-v5'), head = JSON.parse(await fs.readFile(path.join(directory, 'heads', 'A.json'), 'utf8')).payload; // CHANGE
     const filename = path.join(directory, 'epochs', head.epoch, '000000000001.json'), delivered = await fs.readFile(filename); // CHANGE
     await fs.rename(filename, filename + '.delayed'); // NEW
     const follower = f.create(); await assert.rejects(follower.snapshot(), /ENOENT/); // NEW
@@ -442,3 +442,20 @@ test('authorized coordinator policy changes pass while policy intent cannot auth
         assert.equal(result.ok, false, change); assert.equal(result.code, 'PERMISSION_DENIED', change); assert.equal(await fs.readFile(result.recoveryPath, 'utf8'), xml); assert.equal((await f.store.snapshot()).xml, accepted); // CHANGE
     } // CHANGE
 }); // CHANGE
+
+test('protocol 4 cannot construct a current-state store or publish any new records', async t => { // CHANGE
+    const f = await fixture(t), before = await fs.readdir(path.join(f.root, '.trellis')); // CHANGE
+    assert.throws(() => createCurrentStateStore({ ...f.parameters, canvas: { ...f.canvas, protocolVersion: 4 } }), /Only protocol 5/); // CHANGE
+    assert.deepEqual(await fs.readdir(path.join(f.root, '.trellis')), before); // CHANGE
+}); // CHANGE
+
+test('cold verification reports actual checkpoint and change totals and isolates progress failures', async t => { // NEW
+    const f = await fixture(t); // NEW
+    const result = await f.store.action(1, 'admin', { kind: 'save', baseXml: diagram(), xml: diagram('Changed') }); assert.equal(result.ok, true); // NEW
+    const progress = [], restarted = createCollaborationStore({ ...f.parameters, onTiming: value => { if (value.phase === 'verification-progress') progress.push(value); } }); // NEW
+    await restarted.snapshot(); // NEW
+    const measured = progress.filter(value => value.total > 0); // NEW
+    assert.ok(measured.length >= 3); assert.equal(measured[0].completed, 0); assert.equal(measured.at(-1).completed, measured.at(-1).total); assert.equal(measured.at(-1).total, 2); // NEW
+    const throwing = createCollaborationStore({ ...f.parameters, onTiming() { throw new Error('Observer failure'); } }); // NEW
+    assert.match((await throwing.snapshot()).xml, /Changed/); // NEW
+}); // NEW

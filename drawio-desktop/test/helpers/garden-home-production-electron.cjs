@@ -82,6 +82,10 @@ async function run() {
     const splash = await until(() => window.webContents.executeJavaScript(`(()=>{const panel=document.querySelector('.trellis-splash-login-status');return panel?.textContent==='Not logged in'?{controls:panel.textContent,afterLicense:!!panel.previousElementSibling?.matches('.trellis-license-contact-panel,.trellis-saved-license-card'),installed:!!smokeUi.__trellisGardenHome,fieldInstalled:!!smokeUi.__trellisFieldRuntime}:false;})()`), 'logged-out splash status'); // CHANGE: both existing completed-license presentations precede login status.
     assert.equal(splash.controls, 'Not logged in'); // CHANGE
     assert.equal(splash.afterLicense, true); assert.equal(splash.installed, true); assert.equal(splash.fieldInstalled, true); // CHANGE
+    if (process.env.TRELLIS_GARDEN_LOADING_TEST === '1') { // NEW
+        await require('./garden-loading-production.cjs')({ window, until, profile, output }); // NEW
+        console.log('GARDEN_LOADING_RESULT:passed'); await cleanup(0); return; // NEW
+    } // NEW
     if (process.env.TRELLIS_FILE_OPEN_TEST === '1') { // NEW: exercise native Browse and error dialogs through real desktop IPC.
         let selection = []; const originalPicker = dialog.showOpenDialog; // NEW
         dialog.showOpenDialog = async () => ({ canceled: selection.length === 0, filePaths: selection }); // NEW: only replace native file selection in this isolated profile.
@@ -388,12 +392,18 @@ async function runProjectSmoke() { // NEW
     await expression("(()=>{const panel=smokeUi.__trellisGardenHome.panel;[...panel.querySelectorAll('button')].find(b=>b.textContent==='Create identity').click();panel.querySelector('input[aria-label=Username]').value='Project Smoke';panel.querySelector('input[type=password]').value='isolated-project-smoke-password';panel.querySelector('form').requestSubmit();})()"); // NEW
     await wait("smokeUi.__trellisGardenHome.accountHost?.textContent.includes('Project Smoke')", 'library identity creation'); // NEW
     await wait("(()=>{const state=smokeUi.__trellisGardenHome,button=[...state.projectsRoot.querySelectorAll('button')].find(button=>button.textContent==='Create New Private Garden Project');return state.session&&!state.creating&&button&&!button.disabled;})()", 'private creation controls ready'); // NEW
+    async function confirmStarterSettings() { // CHANGE
+        await wait("!!smokeUi.dialog?.container.querySelector('[data-trellis-quickstart=settings-city]')", 'required starter settings'); // CHANGE
+        await expression(`(()=>{const dialog=smokeUi.dialog.container,search=dialog.querySelector('input[placeholder="Search city, country, or region"]'),units=dialog.querySelector('[data-trellis-quickstart=settings-units]');search.value='Buenos';search.dispatchEvent(new Event('input'));search.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));units.value='metric';units.dispatchEvent(new Event('change',{bubbles:true}));dialog.querySelector('[data-trellis-quickstart=settings-save]').click();})()`); // CHANGE
+    } // CHANGE
     await expression("(()=>{const root=smokeUi.__trellisGardenHome.projectsRoot;[...root.querySelectorAll('button')].find(b=>b.textContent==='Create New Private Garden Project').click();root.querySelector('input[aria-label=\"Project name\"]').value='Private starter fixture';root.querySelector('form').requestSubmit();})()"); // NEW
+    await confirmStarterSettings(); // CHANGE
     await wait("(()=>{const error=document.querySelector('.trellis-home-open');if(error)throw new Error(error.textContent);const graph=smokeUi.editor.graph;return !smokeUi.__trellisGardenHome.creating&&Object.values(graph.model.cells).some(cell=>cell.value?.getAttribute?.('garden_module')==='1');})()", 'private starter creation'); // NEW
     const starter = await expression("(()=>{const cells=Object.values(smokeUi.editor.graph.model.cells);return ['garden_module','team_module','task_module','roadmap_module'].map(flag=>cells.filter(cell=>cell.value?.getAttribute?.(flag)==='1').length);})()"); // NEW
     assert.deepEqual(starter, [1, 1, 1, 1]); // NEW
-    await expression("(async()=>{await new Promise((resolve,reject)=>smokeUi.getCurrentFile().save(false,resolve,reject));TrellisGardenHome.showProjects(smokeUi,{focus:'create'});})()"); // NEW
-    await wait("document.querySelector('.trellis-projects-root')?.textContent.includes('Private starter fixture')", 'private project listing'); // NEW
+    await expression("TrellisGardenHome.showProjects(smokeUi,{focus:'create'})"); // CHANGE: the confirmed settings already saved the project.
+    await expression("smokeUi.__trellisGardenHome.projectLoadHeaders.private.reload.click()"); // CHANGE: refresh the library snapshot after the starter save.
+    await wait("smokeUi.__trellisGardenHome.privateRows?.textContent.includes('Move to Trash…')", 'private project listing'); // CHANGE
     await capture('projects-private.png'); // CHANGE // NEW
     assert.equal(await expression("smokeUi.__trellisGardenHome.projectsRoot.textContent.includes('Remove from this device') || smokeUi.__trellisGardenHome.projectsRoot.textContent.includes('Keep available offline')"), false); // NEW
     assert.equal(await expression("[...smokeUi.__trellisGardenHome.projectsRoot.querySelectorAll('button')].every(button=>button.classList.contains('trellis-button'))"), true); // CHANGE
@@ -424,7 +434,8 @@ async function runProjectSmoke() { // NEW
     await wait("smokeUi.__trellisGardenHome.privateRows.textContent.includes('Private starter fixture')", 'restored project in active list'); // NEW
     await wait("(()=>{const state=smokeUi.__trellisGardenHome,button=[...state.projectsRoot.querySelectorAll('button')].find(button=>button.textContent==='Create Garden Community');return state.session&&!state.creating&&button&&!button.disabled;})()", 'community creation controls ready'); // CHANGE
     await expression("(()=>{const root=smokeUi.__trellisGardenHome.projectsRoot;[...root.querySelectorAll('button')].find(b=>b.textContent==='Create Garden Community').click();root.querySelector('input[aria-label=\"Community name\"]').value='Fixture neighborhood';const select=root.querySelector('select[aria-label=\"Garden project\"]');select.value='__new';select.dispatchEvent(new Event('change'));root.querySelector('input[aria-label=\"New garden name\"]').value='Shared starter fixture';root.querySelector('.trellis-project-action form').requestSubmit();})()"); // CHANGE
-    await wait("(()=>{const state=smokeUi.__trellisGardenHome,error=document.querySelector('.trellis-project-action form [aria-live]')?.textContent||document.querySelector('.trellis-home-open')?.textContent;if(error)throw new Error(error);return state.communities?.some(c=>c.name==='Fixture neighborhood')&&!state.actionPanel?.isConnected;})()", 'community first garden creation'); // CHANGE: wait for the submitted form to close before opening another modal.
+    await confirmStarterSettings(); // CHANGE
+    await wait("(()=>{const state=smokeUi.__trellisGardenHome,error=state.communityNotice||document.querySelector('.trellis-project-action form [aria-live]')?.textContent||document.querySelector('.trellis-home-open')?.textContent;if(error)throw new Error(error);return state.communities?.some(c=>c.name==='Fixture neighborhood')&&!state.actionPanel?.isConnected;})()", 'community first garden creation'); // CHANGE: surface errors retained after setup replaced the original form.
     await expression("smokeUi.hideDialog();Promise.resolve(smokeUi.actions.get('trellisShareGardenProject').funct())"); // NEW: community creation keeps the existing explicit invitation action available.
     await wait("(()=>{const error=document.querySelector('.trellis-home-open');if(error)throw new Error(error.textContent);return !!document.querySelector('input[placeholder=\"Recipient email\"]');})()", 'existing invitation handoff'); // NEW
     await capture('projects-invite.png'); // CHANGE // NEW

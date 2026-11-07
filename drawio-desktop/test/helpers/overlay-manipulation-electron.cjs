@@ -11,7 +11,7 @@ app.whenReady().then(async () => { // NEW
     const win = new BrowserWindow({ show: false, width: 1200, height: 900, webPreferences: { sandbox: false, backgroundThrottling: false } }); // NEW
     try { // NEW
         await win.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><body style="margin:0"><button id="fixed">Toolbar</button><div id="graph" style="position:absolute;left:120px;top:40px;width:1050px;height:800px;overflow:auto"></div></body>')); // NEW
-        const run = script => win.webContents.executeJavaScript(script); // NEW
+        const run = script => win.webContents.executeJavaScript(script).catch(error => { throw new Error(error.message + '\nRenderer script:\n' + script, { cause: error }); }); // CHANGE: surface the failing browser step when a native regression fails.
         await run('window.mxLoadResources=false;window.mxLoadStylesheets=false;'); // NEW
         await run(fs.readFileSync(path.join(webapp, 'mxgraph/mxClient.js'), 'utf8')); // NEW
         const cleanup = fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js'), 'utf8'); // NEW
@@ -76,7 +76,40 @@ app.whenReady().then(async () => { // NEW
         assert.equal(await run('display(panel)'), 'none'); assert.notEqual(await run('display(source.previewElement)'), 'none'); // NEW
         await run('source.dragExit(graph);source.currentGraph=null;frames()'); assert.equal(await run('display(panel)'), 'flex'); // NEW
         await run('source.dragEnter(graph,new MouseEvent("mousemove"));source.currentGraph=graph;source.reset();frames()'); assert.equal(await run('display(panel)'), 'flex'); // NEW
-        console.log('Chromium overlay visibility, hit-testing, native move/handle/resize/rotation/library and restoration checks passed'); // NEW
+        // A planting frame may own the native event while click-through selection resolves its gap to the bed. // NEW
+        await run(` // NEW
+            graph.clearSelection();graph.removeCells([garden]);panel.remove();annotation.destroy(); // NEW
+            window.garden=graph.insertVertex(null,'occupied-garden',xml({garden_module:'1',label:'Garden'}),20,20,950,700,'swimlane;module=1;'); // NEW: action controls require a real garden module ancestor.
+            window.bed=graph.insertVertex(garden,'occupied-bed',xml({garden_bed:'1',label:'Occupied bed'}),240,200,320,200); // NEW
+            window.crop=graph.insertVertex(garden,'occupied-crop',xml({tiler_group:'1',label:'Carrots',bed_auto_fit:'0'}),240,200,320,200,'shape=rectangle;fillColor=none;strokeColor=#000000;dashed=1;verticalAlign=top;'); // NEW
+            window.plant=graph.insertVertex(crop,'occupied-plant',xml({plant_tiler:'1',label:'C'}),280,80,30,30,'ellipse;fillColor=#f49a34;'); // NEW: keep direct plant clicks clear of the gap-anchored action toolbar.
+            window.bedClickTrace=[];graph.addListener(mxEvent.FIRE_MOUSE_EVENT,(_sender,event)=>{ // NEW
+                if(event.getProperty('eventName')!==mxEvent.MOUSE_DOWN)return; // NEW
+                const me=event.getProperty('event'),point=mxUtils.convertPoint(graph.container,me.getX(),me.getY()); // NEW
+                bedClickTrace.push({raw:me.getCell()?.id,hit:graph.getCellAt(point.x,point.y)?.id}); // NEW
+            }); // NEW
+            void 0; // NEW
+        `); // NEW
+        for (const scale of [1, 1.25]) { // NEW
+            await run(`graph.clearSelection();graph.view.setScale(${scale});graph.view.setTranslate(17,23);graph.view.validate();graph.container.scrollLeft=35;graph.container.scrollTop=20;frames();`); // NEW
+            const gap = await run(`(()=>{const state=graph.view.getState(crop),rect=graph.container.getBoundingClientRect();const x=Math.round(rect.left-graph.container.scrollLeft+state.x+30*graph.view.scale),y=Math.round(rect.top-graph.container.scrollTop+state.y+60*graph.view.scale);return {x,y,frameHit:state.shape.node.contains(document.elementFromPoint(x,y))};})()`); // NEW
+            assert.equal(gap.frameHit, true, 'native hit must belong to the transparent planting frame'); // NEW
+            const before = await run('mxUtils.getXml(new mxCodec().encode(graph.model))'); // NEW
+            for (const visible of [true, false, true]) { // NEW: initial selection, dismissal, then reopening.
+                mouse('mouseDown', gap.x, gap.y); // NEW
+                if (!visible) assert.equal(await run('document.querySelectorAll(".trellis-bed-conditions-overlay").length'), 1, 'press retains conditions'); // NEW
+                mouse('mouseUp', gap.x, gap.y); await run('frames()'); // NEW
+                const actual = await run(`({selected:graph.getSelectionCells().map(cell=>cell.id),conditions:document.querySelectorAll('.trellis-bed-conditions-overlay').length,actions:document.querySelector('.trellis-garden-module-label-controls')?.parentNode.style.display ?? null,hidden:graph.__plantTilerIsBedOverlayHidden(bed),trace:bedClickTrace.at(-1)})`); // NEW
+                assert.deepEqual(actual, { selected: ['occupied-bed'], conditions: visible ? 1 : 0, actions: visible ? 'flex' : 'none', hidden: !visible, trace: { raw: 'occupied-crop', hit: 'occupied-bed' } }); // NEW
+            } // NEW
+            assert.equal(await run('mxUtils.getXml(new mxCodec().encode(graph.model))'), before, 'native toggles preserve diagram data'); // NEW
+            const circle = await run(`(()=>{const state=graph.view.getState(plant),rect=graph.container.getBoundingClientRect();const x=Math.round(rect.left-graph.container.scrollLeft+state.getCenterX()),y=Math.round(rect.top-graph.container.scrollTop+state.getCenterY()),target=document.elementFromPoint(x,y);return {x,y,plantHit:state.shape.node.contains(target)||!!state.text?.node.contains(target),target:target?.outerHTML.slice(0,600)};})()`); // NEW
+            assert.equal(circle.plantHit, true, 'native plant click must reach its circle or label: ' + JSON.stringify(circle)); // NEW
+            mouse('mouseDown', circle.x, circle.y); mouse('mouseUp', circle.x, circle.y); await run('frames()'); // NEW
+            assert.deepEqual(await run('graph.getSelectionCells().map(cell=>cell.id)'), ['occupied-crop'], 'plant clicks retain group selection'); // NEW
+            assert.equal(await run('graph.__plantTilerIsBedOverlayHidden(bed)'), false); // NEW
+        } // NEW
+        console.log('Chromium overlay visibility, hit-testing, native move/handle/resize/rotation/library, occupied-bed toggling and restoration checks passed'); // CHANGE
     } finally { win.destroy(); } // NEW
     app.quit(); // NEW
 }).catch(error => { console.error(error.stack || error); app.exit(1); }); // NEW

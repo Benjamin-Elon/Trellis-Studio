@@ -93,6 +93,7 @@ Draw.loadPlugin(function (ui) {
     function renderSaveStatus(current) { // NEW
         if (file() !== current || backgroundFile !== current || !background || window.__trellisClosing) return; // NEW
         const timing = background.getSaveStatus(), batch = current.__trellisSaveBatch, stage = current.__trellisSaveStage; // NEW
+        if (current.__trellisStarterSetup && !batch) { setSaveStatus(current, ''); return; } // CHANGE: setup edits have no autosave countdown.
         if (timing.state === 'saving' || current.__trellisCollaborativeSaving || batch?.capturedRevision != null && stage === 'saving garden') return; // NEW: finish displaying an active capture before counting down newer edits.
         if (!current.isModified()) { setSaveStatus(current, ''); return; } // NEW
         if (!coordinationAvailable()) { setSaveStatus(current, lastStatus?.editingAvailability?.reason || info?.editingAvailability?.reason || 'Waiting for saving to become available…'); return; } // NEW
@@ -334,7 +335,7 @@ Draw.loadPlugin(function (ui) {
                 const applied = await coordinate({ kind: 'draft-resolve', baseXml, xml, token: result.review.token, groups, mode, editorDrafts: holdEditors?.capture(['*']) || [] }); // NEW
                 if (!applied?.ok) { message.textContent = applied?.reason || 'Resolution failed. Your draft is retained.'; return; } // NEW
                 if (file() !== current || generation !== contextGeneration || revision !== modelRevision) { message.textContent = 'The document changed. Reopen the review; the original draft remains preserved.'; return; } // NEW
-                applyDraftResolution(applied.resolution, current); await background?.checkpoint(true); overlay.__submitting = false; closeDialog(); conflictDialog = null; // CHANGE
+                applyDraftResolution(applied.resolution, current); notifyManagedSave(current, generation, context().userId); await background?.checkpoint(true); overlay.__submitting = false; closeDialog(); conflictDialog = null; // CHANGE
             } catch (error) { message.textContent = error.message; } // NEW
             finally { submitting = false; overlay.__submitting = false; for (const control of root.querySelectorAll('button,input')) control.disabled = false; updatePartial(); } // CHANGE
         }; // NEW
@@ -398,11 +399,30 @@ Draw.loadPlugin(function (ui) {
         await bridge.setContext(context());
     }
     let documentReady = null, classifiedFile = null; // NEW: one readiness result belongs to one document, actor and generation.
+    const openingWaiters = new Set(); // NEW
+    /** Opening accepts a classified read-only/login state; starter initialization remains authenticated. */ // NEW
+    function settleOpeningReady(error) { // NEW
+        for (const entry of openingWaiters) { // NEW
+            const stale = file() !== entry.file || contextGeneration !== entry.generation || context().userId !== entry.actor; // NEW
+            if (!error && !stale && (classifiedFile !== entry.file || entry.actor && isCollaborative() && (!graph.__trellisSharedPolicy || explicitMode && viewIdentity !== entry.actor))) continue; // NEW
+            openingWaiters.delete(entry); // NEW
+            if (error || stale) entry.reject(error || new Error('The user or document changed during opening.')); else entry.resolve(); // NEW
+        } // NEW
+    } // NEW
+    async function whenOpenReady() { // NEW
+        const current = file(); await users()?.whenLoginRestored?.(); // NEW
+        if (file() !== current) throw new Error('The garden changed during opening.'); // NEW
+        return new Promise((resolve, reject) => { // NEW
+            const entry = { file: current, generation: contextGeneration, actor: context().userId, resolve, reject }; openingWaiters.add(entry); // NEW
+            settleOpeningReady(); if (openingWaiters.has(entry)) void refresh(); // NEW
+        }); // NEW
+    } // NEW
     function invalidateDocumentReady() { // NEW: obsolete waiters fail immediately, even if their old request never returns.
         if (documentReady && !documentReady.settled) { documentReady.settled = true; documentReady.reject(new Error('The user or document changed during initialization.')); } // NEW
-        documentReady = null; // NEW
+        documentReady = null; settleOpeningReady(); // CHANGE
     } // NEW
     function settleDocumentReady(error) { // NEW
+        settleOpeningReady(error); // NEW: completion is independent of stricter starter authentication and history import.
         const entry = documentReady; if (!entry || entry.settled || entry.actor === null) return; // NEW
         if (file() !== entry.file || contextGeneration !== entry.generation || context().userId !== entry.actor) error = new Error('The user or document changed during initialization.'); // NEW
         if (!error && info?.managed && !entry.actor) error = new Error('Log in before initializing this garden project.'); // NEW
@@ -441,7 +461,7 @@ Draw.loadPlugin(function (ui) {
             if (!entry) { info = null; lastStatus = null; classifiedFile = openedFile; settleDocumentReady(); announce(); return; } // CHANGE
             const nextInfo = await bridge.getSyncthingShareInfo({ diagramPath: current.diagramPath }); // CHANGE
             if (file() !== openedFile || generation !== contextGeneration) return; // CHANGE
-            const assetContextChanged = info?.assetBaseUrl !== nextInfo.assetBaseUrl; info = nextInfo; graph.__trellisProjectFormat = info.projectFormat || (info.protocolVersion === 5 ? 2 : 1); window.TrellisContentPolicy?.setAssetBase(info?.assetBaseUrl); // CHANGE
+            const assetContextChanged = info?.assetBaseUrl !== nextInfo.assetBaseUrl; info = nextInfo; graph.__trellisProjectFormat = info.managed ? 2 : 1; window.TrellisContentPolicy?.setAssetBase(info?.assetBaseUrl); // CHANGE
             if (assetContextChanged) refreshManagedImages(); // CHANGE: unchanged context must not refresh the complete graph.
             lastStatus = entry; classifiedFile = openedFile; // CHANGE
             assetAvailability = entry.state; // CHANGE
@@ -537,7 +557,7 @@ Draw.loadPlugin(function (ui) {
         if (current.fileObject && current.fileObject.path) await saveCurrent();
         else current.data = ui.getFileData();
         await synchronizeContext();
-        result = await bridge.setupCanvas({ ...context(), protocolVersion: protocol.newGarden, filename: current.getTitle && current.getTitle() || 'Garden.drawio', xml: current.getData() }); // CHANGE: creating managed storage chooses format 2; opening existing registrations preserves their format.
+        result = await bridge.setupCanvas({ ...context(), protocolVersion: protocol.garden, filename: current.getTitle && current.getTitle() || 'Garden.drawio', xml: current.getData() }); // CHANGE: managed storage always uses protocol 5 and format 2.
         await adoptCanvas(result);
         return result;
     }
@@ -616,10 +636,15 @@ Draw.loadPlugin(function (ui) {
         current.__trellisSharingHooks = true;
         const originalSave = current.save;
         const originalAutosave = current.isAutosave, originalOptional = current.isAutosaveOptional; // NEW
-        current.isAutosave = function () { return file() === current && isCollaborative() ? !!current.fileObject && coordinationAvailable() && !lastStatus?.pending && !['revoked', 'awaitingApproval'].includes(lastStatus?.state) : originalAutosave ? originalAutosave.apply(this, arguments) : false; }; // NEW
+        current.isAutosave = function () { return !this.__trellisStarterSetup && (file() === current && isCollaborative() ? !!current.fileObject && coordinationAvailable() && !lastStatus?.pending && !['revoked', 'awaitingApproval'].includes(lastStatus?.state) : originalAutosave ? originalAutosave.apply(this, arguments) : false); }; // CHANGE
         current.isAutosaveOptional = function () { return file() === current && isCollaborative() ? false : originalOptional ? originalOptional.apply(this, arguments) : true; }; // NEW
         current.save = function () {
             const automatic = !!current.__trellisAutomaticRequest; delete current.__trellisAutomaticRequest; // NEW
+            const starter = current.__trellisStarterSetup; // CHANGE
+            if (starter && (arguments[7] !== starter || !starter.isCurrent?.())) { // CHANGE: only the confirmed starter can enter the managed save queue.
+                if (typeof arguments[2] === 'function') arguments[2]({ message: 'Finish Garden Settings before saving this project.' }); // CHANGE
+                return; // CHANGE
+            } // CHANGE
             if (current.__trellisNamingMove) { const args = arguments; current.__trellisNamingMove.then(() => { current.__trellisAutomaticRequest = automatic; current.save.apply(current, args); }); return; } // CHANGE: retain request intent through native naming waits.
             if (file() === current && refreshing) { const args = arguments; refreshFinished.then(() => { current.__trellisAutomaticRequest = automatic; current.save.apply(current, args); }); return; } // CHANGE: retain request intent while managed status is unresolved.
             if (file() === current && isCollaborative()) { saveCollaborative(current, arguments[1], arguments[2], automatic); return; } // CHANGE
@@ -1117,6 +1142,7 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
     async function releaseHolds(targets, options = {}) { // CHANGE
         const current = file(), shareId = info?.shareId, generation = contextGeneration, actor = context().userId; // CHANGE
+        if (options.automatic && !options.persisted && current?.__trellisStarterSetup && current.isModified()) return; // CHANGE: retain claims on the unsaved cluster until its confirmed save.
         const originalClaims = options.claims || new Map((collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId).map(hold => [hold.key, hold.claimId])); // CHANGE: completion carries the originating claim, never a newer replacement. // CHANGE
         if (!options.automatic && graph.isEditing?.()) { // CHANGE: a delayed automatic release must never commit a reopened label editor.
             stoppingForSave = true; // NEW
@@ -1226,7 +1252,7 @@ Draw.loadPlugin(function (ui) {
                         for (const [key, fingerprint] of capturedObjects) if (!result.resolution.remaining?.includes(key)) { if (fingerprint == null) savedObjects.delete(key); else savedObjects.set(key, fingerprint); } // CHANGE
                         current.setModified(true); current.__trellisConflict = result.resolution.remaining?.length ? result.resolution.review : null; background?.state(current.__trellisConflict ? 'conflict' : 'pending'); // CHANGE
                     } // CHANGE
-                    return new Promise((resolve, reject) => current.fileSaved(result.resolution.baseXml, null, resolve, reject)); // NEW
+                    return new Promise((resolve, reject) => current.fileSaved(result.resolution.baseXml, null, () => { notifyManagedSave(current, generation, saveUser); resolve(); }, reject)); // CHANGE
                 } // NEW
                 current.stat = stat; current.data = explicitMode ? captured : result.xml; // CHANGE
                 for (const [key, fingerprint] of capturedObjects) { if (fingerprint === null) savedObjects.delete(key); else savedObjects.set(key, fingerprint); dirtyObjects.add(key); } current.__trellisConflict = null; // CHANGE: deleted objects have an absent baseline; completed deletions do not accumulate in renderer bookkeeping.
@@ -1236,7 +1262,7 @@ Draw.loadPlugin(function (ui) {
                 else if (unchanged()) { collaborationBaseline = result.xml; if (captured !== result.xml) applyRemote(result.xml, current, current.stat); else { current.setModified(false); observedXml = captured; } } // CHANGE
                 else if (current.patch && ui.diffPages && ui.getPagesForXml && ui.pages?.length) applyRemote(result.xml, current, current.stat, captured); // NEW: apply only differences returned by the captured save, leaving subsequent local changes intact.
                 else { collaborationBaseline = captured; current.setModified(true); } // NEW: compatibility fallback keeps the captured object bases so unseen peer changes cannot be mistaken for local reversions.
-                return new Promise((resolve, reject) => current.fileSaved(explicitMode ? captured : result.xml, null, () => { current.contentChanged?.(); if (background && file() === current && generation === contextGeneration) pendingObjects(); finishGardenCreations(capturedCreations, current, generation, saveUser); void releaseSavedHolds(releaseCandidates, current, generation, saveUser).catch(error => status('Changes saved; releasing editing activity failed: ' + error.message)); background?.state(current.isModified() ? 'pending' : 'saved'); void background?.checkpoint(true).catch(error => status('Recovery checkpoint failed: ' + error.message)); timings({ operationId: batch.id, phase: 'save native completion', durationMs: window.performance.now() - nativeStarted }); resolve(); }, err => { background?.state('failed'); reject(err); })); // CHANGE: reconcile the captured objects before retiring their creation summary, avoiding a completion-time badge flash.
+                return new Promise((resolve, reject) => current.fileSaved(explicitMode ? captured : result.xml, null, () => { current.contentChanged?.(); if (background && file() === current && generation === contextGeneration) pendingObjects(); finishGardenCreations(capturedCreations, current, generation, saveUser); void releaseSavedHolds(releaseCandidates, current, generation, saveUser).catch(error => status('Changes saved; releasing editing activity failed: ' + error.message)); background?.state(current.isModified() ? 'pending' : 'saved'); void background?.checkpoint(true).catch(error => status('Recovery checkpoint failed: ' + error.message)); timings({ operationId: batch.id, phase: 'save native completion', durationMs: window.performance.now() - nativeStarted }); notifyManagedSave(current, generation, saveUser); resolve(); }, err => { background?.state('failed'); reject(err); })); // CHANGE: reconcile the captured objects before retiring their creation summary, avoiding a completion-time badge flash.
             }; // NEW
             const slowTimer = window.setInterval(() => { // NEW
                 if (file() === current && batch.generation === contextGeneration && batch.stage !== 'waiting for an editing pause' && window.performance.now() - started >= 5000) { const stage = batch.stage === 'queued' && batch.blockedBy ? 'queued behind save #' + batch.blockedBy.id + ' (' + batch.blockedBy.stage + ')' : batch.stage; setSaveStatus(current, 'Still working: ' + (stage || 'saving garden') + ' (' + Math.floor((window.performance.now() - started) / 1000) + ' seconds).'); } // CHANGE: report the actual blocking operation while preserving unrelated warnings.
@@ -1523,12 +1549,45 @@ Draw.loadPlugin(function (ui) {
         graph.addListener('editingStopped', () => { const wasEditing = editingLabel; editingLabel = false; if (!wasEditing || stoppingForSave || !isCollaborative()) return; labelEditorRegistration?.complete?.(); labelEditorRegistration?.dispose(); labelEditorRegistration = null; labelClaim.then(() => { const pinned = holdEditors?.pinnedTargets() || [], targets = (collaboration?.holds || []).filter(hold => hold.sessionId === localSessionId && !pinned.includes(hold.key)).map(hold => hold.key); if (targets.length) return releaseHolds(targets, { automatic: true }); }).catch(err => status(err.message)); }); // CHANGE
     } // NEW
     window.Trellis = window.Trellis || {};
+    function commentSaveContext() { // NEW: bind pending comment commands to a single managed file and user generation.
+        return isCollaborative() ? JSON.stringify([contextGeneration, info.shareId, context().userId]) : null; // NEW
+    } // NEW
+
+    let discussionXml, discussionDocument; const discussionPages = new Map(); // NEW: decode a saved page only when a comment command needs its baseline.
+    function savedDiscussion(pageId, objectId) { // NEW
+        if (!isCollaborative() || !collaborationBaseline || explicitMode && viewIdentity !== context().userId) return undefined; // NEW
+        if (discussionXml !== collaborationBaseline) { // NEW
+            const parsed = window.mxUtils.parseXml(collaborationBaseline); // NEW
+            if (parsed.getElementsByTagName('parsererror').length || !['mxfile', 'mxGraphModel'].includes(parsed.documentElement?.nodeName)) throw new Error('The saved discussion could not be read.'); // NEW
+            discussionXml = collaborationBaseline; discussionDocument = parsed.documentElement; discussionPages.clear(); // NEW
+        } // NEW
+        if (!discussionPages.has(pageId)) { // NEW
+            const standalone = discussionDocument.nodeName === 'mxGraphModel'; // NEW
+            const page = standalone ? null : [...discussionDocument.getElementsByTagName('diagram')].find(node => node.getAttribute('id') === pageId); // NEW
+            const model = standalone ? discussionDocument : page && window.Editor.parseDiagramNode(page, true); // NEW
+            const modelRoot = model?.getElementsByTagName('root')[0]; // NEW
+            if ((standalone || page) && !modelRoot) throw new Error('The saved discussion page could not be read.'); // NEW
+            const objects = new Map(); // NEW
+            for (const node of Array.from(modelRoot?.children || [])) { // NEW
+                const id = node.getAttribute('id') || node.getElementsByTagName('mxCell')[0]?.getAttribute('id'); // NEW
+                if (id) objects.set(id, node.getAttribute('trellis_comments_json') || ''); // NEW
+            } // NEW
+            discussionPages.set(pageId, objects); // NEW
+        } // NEW
+        return discussionPages.get(pageId).get(String(objectId)) ?? null; // NEW: an absent object is distinct from a saved object without comments.
+    } // NEW
+
+    function notifyManagedSave(current, generation, actor) { // NEW
+        if (file() === current && generation === contextGeneration && actor === context().userId) graph.fireEvent?.(new mxEventObject('trellisManagedSaveCompleted')); // NEW
+    } // NEW
+
     /** Explicit forms keep their private drafts until the existing claim and collaborative save have both settled. */ // CHANGE
     async function settleObjectEdits(options = {}) { // CHANGE
-        if (!isCollaborative()) return; const current = file(); // CHANGE
+        if (!isCollaborative()) return; const current = file(), originalContext = commentSaveContext(); // CHANGE
         await acquisitionPromise; // CHANGE
-        if (file() !== current) throw new Error('The diagram changed before the comment was accepted.'); // CHANGE
+        if (file() !== current || commentSaveContext() !== originalContext) throw new Error('The diagram or user changed before the edit was saved.'); // CHANGE
         await saveCurrent(options); // CHANGE: object commands may use the automatic quiet queue.
+        if (file() !== current || commentSaveContext() !== originalContext) throw new Error('The diagram or user changed while saving the edit.'); // NEW
         if (options.release) await releaseUnpinnedHolds(); // CHANGE: command cleanup must not release an active planner's hold.
     } // CHANGE
     /** Hand off completed edits while retaining holds pinned by an active editor. */ // NEW
@@ -1550,7 +1609,7 @@ Draw.loadPlugin(function (ui) {
         for (const editor of holdEditors?.recoveryEditors(['*']) || []) editor.setActions([{ id: 'saved-version', label: 'Open latest saved version', destructive: true, run: openLatestSavedVersion }, { id: 'copy', label: 'Copy entries', run: () => copyEditorEntries(editor) }], 'Discards all unsaved work in this window.'); // CHANGE
         void preserve(); status(reason, () => showSavingRecovery(reason)); // CHANGE
     } // CHANGE
-    window.Trellis.sharing = { retainFailedCommit, showBlockedEdit, openLatestSavedVersion, resolveEditorCell, ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, context, describeStatus, settleObjectEdits, registerEditor: registerSharingEditor, rejectOperation: (edit, reason) => undoRejected(edit, reason), releaseRemovedCreations, registerObjectForm: config => holdEditors?.registerForm(config), whenEditingReady: async () => { const current = file(), generation = contextGeneration, actor = context().userId; await acquisitionPromise; if (current !== file() || generation !== contextGeneration || actor !== context().userId) throw new Error('The editing context changed before the operation could begin.'); }, transitionEditor: operation => holdEditors ? holdEditors.transition(operation) : Promise.resolve(operation()), activeEditorTargets: () => holdEditors?.activeTargets() || [], getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE: registered editors retain their API and report draft disposal to creation-badge presentation.
+    window.Trellis.sharing = { retainFailedCommit, showBlockedEdit, openLatestSavedVersion, resolveEditorCell, ensureManaged, prepareInvite, validateInvite, showJoinDialog, showSharingDialog, refresh, whenDocumentReady, whenOpenReady, context, describeStatus, settleObjectEdits, registerEditor: registerSharingEditor, rejectOperation: (edit, reason) => undoRejected(edit, reason), releaseRemovedCreations, registerObjectForm: config => holdEditors?.registerForm(config), whenEditingReady: async () => { const current = file(), generation = contextGeneration, actor = context().userId; await acquisitionPromise; if (current !== file() || generation !== contextGeneration || actor !== context().userId) throw new Error('The editing context changed before the operation could begin.'); }, transitionEditor: operation => holdEditors ? holdEditors.transition(operation) : Promise.resolve(operation()), activeEditorTargets: () => holdEditors?.activeTargets() || [], getStatus: () => lastStatus, getInfo: () => info, isApplyingRemote: () => !!graph.__trellisSharingApplying, isExplicitRefresh: () => explicitMode && isCollaborative(), isPendingCell, permissionChanges: () => unsavedActions.filter(action => !action.edit.__trellisUsersRejected && !action.edit.undone).flatMap(action => action.edit.changes || []), whenHistoryPublished: () => savedQueue, historyXml: async () => (await coordinate({ kind: 'history-state' }))?.xml, getPendingChanges: () => incoming?.getGroups() || [] }; // CHANGE: registered editors retain their API and report draft disposal to creation-badge presentation.
     /** Blocked operations retain their fields and expose existing activity/access commands in place. */ // CHANGE
     function showBlockedEdit(error, element) { // CHANGE
         const current = file(), generation = contextGeneration, actor = context().userId; // CHANGE
@@ -1789,6 +1848,7 @@ Draw.loadPlugin(function (ui) {
         const activeTargets = new Set(holdEditors?.activeTargets() || []); // CHANGE
         return (collaboration?.holds || []).map(hold => ({ ...hold, local: hold.sessionId === localSessionId, active: !!(hold.sessionId === localSessionId && (activeTargets.has(hold.key) || editingForm?.isConnected && formTargets.includes(hold.key))) })); // CHANGE: remote holds remain protected independently of their active flag.
     }; // CHANGE
+    Object.assign(window.Trellis.sharing, { commentSaveContext, savedDiscussion }); // NEW: renderer-only comment acknowledgement uses the existing saved view.
     graph.__trellisSharing = window.Trellis.sharing;
     ui.actions.addAction('trellisJoinSharedCanvas', showJoinDialog).label = 'Join Shared Canvas';
     ui.actions.addAction('trellisCanvasSync', () => showSharingDialog().catch(err => status(err.message))).label = 'Canvas Sync';

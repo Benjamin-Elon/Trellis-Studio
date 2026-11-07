@@ -14,6 +14,97 @@ Draw.loadPlugin(function (ui) { // NEW
     const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b); // NEW
     const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]); // NEW
 
+    const lengthPreferences = new Map(), sessionLengthPreferences = new WeakMap(), lengthLabels = new Map(); // NEW: personal view state never enters the diagram model.
+    const LENGTH_KEY = 'trellis.structureSideLengths.v1:'; // NEW
+    const lengthPrintStyle = document.createElement('style'); lengthPrintStyle.textContent = '@media print{[data-trellis-structure-length]{display:none!important}}'; document.head.appendChild(lengthPrintStyle); disposers.push(() => lengthPrintStyle.remove()); // NEW: DOM-based host printing must also omit editor-only labels.
+
+    /** Reuse the existing non-creating diagram identity and isolate anonymous pages by root object. */ // NEW
+    function lengthPreferenceIdentity() { // NEW
+        const users = window.Trellis?.users, user = users?.getCurrentUser?.(), actor = user?.id ? 'user:' + user.id : 'anonymous'; // NEW
+        const root = model.getRoot(), page = (ui.pages || []).find(candidate => candidate.root === root) || ui.currentPage; // NEW
+        const pageId = page?.getId?.() || page?.id || page?.node?.getAttribute('id') || 'default-page'; // NEW
+        const diagram = users?.getDiagramKey?.({ create: false }); // NEW
+        return { root, actor, key: diagram ? LENGTH_KEY + JSON.stringify([actor, String(diagram), String(pageId)]) : '' }; // NEW
+    } // NEW
+
+    function getShowSideLengths() { // NEW
+        const { root, actor, key } = lengthPreferenceIdentity(); // NEW
+        if (!key) return sessionLengthPreferences.get(root)?.get(actor) === true; // NEW
+        if (!lengthPreferences.has(key)) { // NEW
+            let enabled = false; try { enabled = JSON.parse(window.localStorage.getItem(key) || 'false') === true; } catch (_) { /* Optional or corrupt storage defaults to hidden. */ } // NEW
+            lengthPreferences.set(key, enabled); // NEW
+        } // NEW
+        return lengthPreferences.get(key); // NEW
+    } // NEW
+
+    function setShowSideLengths(enabled) { // NEW
+        const { root, actor, key } = lengthPreferenceIdentity(), value = !!enabled; // NEW
+        if (key) { // NEW
+            lengthPreferences.set(key, value); try { window.localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* Retain the session preference if storage is unavailable. */ } // NEW
+        } else { // NEW
+            if (!sessionLengthPreferences.has(root)) sessionLengthPreferences.set(root, new Map()); // NEW
+            sessionLengthPreferences.get(root).set(actor, value); // NEW
+        } // NEW
+        refresh(); graph.fireEvent(new mxEventObject('trellisStructureLengthsChanged')); // NEW
+    } // NEW
+
+    /** Keep edge text upright and outside the polygon, with bounded local collision adjustments. */ // NEW
+    function positionLengthLabels(cell, points, nodes, annotations) { // CHANGE
+        const scale = graph.view.scale, state = graph.view.getState(cell), geometry = model.getGeometry(cell); // NEW
+        const screen = points.map(p => [state.x + (p[0] - geometry.x) * scale, state.y + (p[1] - geometry.y) * scale]); // NEW
+        const winding = Math.sign(screen.reduce((sum, p, i) => { const next = screen[(i + 1) % screen.length]; return sum + p[0] * next[1] - next[0] * p[1]; }, 0)) || 1; // NEW
+        const occupied = annotations.slice(); // CHANGE: existing dimensions and attribution keep their own readable space.
+        screen.forEach((a, i) => { // NEW
+            const b = screen[(i + 1) % screen.length], dx = b[0] - a[0], dy = b[1] - a[1], distance = Math.hypot(dx, dy); // NEW
+            const node = nodes[i], text = graph.__gardenScaleController.formatLengthFromUnits(distance / scale, cell); // NEW
+            if (node.textContent !== text) node.textContent = text; // NEW
+            const nx = winding * dy / (distance || 1), ny = -winding * dx / (distance || 1); // NEW
+            let angle = Math.atan2(dy, dx); if (angle > Math.PI / 2) angle -= Math.PI; if (angle < -Math.PI / 2) angle += Math.PI; // NEW
+            const width = text.length * 7 + 8, height = 20, boxWidth = Math.abs(Math.cos(angle)) * width + Math.abs(Math.sin(angle)) * height, boxHeight = Math.abs(Math.sin(angle)) * width + Math.abs(Math.cos(angle)) * height; // NEW: conservative boxes avoid synchronous DOM layout in drag previews.
+            let x, y, box; // NEW
+            for (const offset of [22, 38, 54, 70, 86, 102]) { // CHANGE: allow a label to clear the existing stacked dimension and attribution rows.
+                x = (a[0] + b[0]) / 2 + nx * offset; y = (a[1] + b[1]) / 2 + ny * offset; // NEW
+                box = { left: x - boxWidth / 2, right: x + boxWidth / 2, top: y - boxHeight / 2, bottom: y + boxHeight / 2 }; // NEW
+                if (!occupied.some(other => box.left < other.right + 4 && box.right > other.left - 4 && box.top < other.bottom + 4 && box.bottom > other.top - 4)) break; // NEW
+            } // NEW
+            occupied.push(box); node.style.left = x + 'px'; node.style.top = y + 'px'; node.style.transform = 'translate(-50%,-50%) rotate(' + angle + 'rad)'; // NEW
+        }); // NEW
+    } // NEW
+
+    /** Read existing annotation anchors without forcing layout during corner dragging. Fonts and padding match their owners' fixed screen styles. */ // NEW
+    function lengthAnnotationBounds() { // NEW
+        return Array.from(graph.container.querySelectorAll('[data-trellis-dimensions],[data-trellis-attribution]')).filter(node => node.style.display !== 'none').map(node => { // NEW
+            const dimension = node.hasAttribute('data-trellis-dimensions'), lines = dimension ? [node.textContent] : Array.from(node.children, line => line.textContent); // NEW
+            const width = Math.max(0, ...lines.map(text => text.length)) * (dimension ? 7 : 6) + 14, height = dimension ? 22 : lines.length * 16 + 10; // NEW
+            const x = parseFloat(node.style.left), y = parseFloat(node.style.top); return { left: x - width / 2, right: x + width / 2, top: y, bottom: y + height }; // NEW
+        }).filter(box => [box.left, box.right, box.top, box.bottom].every(Number.isFinite)); // NEW
+    } // NEW
+
+    /** Render only current-page structures with a native view state; exports never traverse these DOM annotations. */ // NEW
+    function refreshLengthLabels() { // NEW
+        const enabled = getShowSideLengths(), keep = new Set(), formatter = graph.__gardenScaleController?.formatLengthFromUnits; // NEW
+        const annotations = lengthAnnotationBounds(); // NEW
+        const cells = enabled ? model.getDescendants(model.getRoot()) : (session ? [session.cell] : []); // NEW
+        for (const cell of cells) { // NEW
+            if (!formatter || !isStructure(cell) || !model.contains(cell) || !graph.view.getState(cell)) continue; // NEW
+            let points; // NEW
+            try { points = session?.cell === cell ? (session.previewPoints || session.points).map(p => transform(p, session.geometry, session.style)) : footprint(cell); } catch (_) { continue; } // NEW
+            if (!points.every(p => p.every(Number.isFinite))) continue; // NEW
+            keep.add(cell); let nodes = lengthLabels.get(cell); // NEW
+            if (!nodes || nodes.length !== points.length) { // NEW
+                nodes?.forEach(node => node.remove()); nodes = points.map((_p, index) => { // NEW
+                    const node = document.createElement('div'); node.dataset.trellisStructureLength = cell.id; node.dataset.edge = String(index); // NEW
+                    node.style.cssText = 'position:absolute;pointer-events:none;white-space:nowrap;font:12px/16px Arial,sans-serif;padding:2px 4px;border-radius:3px;background:#fff;color:#263238;z-index:' + GRAPH_OVERLAY_Z.ANNOTATION; // NEW
+                    const host = graph.shiftPreview2 || graph.container; if (!host.parentNode && host !== graph.container) graph.container.appendChild(host); host.appendChild(node); return node; // NEW: native pan preview wrappers already supply the screen translation.
+                }); lengthLabels.set(cell, nodes); // NEW
+            } // NEW
+            const editing = session?.cell === cell; // NEW
+            nodes.forEach(node => { node.style.display = !editing && graph.__trellisOverlayVisibility?.isSuppressed() ? 'none' : ''; }); // NEW
+            positionLengthLabels(cell, points, nodes, annotations); // CHANGE
+        } // NEW
+        for (const [cell, nodes] of lengthLabels) if (!keep.has(cell)) { nodes.forEach(node => node.remove()); lengthLabels.delete(cell); } // NEW
+    } // NEW
+
     /** Reject touching nonadjacent edges as well as ordinary crossings and degenerate edges. */ // NEW
     function validPolygon(points) { // NEW
         if (!Array.isArray(points) || points.length < 3 || points.some(p => !Array.isArray(p) || p.length !== 2 || !p.every(Number.isFinite))) return false; // NEW
@@ -146,6 +237,7 @@ Draw.loadPlugin(function (ui) { // NEW
     } // NEW
 
     function refresh() { // NEW
+        refreshLengthLabels(); // NEW: dimensions remain independent of selection-panel visibility.
         if (session) drawPreview(session); // NEW
         const selected = graph.getSelectionCells(), cell = session?.cell || (selected.length === 1 && isStructure(selected[0]) ? selected[0] : null); // NEW
         const activeMode = window.Trellis?.interactionModes?.getActive(); // NEW
@@ -173,6 +265,7 @@ Draw.loadPlugin(function (ui) { // NEW
         const points = (draft.previewPoints || draft.points).map(p => screenPoint(draft, p)); points.push(points[0]); // NEW
         if (!draft.preview) { draft.preview = new mxPolyline(points, '#2563eb', 2); draft.preview.isDashed = true; draft.preview.pointerEvents = false; draft.preview.svgStrokeTolerance = 0; draft.preview.init(graph.view.getOverlayPane()); draft.preview.node.style.pointerEvents = 'none'; } // NEW
         draft.preview.points = points; draft.preview.redraw(); // NEW
+        refreshLengthLabels(); // NEW: custom corner handles update physical measurements during the gesture.
     } // NEW
 
     function refreshHandles() { // NEW
@@ -377,6 +470,15 @@ Draw.loadPlugin(function (ui) { // NEW
     for (const event of [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE]) listen(graph.view, event, scheduleRefresh); // NEW
     listen(graph, mxEvent.PAN, scheduleRefresh); // NEW
     listen(graph, 'trellisOverlayVisibilityChanged', refresh); // NEW
+    listen(graph, 'trellisGardenScaleReady', scheduleRefresh); // NEW
+    for (const event of ['fileLoaded', 'pageSelected']) if (ui.editor?.addListener) listen(ui.editor, event, scheduleRefresh); // NEW
+    const validateView = graph.view.validate; // NEW
+    graph.view.validate = function () { const result = validateView.apply(this, arguments); scheduleRefresh(); return result; }; // NEW: refresh after native states reflect folding, visibility, and page roots.
+    function reloadLengthPreferences(event) { // NEW
+        if (event?.type === 'storage' && event.key != null && !event.key.startsWith(LENGTH_KEY)) return; // NEW
+        if (event?.type === 'storage') lengthPreferences.clear(); scheduleRefresh(); graph.fireEvent(new mxEventObject('trellisStructureLengthsChanged')); // CHANGE: identity switches retain session preferences when storage has failed.
+    } // NEW
+    for (const event of ['storage', 'trellisUsersSessionChanged', 'trellisUsersStoreChanged']) { window.addEventListener(event, reloadLengthPreferences); disposers.push(() => window.removeEventListener(event, reloadLengthPreferences)); } // NEW
     let clickStart = null; // NEW
     function plainClick(event) { // NEW
         return !!event && !(mxEvent.isPopupTrigger?.(event)) && (event.button == null || event.button === 0) && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && Number(event.detail || 1) <= 1; // NEW
@@ -416,7 +518,7 @@ Draw.loadPlugin(function (ui) { // NEW
     const cancelClick = () => { clickStart = null; }; // NEW
     for (const event of ['mouseup', 'pointerup', 'pointercancel', 'blur']) { window.addEventListener(event, cancelClick); disposers.push(() => window.removeEventListener(event, cancelClick)); } // CHANGE: graph release runs first; outside or late releases can only cancel.
     const keydown = event => { // NEW
-        if (!session || event.target.closest?.('input,textarea,[contenteditable=true],.trellis-structure-discard')) return; // NEW
+        if (!session || event.target.closest?.('input,textarea,[contenteditable=true],.trellis-structure-discard,.trellis-canvas-view-options')) return; // NEW
         if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); cancel(); } // NEW
         if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); event.stopImmediatePropagation(); if (session.selectedCorner != null) removeCorner(session.selectedCorner); } // NEW
     }; // NEW
@@ -424,6 +526,7 @@ Draw.loadPlugin(function (ui) { // NEW
     const modeChanged = () => scheduleRefresh(); // NEW
     for (const event of ['trellisInteractionModeChanged', 'trellisTeamPermissionModeChanged']) { window.addEventListener(event, modeChanged); disposers.push(() => window.removeEventListener(event, modeChanged)); } // NEW
     const destroy = graph.destroy; // NEW
-    graph.destroy = function () { destroyed = true; if (timer != null) clearTimeout(timer); session?.dismissConfirmation?.(); session?.preview?.destroy(); const previous = session; session = null; if (previous) { unregisterHistory(previous); window.Trellis?.interactionModes?.release(MODE, previous.ownerId); } panel?.remove(); disposers.forEach(dispose => dispose()); return destroy.apply(this, arguments); }; // CHANGE
-    graph.__trellisStructures = { create, editFootprint, done, cancel, moveCorner, insertCorner, removeCorner, isStructure, validPolygon, footprint, getDraft: () => session && ({ cell: session.cell, points: copy(session.points), error: draftError(session) }) }; // NEW
+    graph.destroy = function () { destroyed = true; if (timer != null) clearTimeout(timer); session?.dismissConfirmation?.(); session?.preview?.destroy(); const previous = session; session = null; if (previous) { unregisterHistory(previous); window.Trellis?.interactionModes?.release(MODE, previous.ownerId); } panel?.remove(); lengthLabels.forEach(nodes => nodes.forEach(node => node.remove())); lengthLabels.clear(); disposers.forEach(dispose => dispose()); return destroy.apply(this, arguments); }; // CHANGE: release annotations along with the existing editor resources.
+    graph.__trellisStructures = { create, editFootprint, done, cancel, moveCorner, insertCorner, removeCorner, isStructure, validPolygon, footprint, getShowSideLengths, setShowSideLengths, getDraft: () => session && ({ cell: session.cell, points: copy(session.points), error: draftError(session) }) }; // CHANGE
+    graph.fireEvent(new mxEventObject('trellisStructuresReady')); scheduleRefresh(); // NEW: notify a toolbar installed before the structures plugin.
 }); // NEW

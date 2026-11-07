@@ -219,3 +219,113 @@ test('collaboration acceptance controls draft clearing and rejection retains a r
     const actor = { enabled: true, editable: true, user: { id: 'user-a', name: 'user-a' } }; // CHANGE
     assert.equal(h.core.changeComments(acceptedRaw, { type: 'post', id: originalId, html: '<p>Retained until accepted</p>' }, actor), acceptedRaw); // CHANGE
 }); // CHANGE
+
+test('managed post, resolve and reopen save consecutively, even when the panel closes before acceptance', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape'), other = h.vertex('other'); // NEW
+    const { validatePermissionChanges } = await import('../src/main/trellis-permission-policy.js'); // NEW
+    h.policy.admin = true; // NEW
+    const layer = h.w.mxUtils.createXmlDocument().createElement('object'); // NEW
+    layer.setAttribute('trellis_users_json', JSON.stringify({ usersEnabled: true, users: [{ id: 'user-a', name: 'user-a', admin: true }] })); // NEW
+    h.graph.model.setValue(h.graph.getDefaultParent(), layer); // NEW
+    let acceptedXml = h.ui.getFileData(), acceptedDiscussion = '', finishHold, completed = 0; const saves = [], disposals = []; // NEW
+    h.w.Trellis.sharing = h.graph.__trellisSharing = { // NEW
+        registerEditor: config => ({ touch() {}, acquire: () => new Promise(resolve => { finishHold = resolve; }), complete() { if (config.targets[0] === '["page-a","shape"]') completed++; }, dispose(release) { disposals.push(release); } }), // NEW
+        commentSaveContext: () => 'managed', savedDiscussion: () => acceptedDiscussion, // NEW
+        settleObjectEdits(options) { // NEW
+            assert.equal(options?.automatic, undefined); // NEW
+            const xml = h.ui.getFileData(), raw = cell.getAttribute('trellis_comments_json'); // NEW
+            assert.equal(validatePermissionChanges(acceptedXml, xml, 'user-a', Date.now()).allowed, true); // NEW
+            return new Promise(resolve => saves.push({ xml, finish() { acceptedXml = xml; acceptedDiscussion = raw; resolve(); } })); // NEW
+        } // NEW
+    }; // NEW
+    const click = name => panel(h, cell).querySelector(`[data-comment-action="${name}"]`); // NEW
+    h.controller.open(other); panel(h, other).querySelector('[data-details-tab="comments"]').click(); compose(h, other, '<p>Private on another object</p>'); // NEW
+    h.controller.open(cell); panel(h, cell).querySelector('[data-details-tab="comments"]').click(); compose(h, cell, '<p>Managed post</p>'); // NEW
+    h.graph.model.setValue(other, 'Unrelated committed edit'); click('submit').click(); // NEW
+    assert.equal(click('submit').disabled, true); click('submit').click(); assert.equal(comments(h, cell).length, 0); // NEW
+    finishHold(); await h.tick(); // NEW
+    assert.equal(saves.length, 1); assert.match(saves[0].xml, /Unrelated committed edit/); assert.doesNotMatch(saves[0].xml, /Private on another object/); // NEW
+    assert.equal(click('resolve').disabled, true); click('resolve').click(); assert.equal(comments(h, cell)[0].resolvedAt, null); // NEW
+    h.graph.clearSelection(); await h.tick(); assert.equal(panel(h, cell), undefined); assert.ok(disposals.includes(false)); // NEW
+    h.controller.open(cell); await h.tick(); assert.equal(click('resolve').disabled, true); // NEW
+    saves[0].finish(); await h.tick(); assert.equal(completed, 1); assert.equal(panel(h, cell).querySelector('.trellis-comment-editor').textContent, ''); // NEW
+    click('resolve').click(); finishHold(); await h.tick(); assert.equal(saves.length, 2); saves[1].finish(); await h.tick(); // NEW
+    panel(h, cell).querySelector('[data-comment-section="resolved"]').open = true; // NEW
+    click('reopen').click(); finishHold(); await h.tick(); assert.equal(saves.length, 3); saves[2].finish(); await h.tick(); // NEW
+    const savedModel = new h.w.mxGraphModel(), xml = h.w.mxUtils.parseXml(acceptedXml); // NEW
+    new h.w.mxCodec(xml).decode(xml.documentElement, savedModel); // NEW
+    assert.equal(comments(h, savedModel.getCell('shape'))[0].resolvedAt, null); assert.equal(completed, 3); // NEW
+    for (const action of ['markAlert', 'removeAlert']) { // NEW
+        click(action).click(); finishHold(); await h.tick(); saves.at(-1).finish(); await h.tick(); // NEW
+        assert.equal(comments(h, cell)[0].isAlert, action === 'markAlert'); // NEW
+    } // NEW
+    click('edit').click(); compose(h, cell, '<p>Corrected managed post</p>'); click('submit').click(); finishHold(); await h.tick(); saves.at(-1).finish(); await h.tick(); // NEW
+    assert.equal(comments(h, cell)[0].html, '<p>Corrected managed post</p>'); assert.equal(saves.length, 6); // NEW
+}); // NEW
+
+test('managed retry saves the staged revision and a later accepted save clears only the matching draft', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape'); let accepted = '', context = 'managed', publish; const submissions = []; // NEW
+    h.graph.__trellisSharing = { // NEW
+        commentSaveContext: () => context, savedDiscussion: () => accepted, // NEW
+        settleObjectEdits() { submissions.push(cell.getAttribute('trellis_comments_json')); return new Promise((resolve, reject) => { publish = { resolve, reject }; }); } // NEW
+    }; // NEW
+    const click = name => panel(h, cell).querySelector(`[data-comment-action="${name}"]`); // NEW
+    h.controller.open(cell); panel(h, cell).querySelector('[data-details-tab="comments"]').click(); compose(h, cell, '<p>Keep this draft</p>'); // NEW
+    click('submit').click(); publish.reject(new Error('Coordinator denied the save')); await h.tick(); // NEW
+    assert.match(panel(h, cell).textContent, /Comment change unsaved\. Coordinator denied the save/); // NEW
+    assert.equal(click('resolve').disabled, true); assert.equal(click('retry-save').hidden, false); // NEW
+    click('retry-save').click(); publish.resolve(); await h.tick(); // NEW
+    assert.match(panel(h, cell).textContent, /The save did not accept this comment change/); // NEW
+    assert.match(panel(h, cell).querySelector('.trellis-comment-editor').textContent, /Keep this draft/); // NEW
+    click('retry-save').click(); accepted = submissions[0]; publish.reject(new Error('Save response lost')); await h.tick(); // NEW
+    click('retry-save').click(); h.graph.fireEvent(new h.w.mxEventObject('trellisManagedSaveCompleted')); publish.reject(new Error('A later save failed')); await h.tick(); // NEW
+    assert.equal(submissions.length, 4); assert.ok(submissions.every(raw => raw === submissions[0])); // NEW
+    assert.equal(comments(h, cell).length, 1); assert.equal(panel(h, cell).querySelector('.trellis-comment-editor').textContent, ''); // NEW
+    compose(h, cell, '<p>Save from the main toolbar</p>'); click('submit').click(); publish.reject(new Error('Offline')); await h.tick(); // NEW
+    accepted = submissions.at(-1); h.graph.fireEvent(new h.w.mxEventObject('trellisManagedSaveCompleted')); await h.tick(); // NEW
+    assert.equal(click('retry-save').hidden, true); assert.equal(panel(h, cell).querySelector('.trellis-comment-editor').textContent, ''); // NEW
+    compose(h, cell, '<p>Keep across sessions</p>'); click('submit').click(); accepted = submissions.at(-1); // NEW
+    context = 'different document or user'; publish.resolve(); await h.tick(); // NEW
+    assert.match(panel(h, cell).querySelector('.trellis-comment-editor').textContent, /Keep across sessions/); // NEW
+}); // NEW
+
+test('managed recovery stops retrying a superseded action and keeps its private draft', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape', '<p>Details</p>'); let rejectSave; // NEW
+    h.graph.__trellisSharing = { commentSaveContext: () => 'managed', savedDiscussion: () => '', settleObjectEdits: () => new Promise((_resolve, reject) => { rejectSave = reject; }) }; // NEW
+    h.controller.open(cell); panel(h, cell).querySelector('[data-details-tab="comments"]').click(); compose(h, cell, '<p>Recovered private draft</p>'); // NEW
+    panel(h, cell).querySelector('[data-comment-action="submit"]').click(); // NEW
+    const previous = cell.value.cloneNode(true); previous.removeAttribute('trellis_comments_json'); h.graph.model.setValue(cell, previous); // NEW
+    rejectSave(new Error('Editing hold lost')); await h.tick(); // NEW
+    assert.equal(panel(h, cell).querySelector('[data-comment-action="retry-save"]').hidden, true); // NEW
+    assert.match(panel(h, cell).textContent, /Editing hold lost/); // NEW
+    assert.match(panel(h, cell).querySelector('.trellis-comment-editor').textContent, /Recovered private draft/); // NEW
+}); // NEW
+
+test('a failed deletion of the last comment remains retryable after reselecting the object', async t => { // NEW
+    const h = harness(t), resolvedAt = Date.now() - h.core.COMMENT_RETENTION_MS - 1000; // NEW
+    let accepted = encode([record('last', resolvedAt - 1000, { resolvedAt, resolvedByUserId: 'user-a', resolvedByName: 'user-a' })]), saves = 0; // NEW
+    const cell = h.vertex('shape', null, { trellis_comments_json: accepted }); h.w.confirm = () => true; // NEW
+    h.graph.__trellisSharing = { commentSaveContext: () => 'managed', savedDiscussion: () => accepted, async settleObjectEdits() { if (++saves === 1) throw new Error('Offline'); accepted = ''; } }; // NEW
+    h.controller.open(cell); panel(h, cell).querySelector('[data-comment-action="delete"]').click(); await h.tick(); // NEW
+    assert.equal(comments(h, cell).length, 0); assert.match(panel(h, cell).textContent, /Comment change unsaved/); // NEW
+    h.graph.clearSelection(); await h.tick(); assert.equal(panel(h, cell), undefined); // NEW
+    h.graph.setSelectionCell(cell); await h.tick(); // NEW
+    const retry = panel(h, cell).querySelector('[data-comment-action="retry-save"]'); // NEW
+    assert.equal(retry.hidden, false); retry.click(); await h.tick(); assert.equal(saves, 2); assert.equal(accepted, ''); // NEW
+}); // NEW
+
+test('managed hold acquisition failure and identity changes preserve the draft before applying a command', async t => { // NEW
+    const h = harness(t), cell = h.vertex('shape'); let acquire, context = 'managed', saves = 0; // NEW
+    h.w.Trellis.sharing = h.graph.__trellisSharing = { // NEW
+        commentSaveContext: () => context, savedDiscussion: () => '', settleObjectEdits() { saves++; }, // NEW
+        registerEditor: () => ({ touch() {}, acquire: () => new Promise((resolve, reject) => { acquire = { resolve, reject }; }), complete() {}, dispose() {} }) // NEW
+    }; // NEW
+    h.controller.open(cell); panel(h, cell).querySelector('[data-details-tab="comments"]').click(); compose(h, cell, '<p>Wait for editing access</p>'); // NEW
+    const submit = () => panel(h, cell).querySelector('[data-comment-action="submit"]'); // NEW
+    submit().click(); acquire.reject(new Error('Editing access denied')); await h.tick(); // NEW
+    assert.equal(comments(h, cell).length, 0); assert.equal(saves, 0); assert.equal(submit().disabled, false); // NEW
+    assert.match(panel(h, cell).textContent, /Editing access denied/); // NEW
+    submit().click(); context = 'another document'; acquire.resolve(); await h.tick(); // NEW
+    assert.equal(comments(h, cell).length, 0); assert.equal(saves, 0); // NEW
+    assert.match(panel(h, cell).querySelector('.trellis-comment-editor').textContent, /Wait for editing access/); // NEW
+}); // NEW

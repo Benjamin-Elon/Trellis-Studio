@@ -2,12 +2,28 @@
 (function (root) { // CHANGE
     'use strict'; // CHANGE
     const privateDrafts = new Map(); // CHANGE: retain session drafts when local storage is unavailable or a panel is removed.
+    const pendingByGraph = new WeakMap(); // NEW: a submitted command outlives the panel that started it.
+    const saveContext = graph => graph.__trellisSharing?.commentSaveContext?.() ?? null; // NEW
+    const pendingKey = (graph, identity) => JSON.stringify([saveContext(graph), identity.key]); // NEW
+    const hasPendingAction = (graph, identity) => !!pendingByGraph.get(graph)?.has(pendingKey(graph, identity)); // NEW
+
+    function reconcileSaved(graph) { // NEW
+        const operations = pendingByGraph.get(graph); // NEW
+        if (operations) for (const operation of operations.values()) { // NEW
+            try { operation.reconcile(operation.running); } catch (error) { operation.error = error.message; } // NEW: an unreadable saved view must not interrupt save completion.
+        } // NEW
+    } // NEW
 
     function mount(options) { // CHANGE
         const { entry, toolbar, core } = options, userId = entry.user; // CHANGE
         const storageKey = 'trellis.comments.draft.v1:' + options.identity.key; // CHANGE
+        let operations = pendingByGraph.get(options.graph); // NEW
+        if (!operations) { operations = new Map(); pendingByGraph.set(options.graph, operations); } // NEW
+        const sharing = () => options.graph.__trellisSharing; // NEW
+        const operationKey = () => pendingKey(options.graph, options.identity); // NEW
+        const pendingAction = () => operations.get(operationKey()); // NEW
         let destroyed = false, frozen = false, discarded = false, composing = false, pending = false, unresolvedExpanded = true, resolvedExpanded = false, retentionTimer = null, fingerprint = '', storageError = '', commandError = ''; // CHANGE
-        let saved = privateDrafts.get(storageKey); // CHANGE
+        let saved = privateDrafts.get(storageKey), loadedDraft; // CHANGE
         if (!saved) { // CHANGE
             saved = { active: 'new', drafts: {} }; // CHANGE
             if (options.identity.persistent) try { // CHANGE
@@ -37,6 +53,8 @@
             const selection = root.getSelection(), range = document.createRange(); range.selectNodeContents(editor); selection.removeAllRanges(); selection.addRange(range); // CHANGE
             if (!document.execCommand('copy')) { commandError = 'Select the draft and press Ctrl+C to copy it.'; updateMessage(); } // CHANGE
         }); // CHANGE
+        const retry = options.button('Retry save', 'Save the pending comment change', () => { const operation = pendingAction(); if (operation) void run(operation); }); // NEW
+        retry.dataset.commentAction = 'retry-save'; actions.append(retry); // NEW
         const reload = options.button('Reload comment', 'Replace this edit draft with the current saved comment after confirmation', () => { // CHANGE
             try { // CHANGE
                 const item = core.parseComments(options.read()).find(value => value.id === draft().id); // CHANGE
@@ -51,15 +69,16 @@
             const policy = options.users(), user = policy && policy.getCurrentUser && policy.getCurrentUser(); // CHANGE
             return { enabled: !!(policy && policy.isEnabled && policy.isEnabled()), user, editable: options.canEdit(), ownerUserId: policy && policy.getAccessSummary ? policy.getAccessSummary(entry.cell).ownerUserId : '' }; // CHANGE
         } // CHANGE
-        function editable() { const value = actor(); return !frozen && !destroyed && !pending && value.enabled && value.editable && value.user && value.user.id === userId; } // CHANGE
+        function canAct() { const value = actor(); return !frozen && !destroyed && value.enabled && value.editable && value.user && value.user.id === userId; } // NEW
+        function editable() { return canAct() && !pending && !pendingAction(); } // CHANGE
         function draft() { // CHANGE
             let value = saved.drafts[saved.active]; // CHANGE
             if (!value || typeof value.html !== 'string' || typeof value.id !== 'string') value = saved.drafts[saved.active] = { id: root.crypto.randomUUID(), html: '', isAlert: entry.activeTab === 'alerts', baseline: null }; // CHANGE
             if (typeof value.isAlert !== 'boolean') value.isAlert = false; // CHANGE: legacy private drafts are ordinary comments.
             return value; // CHANGE
         } // CHANGE
-        function loadDraft() { const value = draft(); editor.innerHTML = core.normalizeHtml(value.html); alertToggle.checked = value.isAlert; } // CHANGE
-        function capture() { const value = draft(); if (!composing) value.html = core.normalizeHtml(editor.innerHTML); value.isAlert = alertToggle.checked; } // CHANGE
+        function loadDraft() { loadedDraft = draft(); editor.innerHTML = core.normalizeHtml(loadedDraft.html); alertToggle.checked = loadedDraft.isAlert; } // CHANGE
+        function capture() { if (loadedDraft !== saved.drafts[saved.active]) return; if (!composing) loadedDraft.html = core.normalizeHtml(editor.innerHTML); loadedDraft.isAlert = alertToggle.checked; } // CHANGE: a detached panel cannot restore text cleared by a save.
         function persist() { // CHANGE
             privateDrafts.set(storageKey, saved); // CHANGE
             if (!options.identity.persistent) { storageError = 'This diagram has no stable identity; private drafts remain in this session.'; return; } // CHANGE
@@ -69,7 +88,8 @@
         } // CHANGE
         function updateMessage() { // CHANGE
             const value = actor(); // CHANGE
-            message.textContent = [commandError, storageError, pending ? 'Saving comment…' : !value.enabled ? 'Enable Trellis users and log in to post or manage comments.' : !value.user ? 'Log in to post or manage comments.' : !value.editable ? 'Comments are read only.' : 'Drafts are private. Use Post or Save changes to publish.'].filter(Boolean).join(' '); // CHANGE
+            const operation = pendingAction(); // NEW
+            message.textContent = [commandError, storageError, pending || operation?.running ? 'Saving comment…' : operation ? 'Comment change unsaved. ' + operation.error : !value.enabled ? 'Enable Trellis users and log in to post or manage comments.' : !value.user ? 'Log in to post or manage comments.' : !value.editable ? 'Comments are read only.' : 'Drafts are private. Use Post or Save changes to publish.'].filter(Boolean).join(' '); // CHANGE
         } // CHANGE
         function rememberInput() { // CHANGE
             if (!editable()) return; capture(); persist(); entry.editHold?.touch(); submit.disabled = composing || !core.normalizeHtml(editor.innerHTML); // CHANGE
@@ -96,31 +116,80 @@
             if (command) { event.preventDefault(); target.saveSelection(); target.execute(command); } // CHANGE
         }); // CHANGE
 
-        /** Keep durable draft text until both local authorization and existing collaboration save arbitration accept the command. */ // CHANGE
+        function finishDraft(action, submittedDraft, submittedState, active) { // NEW
+            if (submittedDraft && submittedState.drafts[active] === submittedDraft && submittedDraft.html === action.html && submittedDraft.isAlert === action.isAlert) { // NEW
+                delete submittedState.drafts[active]; if (submittedState.active === active) submittedState.active = 'new'; // NEW
+                if (privateDrafts.get(storageKey) === submittedState) persist(); // NEW
+            } // NEW
+        } // NEW
+
+        function savedDiscussion() { return sharing().savedDiscussion(entry.page, entry.cell.id); } // NEW
+
+        /** Retry a staged change by saving its current revision. Apply a command only on the first attempt. */ // NEW
+        async function run(operation, action) { // NEW
+            if (operation.running || !canAct()) return false; // NEW
+            operation.running = true; operation.error = ''; commandError = ''; // NEW
+            try { // NEW
+                refresh(); // NEW
+                if (entry.editHold) await entry.editHold.acquire(); // NEW
+                if (!canAct() || operation.key !== operationKey()) throw new Error('The comment editor changed before editing could begin.'); // NEW
+                operation.hold = entry.editHold; // NEW
+                const before = options.read(); // NEW
+                if (action) { // NEW
+                    const accepted = savedDiscussion(); // NEW
+                    if (accepted === undefined) throw new Error('The saved discussion is still loading. Try again when the garden is ready.'); // NEW
+                    if (before !== (accepted ?? '')) { // NEW
+                        operation.expected = before; operation.acceptDraft = null; // NEW: recovered edits or undo may already have changed the discussion.
+                        throw new Error('Save the earlier change before changing this discussion again.'); // NEW
+                    } // NEW
+                    const next = core.changeComments(before, action, actor()); // NEW
+                    if (before === next) { operation.finish(); return true; } // NEW
+                    options.write(next); operation.expected = next; // NEW
+                } else if (before !== operation.expected) { // NEW
+                    throw new Error('The pending comment change was replaced.'); // NEW
+                } // NEW
+                await sharing().settleObjectEdits(); // NEW: explicit save uses the existing queue without the quiet countdown.
+                if (operation.reconcile()) return true; // NEW
+                throw new Error('The save did not accept this comment change.'); // NEW
+            } catch (error) { // NEW
+                if (operation.accepted && operation.key === operationKey()) { operation.finish(); return true; } // NEW: an earlier completed save may have covered this action.
+                if (operation.key !== operationKey() || operation.expected === undefined) { // NEW
+                    operations.delete(operation.key); commandError = error.message; // NEW
+                } else { operation.error = error.message; } // NEW
+                return false; // NEW
+            } finally { // NEW
+                operation.running = false; if (!destroyed) refresh(); options.changed(); // NEW
+            } // NEW
+        } // NEW
+
         async function execute(action, submittedDraft) { // CHANGE
-            if (!editable() || composing) return; // CHANGE
-            const currentActor = actor(), before = options.read(), active = saved.active; // CHANGE
-            try {
-                if (entry.editHold) await entry.editHold.acquire(); // CHANGE // CHANGE
-                const next = core.changeComments(before, action, currentActor); // CHANGE
-                pending = true; commandError = ''; refresh(); // CHANGE
-                options.write(next); // CHANGE
-                const sharing = options.graph.__trellisSharing; // CHANGE
-                if (sharing?.settleObjectEdits) { // CHANGE
-                    const persistence = sharing.settleObjectEdits({ automatic: true }); // CHANGE
-                    if (entry.editHold) { // CHANGE: model application finishes the edit while normal persistence continues.
-                        void persistence.catch(error => { // CHANGE
-                            commandError = error.message + ' The comment is pending; its private draft has been retained.';
-                            if (submittedDraft && !saved.drafts[active]) saved.drafts[active] = submittedDraft;
-                            persist(); if (!destroyed) refresh();
-                        }); // CHANGE
-                    } else await persistence; // CHANGE: legacy callers still receive durability failures synchronously.
-                } // CHANGE
-                if (options.read() !== next) throw new Error('The comment change was rejected or replaced. Your draft is retained.'); // CHANGE
-                if (submittedDraft && saved.drafts[active] === submittedDraft && submittedDraft.html === action.html && submittedDraft.isAlert === action.isAlert) { delete saved.drafts[active]; if (saved.active === active) saved.active = 'new'; } // CHANGE
-                persist(); // CHANGE
-                if (!destroyed && options.isCurrent()) loadDraft(); entry.editHold?.complete?.(); return true; // CHANGE // CHANGE
-            } catch (error) { commandError = error.message + ' Your text is retained; copy it or retry after reloading the comment.'; return false; } // CHANGE // CHANGE
+            if (!editable() || composing) return false; // CHANGE
+            const active = saved.active, submittedState = saved; // NEW
+            const acceptDraft = () => finishDraft(action, submittedDraft, submittedState, active); // NEW
+            if (saveContext(options.graph) !== null) { // NEW
+                const key = operationKey(), operation = { key, acceptDraft, submittedDraft, active, running: false, expected: undefined, error: '' }; // NEW
+                operation.finish = () => { operations.delete(key); operation.acceptDraft?.(); if (!destroyed && options.isCurrent()) loadDraft(); operation.hold?.complete?.(); options.changed(); }; // NEW
+                operation.reconcile = defer => { // NEW
+                    if (key !== operationKey()) { operations.delete(key); return false; } // NEW
+                    if (!operation.accepted && operation.expected !== undefined) operation.accepted = savedDiscussion() === operation.expected; // NEW
+                    if (!operation.accepted) return false; // NEW
+                    if (!defer) operation.finish(); // NEW
+                    return true; // NEW
+                }; // NEW
+                operations.set(key, operation); // NEW
+                return run(operation, action); // NEW
+            } // NEW
+            pending = true; commandError = ''; refresh(); // CHANGE
+            try { // CHANGE
+                if (entry.editHold) await entry.editHold.acquire(); // CHANGE
+                if (!canAct()) throw new Error('The comment editor changed before editing could begin.'); // NEW
+                const before = options.read(), next = core.changeComments(before, action, actor()); // CHANGE
+                if (before !== next) options.write(next); // CHANGE
+                const legacySharing = sharing(); // NEW
+                if (!legacySharing?.commentSaveContext && legacySharing?.settleObjectEdits) await legacySharing.settleObjectEdits(); // CHANGE: preserve the legacy integration without saving standalone files.
+                if (options.read() !== next) throw new Error('The comment change was rejected or replaced.'); // CHANGE
+                acceptDraft(); entry.editHold?.complete?.(); return true; // CHANGE
+            } catch (error) { commandError = error.message + (submittedDraft ? ' Your draft is retained.' : ''); return false; } // CHANGE
             finally { pending = false; if (!destroyed) refresh(); options.changed(); } // CHANGE
         } // CHANGE
         function submitDraft() { // CHANGE
@@ -174,9 +243,14 @@
         } // CHANGE
         function refresh() { // CHANGE
             if (destroyed) return; const currentActor = actor(); let records = [], error = ''; // CHANGE
+            let operation = pendingAction(); // NEW
+            if (operation && !operation.running && operation.expected !== undefined && options.isCurrent() && options.read() !== operation.expected) { // NEW
+                operations.delete(operation.key); commandError = [operation.error, 'The pending comment change was replaced.'].filter(Boolean).join(' '); operation = null; // NEW: recovery or undo superseded the staged change.
+            } // NEW
+            if (loadedDraft !== saved.drafts[saved.active]) loadDraft(); // NEW: an accepted draft may have been cleared by another mount.
             try { records = core.parseComments(options.read()); } catch (failure) { error = failure.message; } // CHANGE
             if (entry.activeTab === 'alerts') records = records.filter(item => item.isAlert); // CHANGE: both tabs read the same canonical records and share one composer.
-            const signature = JSON.stringify([options.read(), entry.activeTab, currentActor, pending, records.map(item => item.resolvedAt !== null && Date.now() - item.resolvedAt >= core.COMMENT_RETENTION_MS)]); // CHANGE
+            const signature = JSON.stringify([options.read(), entry.activeTab, currentActor, pending || !!operation, records.map(item => item.resolvedAt !== null && Date.now() - item.resolvedAt >= core.COMMENT_RETENTION_MS)]); // CHANGE
             if (signature !== fingerprint) { // CHANGE
                 fingerprint = signature; list.replaceChildren(); // CHANGE
                 records.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)); // CHANGE
@@ -189,13 +263,26 @@
             editor.contentEditable = String(!!editable() && !error); submit.disabled = !editable() || !!error || composing || !core.normalizeHtml(editor.innerHTML); // CHANGE
             const value = draft(); if (saved.active === 'new' && !value.html && !value.alertChosen && !composing && !pending) alertToggle.checked = value.isAlert = entry.activeTab === 'alerts'; // CHANGE: only untouched empty composers adopt a tab's default.
             alertToggle.disabled = !editable() || !!error; // CHANGE
-            discard.disabled = pending; newComment.disabled = pending; newComment.hidden = saved.active === 'new'; reload.hidden = saved.active === 'new'; reload.disabled = !editable(); // CHANGE
+            discard.disabled = pending || !!operation; newComment.disabled = discard.disabled; newComment.hidden = saved.active === 'new'; reload.hidden = saved.active === 'new'; reload.disabled = !editable(); // CHANGE
+            retry.hidden = !operation || operation.running || operation.expected === undefined; retry.disabled = retry.hidden || !canAct(); // NEW
             submit.textContent = saved.active === 'new' ? 'Post' : 'Save changes'; heading.textContent = saved.active === 'new' ? 'New comment' : 'Edit comment'; // CHANGE
             updateMessage(); // CHANGE
         } // CHANGE
         loadDraft(); refresh(); // CHANGE
         const hasDraft = () => !!core.normalizeHtml(editor.innerHTML) || Object.values(saved.drafts).some(value => value && (value.html || value.alertChosen)); // CHANGE
-        return { element: container, submit: submitDraft, restore(value) { saved = value ? JSON.parse(JSON.stringify(value)) : { active: 'new', drafts: {} }; loadDraft(); persist(); refresh(); }, refresh, focus: () => editor.focus(), hasDraft, needsUnloadWarning: () => hasDraft() && (!!storageError || composing), // CHANGE
+        function hasUnsubmittedDraft() { // NEW
+            const submitted = pendingAction()?.submittedDraft; // NEW
+            return submitted ? Object.values(saved.drafts).some(value => value && value !== submitted && (value.html || value.alertChosen)) : hasDraft(); // NEW
+        } // NEW
+        function restore(value) { // NEW
+            const restored = value ? JSON.parse(JSON.stringify(value)) : { active: 'new', drafts: {} }; // NEW
+            const operation = pendingAction(); // NEW
+            if (operation?.submittedDraft) { // NEW: restoring other edits must retain the submitted draft until its save is accepted.
+                restored.drafts[operation.active] = operation.submittedDraft; Object.assign(saved, restored); // NEW
+            } else saved = restored; // NEW
+            loadDraft(); persist(); refresh(); // NEW
+        } // NEW
+        return { element: container, submit: submitDraft, restore, refresh, focus: () => editor.focus(), hasDraft, hasUnsubmittedDraft, hasPendingAction: () => !!pendingAction(), needsUnloadWarning: () => hasDraft() && (!!storageError || composing), // CHANGE
             snapshot() { capture(); return JSON.parse(JSON.stringify(saved)); }, resume() { if (pending) throw new Error('Wait for the previous comment operation to finish before resuming.'); frozen = false; refresh(); }, freeze() { frozen = true; capture(); persist(); editor.contentEditable = 'false'; }, // CHANGE
             discard() { discarded = true; saved = { active: 'new', drafts: {} }; editor.innerHTML = ''; privateDrafts.delete(storageKey); if (options.identity.persistent) root.localStorage.removeItem(storageKey); }, // NEW: explicit hold rejection discards unapplied entries rather than retaining them on close.
             persist() { capture(); persist(); }, // CHANGE
@@ -207,5 +294,5 @@
         if (!value && identity.persistent) try { value = JSON.parse(root.localStorage.getItem(key)); } catch (_) { /* Session drafts are still discoverable. */ } // CHANGE
         return !!(value && value.drafts && Object.values(value.drafts).some(item => item && typeof item.html === 'string' && (item.html || item.alertChosen))); // CHANGE
     } // CHANGE
-    root.TrellisDetailsComments = Object.freeze({ mount, hasDraft }); // CHANGE
+    root.TrellisDetailsComments = Object.freeze({ mount, hasDraft, hasPendingAction, reconcileSaved }); // CHANGE
 })(globalThis); // CHANGE

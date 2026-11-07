@@ -74,7 +74,7 @@ test('closing or forgetting a pending session retires notices across restart wit
 }); // CHANGE
 test('legacy signed closed-session pending records are ignored without rewriting their files', async t => { // CHANGE
     const f = await fixture(t), activity = f.activity(); await activity.action(1, 'alice', { kind: 'publish', pending: [target], saveState: 'pending' }); await activity.close(); // CHANGE
-    const filename = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('device:session-1') + '.json'), old = JSON.parse(await fs.readFile(filename, 'utf8')); // CHANGE
+    const filename = path.join(f.canvas.folderPath, '.trellis/activity-v5', digest('device:session-1') + '.json'), old = JSON.parse(await fs.readFile(filename, 'utf8')); // CHANGE
     const text = JSON.stringify(signRecord({ ...old.payload, sequence: old.payload.sequence + 1, online: false }, f.keys.privateKey)); await f.writeAtomic(filename, text); // CHANGE
     const restarted = f.activity(); await restarted.start(); assert.deepEqual(restarted.snapshot().pendingChanges, []); // CHANGE
     assert.equal(await fs.readFile(filename, 'utf8'), text); // CHANGE
@@ -94,7 +94,7 @@ test('activity observations increase across services and do not enter signed pee
     const f = await fixture(t), first = f.activity(), second = f.activity('peer'); // CHANGE
     const a = await first.action(1, 'alice', { kind: 'claim', targets: [target] }), b = await second.action(2, 'alice', { kind: 'view', objects: [target] }); // CHANGE
     assert.ok(b.collaboration.observationRevision > a.collaboration.observationRevision); assert.ok(first.snapshot().observationRevision > b.collaboration.observationRevision); // CHANGE
-    const names = await fs.readdir(path.join(f.canvas.folderPath, '.trellis/activity-v4')); for (const name of names) { const value = JSON.parse(await fs.readFile(path.join(f.canvas.folderPath, '.trellis/activity-v4', name), 'utf8')); assert.equal(value.payload.observationRevision, undefined); } // CHANGE
+    const names = await fs.readdir(path.join(f.canvas.folderPath, '.trellis/activity-v5')); for (const name of names) { const value = JSON.parse(await fs.readFile(path.join(f.canvas.folderPath, '.trellis/activity-v5', name), 'utf8')); assert.equal(value.payload.observationRevision, undefined); } // CHANGE
 }); // CHANGE
 test('handoff keeps its five-minute deadline independently of renewed thirty-second heartbeats', async t => { // CHANGE
     const f = await fixture(t), activity = f.activity(); await activity.action(1, 'alice', { kind: 'claim', targets: [target] }); const requested = await activity.action(2, 'alice', { kind: 'request', targets: [target] }); // CHANGE
@@ -189,7 +189,7 @@ test('reordered signed snapshots and attempts to rewrite requests cannot resurre
     const f = await fixture(t), owner = f.activity(), requester = f.activity('peer'); // CHANGE
     await owner.action(1, 'alice', { kind: 'claim', targets: [target] }); await requester.start(); // CHANGE
     await requester.action(2, 'alice', { kind: 'request', targets: [target] }); await owner.scan(); // CHANGE
-    const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('peer:session-2') + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // CHANGE
+    const file = path.join(f.canvas.folderPath, '.trellis/activity-v5', digest('peer:session-2') + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // CHANGE
     await heartbeatUntil(f, owner, 1, REQUEST_MS, [requester]); assert.deepEqual(owner.snapshot().holds, []); // CHANGE
     for (const payload of [{ ...envelope.payload, sequence: envelope.payload.sequence - 1, requests: [] }, { ...envelope.payload, sequence: envelope.payload.sequence + 1, requests: [] }, { ...envelope.payload, sequence: envelope.payload.sequence + 1, requests: envelope.payload.requests.map(request => ({ ...request, at: REQUEST_MS })) }]) { // CHANGE
         await f.writeAtomic(file, JSON.stringify(signRecord(payload, f.keys.privateKey))); await owner.scan(); assert.deepEqual(owner.snapshot().holds, []); // CHANGE
@@ -225,7 +225,7 @@ const initial = '<mxfile><diagram id="page"><mxGraphModel><root><mxCell id="0"/>
 async function fixture(t) { // NEW
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trellis-activity-v3-')); t.after(() => fs.rm(root, { recursive: true, force: true })); // NEW
     const pair = crypto.generateKeyPairSync('ed25519'), keys = { publicKey: pair.publicKey.export({ type: 'spki', format: 'pem' }), privateKey: pair.privateKey.export({ type: 'pkcs8', format: 'pem' }) }; // NEW
-    const canvas = { protocolVersion: 4, shareId: 'project', diagramId: 'diagram', folderPath: path.join(root, 'project'), diagramPath: path.join(root, 'project', 'Garden.drawio'), coordinatorDeviceId: 'device', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'device', userId: 'alice', publicKey: keys.publicKey }, { deviceId: 'peer', userId: 'alice', publicKey: keys.publicKey }] }; // NEW
+    const canvas = { protocolVersion: 5, shareId: 'project', diagramId: 'diagram', folderPath: path.join(root, 'project'), diagramPath: path.join(root, 'project', 'Garden.drawio'), coordinatorDeviceId: 'device', coordinatorPublicKey: keys.publicKey, members: [{ deviceId: 'device', userId: 'alice', publicKey: keys.publicKey }, { deviceId: 'peer', userId: 'alice', publicKey: keys.publicKey }] }; // CHANGE
     let time = 0; const mono = () => time; // NEW
     const writeAtomic = async (file, value) => { await fs.mkdir(path.dirname(file), { recursive: true }); const temp = file + '.' + crypto.randomUUID() + '.tmp'; await fs.writeFile(temp, value); for (let attempt = 0; ; attempt++) { try { await fs.rename(temp, file); break; } catch (error) { if (!['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || attempt >= 4) throw error; await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1))); } } }; // CHANGE: match production's bounded Windows scanner retry.
     const services = []; const activity = (id = 'device', options = {}) => { const service = createActivityService({ canvas, deviceId: id, keys, sessionFor: caller => 'session-' + caller, writeAtomic, monotonic: mono, now: mono, authorize: user => user === 'alice', ...options }); services.push(service); return service; }; // CHANGE
@@ -261,7 +261,7 @@ test('the existing maintenance timer removes stale viewers and fresh progression
     assert.deepEqual(updates.at(-1).presence, []); assert.equal(timers.length, 2); // CHANGE
     f.time(5000); await owner.action(2, 'alice', { kind: 'publish' }); await observer.scan(); // CHANGE
     assert.equal(updates.at(-1).presence[0].online, true); assert.deepEqual(updates.at(-1).presence[0].targets, [target]); // CHANGE
-    const filename = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('peer:session-2') + '.json'), text = await fs.readFile(filename, 'utf8'); // CHANGE
+    const filename = path.join(f.canvas.folderPath, '.trellis/activity-v5', digest('peer:session-2') + '.json'), text = await fs.readFile(filename, 'utf8'); // CHANGE
     f.time(5000 + LEASE_MS - 1); await observer.scan(); await observer.action(1, 'alice', { kind: 'snapshot' }); // CHANGE
     assert.equal(observer.snapshot().presence.length, 1); // CHANGE: duplicate reads and authority snapshots do not renew the viewer lease.
     f.time(5000 + LEASE_MS); timers[1](); // CHANGE: exercise automatic expiry before any UI interaction or explicit snapshot request.
@@ -303,7 +303,7 @@ test('offline expiry is persisted before takeover and a failed witness write ret
     f.time(LEASE_MS); failing = true; // CHANGE
     try { await assert.rejects(activity.action(2, 'alice', { kind: 'claim', targets: [target] }), /Expiry disk full/); assert.equal(activity.snapshot().holds.length, 0); } finally { failing = false; } // CHANGE
     const takeover = await activity.action(2, 'alice', { kind: 'claim', targets: [target] }); assert.equal(takeover.ok, true); // CHANGE
-    const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('device:expiry-' + digest('alice')) + '.json'); // CHANGE
+    const file = path.join(f.canvas.folderPath, '.trellis/activity-v5', digest('device:expiry-' + digest('alice')) + '.json'); // CHANGE
     const evidence = JSON.parse(await fs.readFile(file, 'utf8')).payload.requests[0]; // CHANGE
     assert.equal(evidence.claimId, claimed.collaboration.holds[0].claimId); assert.equal(evidence.kind, 'offline-expiry'); assert.equal(evidence.cancelledAt, null); // CHANGE
     await activity.action(2, 'alice', { kind: 'close' }); await activity.close(); // CHANGE
@@ -314,7 +314,7 @@ test('offline expiry cannot be rewritten or cancelled and an old release cannot 
     const f = await fixture(t), observer = f.activity(), owner = f.activity('peer'); // CHANGE
     const original = await owner.action(2, 'alice', { kind: 'claim', targets: [target] }), claimId = original.collaboration.holds[0].claimId; // CHANGE
     await observer.start(); f.time(LEASE_MS); await observer.scan(); // CHANGE
-    const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('device:expiry-' + digest('alice')) + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // CHANGE
+    const file = path.join(f.canvas.folderPath, '.trellis/activity-v5', digest('device:expiry-' + digest('alice')) + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // CHANGE
     for (const requests of [[], envelope.payload.requests.map(request => ({ ...request, kind: undefined })), envelope.payload.requests.map(request => ({ ...request, cancelledAt: request.at }))]) { // CHANGE
         await f.writeAtomic(file, JSON.stringify(signRecord({ ...envelope.payload, sequence: envelope.payload.sequence + 1, requests }, f.keys.privateKey))); await observer.scan(); assert.equal(observer.snapshot().holds.length, 0); // CHANGE
     } // CHANGE
@@ -333,14 +333,14 @@ test('expiry discovered during another witness write is durable before a concurr
     try { // CHANGE
         f.time(LEASE_MS + 1000); assert.equal(activity.snapshot().holds.length, 0); // CHANGE
         const takeover = activity.action(3, 'alice', { kind: 'claim', targets: [second] }); release(); await flushing; assert.equal((await takeover).ok, true); // CHANGE
-        const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('device:expiry-' + digest('alice')) + '.json'); // CHANGE
+        const file = path.join(f.canvas.folderPath, '.trellis/activity-v5', digest('device:expiry-' + digest('alice')) + '.json'); // CHANGE
         assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')).payload.requests.map(request => request.key).sort(), [target, second].sort()); // CHANGE
     } finally { release(); await flushing; } // CHANGE
 }); // CHANGE
 test('terminal evidence rolls over bounded pages without renewing expired human sessions', async t => { // CHANGE
     const f = await fixture(t), activity = f.activity(), targets = Array.from({ length: 513 }, (_, index) => JSON.stringify(['page', String(index)])); // CHANGE
     await activity.action(1, 'alice', { kind: 'claim', targets }); f.time(LEASE_MS); await activity.scan(); // CHANGE
-    const directory = path.join(f.canvas.folderPath, '.trellis/activity-v4'), records = await Promise.all((await fs.readdir(directory)).filter(name => name.endsWith('.json')).map(name => fs.readFile(path.join(directory, name), 'utf8').then(JSON.parse))); // CHANGE
+    const directory = path.join(f.canvas.folderPath, '.trellis/activity-v5'), records = await Promise.all((await fs.readdir(directory)).filter(name => name.endsWith('.json')).map(name => fs.readFile(path.join(directory, name), 'utf8').then(JSON.parse))); // CHANGE
     const witnesses = records.filter(record => record.payload.sessionId.startsWith('expiry-')); // CHANGE
     assert.equal(witnesses.length, 2); assert.equal(witnesses.reduce((total, record) => total + record.payload.requests.length, 0), targets.length); // CHANGE
     assert.ok(witnesses.every(record => record.payload.requests.length <= 512 && Buffer.byteLength(JSON.stringify(record)) < 256 * 1024)); // CHANGE
@@ -358,7 +358,7 @@ test('closing an already stopped service cannot expire ownership resumed by its 
     const f = await fixture(t), first = f.activity(); await first.action(1, 'alice', { kind: 'claim', targets: [target] }); await first.close(); // CHANGE
     f.time(15000); const replacement = f.activity(); await replacement.action(1, 'alice', { kind: 'publish' }); // CHANGE
     f.time(LEASE_MS); await first.close(); assert.equal(replacement.snapshot().holds.length, 1); // CHANGE
-    const names = await fs.readdir(path.join(f.canvas.folderPath, '.trellis/activity-v4')); assert.equal(names.filter(name => name.endsWith('.json')).length, 1); // CHANGE
+    const names = await fs.readdir(path.join(f.canvas.folderPath, '.trellis/activity-v5')); assert.equal(names.filter(name => name.endsWith('.json')).length, 1); // CHANGE
 }); // CHANGE
 test('window cleanup during a terminal-witness flush prevents a delayed acquisition from reopening its session', async t => { // CHANGE
     const f = await fixture(t); let release, entered, block = false; const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; }); // CHANGE
@@ -371,13 +371,13 @@ test('concurrent announcements persist the latest signed revision independently 
     const f = await fixture(t), activity = f.activity(); await activity.start(); // NEW
     await Promise.all(Array.from({ length: 32 }, (_, revision) => activity.action(1, 'alice', { kind: 'publish', pending: [target], revision: revision + 1 }))); // NEW
     await activity.action(2, 'alice', { kind: 'publish', revision: 3, objects: [target] }); // NEW
-    const directory = path.join(f.canvas.folderPath, '.trellis/activity-v4'), records = await Promise.all((await fs.readdir(directory)).filter(name => name.endsWith('.json')).map(name => fs.readFile(path.join(directory, name), 'utf8').then(JSON.parse))); // NEW
+    const directory = path.join(f.canvas.folderPath, '.trellis/activity-v5'), records = await Promise.all((await fs.readdir(directory)).filter(name => name.endsWith('.json')).map(name => fs.readFile(path.join(directory, name), 'utf8').then(JSON.parse))); // CHANGE
     assert.equal(records.length, 2); assert.equal(records.find(record => record.payload.sessionId === 'session-1').payload.revision, 32); assert.equal(records.find(record => record.payload.sessionId === 'session-2').payload.revision, 3); // NEW
 }); // NEW
 test('forged signatures, wrong projects, stale revisions and inactive users never become active status', async t => { // NEW
     const f = await fixture(t), service = f.activity(); await service.start(); // NEW
-    const payload = { schema: 4, shareId: 'project', diagramId: 'diagram', deviceId: 'peer', sessionId: 'forged', userId: 'alice', sequence: 1, revision: 1, viewing: [], editing: [target], claims: [{ key: target, claimId: digest('forged') }], pending: [target], requests: [], saveState: 'pending', online: true }; // CHANGE
-    const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('peer:forged') + '.json'); // NEW
+    const payload = { schema: 5, shareId: 'project', diagramId: 'diagram', deviceId: 'peer', sessionId: 'forged', userId: 'alice', sequence: 1, revision: 1, viewing: [], editing: [target], claims: [{ key: target, claimId: digest('forged') }], pending: [target], requests: [], saveState: 'pending', online: true }; // CHANGE
+    const file = path.join(f.canvas.folderPath, '.trellis/activity-v5', digest('peer:forged') + '.json'); // CHANGE
     for (const envelope of [{ payload, signature: 'fake' }, signRecord({ ...payload, schema: 2 }, f.keys.privateKey), signRecord({ ...payload, shareId: 'other' }, f.keys.privateKey), signRecord({ ...payload, userId: 'inactive' }, f.keys.privateKey)]) { await f.writeAtomic(file, JSON.stringify(envelope)); await service.scan(); assert.equal(service.snapshot().sessions.length, 0); } // CHANGE
     await assert.rejects(service.action(1, 'inactive', { kind: 'publish' }), /Inactive/); // NEW
     await service.action(1, 'alice', { kind: 'publish', revision: 2 }); await assert.rejects(service.action(1, 'alice', { kind: 'publish', revision: 1 }), /Stale/); // NEW
@@ -385,7 +385,7 @@ test('forged signatures, wrong projects, stale revisions and inactive users neve
 test('a higher sequence with an older model revision cannot refresh presence or change ownership', async t => { // CHANGE
     const f = await fixture(t), peer = f.activity('peer'), local = f.activity(); // NEW
     await peer.action(2, 'alice', { kind: 'claim', targets: [target], revision: 2 }); await local.start(); f.time(5000); await peer.action(2, 'alice', { kind: 'publish' }); await local.scan(); // NEW
-    const file = path.join(f.canvas.folderPath, '.trellis/activity-v4', digest('peer:session-2') + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // NEW
+    const file = path.join(f.canvas.folderPath, '.trellis/activity-v5', digest('peer:session-2') + '.json'), envelope = JSON.parse(await fs.readFile(file, 'utf8')); // CHANGE
     f.time(34000); await f.writeAtomic(file, JSON.stringify(signRecord({ ...envelope.payload, sequence: envelope.payload.sequence + 1, revision: 1 }, f.keys.privateKey))); await local.scan(); // NEW
     assert.equal(local.snapshot().sessions[0].revision, 2); f.time(35000); assert.equal(local.snapshot().holds.length, 0); assert.equal(local.snapshot().sessions[0].online, false); // CHANGE
 }); // NEW
@@ -406,3 +406,7 @@ test('checkpoint restart, author isolation and a failed replacement preserve the
     await drafts.checkpoint('alice', 'session-1', input); fail = true; await assert.rejects(drafts.checkpoint('alice', 'session-1', { ...input, revision: 2 }), /Disk full/); // NEW
     const restarted = createDraftStore(options); assert.equal((await restarted.restore('alice')).drafts[0].revision, 1); assert.equal((await restarted.restore('bob')).drafts.length, 0); // NEW
 }); // NEW
+
+test('protocol 4 cannot create an activity service', () => { // CHANGE
+    assert.throws(() => createActivityService({ canvas: { protocolVersion: 4 } }), /Only protocol 5/); // CHANGE
+}); // CHANGE

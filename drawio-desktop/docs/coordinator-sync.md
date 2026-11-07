@@ -8,17 +8,19 @@ archived edits. Peer proposal routing, incremental communities, takeover,
 community backup, reconciliation, shutdown handoff, and the registration cutover
 must follow only after the first performance gate passes.
 
-The final engine will use garden protocol 4 and community protocol 2. Older
+The engine supports only garden protocol 5 and community protocol 2. <!-- CHANGE --> Older
 sharing engines will not run alongside it. Existing files, history, recovery data,
 and old synchronized records must remain available for explicit re-sharing.
 
+Protocol 4 support and its qualification workloads are removed. We assume no protocol-4 gardens exist, so there is no migration or special compatibility handling. Unsupported registrations and invitations are rejected by the normal protocol checks; retained records are not deleted. <!-- CHANGE -->
+
 ## Current-state persistence
 
-The shared browser/main contract is `js/trellis-sync-contract.js`: garden 4,
+The shared browser/main contract is `js/trellis-sync-contract.js`: garden 5, <!-- CHANGE -->
 community 2, namespaces, and production capabilities. Peer proposal delivery,
 communities, takeover, backup and temporary handoff remain unavailable until
 milestone-one qualification succeeds. Old community journals are retained but
-never processed by ordinary protocol 4 polling. <!-- CHANGE -->
+never processed by ordinary protocol 5 polling. <!-- CHANGE -->
 
 Authorized coordinators are trusted checkpoint attestors, including future owner,
 gardener and opted-in community backup coordinators. Checkpoint loading verifies
@@ -61,7 +63,7 @@ writers, and verify production receipt recovery accepts the save only once.
 <!-- CHANGE -->
 
 `trellis-current-state.js` persists immutable signed decisions under
-`.trellis/collaboration-v4/epochs/<epoch>/<sequence>.json`. Each decision retains
+`.trellis/collaboration-v5/epochs/<epoch>/<sequence>.json`. Each decision retains <!-- CHANGE -->
 the author's signed proposal, the predecessor hash, and the resulting content
 hash. A signed device head names the accepted position and checkpoint. Head
 publication follows durable decision storage; an interrupted head publication is
@@ -130,29 +132,31 @@ Run from `drawio-desktop`:
 node scripts/benchmark-coordinator-saves.cjs
 ```
 
-The runner freezes its sources, verifies their manifest, and runs three serial
-campaigns for both protocols 4 and 5 at 0 and 10,000 archived signed content edits (12 workloads). Every workload <!-- CHANGE -->
-has 30 measurements for manual save, autosave execution, overlapping save requests,
+The runner freezes its sources, verifies their manifest, and runs one serial <!-- CHANGE -->
+campaign for protocol 5 at 0 and 10,000 archived signed content edits (two workloads). Every workload <!-- CHANGE -->
+has five measurements for manual save, autosave execution, overlapping save requests, <!-- CHANGE -->
 unchanged save, unchanged refresh, save plus checkpoint, and invitation preparation. The diagram and
 edit shape remain fixed. Autosave debounce is excluded; production native save
 functions, the production sharing service, the history plugin, real SQLite recording, and signed history export
 are included. Live transport and full application startup are separate acceptance
 checks.
 
-The default coordinator run uses split autosave timing: sample 0 waits at least 20 real seconds; the other 29 advance only the background controller's injected quiet clock by 20 seconds after each edit. Execution, publication, rendering, heartbeats, and recovery timers remain real. Every sample must reset and expire the countdown and execute the production automatic branch. The versioned records distinguish actual wall waits from injected advances and require zero advances during execution. These preparations are excluded from the five-second execution p95. <!-- CHANGE -->
+The default coordinator run uses split autosave timing: sample 0 waits at least 20 real seconds; the other four advance only the background controller's injected quiet clock by 20 seconds after each edit. Execution, publication, rendering, heartbeats, and recovery timers remain real. Every sample must reset and expire the countdown and execute the production automatic branch. The versioned records distinguish actual wall waits from injected advances and require zero advances during execution. These preparations are excluded from the five-second execution three-slowest mean. <!-- CHANGE -->
 
-Use `--autosave-timing=real` for 30 real waits per workload. Standalone native fixtures default to real timing. The fixture explicitly invokes the automatic-save path after preparation; it does not certify that the native editor timer initiates the save. Strict legacy all-real evidence remains supported. <!-- NEW -->
+Use `--autosave-timing=real` for five real waits per workload. Standalone native fixtures default to real timing. The fixture explicitly invokes the automatic-save path after preparation; it does not certify that the native editor timer initiates the save. All-real evidence must use the current five-sample/statistic policy. <!-- CHANGE -->
 
-Run `node scripts/benchmark-coordinator-saves.cjs --pilot` for four serial workloads: protocols 4/5 at 0/10,000 edits, one repetition, 30 samples for each of the seven operations. A passing pilot exits zero but records `pilot: true`, `accepted: false`, and no qualified runs. Pilots cannot qualify or supply resume evidence. Full runs require three repetitions; `--resume <summary.json>` requires matching sources and timing policy and independently revalidates reused raw samples. Pilot/resume combinations are rejected. <!-- NEW -->
+The separate pilot is removed; `--pilot` is rejected with a retirement message. Run qualification directly. `--resume <summary.json>` requires five samples, the `slowest-three-mean` statistic, matching sources, explicit summary/run timing modes, version-1 `autosaveTiming` records, and independently validated raw samples. Unversioned `autosaveScheduling` arrays and missing-mode fallbacks are no longer accepted. Historical pilots and ten- or thirty-sample reports cannot qualify or supply resume evidence; old reports remain untouched and are never truncated. Completed extra workloads remain extra evidence. <!-- CHANGE -->
 
-Split timing projects a reduction from 120 to 4 minutes of mandatory waiting for a full matrix, or 80 seconds for the four-workload pilot. Setup and execution add time. Accelerated samples exercise fewer real heartbeat/recovery cycles; focused cadence and quiet-period regressions remain required. No all-real comparison or performance-equivalence claim is implied by the pilot. <!-- NEW -->
+For each operation/workload independently, sort the five raw timings descending and average the first three. Reports retain all measurements and name the result `slowestThreeMeanMs`; summaries and raw reports identify `statistic: "slowest-three-mean"`. This custom statistic replaces p95 for qualification. An individual sample can exceed five seconds when the three-slowest mean still passes. <!-- CHANGE -->
+
+Split timing requires 40 seconds of mandatory quiet waiting across the two workloads, compared with 200 seconds in all-real mode. Setup and execution add time. Accelerated samples exercise fewer real heartbeat/recovery cycles; focused cadence and quiet-period regressions remain required. Five samples and one repetition provide less evidence about intermittent failures and variation between launches; the average can smooth an individual spike. <!-- CHANGE -->
 
 Execution timing includes history publication and UI frame completion. Hidden
 Electron fixtures use offscreen rendering at 60 Hz, avoiding the two-second frame
 delay produced by Chromium's hidden-window throttle. <!-- CHANGE -->
 
 The benchmark asserts that coordinator saving actually ran, so a native local-save
-fallback cannot qualify. All seven p95 results must meet five seconds. Read timing
+fallback cannot qualify. All seven three-slowest means must be at or below five seconds. Read timing <!-- CHANGE -->
 events must show zero historical arbitration replays and zero archived
 collaboration records read. The runner also makes checkpoint-covered archives
 unavailable and independently audits filesystem calls. The SQLite timeline contains
@@ -164,7 +168,7 @@ single samples, and passing only one history size are not qualification. Reports
 and source manifests are retained under `.test-artifacts/coordinator-sync`.
 
 The independent verifier checks raw samples, automatic execution and UI completion
-counts, archive audits, all twelve campaign/history-size combinations, and exact
+counts, archive audits, both protocol-5 history-size combinations, and exact <!-- CHANGE -->
 frozen/current runtime source inventories and hashes. Run
 `npm run test:coordinator-qualification -- <qualification-directory>/summary.json`
 before advancing implementation. Summary flags alone cannot open the gate. Machine

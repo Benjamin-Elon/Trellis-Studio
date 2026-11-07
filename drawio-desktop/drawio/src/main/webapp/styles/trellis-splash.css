@@ -75,6 +75,20 @@
 .trellis-home-muted { display:block;font-size:12px;color:#59675b;overflow-wrap:anywhere; } /* NEW */
 .trellis-home-open { box-sizing:border-box;padding:12px;max-height:100%;overflow:auto; } /* NEW */
 .trellis-home-open .trellis-home-list { max-height:330px; } /* NEW */
+.trellis-garden-loading { position:fixed;inset:0;z-index:2000000001;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(27,39,29,.4);box-sizing:border-box;font:14px Arial,sans-serif;color:#253c2d; } /* NEW */
+.trellis-garden-loading[hidden] { display:none; } /* NEW */
+.trellis-garden-loading .trellis-home-panel { width:440px;max-width:100%;max-height:calc(100vh - 32px);overflow:auto;box-sizing:border-box;padding:24px;box-shadow:0 12px 40px rgba(0,0,0,.2); } /* NEW */
+.trellis-garden-loading h2 { margin:0 0 16px;font-size:20px; } /* NEW */
+.trellis-garden-loading ol { margin:0 0 16px;padding-left:24px;line-height:1.9; } /* NEW */
+.trellis-garden-loading li[data-state="active"] { font-weight:700;color:#1b5da5; } /* NEW */
+.trellis-garden-loading li[data-state="complete"] { color:#28733d; } /* NEW */
+.trellis-garden-loading li[data-state="skipped"] { color:#697169; } /* NEW */
+.trellis-garden-loading progress { display:block;width:100%;height:12px;margin:12px 0 16px;accent-color:#2867ab; } /* NEW */
+.trellis-garden-loading progress:not([value]) { appearance:none;border:0;border-radius:6px;background:linear-gradient(90deg,#dce7d9 0%,#2867ab 45%,#dce7d9 75%);background-size:200% 100%;animation:trellis-opening-progress 1.4s linear infinite; } /* NEW */
+.trellis-garden-loading progress:not([value])::-webkit-progress-bar { background:transparent; } /* NEW */
+.trellis-garden-loading .trellis-home-muted:empty { display:none; } /* NEW */
+@keyframes trellis-opening-progress { from { background-position:100% 0; } to { background-position:-100% 0; } } /* NEW */
+@media (prefers-reduced-motion:reduce) { .trellis-garden-loading progress:not([value]) { animation:none;background:#dce7d9; } } /* NEW */
 .trellis-home-form { display:flex;flex-direction:column;align-items:flex-start; } /* NEW */
 .geEditor.trellis-splash-active > .geMenubarContainer,
 .geEditor.trellis-splash-active > .geToolbarContainer {

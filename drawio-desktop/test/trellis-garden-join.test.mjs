@@ -6,7 +6,7 @@ import os from 'node:os'; // NEW
 import path from 'node:path'; // NEW
 import { createGardenJoinService, parseGardenInvitation } from '../src/main/trellis-garden-join-service.js'; // NEW
 import { encodeBlock } from '../src/main/trellis-share-protocol.js'; // NEW
-const invite = overrides => ({ protocolVersion: 4, shareId: 'share', diagramId: 'diagram', inviteId: 'invitation', pendingUserId: 'member', email: 'member@example.org', expiresAt: Date.now() + 86400000, deviceId: Array(8).fill('AAAAAAA').join('-'), coordinatorPublicKey: 'public-key', folderId: 'trellis-v4-share', filename: 'Garden.drawio', label: 'Community garden', code: 'SECRET-CODE', ...overrides }); // NEW
+const invite = overrides => ({ protocolVersion: 5, shareId: 'share', diagramId: 'diagram', inviteId: 'invitation', pendingUserId: 'member', email: 'member@example.org', expiresAt: Date.now() + 86400000, deviceId: Array(8).fill('AAAAAAA').join('-'), coordinatorPublicKey: 'public-key', folderId: 'trellis-v5-share', filename: 'Garden.drawio', label: 'Community garden', code: 'SECRET-CODE', ...overrides }); // CHANGE
 const block = overrides => encodeBlock('INVITE', invite(overrides)); // NEW
 const xml = (identityId = '', diagramId = 'diagram') => '<mxGraphModel><root><mxCell id="0"/><object id="1" trellis_access_open="1" trellis_users_diagram_id="' + diagramId + '" trellis_users_json="' + JSON.stringify({ usersEnabled: true, users: identityId ? [{ id: 'member', name: 'Member', portableIdentityId: identityId }] : [], invites: [{ id: 'invitation', pendingUserId: 'member', status: 'pending' }] }).replace(/"/g, '&quot;') + '"><mxCell parent="0"/></object></root></mxGraphModel>'; // CHANGE
 

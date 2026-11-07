@@ -905,6 +905,14 @@ begins, the operation completes or compensates rather than being canceled.
 
 ### Auto-window results
 
+A new ordinary planting without a specified crop chooses its crop and active season <!-- CHANGE -->
+before opening: prefer a window open today, otherwise the earliest upcoming start, <!-- CHANGE -->
+otherwise the latest ended window. Crop names break ties alphabetically. Comparisons <!-- CHANGE -->
+use displayed planting dates, including transplant lead time, in the selected year's <!-- CHANGE -->
+computed windows. If no window is available, retain the original first-crop fallback. <!-- CHANGE -->
+Existing crops, allocation drafts, and companion/turnover defaults are preserved; <!-- CHANGE -->
+year changes and background ranking retain the current crop selection. <!-- CHANGE -->
+
 `computeAutoStartEndWindowForward()` returns:
 
 - `feasible: true` with concrete feasibility and harvest dates.

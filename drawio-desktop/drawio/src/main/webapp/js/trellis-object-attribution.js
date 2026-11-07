@@ -28,6 +28,14 @@
             const facts = read(cell), time = value => exact ? value && Number.isFinite(new Date(value).getTime()) ? new Date(value).toLocaleString() : 'time unknown' : relativeTime(value);
             return ['Created by ' + name(facts.createdBy) + ' ' + time(facts.createdAt), 'Last edited by ' + name(facts.editedBy) + ' ' + time(facts.editedAt)];
         }
+        /** Center under an existing dimension chip, or directly under the object's rotated footprint when shown alone. */ // NEW
+        function placement(cell, state) { // NEW
+            const chip = graph.__gardenScaleController?.getOverlayPlacement(cell); // NEW
+            if (chip) return { centerX: chip.centerX, top: chip.bottom + 4 }; // NEW
+            const rotation = Number(graph.getCellStyle?.(cell)?.rotation) || 0; // NEW
+            const bounds = root.mxUtils?.getBoundingBox(state, rotation) || state; // NEW
+            return { centerX: Math.round(bounds.x + bounds.width / 2), top: Math.round(bounds.y + bounds.height + 8) }; // NEW
+        } // NEW
         function render() { // NEW: visit only selected/hovered objects, never all diagram cells.
             root.clearTimeout(timer); timer = null;
             layer?.remove(); layer = null;
@@ -39,8 +47,9 @@
                 const state = graph.view?.getState(cell); if (!state) continue;
                 if (!layer) { layer = root.document.createElement('div'); layer.dataset.trellisAttributionLayer = ''; layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:19;'; graph.container.appendChild(layer); graph.__trellisOverlayVisibility?.mark(layer); }
                 const badge = root.document.createElement('div'); badge.dataset.trellisAttribution = String(cell.id);
-                badge.style.cssText = 'position:absolute;pointer-events:none;white-space:nowrap;background:#fff;color:#444;border:1px solid #bbb;border-radius:4px;padding:4px 6px;font:11px/16px Arial;box-shadow:0 1px 4px #0002;';
-                badge.style.left = Math.round(state.x) + 'px'; badge.style.top = Math.round(state.y + state.height + 4) + 'px';
+                badge.style.cssText = 'position:absolute;transform:translateX(-50%);pointer-events:none;white-space:nowrap;background:#fff;color:#444;border:1px solid #bbb;border-radius:4px;padding:4px 6px;font:11px/16px Arial;box-shadow:0 1px 4px #0002;'; // CHANGE: center the card while preserving its text alignment and appearance.
+                const position = placement(cell, state); // NEW
+                badge.style.left = position.centerX + 'px'; badge.style.top = position.top + 'px'; // CHANGE
                 for (const text of description(cell)) { const line = root.document.createElement('div'); line.textContent = text; badge.appendChild(line); }
                 badge.title = description(cell, true).join('\n'); badge.setAttribute('role', 'note'); badge.setAttribute('aria-label', badge.title); layer.appendChild(badge);
             }
@@ -58,7 +67,7 @@
         if (action) { action.label = 'Show object attribution'; action.setToggleAction?.(true); action.setSelectedCallback?.(enabled); }
         const menu = ui.menus?.get?.('view') || ui.menus?.get?.('extras');
         if (menu) { const original = menu.funct; menu.funct = function (menu, parent) { original?.apply(this, arguments); ui.menus.addMenuItems(menu, ['-', 'trellisShowObjectAttribution'], parent); }; }
-        const api = { read, description, render, enabled }; graph.__trellisObjectAttribution = api; return api; // NEW
+        const api = { read, description, render, enabled }; graph.__trellisObjectAttribution = api; render(); return api; // CHANGE: honor an existing selection when attribution is installed after dimensions.
     }
     root.TrellisObjectAttribution = { install, relativeTime }; // NEW
 })(window);

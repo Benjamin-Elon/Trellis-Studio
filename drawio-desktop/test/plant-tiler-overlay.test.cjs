@@ -49,7 +49,7 @@ test('Garden Settings suppresses the garden options overlay while the dialog is 
 
     assert.match(source, /let openGardenSettingsDialogWithOverlaySuppressed = null;/);
     assert.match(source, /let gardenSettingsOverlaySuppressed = false;/);
-    assert.match(source, /gardenSettingsOverlaySuppressed = true;[\s\S]*hideToolbar\(\);[\s\S]*showGardenSettingsDialog\(ui, graph, moduleCell, clearSuppressionAndNotify\)/);
+    assert.match(source, /gardenSettingsOverlaySuppressed = true;[\s\S]*hideToolbar\(\);[\s\S]*showGardenSettingsDialog\(ui, graph, moduleCell, clearSuppressionAndNotify, !!starter, starter\)/); // CHANGE
     assert.match(source, /gardenSettingsOverlaySuppressed = false;[\s\S]*scheduleRefresh\(\);/);
     assert.match(source, /function refreshForSelection\(\) \{[\s\S]*if \(gardenSettingsOverlaySuppressed\) \{[\s\S]*hideToolbar\(\);[\s\S]*return;/);
     assert.match(source, /function positionToolbar\(\) \{[\s\S]*if \(gardenSettingsOverlaySuppressed\) \{ hideToolbar\(\); return; \}/);
@@ -73,7 +73,7 @@ test('Garden Settings entry points route through the overlay-suppressed opener',
 
     const opener = sourceSlice(source, 'openGardenSettingsDialogWithOverlaySuppressed = async function', 'function getSingleSelectedGardenModule'); // CHANGE: validate the opener contract, independent of form reopen callbacks.
     assert.match(opener, /gardenSettingsOverlaySuppressed = true;[\s\S]*hideToolbar\(\)/); // CHANGE
-    assert.match(opener, /await showGardenSettingsDialog\(ui, graph, moduleCell, clearSuppressionAndNotify\)/); // CHANGE
+    assert.match(opener, /await showGardenSettingsDialog\(ui, graph, moduleCell, clearSuppressionAndNotify, !!starter, starter\)/); // CHANGE
     assert.match(opener, /catch \(e\)[\s\S]*clearSuppressionAndNotify\(\);[\s\S]*throw e/); // CHANGE
 });
 
@@ -190,7 +190,7 @@ test('Garden Settings exposes fixed path width presets with explicit enablement'
     assert.match(dialogSource, /const chosenPathPresetsCm = readPathWidthInputsAsCm\(chosenUnits\);/); // NEW
     assert.match(dialogSource, /Enabled path widths must be positive numbers\./); // NEW
     assert.match(dialogSource, /pathAttrs\[pathPresetEnabledAttr\(preset\.id\)\] = preset\.enabled \? "1" : "0";[\s\S]*pathAttrs\[pathPresetWidthAttr\(preset\.id\)\] = formatBedCmAttr\(preset\.widthCm\);/); // NEW
-    assert.match(dialogSource, /ui\.showDialog\(div, 460, 640, true, true, notifyClose\);/); // CHANGE: circle-budget fields increase the Garden Settings dialog height.
+    assert.match(dialogSource, /ui\.showDialog\(div, 460, 640, true, !starter, notifyClose\);/); // CHANGE: required setup has no close button.
 }); // NEW
 
 test('Garden bed path snapping evaluates direct neighbors and closest path presets', () => { // NEW
@@ -579,6 +579,123 @@ for (const order of [['Planting_Group.js', 'Garden_Beds.js'], ['Garden_Beds.js',
         assert.equal(f.window.mxUtils.getXml(new f.window.mxCodec().encode(f.graph.model)), modelBefore); // CHANGE: visibility never writes diagram data or history.
     }); // CHANGE
 } // CHANGE
+
+/** Keep the planting frame above the bed so raw DOM targets differ from click-through hits. */ // NEW
+function loadOccupiedBedPanelFixture(t, pluginOrder, clickThrough = true) { // NEW
+    const f = loadBedPanelFixture(t, pluginOrder, clickThrough); // NEW
+    const group = f.graph.insertVertex(f.moduleCell, 'planting', f.xml({ tiler_group: '1', label: 'Carrots', bed_auto_fit: '0' }), 400, 200, 200, 100); // NEW
+    const plant = f.graph.insertVertex(group, 'plant', f.xml({ plant_tiler: '1' }), 80, 30, 40, 40, 'ellipse;'); // NEW
+    return { ...f, group, plant, gap: { clientX: 420, clientY: 220 } }; // NEW
+} // NEW
+
+for (const order of [['Planting_Group.js', 'Garden_Beds.js'], ['Garden_Beds.js', 'Planting_Group.js']]) { // NEW
+    test(`occupied-bed frame gaps toggle both panels (${order.join(' then ')})`, async t => { // NEW
+        const f = loadOccupiedBedPanelFixture(t, order); // NEW
+        assert.equal(f.graph.getCellAt(420, 220), f.bed, 'gap resolves through the frame to the bed'); // NEW
+        await f.click(f.group, f.gap); f.assertPanels(true); // NEW: initial selection must not dismiss.
+        assert.equal(f.graph.getSelectionCell(), f.bed); // NEW
+        const before = f.window.mxUtils.getXml(new f.window.mxCodec().encode(f.graph.model)); // NEW
+        for (const visible of [false, true]) { // NEW
+            f.mouse(f.group, 'mousedown', f.gap); f.assertPanels(!visible); // NEW: no press blink.
+            await f.flush(); f.assertPanels(!visible); // NEW
+            f.mouse(f.group, 'mouseup', f.gap); f.assertPanels(visible); // NEW: both panels commit synchronously.
+            await f.flush(); f.assertPanels(visible); // NEW
+            assert.equal(f.graph.getSelectionCell(), f.bed); // NEW
+        } // NEW
+        assert.equal(f.window.mxUtils.getXml(new f.window.mxCodec().encode(f.graph.model)), before); // NEW
+    }); // NEW
+} // NEW
+
+test('occupied-bed plant and label clicks retain click-through selection behavior', async t => { // NEW
+    const f = loadOccupiedBedPanelFixture(t); // NEW
+    for (const node of ['shape', 'text']) { // NEW: a circle and a planting label must follow selection's existing hit policy.
+        f.graph.setSelectionCell(f.bed); await f.flush(); // NEW
+        const cell = node === 'shape' ? f.plant : f.group; // NEW
+        const target = f.graph.view.getState(cell)[node].node; // NEW
+        for (const type of ['mousedown', 'mouseup']) target.dispatchEvent(new f.window.MouseEvent(type, { bubbles: true, clientX: 500, clientY: 250 })); // NEW
+        await f.flush(); // NEW
+        assert.equal(f.graph.getSelectionCell(), f.group); // NEW
+        assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // NEW
+    } // NEW
+}); // NEW
+
+test('occupied-bed gaps resolve in container coordinates after zoom, translation, offset and scroll', async t => { // NEW
+    const f = loadOccupiedBedPanelFixture(t); // NEW
+    f.graph.container.getBoundingClientRect = () => ({ left: 130, top: 70, right: 1330, bottom: 870, width: 1200, height: 800 }); // NEW: jsdom has no layout.
+    f.graph.container.scrollLeft = 45; f.graph.container.scrollTop = 25; // NEW
+    f.graph.view.setScale(1.5); f.graph.view.setTranslate(17, 23); // NEW
+    f.graph.setSelectionCell(f.bed); await f.flush(); // NEW
+    const state = f.graph.view.getState(f.bed); // NEW
+    const gap = { clientX: 130 - 45 + state.x + 30, clientY: 70 - 25 + state.y + 30 }; // NEW
+    await f.click(f.group, gap); f.assertPanels(false); // NEW
+    await f.click(f.group, gap); f.assertPanels(true); // NEW
+    assert.equal(f.graph.getSelectionCell(), f.bed); // NEW
+}); // NEW
+
+test('occupied-bed gaps toggle Allocation names while suppressed modes retain dismissal state', async t => { // NEW
+    const f = loadOccupiedBedPanelFixture(t); // NEW
+    let active = { mode: 'allocate' }; f.window.Trellis = { interactionModes: { getActive: () => active } }; // NEW
+    f.graph.setSelectionCell(f.bed); await f.flush(); f.assertPanels(true, true); // NEW
+    await f.click(f.group, f.gap); f.assertPanels(false, true); // NEW
+    await f.click(f.group, f.gap); f.assertPanels(true, true); // NEW
+    assert.equal(f.conditions()[0].children.length, 1); // NEW
+    active = null; f.window.dispatchEvent(new f.window.CustomEvent('trellisInteractionModeChanged')); await f.flush(); f.assertPanels(true); // NEW
+    f.window.TrellisIrrigationPlanner = { isIrrigationModeActive: () => true }; // NEW
+    f.window.dispatchEvent(new f.window.CustomEvent('trellisIrrigationModeChanged')); await f.flush(); // NEW
+    await f.click(f.group, f.gap); f.assertPanels(false); // NEW
+    assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // NEW
+    f.window.TrellisIrrigationPlanner.isIrrigationModeActive = () => false; // NEW
+    f.window.Trellis.users = { isTeamPermissionModeActive: () => true }; // NEW
+    f.window.dispatchEvent(new f.window.CustomEvent('trellisTeamPermissionModeChanged', { detail: { active: true } })); await f.flush(); // NEW
+    await f.click(f.group, f.gap); f.assertPanels(false); // NEW
+    assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // NEW
+}); // NEW
+
+test('occupied-bed frame gestures preserve drag, modifier, cancellation and selection guards', async t => { // NEW
+    const f = loadOccupiedBedPanelFixture(t); // NEW
+    f.graph.setSelectionCell(f.bed); await f.flush(); // NEW
+    for (const options of [{ shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { button: 1 }, { button: 2 }, { detail: 2 }]) { // NEW
+        await f.click(f.group, { ...f.gap, ...options }); // NEW
+        assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // NEW
+        f.graph.setSelectionCell(f.bed); await f.flush(); // NEW
+    } // NEW
+    for (const hidden of [false, true]) { // NEW
+        if (hidden) await f.click(f.group, f.gap); // NEW
+        assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), hidden); // NEW
+        f.mouse(f.group, 'mousedown', f.gap); // NEW
+        f.mouse(f.group, 'mousemove', { ...f.gap, clientX: f.gap.clientX + 4 }); // NEW
+        f.mouse(f.group, 'mousemove', f.gap); f.mouse(f.group, 'mouseup', f.gap); await f.flush(); // NEW: returning to the origin remains a drag.
+        assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), hidden); f.assertPanels(!hidden); // NEW
+        for (const name of ['mouseup', 'pointerup', 'pointercancel', 'blur']) { // NEW
+            f.mouse(f.group, 'mousedown', f.gap); // NEW
+            f.window.dispatchEvent(new f.window.Event(name)); // NEW
+            f.mouse(f.group, 'mouseup', f.gap); await f.flush(); f.assertPanels(!hidden); // NEW
+        } // NEW
+    } // NEW
+    await f.click(f.group, f.gap); f.assertPanels(true); // NEW
+    f.mouse(f.group, 'mousedown', f.gap); // NEW
+    f.graph.setSelectionCell(f.bed2); f.graph.setSelectionCell(f.bed); // NEW
+    f.mouse(f.group, 'mouseup', f.gap); await f.flush(); f.assertPanels(true); // NEW
+}); // NEW
+
+test('occupied-bed standalone operation retains native hits and falls back when hit lookup misses', async t => { // NEW
+    const f = loadOccupiedBedPanelFixture(t, undefined, false); // NEW
+    f.graph.setSelectionCell(f.bed); await f.flush(); // NEW
+    await f.click(f.group, f.gap); // NEW
+    assert.equal(f.graph.getSelectionCell(), f.group); // NEW: without click-through the frame keeps native selection ownership.
+    assert.equal(f.graph.__plantTilerIsBedOverlayHidden(f.bed), false); // NEW
+    for (const lookup of [undefined, () => null]) { // NEW
+        f.graph.setSelectionCell(f.bed); await f.flush(); // NEW
+        const original = f.graph.getCellAt; f.graph.getCellAt = lookup; // NEW
+        try { // NEW: provide the native state directly; mxCellRenderer itself requires getCellAt on release.
+            const event = new f.window.MouseEvent('mousedown', { bubbles: true, ...f.gap }); // NEW
+            Object.defineProperty(event, 'target', { value: f.graph.view.getState(f.bed).shape.node }); // NEW
+            f.graph.fireMouseEvent(f.window.mxEvent.MOUSE_DOWN, new f.window.mxMouseEvent(event, f.graph.view.getState(f.bed))); // NEW
+        } finally { f.graph.getCellAt = original; } // NEW
+        f.mouse(f.bed, 'mouseup', f.gap); await f.flush(); f.assertPanels(false); // NEW
+        f.graph.clearSelection(); // NEW: reset dismissal before the next fallback case.
+    } // NEW
+}); // NEW
 
 test('bed dismissal survives refresh and view/history events but resets on every selection change', async t => { // CHANGE
     const f = loadBedPanelFixture(t); // CHANGE

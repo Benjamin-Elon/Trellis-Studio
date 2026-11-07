@@ -968,6 +968,9 @@ mxStencilRegistry.allowEval = false;
 	App.prototype.loadArgs = function(argsObj)
 	{
 		var paths = argsObj.args;
+		if (paths?.[0] && paths[0].indexOf('-') !== 0 && /\.drawio$/i.test(paths[0]) && argsObj.create == null && window.TrellisGardenHome) { // CHANGE: existing gardens share the guarded loading lifecycle, including recent files.
+			return window.TrellisGardenHome.openRequested(this, { path: paths[0] }).catch(error => this.handleError(error)); // CHANGE
+		} // CHANGE
 		
 		// If a file is passed, and it is not an argument (has a leading -) 
 		if (paths !== undefined && paths[0] != null && paths[0].indexOf('-') != 0 && this.spinner.spin(document.body, mxResources.get('loading')))
@@ -1473,7 +1476,8 @@ mxStencilRegistry.allowEval = false;
 
 	/** Prepare native Browse, recent-file and tray opening before choosing the projection path or its drafts. */ // NEW
 	var readVerifiedGraphFile = App.prototype.readGraphFile; // NEW
-	App.prototype.readGraphFile = function(fn, fnErr, path, noDraftCheck) { // NEW
+	App.prototype.readGraphFile = function(fn, fnErr, path, noDraftCheck, options) { // CHANGE
+		if (options?.prepared) return readVerifiedGraphFile.call(this, fn, fnErr, path, noDraftCheck); // CHANGE: the opening coordinator already prepared this exact projection.
 		if (!/\.drawio$/i.test(path) || !window.trellisGardenLibrary?.prepareOpen) return readVerifiedGraphFile.apply(this, arguments); // NEW
 		var previousFile = this.getCurrentFile(), previousStatus = this.editor.status; this.editor.setStatus('Checking garden…'); // NEW
 		return window.trellisGardenLibrary.prepareOpen({ path: path }).then(prepared => { // NEW
@@ -1481,6 +1485,24 @@ mxStencilRegistry.allowEval = false;
 			if (this.getCurrentFile() !== previousFile) throw new Error('The document changed while checking this garden. Retry opening it.'); // NEW
 			return readVerifiedGraphFile.call(this, fn, fnErr, prepared?.path || path, noDraftCheck); // NEW
 		}).catch(error => { if (this.editor.status === 'Checking garden…') this.editor.setStatus(previousStatus); fnErr(error); }); // NEW
+	}; // NEW
+	/** Select recovery data before replacement; successful opening alone consumes a recovered draft. */ // NEW
+	App.prototype.chooseGardenDraft = async function(input, operation) { // NEW
+		if (!input.entry) return input; // NEW
+		var drafts = await requestSync({ action: 'getFileDrafts', fileObject: input.entry }); // NEW
+		operation.assertActive(); if (!drafts?.length) return input; // NEW
+		return new Promise((resolve, reject) => { // NEW
+			var settled = false, discarded = new Set(); // CHANGE
+			var finish = value => { if (settled || !operation.active()) return; settled = true; this.hideDialog(); resolve(value); }; // CHANGE
+			try { // NEW
+				var dialog = new DraftDialog(this, mxResources.get('unsavedChanges'), drafts.length > 1 ? null : drafts[0].data, // NEW
+					index => { index = index || 0; finish({ ...input, data: drafts[index].data, modified: true, draftPath: drafts[index].path }); }, // NEW
+					async (index, done) => { try { operation.assertActive(); index = Number(index || 0); await requestSync({ action: 'deleteFile', file: drafts[index].path }); discarded.add(index); if (done && discarded.size < drafts.length) done(); else finish(input); } catch (error) { reject(error); } }, // CHANGE
+					null, null, () => finish(input), drafts.length > 1 ? drafts : null); // NEW
+				operation.cleanupDraft = () => { settled = true; if (this.dialog?.container?.contains(dialog.container)) this.hideDialog(true); }; // NEW
+				this.showDialog(dialog.container, 640, 480, true, false, () => { if (!settled) { settled = true; operation.cancel(); resolve(input); } }); dialog.init(); // NEW
+			} catch (error) { reject(error); } // NEW
+		}); // NEW
 	}; // NEW
 	// Disables temp files in Electron
 	var LocalFileCtor = LocalFile;
@@ -1537,7 +1559,7 @@ mxStencilRegistry.allowEval = false;
 	
 	LocalFile.prototype.isAutosave = function()
 	{
-		return this.fileObject != null && DrawioFile.prototype.isAutosave.apply(this, arguments);
+		return !this.__trellisStarterSetup && this.fileObject != null && DrawioFile.prototype.isAutosave.apply(this, arguments); // CHANGE
 	};
 	
 	LocalFile.prototype.isAutosaveOptional = function()
@@ -1560,6 +1582,7 @@ mxStencilRegistry.allowEval = false;
 	// Optional cancel callback lets navigation observe native dialog dismissal without changing existing save callers. // NEW
 	LocalFile.prototype.save = function(revision, success, error, unloading, overwrite, cancel) // CHANGE
 	{
+		if (this.__trellisStarterSetup) { error?.({ message: 'Finish Garden Settings before saving this project.' }); return; } // CHANGE: the first save must use the managed pipeline.
 		if (this.__trellisNamingMove) { const args = arguments; this.__trellisNamingMove.then(() => this.save.apply(this, args)); return; } // NEW
 		if (this.__trellisLocalSavePending) { // CHANGE: native saveFile otherwise drops requests while an autosave is writing.
 			const args = arguments; // CHANGE
@@ -1804,6 +1827,7 @@ mxStencilRegistry.allowEval = false;
 	{
 		try
 		{
+			if (this.__trellisStarterSetup) throw new Error('Finish Garden Settings before saving this project.'); // CHANGE
 			await window.Trellis?.sharing?.whenDocumentReady?.(); // NEW: classification may still be restoring an existing managed project.
 			if (this.ui.getCurrentFile && this.ui.getCurrentFile() !== this) throw new Error('The diagram changed before Save As could begin.'); // NEW: readiness belongs to the initiating file.
 			const portableCopy = this.ui.editor.graph.__trellisProjectFormat === 2 || window.Trellis?.sharing?.getInfo?.()?.managed === true; // CHANGE

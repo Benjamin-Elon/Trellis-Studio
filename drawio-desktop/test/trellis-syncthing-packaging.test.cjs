@@ -132,7 +132,7 @@ test('Electron file filter allows managed images only and always blocks private 
 test('tray filters retained registrations while preserving actionable current sync states', async () => { // NEW
     const { isTrayStatusVisible } = await import('../src/main/trellis-sharing-tray.js'); // NEW
     for (const key of ['localOnly', 'retired', 'fenced', 'revoked', 'localRemoved']) assert.equal(isTrayStatusVisible({ [key]: true }), false); // NEW
-    for (const state of ['paused', 'awaitingApproval', 'initializing', 'unavailable', 'syncing', 'upToDate']) assert.equal(isTrayStatusVisible({ state, protocolVersion: 4 }), true); // NEW
-    assert.equal(isTrayStatusVisible({ protocolVersion: 3 }), false); // NEW
+    for (const state of ['paused', 'awaitingApproval', 'initializing', 'unavailable', 'syncing', 'upToDate']) assert.equal(isTrayStatusVisible({ state, protocolVersion: 5 }), true); // CHANGE
+    for (const protocolVersion of [3, 4]) assert.equal(isTrayStatusVisible({ protocolVersion }), false); // CHANGE
     assert.equal(isTrayStatusVisible({ label: 'Account', state: 'initializing' }), true); // NEW
 }); // NEW

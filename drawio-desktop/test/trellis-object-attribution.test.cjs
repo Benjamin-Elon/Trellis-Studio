@@ -102,6 +102,35 @@ test('attribution toggle is local per user; badges are bounded, escaped and read
     assert.match(h.badge.description(cell)[0], /Unknown/);
 });
 
+test('stacking reserves only visible chips and never adds document or undo changes', t => { // NEW
+    const h = fixture(t), cell = h.create('stacked-group', { tiler_group: '1' }); // NEW
+    h.graph.setSelectionCell(cell); // NEW
+    const before = h.ui.getFileData(), undoCount = h.undo.history.length; // NEW
+    h.load('plugins/garden_planner_plugins/Garden_Scale.js'); // NEW
+    const controller = h.graph.__gardenScaleController, scale = h.w.TrellisGardenScale._test; // NEW
+    for (const update of [ // NEW
+        () => h.graph.view.setScale(1.65), // NEW
+        () => h.graph.view.setTranslate(17, 23), // NEW
+        () => controller.markResizeTarget({ state: { cell } }, true), // NEW
+        () => controller.markResizeTarget({ state: { cell } }, false), // NEW
+        () => h.actions.get('trellisShowObjectAttribution').funct(), // NEW
+        () => h.actions.get('trellisShowObjectAttribution').funct() // NEW
+    ]) { // NEW
+        update(); assert.equal(h.ui.getFileData(), before); assert.equal(h.undo.history.length, undoCount); // NEW
+    } // NEW
+    const getGeometry = cell.getGeometry; cell.getGeometry = () => null; // NEW: a chip with no displayable dimensions must leave no blank row.
+    scale.refreshOverlayPositions(); assert.equal(controller.getOverlayPlacement(cell), null); // NEW
+    assert.equal(h.w.document.querySelector('[data-trellis-dimensions]').style.display, 'none'); // NEW
+    const state = h.graph.view.getState(cell), badge = h.w.document.querySelector('[data-trellis-attribution]'); // NEW
+    assert.equal(parseFloat(badge.style.top), Math.round(state.y + state.height + 8)); // NEW
+    cell.getGeometry = getGeometry; scale.refreshOverlayPositions(); assert.ok(controller.getOverlayPlacement(cell)); // NEW
+    h.graph.view.removeState(cell); scale.refreshOverlayPositions(); // NEW: stale entries disappear when their rendered object disappears.
+    assert.equal(controller.getOverlayPlacement(cell), null); // NEW
+    assert.equal(h.w.document.querySelector('[data-trellis-dimensions]'), null); // NEW
+    assert.equal(h.w.document.querySelector('[data-trellis-attribution]'), null); // NEW
+    assert.equal(h.ui.getFileData(), before); assert.equal(h.undo.history.length, undoCount); // NEW
+}); // NEW
+
 test('remote apply and Change Map styling preserve recorded attribution', t => { // NEW
     const h = fixture(t), cell = h.create('object'), original = h.badge.read(cell); h.advance();
     h.graph.__trellisSharingApplying = true; h.patch(cell, { label: 'Remote content', createdAt: original.createdAt }); h.graph.__trellisSharingApplying = false;
